@@ -70,6 +70,8 @@
   p { margin: 0 0 1rem; }
   ul, ol { padding-inline-start: 1.5rem; }
   li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
   code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
   pre {
     margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
@@ -180,8 +182,9 @@
   details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
   details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
   details[open] > summary { margin-bottom: .5rem; }
-  .checklist label { display: flex; gap: .6rem; align-items: flex-start; padding: .35rem 0; cursor: pointer; }
-  .checklist input { margin-top: .35rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
   .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
   .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
 
@@ -290,7 +293,7 @@
     <p>From JavaScript's point of view, everything without <code>Sync</code> in its name is asynchronous and non-blocking for the main thread — but under the hood Node uses <em>different</em> quadrants: sockets go through readiness (epoll/kqueue) or completion (IOCP), while file reads are <em>blocking sync calls executed on a libuv pool thread</em> (Part 4). The practical rule: <b>any <code>*Sync</code> call in a request path stalls every other request on that process for its whole duration.</b> In the benchmark below, a 48 MB <code>readFileSync</code> handler made a trivial <code>/health</code> request wait over a second.</p>
   </section>
 
-<pre data-file="io-quadrants.c  (للتوضيح بس، Linux؛ من غير error handling)"><code class="language-c">// 1) الـ blocking + synchronous: الـ thread بينام جوه read() لحد ما الـ bytes توصل
+<pre data-file="io-quadrants.c  (للتوضيح بس، Linux؛ من غير error handling)"><code class="language-c">// 1) الـ blocking + synchronous: الـ thread بينام جوه ⁦read()⁩ لحد ما الـ bytes توصل
 ssize_t n = read(fd, buf, sizeof buf);
 
 // 2) الـ non-blocking + synchronous: بترجع على طول؛ وإنت تفضل تسأل (poll) وتحرق CPU لحد ما الـ data تظهر
@@ -298,20 +301,20 @@ fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
 // الـ comment اللي جوه الـ loop معناه: اعمل حاجة تانية وبعدين جرّب تاني
 while ((n = read(fd, buf, sizeof buf)) == -1 &amp;&amp; errno == EAGAIN) { /* do something else, retry */ }
 
-// 3) الـ multiplexed readiness ("blocking async"): نام على fds كتير مرة واحدة، وبعدين اقرا الجاهزين بس
+// 3) الـ ⁦multiplexed readiness ("blocking async")⁩: نام على fds كتير مرة واحدة، وبعدين اقرا الجاهزين بس
 int ready = epoll_wait(ep, events, 1024, timeout_ms);       // بينام لحد ما fd واحد على الأقل يجهز
 for (int i = 0; i &lt; ready; i++) read(events[i].data.fd, buf, sizeof buf);   // دلوقتي مش هيعمل block
 
-// 4) الـ completion-based ("non-blocking async"): ابعت الطلب، والـ kernel يملا الـ buf، وإنت تستلم completion
+// 4) الـ ⁦completion-based ("non-blocking async")⁩: ابعت الطلب، والـ kernel يملا الـ buf، وإنت تستلم completion
 struct io_uring_sqe *sqe = io_uring_get_sqe(&amp;ring);
 io_uring_prep_read(sqe, fd, buf, sizeof buf, 0);
 io_uring_submit(&amp;ring);
 // هنا تعمل أي شغل تاني على ما الـ kernel يخلص القراية
 /* ... do other work ... */
-io_uring_wait_cqe(&amp;ring, &amp;cqe);                             // قيمة cqe-&gt;res = عدد الـ bytes اللي اتقرت، والـ buf متملي خلاص
+io_uring_wait_cqe(&amp;ring, &amp;cqe);                             // قيمة ⁦cqe-&gt;res =⁩ عدد الـ bytes اللي اتقرت، والـ buf متملي خلاص
 </code></pre>
 
-<pre data-file="src/sync-vs-async.ts"><code class="language-typescript">// سيرفر واحد فيه handlerين. 20 request "export" في نفس الوقت + health check واحد بنقيسه في النص.
+<pre data-file="src/sync-vs-async.ts"><code class="language-typescript">// سيرفر واحد فيه handlerين. ⁦20 request "export"⁩ في نفس الوقت ⁦+ health check⁩ واحد بنقيسه في النص.
 import http from "node:http";
 import fs from "node:fs";
 import { fork } from "node:child_process";
@@ -327,7 +330,7 @@ if (process.argv[2] === "server") {
       return res.end(String(buf.length));
     }
     if (req.url === "/export-async") {
-      const buf = await fs.promises.readFile(FILE);         // ✅ القراية بتحصل بره الـ main thread (في الـ libuv pool)
+      const buf = await fs.promises.readFile(FILE);         // ✅ القراية بتحصل بره الـ ⁦main thread (⁩في الـ libuv pool)
       return res.end(String(buf.length));
     }
     res.statusCode = 404; res.end();
@@ -358,12 +361,12 @@ if (process.argv[2] === "server") {
   fs.unlinkSync(FILE);
 }
 
-// الـ output الحقيقي (تشغيلتين):
+// الـ output الحقيقي (تشغيلتين⁦):⁩
 // sync : 20 exports in 1076ms, /health took 1055ms
 // async: 20 exports in 364ms, /health took 8ms
 // sync : 20 exports in 970ms, /health took 945ms
 // async: 20 exports in 301ms, /health took 8ms
-// لاحظ: في الـ sync الـ health check علق ورا الـ 20 sync read (أكتر من ثانية).
+// لاحظ: في الـ sync الـ health check علق ورا الـ ⁦20 sync read (⁩أكتر من ثانية⁦).⁩
 // والـ async كمان أسرع في المجموع: الـ 4 pool threads بيقروا parallel والـ main thread بيخدم الـ requests
 </code></pre>
 
@@ -426,8 +429,8 @@ if (process.argv[2] === "server") {
 </pre>
   <div class="ar-note">شمال: thread لكل connection بـ pool = 200 — كل thread من T1 لـ T200 قاعد مستني (⏳) على read لـ WebSocket فاضي، والـ ws#201 لحد ws#10,000 والـ POST /checkout الجديد بيستنوا في الـ accept queue؛ والـ memory = 200+ stack و context switch مع كل صحيان. يمين: الـ event-driven (Node / Nginx) — main thread واحد بيعمل <code>epoll_wait</code> على 10,000 fd، يرجعله [fd 4711 جاهز]، يشغّل الـ callback بتاعه في microseconds، ويرجع يستنى تاني؛ كل connection فاضية = fd واحد + ~3KB state، والـ memory ≈ 30MB لـ 10 آلاف connection (الجزء 3).</div>
 
-<pre data-file="src/c10k-sim.ts"><code class="language-typescript">// النموذج: 10,000 WebSocket client أغلبهم فاضيين (order-status updates) + checkout request جديد واحد.
-// الوقت مضغوط: الـ "session" بتاعة الـ client = 50ms هنا (في الحقيقة دقايق).
+<pre data-file="src/c10k-sim.ts"><code class="language-typescript">// النموذج: 10,000 WebSocket client أغلبهم فاضيين ⁦(order-status updates) + checkout request⁩ جديد واحد.
+// الوقت مضغوط: الـ "session" بتاعة الـ client = 50ms هنا (في الحقيقة دقايق⁦).⁩
 import { setTimeout as sleep } from "node:timers/promises";
 
 const CLIENTS = 10_000, SESSION_MS = 50, POOL = 200;
@@ -438,7 +441,7 @@ async function threadPerConnection() {
   const acquire = () =&gt; (free &gt; 0 ? (free--, Promise.resolve()) : new Promise&lt;void&gt;((r) =&gt; queue.push(r)));
   const release = () =&gt; { const n = queue.shift(); if (n) n(); else free++; };
 
-  // كل client فاضي بيحجز (PINS) thread طول الـ session بتاعته، حتى وهو مش بيعمل حاجة
+  // كل client فاضي بيحجز ⁦(PINS) thread⁩ طول الـ session بتاعته، حتى وهو مش بيعمل حاجة
   for (let i = 0; i &lt; CLIENTS; i++) acquire().then(() =&gt; sleep(SESSION_MS)).then(release);
 
   const t0 = performance.now();
@@ -464,7 +467,7 @@ console.log(`ideal math: ${CLIENTS}/${POOL} waves x ${SESSION_MS}ms = ${(CLIENTS
 // thread-per-connection (pool=200): checkout waited 3147ms
 // event-driven                      : checkout waited 0.01ms
 // ideal math: 10000/200 waves x 50ms = 2500ms
-// لو كبّرت SESSION_MS لـ WebSocket session حقيقية 5 دقايق، الـ checkout هيستنى ~4 ساعات.
+// لو كبّرت SESSION_MS لـ WebSocket session حقيقية 5 دقايق، الـ checkout هيستنى ⁦~4⁩ ساعات.
 </code></pre>
 
   <section class="ar">
@@ -523,9 +526,9 @@ for (;;) {                                            // الـ loop دي هي �
     } else {
       char buf[65536];
       ssize_t r = read(fd, buf, sizeof buf);          // مش هيعمل block: الـ kernel قال إنه readable
-      if (r == 0) { close(fd); continue; }            // الطرف التاني قفل (و close() كمان بتشيله من epoll)
+      if (r == 0) { close(fd); continue; }            // الطرف التاني قفل (و ⁦close()⁩ كمان بتشيله من epoll)
       if (r &lt; 0 &amp;&amp; errno == EAGAIN) continue;         // طلع مفيش حاجة، استنى الـ event الجاي
-      handle(fd, buf, r);                             // في Node: هنا بيشتغل الـ 'data' / request callback بتاعك
+      handle(fd, buf, r);                             // في Node: هنا بيشتغل الـ ⁦'data' / request callback⁩ بتاعك
     }
   }
 }
@@ -543,7 +546,7 @@ for (;;) {                                            // الـ loop دي هي �
   <div class="ar-note">شمال الـ readiness (epoll/kqueue): الـ app بيسجّل الـ fd بـ <code>epoll_ctl(ADD)</code> وينام في <code>epoll_wait()</code>؛ الـ packet توصل فالـ kernel يحط الـ fd في الـ ready list؛ الـ app يصحى على "fd 21 readable" ويعمل <code>read()</code> بنفسه، والنسخ بيحصل ساعتها — يعني "قولّي إمتى <b>أقدر</b> أقرا". يمين الـ completion (IOCP/io_uring): الـ app يبعت <code>ReadFile</code> بـ OVERLAPPED أو SQE ويكمّل شغله؛ الـ packet توصل فالـ kernel ينسخها <b>جوه</b> الـ buf على طول؛ الـ app يستلم من <code>GetQueuedCompletionStatus</code> "خلصت، 512 B"، والـ data تكون في الـ buf خلاص — يعني "قولّي لما القراية <b>تخلص</b>".</div>
 
 <pre data-file="src/idle-conns.ts"><code class="language-typescript">// عندنا Node process واحد (JS thread واحد) شايل N TCP connection فاضية — زي notifications gateway.
-// شغّله كده: node src/idle-conns.ts   (ولعدد أكبر: CONNS=10000 node src/idle-conns.ts)
+// شغّله كده: ⁦node src/idle-conns.ts   (⁩ولعدد أكبر: CONNS=10000 node src/idle-conns.ts)
 import net from "node:net";
 import { fork } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -665,9 +668,9 @@ $ ls -l /proc/4123/fd | grep -c socket
 </pre>
   <div class="ar-note">جوه الـ Node process: الـ main thread (V8 + event loop) — الـ sockets والـ timers بيدخلوا من الـ poll phase (<code>epoll_wait</code>/<code>kevent</code>/IOCP) اللي بتستلم الـ readiness من الـ kernel، والـ JS callbacks بتشتغل واحد واحد. أي <code>fs.readFile</code> أو <code>dns.lookup</code> أو pbkdf2 أو zlib أو bcrypt بينزل لـ work queue (FIFO) بتغذّي 4 pool threads، والـ blocking calls بتشتغل هناك، ولما تخلص الـ completion بيرجع كـ callback على الـ main thread. تحت: 4 pbkdf2 jobs بطيئة شاغلين الـ 4 threads، فـ <code>fs.readFile</code> بياخد 1ms بيستنى وراهم.</div>
 
-<pre data-file="src/threadpool.ts"><code class="language-typescript">// عندنا 8 password hashes "في نفس الوقت" (8 users بيعملوا login) — اتفرّج عليهم بيخلصوا على دفعات.
-// شغّله كده: node src/threadpool.ts   (الـ pool الـ default = 4)
-// أو كده: UV_THREADPOOL_SIZE=8 node src/threadpool.ts   (لازم يتحط قبل ما الـ process يبدأ)
+<pre data-file="src/threadpool.ts"><code class="language-typescript">// عندنا ⁦8 password hashes "⁩في نفس الوقت⁦" (8 users⁩ بيعملوا login) — اتفرّج عليهم بيخلصوا على دفعات.
+// شغّله كده: ⁦node src/threadpool.ts   (⁩الـ pool الـ default = 4)
+// أو كده: ⁦UV_THREADPOOL_SIZE=8 node src/threadpool.ts   (⁩لازم يتحط قبل ما الـ process يبدأ)
 import { pbkdf2 } from "node:crypto";
 
 const start = performance.now();
@@ -716,14 +719,14 @@ await probe("[idle pool]");
 for (let i = 0; i &lt; 4; i++) pbkdf2(`pw-${i}`, "salt", 400_000, 64, "sha512", () =&gt; {});
 await probe("[pool busy]");
 
-// الـ output الحقيقي، بالـ pool الـ default (4):
+// الـ output الحقيقي، بالـ pool الـ ⁦default (4)⁩:
 // [idle pool] fs.readFile(small file)          15ms
 // [idle pool] dns.lookup(localhost)            18ms
 // [idle pool] dns.resolve4(example.com)        97ms
 // [pool busy] dns.resolve4(example.com)        90ms
 // [pool busy] dns.lookup(localhost)            944ms
 // [pool busy] fs.readFile(small file)          945ms
-// لاحظ: الـ resolve4 بياخد ~90ms في الحالتين لأنه network round trip ومش بيستخدم الـ pool أصلًا،
+// لاحظ: الـ resolve4 بياخد ⁦~90ms⁩ في الحالتين لأنه network round trip ومش بيستخدم الـ pool أصلًا،
 // إنما الـ lookup والـ readFile وقفوا ورا الـ hashes (944ms و 945ms).
 //
 // ولما تشغّله بـ UV_THREADPOOL_SIZE=16 node src/pool-starvation.ts:
@@ -770,7 +773,7 @@ const report = (label: string) =&gt; {
   h.reset();
 };
 
-// ده payload لـ "تقرير شهري": 200 ألف order row ≈ 21MB JSON
+// ده payload لـ "تقرير شهري⁦": 200⁩ ألف order row ≈ 21MB JSON
 const payload = JSON.stringify(Array.from({ length: 200_000 }, (_, i) =&gt; ({
   id: i, userId: i % 5000, total: (i * 7.31) % 900, status: "paid", items: [{ sku: `SKU-${i}`, qty: 2 }],
 })));
@@ -796,7 +799,7 @@ for (let i = 0; i &lt; orders.length; i += 10_000) {
 await sleep(200); report("chunked aggregation");
 console.log(`payload=${(payload.length / 1e6).toFixed(0)}MB, sum=${sum.toFixed(0)}`);
 
-// الـ output الحقيقي (على Windows الـ idle ≈16ms = دقة الـ timer؛ على Linux الـ idle ≈10ms):
+// الـ output الحقيقي (على Windows الـ idle ≈⁦16ms =⁩ دقة الـ timer؛ على Linux الـ idle ≈10ms):
 // idle                       p50=   15.9ms p99=   16.9ms max=   18.5ms
 // 5x JSON.parse(21MB) sync   p50=  442.0ms p99=  516.4ms max=  516.4ms
 // chunked aggregation        p50=   15.9ms p99=   21.2ms max=   21.2ms
@@ -804,7 +807,7 @@ console.log(`payload=${(payload.length / 1e6).toFixed(0)}MB, sum=${sum.toFixed(0
 // لاحظ: في الـ sync كل client استنى لحد ½ ثانية؛ وبالـ chunks الـ lag رجع طبيعي تقريبًا.
 </code></pre>
 
-<pre data-file="src/redos.ts"><code class="language-typescript">// الـ ReDoS: nested quantifiers + آخر مش بيعمل match = exponential backtracking على الـ JS thread الوحيد.
+<pre data-file="src/redos.ts"><code class="language-typescript">// الـ ⁦ReDoS: nested quantifiers +⁩ آخر مش بيعمل match = exponential backtracking على الـ JS thread الوحيد.
 const badCouponRe = /^([A-Z0-9]+)*-PROMO$/;        // اتكتبت على السريع عشان "validate coupon code"
 const goodCouponRe = /^[A-Z0-9]+-PROMO$/;          // بتقبل نفس الـ strings بالظبط، من غير nested quantifier
 
@@ -881,7 +884,7 @@ for (const n of [24, 26, 28, 30]) {
 
 <pre data-file="src/fd-leak.ts"><code class="language-typescript">// ده helper لـ "Attach invoice template" بيسرّب fd في مسار الـ error.
 // شغّله كده: node src/fd-leak.ts leaky   |   node src/fd-leak.ts fixed
-// على Linux، عشان توصل للحد بسرعة:  bash -c 'ulimit -n 256 &amp;&amp; node src/fd-leak.ts leaky'
+// على Linux، عشان توصل للحد بسرعة:  ⁦bash -c 'ulimit -n 256 &amp;&amp; node src/fd-leak.ts leaky'⁩
 import { openSync, readSync, closeSync, writeFileSync, rmSync, readdirSync, existsSync } from "node:fs";
 
 const TEMPLATE = "./invoice-template.pdf";
@@ -926,15 +929,15 @@ for (let orderId = 1; orderId &lt;= 30_000; orderId++) {
 console.log(`${mode}: 30000 requests OK (${businessErrors} business errors), open fds=${openFds()}`);
 rmSync(TEMPLATE);
 
-// الـ output الحقيقي على الجهاز ده (Windows) — الـ C runtime بيحط حد ~8,192 fd للـ process:
+// الـ output الحقيقي على الجهاز ده (Windows) — الـ C runtime بيحط حد ⁦~8,192 fd⁩ للـ process:
 // leaky: EMFILE at order 24568, open fds=n/a on Windows
 // fixed: 30000 requests OK (10000 business errors), open fds=n/a on Windows
-// الحسبة: 8,189 fd اتسرّبوا × 3 (كل تالت order بيفشل) = order رقم 24,567.
-// على Linux بـ `ulimit -n 256` النسخة الـ leaky بتموت بعد ~230 fd متسرّب (≈ order 700؛
+// الحسبة: 8,189 fd اتسرّبوا × ⁦3 (⁩كل تالت order بيفشل⁦) = order⁩ رقم 24,567.
+// على Linux بـ `ulimit -n 256` النسخة الـ leaky بتموت بعد ⁦~230 fd⁩ متسرّب (≈ order 700؛
 // النقطة بالظبط بتعتمد على عدد الـ fds اللي Node كان فاتحها وهو بيقوم) وبتطبع العدد الحقيقي.
 </code></pre>
 
-<pre data-file="src/agent-leak.ts"><code class="language-typescript">// الغلطة: "keep-alive Agent جديد لكل request" — كل call بتسيب وراها socket فاضي (= fd على كل ناحية).
+<pre data-file="src/agent-leak.ts"><code class="language-typescript">// الغلطة: ⁦"keep-alive Agent⁩ جديد لكل ⁦request"⁩ — كل call بتسيب وراها socket فاضي (⁦= fd⁩ على كل ناحية⁦).⁩
 import http from "node:http";
 
 const fx = http.createServer((req, res) =&gt; res.end(JSON.stringify({ rate: 1.08 }))); // خدمة FX-rates وهمية
@@ -978,7 +981,7 @@ fxAgent.destroy(); fx.close();
 524288
 $ grep "open files" /proc/4123/limits        # الـ limits بتاعة الـ process الشغّال (وده اللي يفرق)
 Max open files            1024                 524288               files
-$ ls /proc/4123/fd | wc -l                   # خد sample كل دقيقة: ثابت = تمام، بيطلع = leak
+$ ls /proc/4123/fd | wc -l                   # خد sample كل دقيقة: ثابت = تمام، بيطلع ⁦= leak⁩
 1019
 $ lsof -p 4123 | awk 'NR &gt; 1 {print $5}' | sort | uniq -c | sort -rn   # جمّعهم حسب الـ type
     987 IPv4                                  # دي sockets: يعني connection leak مش ملفات
@@ -988,7 +991,7 @@ $ lsof -p 4123 | awk 'NR &gt; 1 {print $5}' | sort | uniq -c | sort -rn   # جم
 $ ss -tnp | grep 'pid=4123' | awk '{print $5}' | sort | uniq -c | sort -rn | head -3
     950 10.0.4.17:443                         # كلهم رايحين لـ upstream واحد: Agent جديد لكل request؟
 
-# ارفع الـ limit (بس بعد ما تتأكد إن مفيش leak)
+# ارفع الـ ⁦limit (⁩بس بعد ما تتأكد إن مفيش leak)
 # السطور الجاية: نفس الرفع في الـ systemd unit، وفي docker run، وفي docker compose
 # systemd unit:      [Service]  LimitNOFILE=65536
 # docker run:        docker run --ulimit nofile=65536:65536 my-api
@@ -1035,7 +1038,7 @@ $ ss -tnp | grep 'pid=4123' | awk '{print $5}' | sort | uniq -c | sort -rn | hea
   <div class="ar-note">الـ V8 heap مبسّط: شمال الـ young generation (صغيرة) فيها semi-space A (from) و semi-space B (to): الـ objects الجديدة بتملا A، والـ Scavenge بينسخ الحيين بس لـ B، والميتين بيختفوا ببلاش، والـ pause ~0.1–2 ms؛ واللي يعيش مرتين بيتنقل للـ old generation. يمين الـ old generation (كبيرة): فيها الـ objects اللي اتنقلت (caches، sessions، module state، closures عايشة كتير)، وبيتعملها Mark-Compact: marking concurrent على helper threads + STW finalize/compact من ms لمئات الـ ms. تحت: allocation rate عالي = scavenges كتير؛ و old gen كبيرة أو مليانة = pauses طويلة أو ورا بعض.</div>
 
 <pre data-file="src/gc-pressure.ts"><code class="language-typescript">// ده hot path لـ "pricing" بيعمل allocation كتير. شغّله:  node --trace-gc src/gc-pressure.ts
-// الزبالة قصيرة العمر = Scavenges رخيصة. والـ cache طويل العمر اللي بيكبر = Mark-Compacts غالية.
+// الزبالة قصيرة العمر ⁦= Scavenges⁩ رخيصة. والـ cache طويل العمر اللي بيكبر ⁦= Mark-Compacts⁩ غالية.
 const sessionCache = new Map&lt;number, { cart: number[]; note: string }&gt;();   // عايش كتير (old gen)
 
 function priceCart(requestId: number): number {
@@ -1073,16 +1076,16 @@ FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaS
 </code></pre>
   <div class="ar-note">ده الـ output الحقيقي من <code>--trace-gc</code>: كل سطر فيه نوع الـ GC (Scavenge أو Mark-Compact)، والـ heap قبل ← بعد بالـ MB، ومدة الـ pause. في التشغيل العادي: 171 Scavenge (أطولهم 1.5 ms) + 2 Mark-Compact (~1.7 ms STW، والـ marking اشتغل concurrent لمدة 8–56 ms)، ومجموع الـ GC pauses ≈ 111 ms من 1926 ms ≈ 5.8%. والـ "mu" = mutator utilization، يعني نسبة الوقت اللي الـ JS كان شغال فيه. في التشغيل التاني بـ <code>--max-old-space-size=48</code> (heap صغير): 14 full GC كل واحد 21–27 ms، والـ JS فاضله ~34% بس من الوقت (GC thrashing)، وبعدين <code>FATAL ERROR … JavaScript heap out of memory</code> و exit code 134.</div>
 
-<pre data-file="terminal — نسبة الـ GC من trace log"><code class="language-bash"># نسبة الـ wall time اللي راحت في GC pauses (شغالة على سطور --trace-gc بتاعة Node 22)
+<pre data-file="terminal — نسبة الـ GC من trace log"><code class="language-bash"># نسبة الـ wall time اللي راحت في ⁦GC pauses (⁩شغالة على سطور ⁦--trace-gc⁩ بتاعة Node 22)
 $ node --trace-gc dist/server.js &gt; gc.log   # شغّل load test في نفس الوقت، وبعدين:
 $ awk '/: (Scavenge|Mark-Compact)/ { for (i = 1; i &lt;= NF; i++) if ($i == "ms:") t = $(i-1);
        n = split($0, a, "MB, "); split(a[n], b, " "); pause += b[1] }
        END { printf "GC pauses: %.0f ms of %d ms wall = %.1f%%\n", pause, t, 100 * pause / t }' gc.log
 GC pauses: 111 ms of 1926 ms wall = 5.8%
 
-# حجم الـ container: الـ memory limit 2Gi، سيب ~25% للـ young gen والـ Buffers والـ code والـ stacks
+# حجم الـ container: الـ memory limit 2Gi، سيب ⁦~25%⁩ للـ young gen والـ Buffers والـ code والـ stacks
 $ node --max-old-space-size=1536 -e "console.log(require('v8').getHeapStatistics().heap_size_limit / 2**20)"
-1584                                         # بالـ MB: الـ old space + الـ young generation
+1584                                         # بالـ MB: الـ ⁦old space +⁩ الـ young generation
 </code></pre>
 
   <section class="ar">
@@ -1129,7 +1132,7 @@ app.get("/invoices/:id/pdf", async (req, res) =&gt; {
   <div class="compare">
     <div class="bad"><b>❌ Sync password hashing on login</b>
 <pre><code class="language-typescript">const ok = bcrypt.compareSync(password, user.hash);
-// حوالي 250ms (cost 12) الـ event loop متجمّد في كل login؛
+// حوالي ⁦250ms (cost 12)⁩ الـ event loop متجمّد في كل login؛
 // و 10 logins في الثانية ≈ الـ process كله مش بيعمل أي حاجة تانية</code></pre></div>
     <div class="good"><b>✅ Async hash, off the main thread, rate-limited</b>
 <pre><code class="language-typescript">const ok = await bcrypt.compare(password, user.hash);
@@ -1149,7 +1152,7 @@ app.get("/invoices/:id/pdf", async (req, res) =&gt; {
   const agent = new https.Agent({ keepAlive: true });
   const redis = new Redis(process.env.REDIS_URL!);
   // … بتستخدمهم ومبتقفلهمش أبدًا
-} // كل call بتزوّد 2 sockets (fds)، فـ EMFILE بييجي خلال ساعات</code></pre></div>
+} // كل call بتزوّد ⁦2 sockets (fds)⁩، فـ EMFILE بييجي خلال ساعات</code></pre></div>
     <div class="good"><b>✅ One per upstream, at module scope</b>
 <pre><code class="language-typescript">const agent = new https.Agent({ keepAlive: true, maxSockets: 50 });
 const redis = new Redis(process.env.REDIS_URL!);
@@ -1175,7 +1178,7 @@ export async function chargeCard(p: Payment) {
 //   CMD ["node", "--max-old-space-size=1536",
 //        "--heapsnapshot-near-heap-limit=1", "dist/server.js"]
 // الـ V8 بيعمل GC بدري؛ ولو حصل heap OOM حقيقي بيخرج بـ 134
-// ومعاه رسالة + snapshot تقدر تحللهم</code></pre></div>
+// ومعاه رسالة ⁦+ snapshot⁩ تقدر تحللهم</code></pre></div>
   </div>
   <section class="ar">
     <span class="label">بالعامية</span>
@@ -1190,14 +1193,14 @@ export async function chargeCard(p: Payment) {
     for (const o of req.body.orders) await upsert(o);
     res.sendStatus(201);
   });
-// الـ JSON.parse(500MB) بيعمل block لثواني، والـ heap بيتضرب ×3</code></pre></div>
+// الـ ⁦JSON.parse(500MB)⁩ بيعمل block لثواني، والـ heap بيتضرب ×3</code></pre></div>
     <div class="good"><b>✅ Bound it, stream it, or queue it</b>
 <pre><code class="language-typescript">app.post("/imports/orders", async (req, res) =&gt; {
   const key = await uploadToS3(req);   // اعمل stream للـ body على S3
   await importQueue.add("orders", { key });
   res.status(202).json({ importId: key });
 });
-// والـ worker بيقرا الملف (NDJSON) stream على batches</code></pre></div>
+// والـ worker بيقرا الملف ⁦(NDJSON) stream⁩ على batches</code></pre></div>
   </div>
   <section class="ar">
     <span class="label">بالعامية</span>
@@ -1271,7 +1274,7 @@ function priceCart(requestId: number): number {
   if (requestId % 4 === 0) sessionCache.set(requestId, { cart: QTY.slice(), note: "x".repeat(200) + requestId });
   return total;
 }
-// تشغيل حقيقي بـ --trace-gc: 14 Scavenge (كانوا 171)، و Mark-Compact واحد، وخلص في 151ms (كان 1830ms).
+// تشغيل حقيقي بـ ⁦--trace-gc: 14 Scavenge (⁩كانوا 171)، و Mark-Compact واحد، وخلص في ⁦151ms (⁩كان 1830ms).
 // اللي فاضل أغلبه الـ cache اللي فيه 100 ألف entry في الـ old generation — صغّره أو انقله لـ Redis.</code></pre>
       <div class="ar-note">الحل: <code>QTY</code> هو <code>Uint8Array</code> فيه الـ 50 كمية، متعمله allocate مرة واحدة بس، والـ total بيتحسب في loop عادي من غير أي objects جديدة لكل request، والـ cache بيخزّن <code>QTY.slice()</code> (typed array صغير) بدل array من objects. في التشغيل الحقيقي: 14 Scavenge بدل 171، و Mark-Compact واحد، وخلص في 151ms بدل 1830ms. واللي فاضل أغلبه الـ cache بتاع الـ 100 ألف entry في الـ old generation — صغّره أو انقله لـ Redis.</div>
     </details>
