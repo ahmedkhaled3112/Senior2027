@@ -28,10 +28,11 @@
 | 7 | [Modules, Declarations & Library Authoring](./lessons/07-modules-declarations.html) | 🟡 → 🔴 | 60 min |
 | 8 | [Runtime Validation & TypeScript in Node](./lessons/08-runtime-validation-node.html) | 🟡 Intermediate | 55 min |
 | 9 | [TypeScript with React](./lessons/09-typescript-react.html) | 🟡 Intermediate | 50 min |
-| 10 | [Conditional & Mapped Types](./lessons/11-conditional-mapped-types.html) | 🔴 Advanced | 60 min |
-| 11 | [Template Literal Types & Type-Level Programming](./lessons/12-template-literal-type-level.html) | 🔴 Advanced | 60 min |
-| 12 | [Variance, satisfies & as const](./lessons/13-variance-satisfies.html) | 🔴 Advanced | 50 min |
-| 13 | [TypeScript Patterns for Real Systems](./lessons/14-typescript-patterns.html) | 🔴 Advanced | 60 min |
+| 10 | [Tooling, Strict Flags & Type-Checker Performance](./lessons/10-tooling-strict-performance.html) | 🟡 → 🔴 | 60 min |
+| 11 | [Conditional & Mapped Types](./lessons/11-conditional-mapped-types.html) | 🔴 Advanced | 60 min |
+| 12 | [Template Literal Types & Type-Level Programming](./lessons/12-template-literal-type-level.html) | 🔴 Advanced | 60 min |
+| 13 | [Variance, satisfies & as const](./lessons/13-variance-satisfies.html) | 🔴 Advanced | 50 min |
+| 14 | [TypeScript Patterns for Real Systems](./lessons/14-typescript-patterns.html) | 🔴 Advanced | 60 min |
 
 <!-- AUTO:END -->
 

@@ -1,0 +1,1973 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tooling, Strict Flags &amp; Type-Checker Performance — 03 TypeScript</title>
+<meta name="section" content="03-TypeScript">
+<meta name="level" content="🟡 → 🔴">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">03 · TypeScript</a></span>
+    <span>·</span>
+    <span>Lesson 10 / 14</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Tooling, Strict Flags &amp; Type-Checker Performance</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 10 of 14 — 03 TypeScript</p>
+    <div class="meta">
+      <span class="chip">🟡 → 🔴</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">TypeScript 7.0.2 + 6.0.3 · ESLint 10 · typescript-eslint 8.72 · Windows</span>
+      <span class="chip">Prereq: 03 Classes &amp; tsconfig · 07 Modules &amp; Declarations</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>03 · 2.8 — typescript-eslint: الـ rules المهمة (<code>no-floating-promises</code>، <code>no-explicit-any</code>، <code>strict-boolean-expressions</code>، <code>switch-exhaustiveness-check</code>)</li>
+        <li>03 · 2.8 — <code>tsc --noEmit</code> كـ type-check في CI، وesbuild/SWC/tsx للـ transpile</li>
+        <li>03 · 2.8 — Project references للـ monorepos (<code>composite</code>، <code>references</code>)</li>
+        <li>03 · 3.7 — <code>noUncheckedIndexedAccess</code>: <code>arr[0]</code> بيبقى <code>T | undefined</code> — وليه ده بيمسك bugs حقيقية</li>
+        <li>03 · 3.7 — <code>exactOptionalPropertyTypes</code>: الفرق بين <code>prop?: string</code> و <code>prop: string | undefined</code></li>
+        <li>03 · 3.7 — <code>noImplicitOverride</code>، <code>noPropertyAccessFromIndexSignature</code>، <code>noFallthroughCasesInSwitch</code></li>
+        <li>03 · 3.7 — <code>useUnknownInCatchVariables</code> (جوه <code>strict</code>)</li>
+        <li>03 · 3.7 — إزاي تفعّلهم على codebase قديم تدريجيًا</li>
+        <li>03 · 3.10 — ليه الـ <code>tsc</code> بطيء في المشاريع الكبيرة: deep conditional types، big unions، <code>--extendedDiagnostics</code></li>
+        <li>03 · 3.10 — Project references و <code>incremental</code> للـ monorepos</li>
+        <li>03 · 3.10 — <code>skipLibCheck</code> وإمتى</li>
+        <li>03 · 3.10 — Interface vs type للـ performance (interfaces cached، intersections لأ)</li>
+        <li>03 · 3.10 — <code>--generateTrace</code> لتحليل الـ slow types</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — typescript-eslint, and why it can't use TS 7 yet</a></li>
+      <li><a href="#p2">Part 2 — tsc --noEmit in CI &amp; project references</a></li>
+      <li><a href="#p3">Part 3 — noUncheckedIndexedAccess &amp; exactOptionalPropertyTypes</a></li>
+      <li><a href="#p4">Part 4 — The other strict flags</a></li>
+      <li><a href="#p5">Part 5 — Adopting strictness on an old codebase</a></li>
+      <li><a href="#p6">Part 6 — Why tsc is slow, measured on TS 6 and TS 7</a></li>
+      <li><a href="#p7">Part 7 — --generateTrace: find the hot type and fix it</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Writing good types is half the job. The other half is the system around them: a lint rule that catches the floating promise <code>tsc</code> is happy with, a flag that catches <code>items[0].sku</code> on an empty cart, a plan to turn those flags on in a 200,000-line codebase without stopping the team, and the ability to answer "why does CI take 12 minutes?" with data. That's Senior ownership, and it's what interviewers probe with "how would you migrate this to strict?"</p>
+    <p>The ground also moved in 2026. <code>npm i typescript</code> now gives you TS 7, the native compiler, and the type-aware lint tooling can't run on it yet. This lesson shows the setup that works, and every number in it comes from a real run on both compilers. Timings are from a busy Windows machine with other jobs running, so treat them as approximate (≈) and trust the ratios and the counts.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>إنك تكتب types كويسة ده نص الشغل. النص التاني هو السيستم اللي حواليها: lint rule بتمسك الـ floating promise اللي <code>tsc</code> راضي عنها، وflag بيمسك <code>items[0].sku</code> على cart فاضية، وخطة تفعّل بيها الـ flags دي في codebase فيه 200 ألف سطر من غير ما توقف الفريق، وإنك تعرف ترد على "ليه الـ CI بياخد 12 دقيقة؟" بأرقام. ده اللي بيتسمى Senior ownership، وده اللي الـ interviewer بيدوّر عليه لما يسألك "هتحوّل المشروع ده لـ strict إزاي؟".</p>
+    <p>وكمان الأرض اتحركت في 2026: <code>npm i typescript</code> بقى بيجيب TS 7، الـ compiler الـ native، وأدوات الـ type-aware lint لسه مش بتشتغل عليه. الدرس ده بيوريك الـ setup اللي شغال، وكل رقم فيه طالع من تشغيل حقيقي على الـ compiler الاتنين. الأوقات من جهاز Windows مشغول وعليه شغل تاني، فاعتبرها تقريبية (≈)، واعتمد على النسب والأعداد.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — typescript-eslint, and why it can't use TS 7 yet <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — typescript-eslint، وليه لسه مش بيشتغل على TS 7</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><code>tsc</code> asks "do the types line up?" Type-aware lint rules ask "is this code doing something dangerous, given the types?" The file below has five real production bugs and <code>tsc</code> reports zero errors on both TS 6 and TS 7. A dropped promise is valid TypeScript, and so is a <code>default</code> branch that swallows a new status. <code>no-floating-promises</code>, <code>no-explicit-any</code>, <code>strict-boolean-expressions</code> and <code>switch-exhaustiveness-check</code> catch them because they read type information from the compiler.</p>
+    <p>That dependency is exactly the problem today. typescript-eslint 8.72 declares <code>"typescript": "&gt;=4.8.4 &lt;6.1.0"</code> as its peer range, so npm refuses to install it next to TS 7 (<code>ERESOLVE</code>). Forcing it with <code>--legacy-peer-deps</code> only moves the failure: ESLint crashes at startup with <code>typescript-eslint does not support TS 7.0</code>. The reason is architectural. <code>require("typescript")</code> on TS 7 exports only <code>version</code> and <code>versionMajorMinor</code>; there's no <code>createProgram</code>, because 7.0 ships without the JS compiler API that the lint tooling reads types through. Microsoft says it expects 7.1 to ship a new and different API, and typescript-eslint tracks its support in <a href="https://github.com/typescript-eslint/typescript-eslint/issues/10940">issue #10940</a>. Other tools lag too: <code>openapi-typescript</code> 7.13 still peers on <code>typescript ^5.x</code>.</p>
+    <p>The way teams deal with this is the side-by-side setup from Microsoft's announcement, using two npm aliases. <code>typescript</code> points at <code>@typescript/typescript6</code>, so every tool that does <code>require("typescript")</code> gets the TS 6 API. <code>@typescript/native</code> points at TS 7, which provides the <code>tsc</code> binary. You get a fast type-check and a working linter from one install. The cost is that two compilers now read your code, so keep the code valid on both: run <code>tsc6 --stableTypeOrdering</code> in CI, and remove the alias once your tools support the new API.</p>
+    <p>Two of the four rules aren't in any preset. <code>recommendedTypeChecked</code> includes <code>no-floating-promises</code> and <code>no-explicit-any</code>, but <code>strict-boolean-expressions</code> and <code>switch-exhaustiveness-check</code> are in neither <code>recommended</code> nor <code>strict</code>, so you must switch them on yourself, as the config below does.</p>
+  </section>
+
+<pre data-file="src/orders.ts"><code class="language-typescript">type OrderStatus = "pending" | "paid" | "refunded";
+
+interface Order {
+  id: string;
+  status: OrderStatus;
+  coupon: string | null;
+  totalCents: number;
+}
+
+async function saveOrder(order: Order): Promise&lt;void&gt; {
+  await Promise.resolve(order.id);
+}
+
+// (1) الـ promise ضايعة: لو الـ save وقع، مفيش حد هيعرف
+export function markPaid(order: Order): void {
+  saveOrder({ ...order, status: "paid" });
+}
+
+// (2) الـ any بيقفل الـ type-checker على كل اللي بعده
+export function parseOrder(json: string): Order {
+  const data: any = JSON.parse(json);
+  return data;
+}
+
+// (3) الشرط ده بيعدّي ⁦""⁩ و 0 كإنهم مفيش قيمة
+export function discountLabel(order: Order): string {
+  if (order.coupon) return `coupon: ${order.coupon}`;
+  if (order.totalCents) return "no coupon";
+  return "free order";
+}
+
+// (4) حد ضاف refunded في الـ union ونسي الـ switch ده
+export function statusLabel(status: OrderStatus): string {
+  switch (status) {
+    case "pending":
+      return "Waiting for payment";
+    case "paid":
+      return "Paid";
+    default:
+      return "Unknown";
+  }
+}
+
+// (5) الـ callback async جوه forEach: محدش بيستنى ولا بيمسك الـ errors
+export function saveAll(orders: Order[]): void {
+  orders.forEach(async (order) =&gt; {
+    await saveOrder(order);
+  });
+}</code></pre>
+
+<pre><code class="language-bash"># الاتنين راضيين تمامًا عن الملف ده، ومفيش ولا error
+npx tsc -p .
+npx tsc6 -p .
+# أما الـ lint فبيلاقي 8 مشاكل
+npx eslint src/orders.ts</code></pre>
+
+<pre><code class="language-plaintext">src/orders.ts
+  16:3   error  Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly marked as ignored with the `void` operator  @typescript-eslint/no-floating-promises
+  21:9   error  Unsafe assignment of an `any` value                                                                                                                                 @typescript-eslint/no-unsafe-assignment
+  21:15  error  Unexpected any. Specify a different type                                                                                                                            @typescript-eslint/no-explicit-any
+  22:3   error  Unsafe return of a value of type `any`                                                                                                                              @typescript-eslint/no-unsafe-return
+  27:7   error  Unexpected nullable string value in conditional. Please handle the nullish/empty cases explicitly                                                                   @typescript-eslint/strict-boolean-expressions
+  28:7   error  Unexpected number value in conditional. An explicit zero/NaN check is required                                                                                      @typescript-eslint/strict-boolean-expressions
+  34:11  error  Switch is not exhaustive. Cases not matched: "refunded"                                                                                                             @typescript-eslint/switch-exhaustiveness-check
+  46:18  error  Promise returned in function argument where a void return was expected                                                                                              @typescript-eslint/no-misused-promises
+
+✖ 8 problems (8 errors, 0 warnings)</code></pre>
+  <div class="ar-note">ده الـ output الحقيقي، و5 الـ bugs طلعوا 8 مشاكل. السطر 16: الـ promise ضايعة. السطور 21 و22: الـ <code>any</code> (الـ rule بتاعة <code>no-explicit-any</code> ومعاها <code>no-unsafe-assignment</code> و<code>no-unsafe-return</code>). السطور 27 و28: شروط مش boolean صريحة. السطر 34: الـ <code>switch</code> ناقصه <code>"refunded"</code> رغم إن فيه <code>default</code>. السطر 46: <code>async</code> callback جوه <code>forEach</code>.</div>
+
+<pre data-file="eslint.config.mjs"><code class="language-javascript">import { defineConfig } from "eslint/config";
+import tseslint from "typescript-eslint";
+
+export default defineConfig(
+  { ignores: ["dist/**"] },
+  // الـ preset ده بيشغّل الـ rules اللي محتاجة type information
+  tseslint.configs.recommendedTypeChecked,
+  {
+    languageOptions: {
+      parserOptions: {
+        // الـ project service بيقرا الـ tsconfig الأقرب لكل ملف لوحده
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      // الاتنين دول في الـ preset أصلًا، وكتبناهم عشان يبقوا واضحين
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-explicit-any": "error",
+      // الاتنين دول مش في recommended ولا strict، لازم تشغّلهم بإيدك
+      "@typescript-eslint/switch-exhaustiveness-check": "error",
+      "@typescript-eslint/strict-boolean-expressions": [
+        "error",
+        { allowString: false, allowNumber: false, allowNullableObject: false },
+      ],
+    },
+  },
+);</code></pre>
+
+<pre data-file="src/orders-fixed.ts"><code class="language-typescript">import { z } from "zod";
+
+type OrderStatus = "pending" | "paid" | "refunded";
+
+const OrderSchema = z.object({
+  id: z.string(),
+  status: z.enum(["pending", "paid", "refunded"]),
+  coupon: z.string().nullable(),
+  totalCents: z.number().int(),
+});
+type Order = z.infer&lt;typeof OrderSchema&gt;;
+
+async function saveOrder(order: Order): Promise&lt;void&gt; {
+  await Promise.resolve(order.id);
+}
+
+// (1) بقت async، والـ caller هو اللي مسؤول عن الـ error
+export async function markPaid(order: Order): Promise&lt;void&gt; {
+  await saveOrder({ ...order, status: "paid" });
+}
+
+// (2) الـ parse بيطلّع Order حقيقي من unknown بدل ما any يكذب
+export function parseOrder(json: string): Order {
+  return OrderSchema.parse(JSON.parse(json) as unknown);
+}
+
+// (3) كل حالة مكتوبة صراحةً: الـ ⁦""⁩ و الـ 0 ليهم معنى واضح
+export function discountLabel(order: Order): string {
+  if (order.coupon !== null &amp;&amp; order.coupon !== "") return `coupon: ${order.coupon}`;
+  if (order.totalCents &gt; 0) return "no coupon";
+  return "free order";
+}
+
+// (4) مفيش default: لو ضفت status جديد الـ lint هيقف هنا
+export function statusLabel(status: OrderStatus): string {
+  switch (status) {
+    case "pending":
+      return "Waiting for payment";
+    case "paid":
+      return "Paid";
+    case "refunded":
+      return "Refunded";
+  }
+}
+
+// (5) الـ for...of بيستنى كل save، وأي error بيوصل للـ caller
+export async function saveAll(orders: Order[]): Promise&lt;void&gt; {
+  for (const order of orders) {
+    await saveOrder(order);
+  }
+}</code></pre>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><code>tsc</code> بيسأل "الـ types راكبة على بعض؟"، والـ type-aware lint rules بتسأل "الكود ده بيعمل حاجة خطر، بالنظر للـ types؟". الملف فوق فيه 5 bugs حقيقية بتاعة production، و<code>tsc</code> بيطلّع صفر errors على TS 6 وTS 7. الـ promise الضايعة TypeScript سليم، وكمان الـ <code>default</code> اللي بيبلع status جديد. <code>no-floating-promises</code> و<code>no-explicit-any</code> و<code>strict-boolean-expressions</code> و<code>switch-exhaustiveness-check</code> بيمسكوهم لإنهم بيقروا الـ type information من الـ compiler.</p>
+    <p>والاعتماد ده هو المشكلة النهارده. typescript-eslint 8.72 معلن <code>"typescript": "&gt;=4.8.4 &lt;6.1.0"</code> كـ peer range، فـ npm بيرفض يسطّبه جنب TS 7 (<code>ERESOLVE</code>). ولو غصبته بـ <code>--legacy-peer-deps</code> الغلطة بتتنقل بس: ESLint بيقع أول ما يبدأ برسالة <code>typescript-eslint does not support TS 7.0</code>. والسبب في الـ architecture: <code>require("typescript")</code> على TS 7 بيرجّع <code>version</code> و<code>versionMajorMinor</code> بس، ومفيش <code>createProgram</code>، لإن 7.0 نازل من غير الـ JS compiler API اللي الـ lint بيقرا منها الـ types. Microsoft بتقول إنها متوقعة إن 7.1 ينزل بـ API جديدة ومختلفة، وtypescript-eslint بيتابع الدعم في <a href="https://github.com/typescript-eslint/typescript-eslint/issues/10940">issue #10940</a>. وأدوات تانية متأخرة كمان: <code>openapi-typescript</code> 7.13 لسه peer بتاعها <code>typescript ^5.x</code>.</p>
+    <p>والفرق بتتعامل مع ده بالـ side-by-side setup اللي في إعلان Microsoft، بـ npm aliases اتنين. <code>typescript</code> بيشاور على <code>@typescript/typescript6</code>، فأي tool بتعمل <code>require("typescript")</code> بتاخد TS 6 API. و<code>@typescript/native</code> بيشاور على TS 7، وهو اللي بيدّيك الـ <code>tsc</code>. فبتاخد type-check سريع وlinter شغال من install واحد. التكلفة إن فيه 2 compilers بيقروا الكود، فلازم يفضل سليم على الاتنين: شغّل <code>tsc6 --stableTypeOrdering</code> في الـ CI، وشيل الـ alias لما الأدوات تدعم الـ API الجديدة.</p>
+    <p>واتنين من الأربع rules مش في أي preset. <code>recommendedTypeChecked</code> فيها <code>no-floating-promises</code> و<code>no-explicit-any</code>، إنما <code>strict-boolean-expressions</code> و<code>switch-exhaustiveness-check</code> مش في <code>recommended</code> ولا <code>strict</code>، فلازم تفعّلهم بإيدك زي الـ config اللي فوق.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      API بتاع payments: <code>markPaid(order)</code> من غير <code>await</code> في webhook handler. الـ DB وقعت، والـ promise اترفضت من غير ما حد يشوفها، والـ webhook رجّع 200، فالعميل دفع والـ order لسه <code>pending</code>. <code>no-floating-promises</code> بتمسك ده في الـ PR. والغلطة الشائعة: تعمل <code>npm i typescript</code> في مشروع فيه ESLint، فبيجيب TS 7 وبيوقع الـ lint في الـ CI، فاستخدم الـ aliases من الأول.
+    </div>
+  </section>
+
+<pre><code class="language-plaintext">$ npm i -D typescript@7 typescript-eslint eslint
+npm error code ERESOLVE
+npm error ERESOLVE unable to resolve dependency tree
+npm error Found: typescript@7.0.2
+npm error Could not resolve dependency:
+npm error peer typescript@"&gt;=4.8.4 &lt;6.1.0" from typescript-eslint@8.72.1
+
+$ npm i -D typescript@7 typescript-eslint eslint --legacy-peer-deps
+$ npx eslint src
+typescript-eslint does not support TS 7.0.
+Please see https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-6.0 to run typescript-eslint using the TS 6 API.
+See also https://github.com/typescript-eslint/typescript-eslint/issues/10940 for tracking typescript-eslint's support for TS &gt;=7.1
+
+$ node -p "Object.keys(require('typescript')).join(',')"
+version,versionMajorMinor
+$ node -p "typeof require('typescript').createProgram"
+undefined</code></pre>
+  <div class="ar-note">ده اللي حصل فعلًا لما جربت الطريق الغلط، مختصر على السطور المهمة. المحاولة الأولى: npm رفض بسبب الـ peer range. التانية بـ <code>--legacy-peer-deps</code>: اتسطّب، بس ESLint وقع وهو بيقولك روح لـ side-by-side setup. وآخر 4 سطور هما السبب: <code>typescript</code> 7 مفيهوش غير <code>version</code> و<code>versionMajorMinor</code>، و<code>createProgram</code> قيمتها <code>undefined</code>.</div>
+
+<pre><code class="language-bash"># الأوامر دي بتكتب الـ aliases الاتنين في package.json
+npm i -D typescript@npm:@typescript/typescript6
+npm i -D @typescript/native@npm:typescript@7</code></pre>
+
+<pre data-file="package.json"><code class="language-json">{
+  "name": "orders-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "typecheck:ts6": "tsc6 --noEmit --stableTypeOrdering",
+    "lint": "eslint src",
+    "build": "esbuild src/*.ts --outdir=dist --platform=node --format=esm",
+    "verify": "npm run typecheck &amp;&amp; npm run lint"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.14.0",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "typescript-eslint": "^8.72.1"
+  }
+}</code></pre>
+
+<pre><code class="language-plaintext">$ npx tsc --version
+Version 7.0.2
+$ npx tsc6 --version
+Version 6.0.3
+$ node -p "require('typescript').version"
+6.0.3
+$ node -p "typeof require('typescript').createProgram"
+function</code></pre>
+  <div class="ar-note">ده نفس الـ <code>package.json</code> اللي فوق بعد <code>npm install</code> حقيقي، وكل الـ scripts بتاعته اشتغلت من غير errors. <code>tsc</code> بقى TS 7، و<code>tsc6</code> هو TS 6، و<code>require("typescript")</code> اللي ESLint بيعتمد عليه بيرجّع TS 6 ومعاه <code>createProgram</code>. وخد بالك: <code>@typescript/typescript6</code> رقمه 6.0.2، بس بيجيب <code>typescript@^6</code> جواه، فالنسخة الفعلية 6.0.3.</div>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: lint is now your slowest job</b>
+    On the same 301-file project, type-aware ESLint took ≈15 s and <code>tsc</code> on TS 7 took ≈1.3 s, both through <code>npx</code>. ESLint uses the TS 6 API to read types, so it doesn't get TS 7's speed. Split them into separate CI jobs so the type-check fails early, and don't let lint block your editor's save action.
+    <div class="ar-note">على نفس المشروع اللي فيه 301 ملف، الـ ESLint الـ type-aware أخد ≈15 ثانية، و<code>tsc</code> على TS 7 أخد ≈1.3 ثانية، والاتنين من خلال <code>npx</code>. ESLint بيستخدم TS 6 API عشان يقرا الـ types، فمش بياخد سرعة TS 7. افصلهم في CI jobs منفصلة عشان الـ type-check يفشل بدري، ومتخليش الـ lint يعطّل الـ save في الـ editor.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question: "Your team wants TS 7's speed but uses typescript-eslint. What do you do?"</b>
+    Don't force the peer range: the linter throws at import, because TS 7.0 has no JS compiler API. Use two aliases: <code>typescript</code> → <code>@typescript/typescript6</code> for tools, <code>@typescript/native</code> → TS 7 for the <code>tsc</code> binary. Type-check with TS 7, lint with the TS 6 API, verify both agree in CI, pin versions, and remove the alias when the tools support the 7.x API.
+    <div class="ar-note"><b>السؤال: "الفريق عايز سرعة TS 7 وبيستخدم typescript-eslint. هتعمل إيه؟"</b> متغصبش الـ peer range: الـ linter بيرمي error عند الـ import، لإن TS 7.0 مفيهوش JS compiler API. استخدم alias لكل واحد: <code>typescript</code> لـ <code>@typescript/typescript6</code> عشان الأدوات، و<code>@typescript/native</code> لـ TS 7 عشان <code>tsc</code>. الـ type-check بـ TS 7، والـ lint بـ TS 6 API، واتأكد إن الاتنين متفقين في الـ CI، وثبّت الـ versions، وشيل الـ alias لما الأدوات تدعم API بتاعة 7.x.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — tsc --noEmit in CI &amp; project references <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — tsc --noEmit في الـ CI والـ project references</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Type-checking and transpiling are separate jobs (<a href="./01-why-ts-basic-types.html">lesson 01</a> introduced this). esbuild, SWC and tsx strip types without looking at them, so a build can succeed and run with a type error in it: below, esbuild exits 0 and the program prints <code>15050</code> instead of adding two numbers. So CI must run <code>tsc --noEmit</code> as its own required step. With TS 7 the old reason for the split, speed, has weakened: a full type-check of 301 files took ≈0.7 s, while esbuild took ≈1–1.5 s to write them on this machine. Keep the split anyway, because your dev server shouldn't refuse to reload over a type error, and bundling is a different job.</p>
+    <p>In a monorepo, project references split the type-check along package lines. A package sets <code>composite: true</code> (which turns on <code>declaration</code>), and dependents list it under <code>references</code>. <code>tsc -b</code> then builds in dependency order and stores state in <code>.tsbuildinfo</code>. The important behaviour is in the logs below. With nothing changed, it skips everything. Change a function body in <code>shared</code> and only <code>shared</code> rebuilds, because <code>api</code> depends on the emitted <code>.d.ts</code>, which didn't change. Change a public signature and <code>api</code> rebuilds and reports the real break.</p>
+    <p>Dependents type-check against the <code>.d.ts</code> rather than re-checking source, which is what makes this scale. The price is config: every package needs a <code>tsconfig.json</code> and correct <code>references</code>, and you must commit to <code>tsc -b</code> as the entry point. Importing another package without a reference fails with <code>TS6059</code> and <code>TS6307</code>.</p>
+  </section>
+
+<pre data-file="transpile/refund.ts"><code class="language-typescript">const refundCents: number = "150";
+console.log(refundCents + 50);</code></pre>
+
+<pre><code class="language-plaintext">esbuild exit code: 0
+15050
+refund.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
+tsc exit code: 1</code></pre>
+  <div class="ar-note">الـ output الحقيقي: esbuild خلص بـ exit code 0، والبرنامج اشتغل وطبع <code>15050</code> (الـ <code>"150"</code> اتلزق في <code>50</code> كـ strings). و<code>tsc</code> بس هو اللي قال <code>TS2322</code> وخرج بـ 1. يعني لو الـ CI بيعمل build بس، الـ bug ده هيوصل production.</div>
+
+<pre data-file=".github/workflows/ci.yml"><code class="language-yaml">name: ci
+on: [pull_request]
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # الـ type-check بـ TS 7: أسرع job، فبيفشل بدري
+      - run: npm run typecheck
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # الـ lint بياخد الـ type information من TS 6، فلازم الـ tsconfig يشتغل على الاتنين
+      - run: npm run lint
+      # بنتأكد إن النسختين متفقين، عشان الـ lint مايشوفش كود مختلف عن اللي الـ tsc شايفه
+      - run: npm run typecheck:ts6</code></pre>
+
+<pre class="diagram">
+ tsconfig.json (solution: no files, only references)
+      |
+      +-- packages/shared  composite: true
+      |        |  emits dist/money.d.ts + tsconfig.tsbuildinfo
+      |        v
+      +-- packages/api     references: ../shared
+               type-checks against shared's .d.ts, not its source
+</pre>
+  <div class="ar-note">الـ <code>tsconfig.json</code> اللي في الـ root مفيهوش ملفات، فيه references بس. <code>shared</code> فيه <code>composite: true</code> وبيطلّع <code>money.d.ts</code> و<code>tsconfig.tsbuildinfo</code>. و<code>api</code> بيشاور عليه بـ <code>references</code>، وبيعمل type-check على الـ <code>.d.ts</code> بتاعه مش على الـ source، وده اللي بيخلي الموضوع يكبر من غير ما يبطّأ.</div>
+
+<pre data-file="tsconfig.base.json"><code class="language-json">{
+  "compilerOptions": {
+    "target": "es2023",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "composite": true
+  }
+}</code></pre>
+
+<pre data-file="tsconfig.json"><code class="language-json">{
+  "files": [],
+  "references": [{ "path": "packages/shared" }, { "path": "packages/api" }]
+}</code></pre>
+
+<pre data-file="packages/api/tsconfig.json"><code class="language-json">{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "dist" },
+  "include": ["src"],
+  "references": [{ "path": "../shared" }]
+}</code></pre>
+
+<pre data-file="packages/shared/src/money.ts"><code class="language-typescript">export type Cents = number &amp; { readonly __brand: "Cents" };
+
+export function toCents(pounds: number): Cents {
+  return Math.round(pounds * 100) as Cents;
+}
+
+export function formatCents(cents: Cents): string {
+  return (cents / 100).toFixed(2);
+}</code></pre>
+
+<pre><code class="language-plaintext">$ tsc -b --verbose   # first build
+06:55:43 AM - Project 'packages/shared/tsconfig.json' is out of date because output file 'packages/shared/tsconfig.tsbuildinfo' does not exist
+06:55:43 AM - Building project 'packages/shared/tsconfig.json'...
+06:55:43 AM - Project 'packages/api/tsconfig.json' is out of date because output file 'packages/api/tsconfig.tsbuildinfo' does not exist
+06:55:43 AM - Building project 'packages/api/tsconfig.json'...
+
+$ tsc -b --verbose   # nothing changed
+06:55:43 AM - Project 'packages/shared/tsconfig.json' is up to date because newest input 'packages/shared/src/money.ts' is older than output 'packages/shared/tsconfig.tsbuildinfo'
+06:55:43 AM - Project 'packages/api/tsconfig.json' is up to date because newest input 'packages/api/src/invoice.ts' is older than output 'packages/api/tsconfig.tsbuildinfo'</code></pre>
+<pre><code class="language-plaintext">$ tsc -b --verbose   # internal change in shared
+06:55:43 AM - Project 'packages/shared/tsconfig.json' is out of date because output 'packages/shared/tsconfig.tsbuildinfo' is older than input 'packages/shared/src/money.ts'
+06:55:43 AM - Building project 'packages/shared/tsconfig.json'...
+06:55:43 AM - Project 'packages/api/tsconfig.json' is up to date with .d.ts files from its dependencies
+06:55:43 AM - Updating output timestamps of project 'packages/api/tsconfig.json'...</code></pre>
+<pre><code class="language-plaintext">$ tsc -b --verbose   # public signature changed in shared
+06:55:44 AM - Project 'packages/shared/tsconfig.json' is out of date because output 'packages/shared/tsconfig.tsbuildinfo' is older than input 'packages/shared/src/money.ts'
+06:55:44 AM - Building project 'packages/shared/tsconfig.json'...
+06:55:44 AM - Project 'packages/api/tsconfig.json' is out of date because output 'packages/api/tsconfig.tsbuildinfo' is older than input 'packages/shared/dist/money.d.ts'
+06:55:44 AM - Building project 'packages/api/tsconfig.json'...
+packages/api/src/invoice.ts(4,20): error TS2554: Expected 2 arguments, but got 1.</code></pre>
+  <div class="ar-note">ده الـ log الحقيقي من <code>tsc -b --verbose</code> على TS 7، في 4 حالات. <b>أول build:</b> الاتنين اتبنوا، لإن مفيش <code>.tsbuildinfo</code>. <b>مفيش تغيير:</b> الاتنين <code>up to date</code> ومفيش شغل. <b>تعديل داخلي في <code>shared</code>:</b> <code>shared</code> بس اتبنى، و<code>api</code> طلع <code>up to date with .d.ts files from its dependencies</code>، لإن الـ <code>.d.ts</code> ماتغيرش. <b>تغيير في الـ signature:</b> <code>api</code> اتبنى ومسك الكسر الحقيقي <code>TS2554</code>. وTS 6.0.3 طلّع نفس السلوك.</div>
+
+<pre><code class="language-plaintext">packages/api/src/invoice.ts(1,38): error TS6059: File 'packages/shared/src/money.ts' is not under 'rootDir' 'packages/api/src'. 'rootDir' is expected to contain all source files.
+  File is ECMAScript module because 'packages/shared/package.json' has field "type" with value "module"
+packages/api/src/invoice.ts(1,38): error TS6307: File 'packages/shared/src/money.ts' is not listed within the file list of project 'packages/api/tsconfig.json'. Projects must list all files or use an 'include' pattern.
+  File is ECMAScript module because 'packages/shared/package.json' has field "type" with value "module"</code></pre>
+  <div class="ar-note">وده اللي بيحصل لو شلت <code>references</code> من <code>api</code>: <code>TS6059</code> معناها الملف برّه الـ <code>rootDir</code>، و<code>TS6307</code> معناها الملف مش في قايمة ملفات الـ project. الـ paths متقصّرة بس، والرسايل زي ما هي.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ type-check والـ transpile شغلتين منفصلتين (<a href="./01-why-ts-basic-types.html">الدرس 01</a> قدّم الفكرة). esbuild وSWC وtsx بيشيلوا الـ types من غير ما يبصوا عليها، فالـ build ممكن ينجح ويشتغل وفيه type error: فوق esbuild خرج بـ 0، والبرنامج طبع <code>15050</code> بدل ما يجمع رقمين. فلازم الـ CI يشغّل <code>tsc --noEmit</code> كـ step لوحده وإجباري. ومع TS 7 السبب القديم للفصل، السرعة، بقى أضعف: type-check كامل لـ 301 ملف أخد ≈0.7 ثانية، وesbuild أخد ≈1–1.5 ثانية عشان يكتبهم على الجهاز ده. سيب الفصل برضه، لإن الـ dev server مش المفروض يرفض يعمل reload بسبب type error، والـ bundling شغلانة تانية.</p>
+    <p>في الـ monorepo، الـ project references بتقسّم الـ type-check على حدود الـ packages. الـ package بيحط <code>composite: true</code> (وده بيفعّل <code>declaration</code>)، واللي بيعتمد عليه بيكتبه في <code>references</code>. وبعدين <code>tsc -b</code> بيبني بترتيب الـ dependencies، وبيخزّن الحالة في <code>.tsbuildinfo</code>. السلوك المهم في الـ logs اللي فوق: مفيش تغيير يعني بيعدّي كله. تعديل جوه function في <code>shared</code> يعني <code>shared</code> بس بيتبني، لإن <code>api</code> معتمد على الـ <code>.d.ts</code> وده ماتغيرش. تغيير في public signature يعني <code>api</code> بيتبني وبيطلّع الكسر الحقيقي.</p>
+    <p>الـ packages اللي معتمدة بتعمل type-check على الـ <code>.d.ts</code> بدل ما تفحص الـ source من الأول، وده اللي بيخلي الموضوع يكبر. والتمن هو الـ config: كل package محتاج <code>tsconfig.json</code> و<code>references</code> صح، ولازم تلتزم بـ <code>tsc -b</code> كنقطة البداية. ولو عملت import من package تاني من غير reference بتاخد <code>TS6059</code> و<code>TS6307</code>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      monorepo فيه <code>api</code> و<code>web</code> و<code>shared</code>: واحد عدّل تفصيلة جوه <code>formatCents</code> في <code>shared</code>، فـ <code>tsc -b</code> بيعدّي على <code>api</code> و<code>web</code> من غير ما يفحصهم، والـ PR بيخلص بدري. ولو غيّر الـ signature، الاتنين بيتفحصوا والكسر بيبان قبل الـ merge. والغلطة الشائعة: الـ pipeline بيعمل <code>next build</code> أو esbuild بس، فتفتكر الـ types اتفحصت وهي ماتفحصتش.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What changed: <code>baseUrl</code></b>
+    If your old monorepo tsconfig uses it, note that <code>baseUrl</code> is removed in TS 7 (<code>TS5102</code>) and deprecated in TS 6 (<code>TS5101</code>). The README's 2.4 still mentions it. <a href="./07-modules-declarations.html">Lesson 07</a> covers the migration to <code>paths</code> without <code>baseUrl</code>.
+    <div class="ar-note"><b>اللي اتغيّر: <code>baseUrl</code>.</b> لو الـ tsconfig القديم بتاع الـ monorepo بيستخدمه، <code>baseUrl</code> اتشال في TS 7 (<code>TS5102</code>) وبقى deprecated في TS 6 (<code>TS5101</code>). بند 2.4 في الـ README لسه ذاكره. و<a href="./07-modules-declarations.html">الدرس 07</a> بيشرح إزاي تنقل لـ <code>paths</code> من غير <code>baseUrl</code>.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — noUncheckedIndexedAccess &amp; exactOptionalPropertyTypes <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — noUncheckedIndexedAccess و exactOptionalPropertyTypes</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>These two aren't part of <code>strict</code>, yet they close its biggest remaining holes. By default <code>items[0]</code> has type <code>OrderItem</code> even when the array is empty, and <code>FX_RATES[currency]</code> has type <code>number</code> even for a currency that isn't there. <code>noUncheckedIndexedAccess</code> adds <code>| undefined</code> to every index access, which forces you to decide what an empty cart or an unknown currency means. The unknown-currency case is the nastier one: nothing crashes, a <code>NaN</code> just flows into your database.</p>
+    <p>The cost is noise in code that already checks bounds: a classic <code>for (let i...)</code> loop gets flagged even though <code>i</code> is in range. Prefer <code>for...of</code>, which doesn't get <code>undefined</code>, and use <code>!</code> only where the bound is genuinely proven. Narrowing still works on a literal or <code>const</code> key. Also, the flag needs <code>strictNullChecks</code>: without it, it does nothing and reports nothing, because <code>| undefined</code> vanishes. On TS 7 it passes with no message at all.</p>
+    <p><code>exactOptionalPropertyTypes</code> separates two things JavaScript treats differently: a key that's absent and a key that's present with the value <code>undefined</code>. Without the flag, <code>name?: string</code> accepts <code>{ name: undefined }</code>. That breaks PATCH semantics, because <code>{ ...user, ...patch }</code> copies the key and wipes the value, leaving <code>updated.name</code> typed <code>string</code> and actually <code>undefined</code>. With the flag, <code>name?: string</code> means "absent or a string", and if you really mean to allow <code>undefined</code>, you write <code>name?: string | undefined</code>. This one does refuse to run without <code>strictNullChecks</code> (<code>TS5052</code>).</p>
+    <p>Worth knowing: <code>tsc --init</code> on both TS 6 and TS 7 now writes <code>noUncheckedIndexedAccess: true</code> and <code>exactOptionalPropertyTypes: true</code> into new configs, so new projects get them whether they know it or not. Both flags behaved identically on 6.0.3 and 7.0.2 in every test here.</p>
+  </section>
+
+<pre data-file="src/unchecked-index.ts"><code class="language-typescript">interface OrderItem { sku: string; qty: number }
+
+const FX_RATES: Record&lt;string, number&gt; = { EGP: 1, USD: 48.5 };
+
+// (1) الـ type بيقول OrderItem، بس الـ array ممكن تكون فاضية
+export function firstSku(items: OrderItem[]): string {
+  // ✗ TS2532: Object is possibly 'undefined'.
+  return items[0].sku;
+}
+
+// (2) العملة مش موجودة في الـ map: مفيش crash، بس الرقم بقى NaN
+export function toEgpCents(cents: number, currency: string): number {
+  // ✗ TS2532: Object is possibly 'undefined'.
+  return cents * FX_RATES[currency];
+}
+
+console.log(toEgpCents(1000, "USD"));
+// → 48500
+console.log(toEgpCents(1000, "EUR"));
+// → NaN
+try {
+  console.log(firstSku([]));
+} catch (e) {
+  console.log(String(e));
+}
+// → TypeError: Cannot read properties of undefined (reading 'sku')</code></pre>
+
+<pre data-file="src/unchecked-index-fixed.ts"><code class="language-typescript">interface OrderItem { sku: string; qty: number }
+
+const FX_RATES: Record&lt;string, number&gt; = { EGP: 1, USD: 48.5 };
+
+// (1) الـ flag بيجبرك تقرر: الـ array الفاضية معناها إيه في الـ business؟
+export function firstSku(items: OrderItem[]): string | null {
+  return items[0]?.sku ?? null;
+}
+
+// (2) عملة مش معروفة بقت error صريح بدل NaN بيتخزن في الـ DB
+export function toEgpCents(cents: number, currency: string): number {
+  const rate = FX_RATES[currency];
+  if (rate === undefined) throw new Error(`Unknown currency: ${currency}`);
+  return cents * rate;
+}
+
+// (3) الـ narrowing بيشتغل كمان لو الـ key متغيّر const أو literal
+export function hasUsd(): number {
+  if (FX_RATES["USD"] !== undefined) return FX_RATES["USD"];
+  return 0;
+}
+
+// (4) الـ for...of مفيهوش undefined، إنما الـ index القديم فيه
+export function totalQty(items: OrderItem[]): number {
+  let total = 0;
+  for (const item of items) total += item.qty;
+  for (let i = 0; i &lt; items.length; i++) {
+    // هنا إنت عارف إن الـ i جوه الحدود، والـ ! قرار مكتوب مش غلطة مستخبية
+    total += items[i]!.qty * 0;
+  }
+  return total;
+}
+
+console.log(firstSku([]));
+// → null
+console.log(toEgpCents(1000, "USD"));
+// → 48500</code></pre>
+
+<pre data-file="src/exact-optional.ts"><code class="language-typescript">interface User { id: string; name: string; phone: string | null }
+
+// الـ PATCH body: الـ key لو مش مبعوت يبقى سيب القيمة زي ما هي
+interface UpdateUserDto { name?: string; phone?: string | null }
+
+// (1) الـ form بعت name فاضي، فالمبرمج حوّله undefined وهو فاكر إنه "مش مبعوت"
+export function fromForm(form: { name: string; phone: string }): UpdateUserDto {
+  // ✗ TS2375: Type '{ name: string | undefined; phone: string; }' is not assignable to type 'UpdateUserDto' with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the types of the target's properties.
+  //   Types of property 'name' are incompatible.
+  return { name: form.name === "" ? undefined : form.name, phone: form.phone };
+}
+
+// (2) الـ spread بينسخ الـ key حتى لو قيمته undefined
+export function applyPatch(user: User, patch: UpdateUserDto): User {
+  return { ...user, ...patch };
+}
+
+const user: User = { id: "u_1", name: "Mona", phone: null };
+const updated = applyPatch(user, fromForm({ name: "", phone: "010" }));
+console.log(updated);
+// → { id: 'u_1', name: undefined, phone: '010' }
+
+// الـ type بيقول string، والـ runtime بيقول undefined
+try {
+  console.log(updated.name.toUpperCase());
+} catch (e) {
+  console.log(String(e));
+}
+// → TypeError: Cannot read properties of undefined (reading 'toUpperCase')</code></pre>
+
+<pre data-file="src/exact-optional-fixed.ts"><code class="language-typescript">interface User { id: string; name: string; phone: string | null }
+interface UpdateUserDto { name?: string; phone?: string | null }
+
+// الحل: الـ key يتحط بس لو فيه قيمة، بدل ما يتحط وقيمته undefined
+export function fromForm(form: { name: string; phone: string }): UpdateUserDto {
+  return {
+    ...(form.name !== "" ? { name: form.name } : {}),
+    phone: form.phone,
+  };
+}
+
+export function applyPatch(user: User, patch: UpdateUserDto): User {
+  return { ...user, ...patch };
+}
+
+const user: User = { id: "u_1", name: "Mona", phone: null };
+console.log(applyPatch(user, fromForm({ name: "", phone: "010" })));
+// → { id: 'u_1', name: 'Mona', phone: '010' }</code></pre>
+
+<pre data-file="src/optional-shapes.ts"><code class="language-typescript">// الشكل الأول: الـ key ممكن يبقى مش موجود، بس لو موجود لازم يبقى string
+interface WithOptional { coupon?: string }
+// الشكل التاني: الـ key لازم يتبعت، بس قيمته ممكن تبقى undefined
+interface WithUndefined { coupon: string | undefined }
+
+export const a1: WithOptional = {};
+// ✗ TS2375: Type '{ coupon: undefined; }' is not assignable to type 'WithOptional' with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the types of the target's properties.
+export const a2: WithOptional = { coupon: undefined };
+
+export const b1: WithUndefined = { coupon: undefined };
+// ✗ TS2741: Property 'coupon' is missing in type '{}' but required in type 'WithUndefined'.
+export const b2: WithUndefined = {};</code></pre>
+
+  <table>
+    <tr><th>Declaration</th><th><code>{}</code></th><th><code>{ coupon: undefined }</code></th><th><code>{ coupon: "SAVE10" }</code></th></tr>
+    <tr><td><code>coupon?: string</code> (flag off)</td><td>✓</td><td>✓</td><td>✓</td></tr>
+    <tr><td><code>coupon?: string</code> (flag on)</td><td>✓</td><td>✗</td><td>✓</td></tr>
+    <tr><td><code>coupon?: string | undefined</code> (flag on)</td><td>✓</td><td>✓</td><td>✓</td></tr>
+    <tr><td><code>coupon: string | undefined</code></td><td>✗</td><td>✓</td><td>✓</td></tr>
+  </table>
+  <div class="ar-note">الجدول سطر سطر:
+    <ul>
+      <li><b><code>coupon?: string</code> والـ flag مقفول:</b> بيقبل التلاتة، وده الباب اللي بيدخل منه الـ bug.</li>
+      <li><b><code>coupon?: string</code> والـ flag مفتوح:</b> مش موجود أو string بس، و<code>undefined</code> الصريحة مرفوضة.</li>
+      <li><b><code>coupon?: string | undefined</code> والـ flag مفتوح:</b> بتقول صراحةً إن <code>undefined</code> مقبولة، فبيقبل التلاتة.</li>
+      <li><b><code>coupon: string | undefined</code>:</b> الـ key لازم يتبعت، فـ <code>{}</code> مرفوض.</li>
+    </ul>
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الاتنين دول مش جوه <code>strict</code>، وهما اللي بيقفلوا أكبر فتحات فاضلة فيه. الـ default إن <code>items[0]</code> نوعها <code>OrderItem</code> حتى لو الـ array فاضية، و<code>FX_RATES[currency]</code> نوعها <code>number</code> حتى لو العملة مش موجودة. <code>noUncheckedIndexedAccess</code> بيضيف <code>| undefined</code> لكل index access، فبيجبرك تقرر الـ cart الفاضية أو العملة المجهولة معناها إيه. وحالة العملة أوحش: مفيش crash، وبس <code>NaN</code> بيدخل الـ database.</p>
+    <p>التكلفة noise في الكود اللي بيفحص الحدود أصلًا: <code>for (let i...)</code> التقليدية بتتعلّم حتى لو <code>i</code> جوه الحدود. استخدم <code>for...of</code>، ومفيهاش <code>undefined</code>، واستخدم <code>!</code> بس لما الحد يكون مثبوت فعلًا. والـ narrowing لسه شغال على key literal أو <code>const</code>. وكمان الـ flag محتاج <code>strictNullChecks</code>: من غيره مش بيعمل حاجة ومش بيقول حاجة، لإن <code>| undefined</code> بتختفي. وعلى TS 7 بتعدّي من غير أي رسالة.</p>
+    <p><code>exactOptionalPropertyTypes</code> بيفرّق بين حاجتين JavaScript بتعاملهم مختلف: key مش موجود، وkey موجود وقيمته <code>undefined</code>. من غير الـ flag، <code>name?: string</code> بيقبل <code>{ name: undefined }</code>. وده بيكسر معنى الـ PATCH، لإن <code>{ ...user, ...patch }</code> بينسخ الـ key ويمسح القيمة، فـ <code>updated.name</code> نوعها <code>string</code> وهي فعليًا <code>undefined</code>. مع الـ flag، <code>name?: string</code> معناها "مش موجود أو string"، ولو عايز تسمح بـ <code>undefined</code> فعلًا تكتب <code>name?: string | undefined</code>. وده بقى بيرفض يشتغل من غير <code>strictNullChecks</code> (<code>TS5052</code>).</p>
+    <p>ومهم تعرف: <code>tsc --init</code> على TS 6 وTS 7 بقى بيكتب <code>noUncheckedIndexedAccess: true</code> و<code>exactOptionalPropertyTypes: true</code> في الـ configs الجديدة، فالمشاريع الجديدة بتاخدهم سواء تعرف أو لأ. والاتنين اتصرفوا نفس التصرف على 6.0.3 و7.0.2 في كل التجارب هنا.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      <code>PATCH /users/:id</code>: الـ DTO فيه <code>name?: string</code>، والـ mapper بيحوّل الفاضي لـ <code>undefined</code>، و<code>{ ...user, ...patch }</code> بتمسح اسم العميل، وبعدها <code>name.toUpperCase()</code> بتقع في صفحة تانية خالص. الـ flag بيمسك ده في الـ mapper نفسه. وفي تحويل العملات: <code>FX_RATES[currency]</code> بعملة جديدة بيحط <code>NaN</code> في <code>invoices.total</code>، ومش هتعرف غير من تقرير آخر الشهر. والغلطة الشائعة: تحل كل error بـ <code>!</code>، فبترجع نفس الـ bug بس بكتابة أكتر.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: "What's the difference between <code>prop?: string</code> and <code>prop: string | undefined</code>?"</b>
+    The first lets the key be absent; the second requires the key but allows the value <code>undefined</code>. Without <code>exactOptionalPropertyTypes</code>, the first also accepts an explicit <code>undefined</code>, which is how a PATCH wipes a field through a spread. With the flag, an explicit <code>undefined</code> is rejected unless you add <code>| undefined</code>.
+    <div class="ar-note"><b>السؤال: "إيه الفرق بين <code>prop?: string</code> و<code>prop: string | undefined</code>؟"</b> الأول بيسمح إن الـ key مايبقاش موجود، والتاني لازم الـ key بس القيمة ممكن تبقى <code>undefined</code>. من غير <code>exactOptionalPropertyTypes</code> الأول بيقبل <code>undefined</code> صريحة كمان، وده اللي بيخلي PATCH يمسح field من خلال spread. ومع الـ flag الـ <code>undefined</code> الصريحة بتترفض، إلا لو ضفت <code>| undefined</code>.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — The other strict flags <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — باقي الـ strict flags</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Each flag below prevents one specific bug, shown with its real run. All were tested on TS 7.0.2 and TS 6.0.3 with identical diagnostics.</p>
+    <ul>
+      <li><b><code>noImplicitOverride</code></b> (not in <code>strict</code>): every overriding member must say <code>override</code>. On its own the flag doesn't catch an orphaned method. It flags <code>capture</code>, the one that really overrides. Its value comes next: once everything is marked, renaming the base method turns <code>override refund</code> into <code>TS4113</code>. That check runs even without the flag, so the keyword is worth writing either way.</li>
+      <li><b><code>noPropertyAccessFromIndexSignature</code></b> (not in <code>strict</code>): dot access is reserved for known properties, so a key from an index signature needs <code>limits["maxRetires"]</code>. It doesn't detect the typo by itself. It makes "this key is unchecked" visible, and the real fix is a type with known keys.</li>
+      <li><b><code>noFallthroughCasesInSwitch</code></b> (not in <code>strict</code>): a non-empty <code>case</code> must end in <code>break</code>, <code>return</code> or <code>throw</code>. Empty cases that deliberately share a body are still fine.</li>
+      <li><b><code>useUnknownInCatchVariables</code></b> (in <code>strict</code>): <code>e</code> in <code>catch</code> is <code>unknown</code> rather than <code>any</code>. Anything can be thrown, and a handler that assumes <code>e.response.status</code> crashes inside the <code>catch</code> and hides the original error. Remember that <code>strict</code> has been the default since TS 6, so with no setting at all, this is on.</li>
+    </ul>
+  </section>
+
+<pre data-file="src/implicit-override.ts"><code class="language-typescript">class PaymentProvider {
+  // كان اسمها refund، وحد عمل rename في الـ base class
+  refundPayment(orderId: string): string {
+    return `refund not supported for ${orderId}`;
+  }
+  capture(orderId: string): string {
+    return `captured ${orderId}`;
+  }
+}
+
+class StripeProvider extends PaymentProvider {
+  // الـ method دي بقت يتيمة: مبقتش بتعمل override لحاجة، ومحدش زعّق
+  refund(orderId: string): string {
+    return `stripe refund ${orderId}`;
+  }
+  // الـ method دي بتعمل override فعلًا، والـ flag بيجبرها تقول كده
+  // ✗ TS4114: This member must have an 'override' modifier because it overrides a member in the base class 'PaymentProvider'.
+  capture(orderId: string): string {
+    return `stripe capture ${orderId}`;
+  }
+}
+
+const provider: PaymentProvider = new StripeProvider();
+console.log(provider.refundPayment("ord_1"));
+// → refund not supported for ord_1</code></pre>
+
+<pre data-file="src/implicit-override-fixed.ts"><code class="language-typescript">class PaymentProvider {
+  refundPayment(orderId: string): string {
+    return `refund not supported for ${orderId}`;
+  }
+}
+
+class StripeProvider extends PaymentProvider {
+  // الكلمة override عقد: لو اسم الـ base اتغيّر، الـ compiler بيزعق هنا
+  // ✗ TS4113: This member cannot have an 'override' modifier because it is not declared in the base class 'PaymentProvider'.
+  override refund(orderId: string): string {
+    return `stripe refund ${orderId}`;
+  }
+}
+
+export { StripeProvider };</code></pre>
+
+<pre data-file="src/index-signature-access.ts"><code class="language-typescript">// الـ keys هنا مش معروفة للـ compiler، فأي اسم بيعدّي
+const limits: Record&lt;string, number&gt; = { maxRetries: 3, timeoutMs: 5000 };
+
+// الغلطة: حرفين اتبدلوا، ومن غير الـ flag مفيش أي error
+// ✗ TS4111: Property 'maxRetires' comes from an index signature, so it must be accessed with ['maxRetires'].
+const retries = limits.maxRetires;
+
+console.log(retries);
+// → undefined
+console.log(Array.from({ length: retries ?? 0 }).length);
+// → 0</code></pre>
+
+<pre data-file="src/fallthrough.ts"><code class="language-typescript">type OrderEvent = "paid" | "refunded" | "shipped";
+
+export function notifications(event: OrderEvent): string[] {
+  const out: string[] = [];
+  switch (event) {
+    // ✗ TS7029: Fallthrough case in switch.
+    case "paid":
+      out.push("send receipt");
+    // نسينا break: الـ paid هيبعت كمان إيميل الـ refund
+    case "refunded":
+      out.push("send refund email");
+      break;
+    case "shipped":
+      out.push("send tracking link");
+      break;
+  }
+  return out;
+}
+
+console.log(notifications("paid"));
+// → [ 'send receipt', 'send refund email' ]</code></pre>
+
+<pre data-file="src/unknown-catch.ts"><code class="language-typescript">async function chargeCard(): Promise&lt;void&gt; {
+  // مكتبات كتير بترمي string أو object، مش بس Error
+  throw "gateway timeout";
+}
+
+export async function pay(): Promise&lt;string&gt; {
+  try {
+    await chargeCard();
+    return "ok";
+  } catch (e) {
+    // من غير الـ flag الـ e نوعها any، والسطر ده بيقع جوه الـ catch نفسها
+    // ✗ TS18046: 'e' is of type 'unknown'.
+    return e.response.status === 402 ? "declined" : "retry";
+  }
+}
+
+await pay().then(console.log, (e: unknown) =&gt; console.log(String(e)));
+// → TypeError: Cannot read properties of undefined (reading 'status')</code></pre>
+
+<pre data-file="src/unknown-catch-fixed.ts"><code class="language-typescript">class GatewayError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+async function chargeCard(): Promise&lt;void&gt; {
+  throw "gateway timeout";
+}
+
+export async function pay(): Promise&lt;string&gt; {
+  try {
+    await chargeCard();
+    return "ok";
+  } catch (e) {
+    // الـ unknown بيجبرك تفحص قبل ما تلمس أي property
+    if (e instanceof GatewayError) return e.status === 402 ? "declined" : "retry";
+    return `retry (${e instanceof Error ? e.message : String(e)})`;
+  }
+}
+
+await pay().then(console.log);
+// → retry (gateway timeout)</code></pre>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>كل flag هنا بيمنع bug محدد، وموجود مع التشغيل الحقيقي بتاعه. وكلهم اتجربوا على TS 7.0.2 وTS 6.0.3 بنفس الـ diagnostics.</p>
+    <ul>
+      <li><b><code>noImplicitOverride</code></b> (مش في <code>strict</code>): أي member بيعمل override لازم يقول <code>override</code>. الـ flag لوحده مش بيمسك الـ method اليتيمة، هو بيعلّم <code>capture</code>، اللي بتعمل override فعلًا. قيمته في الخطوة اللي بعدها: لما كله يبقى متعلّم، أي rename في الـ base بيخلي <code>override refund</code> تطلع <code>TS4113</code>. والفحص ده شغال حتى من غير الـ flag، فالكلمة تستاهل تتكتب في الحالتين.</li>
+      <li><b><code>noPropertyAccessFromIndexSignature</code></b> (مش في <code>strict</code>): الوصول بالنقطة للـ properties المعروفة بس، فالـ key اللي جاي من index signature لازم يتكتب <code>limits["maxRetires"]</code>. هو مش بيكتشف الغلطة الإملائية لوحده، بس بيوضّح إن "الـ key ده مش متفحص"، والحل الحقيقي type بـ keys معروفة.</li>
+      <li><b><code>noFallthroughCasesInSwitch</code></b> (مش في <code>strict</code>): الـ <code>case</code> اللي فيه كود لازم يخلص بـ <code>break</code> أو <code>return</code> أو <code>throw</code>. والـ cases الفاضية اللي بتشارك نفس الكود قصدًا لسه مقبولة.</li>
+      <li><b><code>useUnknownInCatchVariables</code></b> (في <code>strict</code>): الـ <code>e</code> في <code>catch</code> نوعها <code>unknown</code> مش <code>any</code>. أي حاجة ممكن تترمي، والـ handler اللي بيفترض <code>e.response.status</code> بيقع جوه الـ <code>catch</code> نفسها وبيخبي الـ error الأصلي. وافتكر إن <code>strict</code> بقى الـ default من TS 6، فمن غير أي إعداد ده شغال.</li>
+    </ul>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      <code>noImplicitOverride</code>: base class لـ payment providers، وحد عمل rename لـ <code>refund</code>، فـ Stripe بقى بيرد "not supported" والعملاء مش بياخدوا فلوسهم. <code>noFallthroughCasesInSwitch</code>: عميل دفع فجاله إيميل refund. <code>useUnknownInCatchVariables</code>: الـ gateway رمت string، فالـ <code>catch</code> وقعت وضاع الـ log بتاع الـ timeout الأصلي وقت الـ incident. و<code>noPropertyAccessFromIndexSignature</code>: <code>process.env.DATABSE_URL</code> بغلطة إملائية بتعدّي من غير الـ flag، والحل الدائم validation بـ schema زي <a href="./08-runtime-validation-node.html">الدرس 08</a>.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: <code>noPropertyAccessFromIndexSignature</code> is the least valuable of the four</b>
+    It adds bracket noise and doesn't catch the typo; it only makes unchecked access visible. Turn it on last, or skip it if you've already replaced index signatures with known keys and validated env vars at startup.
+    <div class="ar-note"><code>noPropertyAccessFromIndexSignature</code> أقل واحد فيهم قيمة: بيزوّد أقواس في الكود، ومش بيمسك الغلطة الإملائية، هو بس بيوضّح إن الوصول مش متفحص. فعّله في الآخر، أو سيبه لو كنت بدّلت الـ index signatures بـ keys معروفة وبتعمل validation للـ env vars عند الـ startup.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Adopting strictness on an old codebase <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — إزاي تفعّل الـ strict على codebase قديم</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Don't fix everything in one PR. It'll conflict with every open branch, it can't be reviewed, and the shortcuts people take under pressure (<code>as any</code>, <code>!</code>) leave you with the same bugs and less honest types. Instead, make the debt visible and stop it from growing. Here's the plan:</p>
+    <ol>
+      <li><b>Pin the starting point.</b> <code>strict</code> has defaulted to <code>true</code> since TS 6, so an old project upgrading must set <code>"strict": false</code> explicitly and then flip each flag on purpose.</li>
+      <li><b>Count errors per flag</b> with a ladder, where each flag is added on top of the previous ones and only the increase is charged to it. Order matters: <code>noUncheckedIndexedAccess</code> shows nothing without <code>strictNullChecks</code>, so counting it alone gives a false zero.</li>
+      <li><b>Add a ratchet.</b> Save the current errors in a baseline file, keyed by file and error code rather than by line number, so unrelated edits don't invalidate it. CI fails on any new error, and the baseline only moves down.</li>
+      <li><b>Turn on one flag at a time,</b> starting with the cheapest and the most valuable, in small PRs by folder. A flag leaves the ladder once its count reaches zero, and goes into <code>tsconfig.json</code> for good.</li>
+      <li><b>Use a per-folder config for new code</b> so <code>src/payments</code> can be strict before the rest. The catch is real: <code>tsc</code> also reports errors in files that the folder <em>imports</em>, so below the strict payments config reports errors in <code>orders</code>. Either fix dependencies from the bottom up, or filter the report by path in your ratchet.</li>
+      <li><b>Prefer <code>@ts-expect-error</code> over <code>@ts-ignore</code></b> when you must suppress. It fails with <code>TS2578</code> once the error is gone, so stale suppressions can't pile up, whereas <code>@ts-ignore</code> stays silent forever and hides any future error on that line. Add a ticket number. typescript-eslint's <code>ban-ts-comment</code> (in the recommended set) rejects <code>@ts-ignore</code>.</li>
+    </ol>
+  </section>
+
+<pre class="diagram">
+ errors over time, with a ratchet
+
+ 120 |#
+ 100 |# #
+  80 |# # #       new error? CI fails, the line can't go up
+  60 |# # # #
+  40 |# # # # #
+  20 |# # # # # #
+   0 +-------------
+      PR1 ... PR6    flag count = 0  -&gt;  move it to tsconfig.json
+</pre>
+  <div class="ar-note">الرسمة توضيحية مش قياس: عدد الـ errors بينزل مع كل PR صغير، والـ ratchet هو اللي بيمنع الخط يطلع تاني، لإن أي error جديد بيوقع الـ CI. ولما عدد الـ errors بتاع flag يوصل صفر، بتنقله لـ <code>tsconfig.json</code> نهائي.</div>
+
+<pre data-file="scripts/strict-count.ts"><code class="language-typescript">import { spawnSync } from "node:child_process";
+
+// (1) السلّم: كل flag بيتضاف فوق اللي قبله، بالترتيب اللي هتفعّلهم بيه
+const LADDER = [
+  "noImplicitAny",
+  "strictNullChecks",
+  "useUnknownInCatchVariables",
+  "noUncheckedIndexedAccess",
+  "exactOptionalPropertyTypes",
+  "noPropertyAccessFromIndexSignature",
+];
+
+// (2) بنشغّل tsc ونجمّع الـ errors حسب الفولدر
+function countErrors(flags: string[]): Map&lt;string, number&gt; {
+  const args = ["tsc", "-p", ".", "--noEmit", "--pretty", "false", ...flags];
+  const { stdout } = spawnSync("npx", args, { encoding: "utf8", shell: true });
+  const perFolder = new Map&lt;string, number&gt;();
+  for (const line of stdout.split("\n")) {
+    const match = /^src\/([^/]+)\/.*: error TS\d+:/.exec(line);
+    if (match?.[1]) perFolder.set(match[1], (perFolder.get(match[1]) ?? 0) + 1);
+  }
+  return perFolder;
+}
+
+// (3) الرقم المهم هو اللي الـ flag ده زوّده، مش الإجمالي
+const enabled: string[] = [];
+let previous = 0;
+for (const flag of LADDER) {
+  enabled.push(`--${flag}`);
+  const counts = countErrors(enabled);
+  const total = [...counts.values()].reduce((sum, n) =&gt; sum + n, 0);
+  const added = `+${total - previous}`;
+  console.log(flag.padEnd(36), added.padStart(3), `total=${total}`, JSON.stringify(Object.fromEntries(counts)));
+  previous = total;
+}</code></pre>
+
+<pre><code class="language-plaintext">noImplicitAny                         +2 total=2 {"payments":1,"users":1}
+strictNullChecks                      +2 total=4 {"payments":1,"users":3}
+useUnknownInCatchVariables            +1 total=5 {"payments":2,"users":3}
+noUncheckedIndexedAccess              +3 total=8 {"orders":3,"payments":2,"users":3}
+exactOptionalPropertyTypes            +1 total=9 {"orders":4,"payments":2,"users":3}
+noPropertyAccessFromIndexSignature    +1 total=10 {"orders":4,"payments":2,"users":4}</code></pre>
+  <div class="ar-note">الـ output الحقيقي على مشروع legacy صغير فيه 3 فولدرات. العمود الأول الـ flag، والتاني زاد كام error، والتالت الإجمالي، والأخير التوزيع على الفولدرات. <code>noUncheckedIndexedAccess</code> زوّد 3 لما اتحسب فوق <code>strictNullChecks</code>، ولما شغّلته لوحده طلّع صفر، ودي النتيجة الكدابة اللي الـ ladder بيمنعها. كده تعرف تبدأ بإيه.</div>
+
+<pre data-file="scripts/ratchet.ts"><code class="language-typescript">import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+
+type Baseline = Record&lt;string, number&gt;;
+
+const BASELINE_FILE = "strict-baseline.json";
+const NEXT_FLAGS = ["--strictNullChecks", "--noUncheckedIndexedAccess"];
+
+// (1) المفتاح "ملف + كود الـ ⁦error"⁩، مش رقم السطر، عشان الـ baseline ميبوظش مع كل تعديل
+function currentErrors(): Baseline {
+  const args = ["tsc", "-p", ".", "--noEmit", "--pretty", "false", ...NEXT_FLAGS];
+  const { stdout } = spawnSync("npx", args, { encoding: "utf8", shell: true });
+  const counts: Baseline = {};
+  for (const line of stdout.split("\n")) {
+    const match = /^(.+?)\(\d+,\d+\): error (TS\d+):/.exec(line);
+    if (!match) continue;
+    const key = `${match[1]} ${match[2]}`;
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
+
+const now = currentErrors();
+
+// (2) أول مرة بس: بنسجّل الوضع الحالي كنقطة بداية
+if (process.argv.includes("--update") || !existsSync(BASELINE_FILE)) {
+  writeFileSync(BASELINE_FILE, JSON.stringify(now, null, 2) + "\n");
+  console.log(`baseline saved: ${Object.values(now).reduce((a, b) =&gt; a + b, 0)} errors`);
+  process.exit(0);
+}
+
+const baseline = JSON.parse(readFileSync(BASELINE_FILE, "utf8")) as Baseline;
+const keys = new Set([...Object.keys(baseline), ...Object.keys(now)]);
+let regressions = 0;
+let improvements = 0;
+
+for (const key of [...keys].sort()) {
+  const before = baseline[key] ?? 0;
+  const after = now[key] ?? 0;
+  if (after &gt; before) {
+    regressions += after - before;
+    console.log(`NEW   ${key}: ${before} -&gt; ${after}`);
+  } else if (after &lt; before) {
+    improvements += before - after;
+    console.log(`FIXED ${key}: ${before} -&gt; ${after}`);
+  }
+}
+
+// (3) الـ CI بيقع على أي error جديد، والرقم مبينزلش غير لما تعمل ⁦--update⁩ وتعمل commit
+console.log(`regressions=${regressions} improvements=${improvements}`);
+if (improvements &gt; 0 &amp;&amp; regressions === 0) console.log("run: node scripts/ratchet.ts --update");
+process.exit(regressions &gt; 0 ? 1 : 0);</code></pre>
+
+<pre><code class="language-plaintext">$ node scripts/ratchet.ts          # first run
+baseline saved: 5 errors
+
+$ node scripts/ratchet.ts          # someone added orders[2].id
+NEW   src/orders/list.ts TS2532: 3 -> 4
+regressions=1 improvements=0
+exit code: 1
+
+$ node scripts/ratchet.ts          # someone fixed one
+FIXED src/orders/list.ts TS2532: 3 -> 2
+regressions=0 improvements=1
+run: node scripts/ratchet.ts --update
+exit code: 0</code></pre>
+  <div class="ar-note">3 تشغيلات حقيقية. الأول سجّل نقطة البداية: 5 errors. التاني: حد ضاف كود جديد فيه نفس الغلطة، فالـ CI وقع بـ exit code 1، مع إن الكود القديم الغلط لسه موجود. التالت: حد صلّح واحدة، فعدّى، والسكريبت قاله يحدّث الـ baseline عشان الرقم ينزل ومايرجعش يطلع.</div>
+
+<pre data-file="tsconfig.payments.json"><code class="language-json">{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
+  },
+  "include": ["src/payments"]
+}</code></pre>
+
+<pre><code class="language-plaintext">src/orders/list.ts(4,10): error TS2532: Object is possibly 'undefined'.
+src/orders/list.ts(8,10): error TS2532: Object is possibly 'undefined'.
+src/orders/list.ts(12,10): error TS2532: Object is possibly 'undefined'.
+src/orders/list.ts(16,3): error TS2375: Type '{ id: string; totalCents: number; note: undefined; }' is not assignable to type 'Order' with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the types of the target's properties.
+  Types of property 'note' are incompatible.
+    Type 'undefined' is not assignable to type 'string'.
+src/payments/charge.ts(7,29): error TS7006: Parameter 'region' implicitly has an 'any' type.
+src/payments/charge.ts(15,12): error TS18046: 'e' is of type 'unknown'.</code></pre>
+  <div class="ar-note">الـ config ده <code>include</code> بتاعه <code>src/payments</code> بس، ورغم كده الـ output فيه 4 errors في <code>src/orders/list.ts</code>، لإن <code>charge.ts</code> بيعمل import منه. فالفولدر الـ strict بيسحب معاه كل اللي بيعتمد عليه. آخر سطرين هما الـ errors بتوع <code>payments</code> نفسه.</div>
+
+<pre data-file="src/suppress.ts"><code class="language-typescript">interface Invoice { totalCents: number }
+const invoice: Invoice = { totalCents: 100 };
+
+// (1) لو الـ error لسه موجود: الاتنين ساكتين
+// @ts-expect-error -- ⁧الكود القديم كان بيعامل totalCents كـ ⁦string (TICKET-812)⁩⁩
+export const a: string = invoice.totalCents;
+// @ts-ignore
+export const b: string = invoice.totalCents;
+
+// (2) لو الـ error اتصلّح: الـ expect-error بيبلّغك، والـ ignore بيفضل ساكت للأبد
+// ✗ TS2578: Unused '@ts-expect-error' directive.
+// @ts-expect-error -- ⁧الـ error ده مبقاش موجود⁩
+export const c: number = invoice.totalCents;
+// @ts-ignore
+export const d: number = invoice.totalCents;</code></pre>
+
+<pre><code class="language-plaintext">src/suppress.ts
+   7:1  error  Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+  13:1  error  Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+
+✖ 2 problems (2 errors, 0 warnings)</code></pre>
+  <div class="ar-note">الـ <code>ban-ts-comment</code> مسك السطرين 7 و13 بتوع <code>@ts-ignore</code> بس، وسابك مع <code>@ts-expect-error</code> لإنها مكتوب معاها سبب. والرسالة بتقول بالظبط ليه: <code>@ts-ignore</code> مش بيعمل حاجة لو السطر اللي بعده مفيهوش error.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>متصلّحش كله في PR واحد. هيعمل conflict مع كل branch مفتوح، ومحدش هيعرف يعمله review، والـ shortcuts اللي الناس بتاخدها تحت الضغط (<code>as any</code> و<code>!</code>) بتسيبك بنفس الـ bugs وtypes أقل صدقًا. بدل كده، خلّي الدين ظاهر ووقف زيادته. دي الخطة:</p>
+    <ol>
+      <li><b>ثبّت نقطة البداية.</b> <code>strict</code> بقى <code>true</code> by default من TS 6، فالمشروع القديم اللي بيعمل upgrade لازم يكتب <code>"strict": false</code> صراحةً، وبعدها يفتح كل flag بقصد.</li>
+      <li><b>عدّ الـ errors لكل flag</b> بسلّم: كل flag بيتضاف فوق اللي قبله، واللي بيتحسب عليه الزيادة بس. الترتيب مهم: <code>noUncheckedIndexedAccess</code> مش بيطلّع حاجة من غير <code>strictNullChecks</code>، فلو عديته لوحده هتاخد صفر كداب.</li>
+      <li><b>ضيف ratchet.</b> احفظ الـ errors الحالية في baseline، بالمفتاح "ملف + كود الـ error" مش رقم السطر، عشان التعديلات اللي مالهاش علاقة ماتبوظوش. الـ CI بيقع على أي error جديد، والـ baseline بينزل بس.</li>
+      <li><b>فعّل flag واحد في المرة،</b> ابدأ بالأرخص والأعلى قيمة، في PRs صغيرة حسب الفولدر. ولما عدد الـ flag يوصل صفر، يتشال من السلّم ويدخل <code>tsconfig.json</code> نهائي.</li>
+      <li><b>استخدم config لكل فولدر للكود الجديد</b> عشان <code>src/payments</code> تبقى strict قبل الباقي. وفيه مشكلة حقيقية: <code>tsc</code> بيبلّغ كمان عن errors في الملفات اللي الفولدر بيعملها <em>import</em>، فتحت الـ payments config بيطلّع errors في <code>orders</code>. فإما تصلّح الـ dependencies من تحت لفوق، أو تفلتر التقرير بالـ path في الـ ratchet.</li>
+      <li><b>فضّل <code>@ts-expect-error</code> على <code>@ts-ignore</code></b> لما تضطر تسكّت error. الأولى بتطلّع <code>TS2578</code> أول ما الـ error يروح، فمش هتتراكم حاجات قديمة، إنما <code>@ts-ignore</code> بتفضل ساكتة للأبد وبتخبي أي error جاي في السطر ده. وحط رقم ticket. والـ <code>ban-ts-comment</code> بتاعة typescript-eslint (في الـ recommended) بترفض <code>@ts-ignore</code>.</li>
+    </ol>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      ورثت API فيه <code>strict: false</code>: أسبوع واحد وتطلّع جدول السلّم وتحطه في RFC للفريق ("<code>noImplicitAny</code> تمنها 40 error في <code>payments</code>، ابدأ بيها"). بعدها الـ ratchet يدخل الـ CI في نفس اليوم، فالدين يقف عن الزيادة حتى قبل ما حد يصلّح حاجة. وكل واحد يلمس ملف يصلّح اللي فيه. والغلطة الشائعة: <code>as any</code> على كل error عشان الرقم ينزل، فالعدّاد بيتحسن والـ bugs لسه موجودة، فراجع زيادة <code>as any</code> في الـ PR.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: "Migrate a 200k-line JS-style TS codebase to strict. What's your plan?"</b>
+    Not one big PR. Measure errors per flag with a cumulative ladder and share the numbers. Add a ratchet in CI on day one, so the debt stops growing. Enable flags one at a time, by folder, in small PRs, starting with new or critical code such as payments. Use <code>@ts-expect-error</code> with a ticket for what can't be fixed yet, and watch for <code>as any</code> being used to game the count. Report progress as a number going down.
+    <div class="ar-note"><b>السؤال: "حوّل codebase فيه 200 ألف سطر مكتوب بأسلوب JS لـ strict. خطتك إيه؟"</b> مش PR واحد ضخم. قيس الـ errors لكل flag بسلّم تراكمي واعرض الأرقام. ضيف ratchet في الـ CI من أول يوم، فالدين يقف عن الزيادة. فعّل الـ flags واحد واحد، بالفولدر، في PRs صغيرة، وابدأ بالكود الجديد أو الحساس زي payments. استخدم <code>@ts-expect-error</code> بـ ticket للي مش هينفع يتصلّح دلوقتي، وخلّي بالك من <code>as any</code> اللي بيتستخدم عشان يضحك على العدّاد. وبلّغ عن التقدم برقم بينزل.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Why tsc is slow, measured on TS 6 and TS 7 <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — ليه الـ tsc بطيء، بالقياس على TS 6 و TS 7</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Start with <code>--extendedDiagnostics</code>, which works on both compilers. Check time usually dominates. Read the counts before the times: <b>Instantiations</b> is how many times generic types were expanded, and in every run here it was identical on TS 6 and TS 7, on any checker count and under any load. That makes it the best number to track. Timings move with the machine.</p>
+    <p>To compare the compilers, a script generated 6,000 blocks of realistic code (interfaces, discriminated unions, mapped types, generics): 174,004 lines, 6.5 MB. It was then type-checked two ways, as one huge file and split into 300 files, with every scenario run in turn for 7 rounds so background load hit them equally. TS 7 was ≈3.2× faster on the single file and ≈7.5× on the same code split into files, ≈9× with <code>--checkers 8</code>. Microsoft reports 8–12× on real projects, and the split-file result lands near that. The lesson in the difference is about shape: TS 7 runs parallel checkers across <em>files</em>, so one giant generated file gets almost nothing from them. Here <code>--singleThreaded</code> barely changed the single-file time but made the multi-file run ≈2.5× slower. Memory dropped too, from ≈680 MB to ≈400–450 MB, as each compiler reports it.</p>
+    <p>What costs most in the checker is deep conditional types and large unions, covered with a real example in Part 7. Next comes the classic question of interface versus intersection, where the honest answer has two halves. On flat types the difference is small in time, even though the counts are clearly worse: +50% types, +63% assignability checks, about 5% more check time on TS 6. On deep chains, where each type builds on the last, intersections blow up: 80× more assignability entries, and check time ≈6× worse on TS 6 and ≈9× worse on TS 7. So don't rewrite your codebase over flat <code>A &amp; B</code>, but do use <code>interface extends</code> for type hierarchies.</p>
+    <p>Two settings give big wins for free. <code>skipLibCheck</code> skips checking all <code>.d.ts</code> files, and on a small app importing Express, Fastify, Zod and React it cut the run ≈3× on TS 6 and ≈7× on TS 7, with Types dropping from 149,587 to 2,403 on TS 6. Its danger is that it covers <em>your own</em> <code>.d.ts</code> files too: an undefined type there silently becomes <code>any</code>. So keep your own types in <code>.ts</code> files. <code>incremental</code> stores state in <code>.tsbuildinfo</code>, so a no-change run does zero checking.</p>
+  </section>
+
+<pre data-file="gen-big.mjs"><code class="language-javascript">// الـ generator: ملف واحد ضخم شكله زي كود حقيقي (DTOs و handlers و mapped types)
+// الاستخدام: ⁦node gen-big.mjs &lt;blocks&gt; &lt;out-file&gt;⁩
+import { writeFileSync } from "node:fs";
+
+const blocks = Number(process.argv[2] ?? 5000);
+const out = process.argv[3] ?? "big.ts";
+
+let src = `type Status = "pending" | "paid" | "refunded" | "failed";\n`;
+src += `type Patch&lt;T&gt; = { [K in keyof T]?: T[K] };\n`;
+src += `type Keys&lt;T, V&gt; = { [K in keyof T]: T[K] extends V ? K : never }[keyof T];\n`;
+
+for (let i = 0; i &lt; blocks; i++) {
+  src += `
+export interface Order${i} {
+  id: string;
+  tenantId: string;
+  status: Status;
+  totalCents: number;
+  items: { sku: string; qty: number; unitCents: number }[];
+  createdAt: Date;
+}
+export type OrderEvent${i} =
+  | { kind: "created"; order: Order${i} }
+  | { kind: "paid"; orderId: string; amountCents: number }
+  | { kind: "refunded"; orderId: string; reason: string };
+export type OrderPatch${i} = Patch&lt;Pick&lt;Order${i}, "status" | "totalCents"&gt;&gt;;
+export type NumberKeys${i} = Keys&lt;Order${i}, number&gt;;
+export function apply${i}(order: Order${i}, patch: OrderPatch${i}): Order${i} {
+  const total = order.items.reduce((sum, item) =&gt; sum + item.qty * item.unitCents, 0);
+  return { ...order, ...patch, totalCents: patch.totalCents ?? total };
+}
+export function reduce${i}(order: Order${i}, event: OrderEvent${i}): Order${i} {
+  switch (event.kind) {
+    case "created":
+      return event.order;
+    case "paid":
+      return apply${i}(order, { status: "paid", totalCents: event.amountCents });
+    case "refunded":
+      return apply${i}(order, { status: "refunded" });
+  }
+}
+`;
+}
+writeFileSync(out, src);
+console.log(out, (src.length / 1e6).toFixed(1) + " MB", src.split("\n").length, "lines");</code></pre>
+
+<pre><code class="language-bash"># نفس الأمر على الـ compiler الاتنين، على نفس الملف
+npx tsc6 --noEmit --strict --skipLibCheck --target es2023 --module nodenext --extendedDiagnostics big.ts
+npx tsc  --noEmit --strict --skipLibCheck --target es2023 --module nodenext --extendedDiagnostics big.ts</code></pre>
+
+<pre data-file="diagnostics-ts6.txt"><code class="language-plaintext">Files:                          68
+Lines of Library:            57158
+Lines of Definitions:            0
+Lines of TypeScript:        174004
+Lines of JavaScript:             0
+Lines of JSON:                   0
+Lines of Other:                  0
+Identifiers:                486822
+Symbols:                    817550
+Types:                      174141
+Instantiations:             738000
+Memory used:               695636K
+Assignability cache size:    36011
+Identity cache size:             0
+Subtype cache size:          24000
+Strict subtype cache size:       0
+I/O Read time:               0.04s
+Parse time:                  0.51s
+Program time:                0.56s
+Bind time:                   0.34s
+Check time:                  2.83s
+printTime time:              0.00s
+Emit time:                   0.00s
+Total time:                  3.73s</code></pre>
+<pre data-file="diagnostics-ts7.txt"><code class="language-plaintext">Files:               68
+Lines:           231175
+Identifiers:     486822
+Symbols:         818191
+Types:           180397
+Instantiations:  738000
+Memory used:    413871K
+Memory allocs:  1759863
+Parse time:      0.137s
+Bind time:       0.077s
+Check time:      0.931s
+Total time:      1.146s</code></pre>
+  <div class="ar-note">دول تشغيلتين حقيقيتين على <code>big.ts</code>، الأولى TS 6 والتانية TS 7 (الأوقات هنا من تشغيلة واحدة، والجدول اللي تحت فيه الـ medians). بص على <code>Instantiations: 738000</code> في الاتنين بالظبط، وكمان <code>Identifiers</code>. الـ <code>Types</code> مختلفة شوية، والـ <code>Check time</code> هو أكبر رقم. وTS 7 بيطلّع شكل أبسط: مفيش <code>Assignability cache size</code>، وفيه <code>Memory allocs</code>. فأي سكريبت بيقرا الـ output لازم يتعامل مع الشكلين.</div>
+
+  <table>
+    <tr><th>Same code (median of 7 rounds, wall time)</th><th>TS 6.0.3</th><th>TS 7.0.2</th><th>Speed-up</th></tr>
+    <tr><td>One 6.5 MB file</td><td>≈4.8 s (4.0–6.4)</td><td>≈1.5 s (1.4–2.0)</td><td>≈3.2×</td></tr>
+    <tr><td>One file, <code>--singleThreaded</code></td><td>—</td><td>≈1.6 s (1.4–2.5)</td><td>≈2.9×</td></tr>
+    <tr><td>300 files, default (4 checkers)</td><td>≈5.3 s (4.7–8.5)</td><td>≈0.71 s (0.5–1.1)</td><td>≈7.5×</td></tr>
+    <tr><td>300 files, <code>--checkers 8</code></td><td>—</td><td>≈0.58 s (0.4–0.6)</td><td>≈9.1×</td></tr>
+    <tr><td>300 files, <code>--checkers 1</code></td><td>—</td><td>≈1.5 s (1.2–1.7)</td><td>≈3.6×</td></tr>
+    <tr><td>300 files, <code>--singleThreaded</code></td><td>—</td><td>≈1.8 s (1.4–2.5)</td><td>≈2.9×</td></tr>
+    <tr><td>Memory used, as reported</td><td>≈680 MB</td><td>≈400–450 MB</td><td></td></tr>
+    <tr><td>Instantiations (every row)</td><td>738,000</td><td>738,000</td><td>identical</td></tr>
+    <tr><td>Types</td><td>174,141</td><td>180,142 (1 checker) · 180,559 (4) · 181,115 (8)</td><td></td></tr>
+  </table>
+  <div class="ar-note">الجدول سطر سطر، والرقم بين القوسين هو أقل وأعلى تشغيلة:
+    <ul>
+      <li><b>ملف واحد:</b> TS 6 ≈4.8 ثانية وTS 7 ≈1.5، يعني ≈3.2×.</li>
+      <li><b>ملف واحد بـ <code>--singleThreaded</code>:</b> ≈1.6 ثانية، تقريبًا نفس الرقم، لإن الـ parallel checkers مالهاش حاجة تقسمها.</li>
+      <li><b>300 ملف بالـ default:</b> TS 6 ≈5.3 وTS 7 ≈0.71، يعني ≈7.5×. نفس الكود بالظبط، بس متقسّم.</li>
+      <li><b>300 ملف بـ <code>--checkers 8</code>:</b> ≈0.58، يعني ≈9.1×.</li>
+      <li><b>300 ملف بـ <code>--checkers 1</code>:</b> ≈1.5، يعني ≈3.6×، وده تقريبًا مكسب الـ native code لوحده.</li>
+      <li><b>300 ملف بـ <code>--singleThreaded</code>:</b> ≈1.8، يعني ≈2.9×.</li>
+      <li><b>الـ memory:</b> ≈680 MB نزلت لـ ≈400–450 MB، زي ما كل compiler بيبلّغ.</li>
+      <li><b>الـ Instantiations:</b> 738,000 في كل الحالات، وده اللي يخليها أحسن رقم تتابعه.</li>
+      <li><b>الـ Types:</b> بتزيد شوية مع عدد الـ checkers، لإن كل checker بيبني أنواعه لوحده.</li>
+    </ul>
+  </div>
+
+<pre class="diagram">
+ Parse ──▶ Bind ──▶ Check ──▶ Emit
+ per file  per file  by far     skipped with --noEmit
+                     the biggest
+
+ TS 6:  one thread for everything
+ TS 7:  parse/bind/check spread over threads, one checker per group of files
+
+ 300 files:  [checker 1: 75 files] [checker 2: 75] [checker 3: 75] [checker 4: 75]
+ 1 big file: [checker 1: all of it] [checker 2: idle] [checker 3: idle] [checker 4: idle]
+</pre>
+  <div class="ar-note">الـ compiler بيمشي 4 مراحل: Parse وBind لكل ملف، وCheck وده الأكبر بفرق كبير، وEmit واللي <code>--noEmit</code> بيعدّيها. TS 6 بيعمل كل ده على thread واحد. TS 7 بيوزّعهم على threads، وكل checker بياخد مجموعة ملفات. فمع 300 ملف كل واحد من الـ 4 checkers بياخد حوالي 75. ومع ملف واحد ضخم، checker واحد بياخد الشغل كله والباقيين فاضيين. والتوزيع بالأرقام دي للتوضيح. وده اللي بيفسّر ليه نفس الكود أسرع لما يتقسّم.</div>
+
+<pre data-file="src/shapes.ts"><code class="language-typescript">interface Timestamps { createdAt: Date; updatedAt: Date }
+interface TenantScoped { tenantId: string; region: "eg" | "sa" | "ae" }
+
+// الشكل الأول: الـ interface نوع واحد ليه اسم، ونتيجة مقارنته بتتخزن في cache
+export interface OrderA extends Timestamps, TenantScoped { id: string; totalCents: number }
+export interface OrderDetailA extends OrderA { note: string }
+
+// الشكل التاني: نفس الـ properties بالظبط، بس كل &amp; نوع جديد لازم يتفحص لوحده
+export type OrderB = Timestamps &amp; TenantScoped &amp; { id: string; totalCents: number };
+export type OrderDetailB = OrderB &amp; { note: string };
+
+// الاتنين متبادلين في الاستخدام، فالفرق في تكلفة الـ checker بس
+export const toB = (order: OrderDetailA): OrderDetailB =&gt; order;
+export const toA = (order: OrderDetailB): OrderDetailA =&gt; order;</code></pre>
+
+<pre data-file="gen-chain.mjs"><code class="language-javascript">// سلسلة عميقة: كل نوع مبني على اللي قبله، مرة extends ومرة &amp;
+// الاستخدام: ⁦node gen-chain.mjs &lt;families&gt; &lt;depth&gt;⁩
+import { writeFileSync } from "node:fs";
+
+const families = Number(process.argv[2] ?? 40);
+const depth = Number(process.argv[3] ?? 60);
+
+let a = "";
+let b = "";
+for (let f = 0; f &lt; families; f++) {
+  a += `interface F${f}L0 { id: string; tenantId: string }\n`;
+  b += `type F${f}L0 = { id: string; tenantId: string };\n`;
+  for (let d = 1; d &lt; depth; d++) {
+    a += `interface F${f}L${d} extends F${f}L${d - 1} { f${d}: number }\n`;
+    b += `type F${f}L${d} = F${f}L${d - 1} &amp; { f${d}: number };\n`;
+  }
+  const use = [];
+  for (let d = 1; d &lt; depth; d++) {
+    use.push(`export function up${f}_${d}(x: F${f}L${d}): F${f}L${d - 1} { return x; }`);
+    use.push(`export const get${f}_${d} = (x: F${f}L${d}) =&gt; [x.id, x.f${d}] as const;`);
+  }
+  a += use.join("\n") + "\n";
+  b += use.join("\n") + "\n";
+}
+writeFileSync("chain-iface.ts", a);
+writeFileSync("chain-inter.ts", b);
+console.log("generated", families, depth);</code></pre>
+
+  <table>
+    <tr><th>Workload (median of 5)</th><th><code>interface extends</code></th><th><code>type &amp;</code></th><th>Ratio</th></tr>
+    <tr><td><b>Flat</b>, 3,000 entities: Types</td><td>12,112</td><td>18,112</td><td>1.5×</td></tr>
+    <tr><td>Flat: assignability cache (TS 6)</td><td>24,000</td><td>39,006</td><td>1.6×</td></tr>
+    <tr><td>Flat: check time, TS 6</td><td>≈0.78 s</td><td>≈0.82 s</td><td>≈1.05×</td></tr>
+    <tr><td>Flat: check time, TS 7</td><td>≈0.20 s</td><td>≈0.24 s</td><td>≈1.2×</td></tr>
+    <tr><td><b>Deep chain</b>, 40 × 80 levels: Types</td><td>6,452</td><td>9,612</td><td>1.5×</td></tr>
+    <tr><td>Chain: assignability cache (TS 6)</td><td>3,160</td><td>252,760</td><td>80×</td></tr>
+    <tr><td>Chain: check time, TS 6</td><td>≈0.42 s</td><td>≈2.7 s</td><td>≈6.4×</td></tr>
+    <tr><td>Chain: check time, TS 7</td><td>≈0.12 s</td><td>≈1.06 s</td><td>≈9×</td></tr>
+  </table>
+  <div class="ar-note">نفس الـ properties في العمودين، والفرق في شكل التعريف بس:
+    <ul>
+      <li><b>الـ flat (نوع مبني على كام base):</b> الأعداد أسوأ بـ <code>&amp;</code> (الـ Types 1.5×، والـ assignability 1.6×)، بس الوقت فرقه صغير: ≈5% على TS 6 و≈20% على TS 7. مش مستاهل تعيد كتابة الكود.</li>
+      <li><b>السلسلة العميقة (كل نوع مبني على اللي قبله، 80 مستوى):</b> الـ assignability بقت 80×، ووقت الـ check ≈6.4× على TS 6 و≈9× على TS 7. هنا الفرق حقيقي.</li>
+      <li>وعلى كبر الفرق، حتى TS 7 مش بيعالج الموضوع: السلسلة فضلت أبطأ بكتير من الـ interfaces.</li>
+    </ul>
+  </div>
+
+<pre data-file="src/payments-sdk.d.ts"><code class="language-typescript">// ملف ⁦.d.ts⁩ بتاعنا، وفيه غلطة: الـ Money مش متعرف في أي حتة
+export declare function chargeCard(amount: Money): { id: string };</code></pre>
+
+<pre data-file="src/app.ts"><code class="language-typescript">import { chargeCard } from "./payments-sdk.js";
+
+// الـ amount المفروض رقم، بس الـ ⁦.d.ts⁩ بايظ، فبقى any من غير ما حد يحس
+export const receipt = chargeCard("not-a-number");</code></pre>
+
+<pre><code class="language-plaintext">$ tsc --noEmit --strict src/app.ts
+src/payments-sdk.d.ts(2,44): error TS2304: Cannot find name 'Money'.
+
+$ tsc --noEmit --strict --skipLibCheck src/app.ts
+(no output, exit code 0)</code></pre>
+  <div class="ar-note">نفس الكود على TS 7 (وTS 6 طلّع نفس النتيجة). من غير <code>skipLibCheck</code> الـ error ظهر. ومعاه مفيش حاجة خالص، لإن الملف <code>.d.ts</code>، فـ <code>Money</code> بقت <code>any</code>، و<code>chargeCard("not-a-number")</code> عدّت. السطر الأخير بين القوسين وصف مني مش output.</div>
+
+  <table>
+    <tr><th>Run (median of 5, wall time)</th><th>TS 6.0.3</th><th>TS 7.0.2</th></tr>
+    <tr><td>Express + Fastify + Zod + React, all <code>.d.ts</code> checked</td><td>≈4.5 s · 149,587 types</td><td>≈0.89 s · 206,284 types</td></tr>
+    <tr><td>Same, <code>--skipLibCheck</code></td><td>≈1.3 s · 2,403 types</td><td>≈0.13 s · 2,402 types</td></tr>
+    <tr><td>300 files, no incremental state (cold)</td><td>≈5.6 s</td><td>≈0.98 s</td></tr>
+    <tr><td>300 files, <code>--incremental</code>, no changes (warm)</td><td>≈2.1 s · Check 0.00 s</td><td>≈0.62 s · Check 0.00 s</td></tr>
+  </table>
+  <div class="ar-note">سطر سطر:
+    <ul>
+      <li><b>من غير <code>skipLibCheck</code>:</b> TS 6 ≈4.5 ثانية وTS 7 ≈0.89، وكله بيروح في فحص الـ <code>.d.ts</code> بتاعة المكتبات.</li>
+      <li><b>مع <code>skipLibCheck</code>:</b> ≈1.3 و≈0.13، والـ Types نزلت من حوالي 150 ألف لـ 2,400.</li>
+      <li><b>الـ cold:</b> أول تشغيل من غير state.</li>
+      <li><b>الـ warm:</b> تشغيل تاني من غير أي تغيير: الـ <code>Check</code> صفر. والوقت الباقي تحميل الـ program وقراية الـ <code>.tsbuildinfo</code>.</li>
+    </ul>
+    سطور الـ cold والـ warm اتقاست في مرة منفصلة عن الباقي، فقارنها ببعض بس.
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>ابدأ بـ <code>--extendedDiagnostics</code>، وده شغال على الـ compiler الاتنين. الـ Check time غالبًا هو الأكبر. واقرا الأعداد قبل الأوقات: <b>الـ Instantiations</b> هي عدد المرات اللي الـ generic types اتفردت فيها، وفي كل تشغيلة هنا كانت هي هي على TS 6 وTS 7، مع أي عدد checkers وتحت أي load. وده بيخليها أحسن رقم تتابعه، إنما الأوقات بتتغير مع الجهاز.</p>
+    <p>عشان نقارن الـ compilers، سكريبت ولّد 6,000 block من كود شكله حقيقي (interfaces وdiscriminated unions وmapped types وgenerics): 174,004 سطر، 6.5 MB. وبعدها اتعمل type-check بطريقتين: ملف واحد ضخم، ونفس الكود متقسّم على 300 ملف، وكل حالة بتشتغل بالدور لمدة 7 جولات عشان الـ load يأثر عليهم بالتساوي. TS 7 كان أسرع بـ ≈3.2× على الملف الواحد، و≈7.5× على نفس الكود متقسّم، و≈9× بـ <code>--checkers 8</code>. Microsoft بتقول 8–12× على مشاريع حقيقية، ونتيجة الملفات المتقسمة قريبة من ده. والدرس في الفرق هو الشكل: TS 7 بيشغّل checkers بالتوازي على مستوى <em>الملفات</em>، فالملف الضخم الواحد مش بيستفيد منهم تقريبًا. وهنا <code>--singleThreaded</code> ماغيرش وقت الملف الواحد تقريبًا، بس خلّى الملفات الكتير أبطأ بـ ≈2.5×. والـ memory نزلت كمان، من ≈680 MB لـ ≈400–450 MB، زي ما كل compiler بيبلّغ.</p>
+    <p>أغلى حاجة في الـ checker هي الـ deep conditional types والـ unions الكبيرة، وليهم مثال حقيقي في الجزء 7. وبعدها السؤال الكلاسيكي: interface ولا intersection؟ والإجابة الصادقة ليها نصين. في الأنواع الـ flat الفرق في الوقت صغير، رغم إن الأعداد أسوأ بوضوح: +50% types، و+63% assignability checks، وحوالي 5% check time زيادة على TS 6. وفي السلاسل العميقة، اللي كل نوع فيها مبني على اللي قبله، الـ intersections بتنفجر: 80× أكتر في الـ assignability entries، ووقت الـ check ≈6× أسوأ على TS 6 و≈9× أسوأ على TS 7. فمتعيدش كتابة الكود عشان <code>A &amp; B</code> flat، بس استخدم <code>interface extends</code> في الـ hierarchies.</p>
+    <p>وفيه إعدادين بيدّوا مكسب كبير ببلاش. <code>skipLibCheck</code> بيعدّي فحص كل ملفات <code>.d.ts</code>، وعلى app صغير بيعمل import لـ Express وFastify وZod وReact قلّل الوقت ≈3× على TS 6 و≈7× على TS 7، والـ Types نزلت من 149,587 لـ 2,403 على TS 6. وخطره إنه بيغطي ملفات <code>.d.ts</code> <em>بتاعتك إنت</em> كمان: نوع مش متعرف فيها بيبقى <code>any</code> من غير صوت. فخلي الأنواع بتاعتك في ملفات <code>.ts</code>. و<code>incremental</code> بيخزّن الحالة في <code>.tsbuildinfo</code>، فالتشغيل من غير تغيير مش بيعمل أي check.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ CI بقى 12 دقيقة: أول خطوة <code>tsc --extendedDiagnostics</code> على كل package، وقارن الـ Instantiations وCheck time، بدل التخمين. وعندك ملف <code>schema.generated.ts</code> ضخم من Prisma أو OpenAPI؟ قسّمه، عشان الـ TS 7 يقدر يوزّعه على الـ checkers. وفي الـ monorepo خزّن <code>.tsbuildinfo</code> في cache بتاع الـ CI. والغلطة الشائعة: تقارن <code>Total time</code> بين لابتوبك والـ CI، وتستنتج حاجة من فرق سببه الجهاز.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b><code>--checkers</code> and <code>--builders</code> are experimental</b>
+    Microsoft's announcement labels both experimental, and notes that higher <code>--checkers</code> values can change results in rare, order-dependent cases, and that <code>--builders</code> multiplies with <code>--checkers</code>. More isn't always better either: going from 4 to 8 checkers here saved only ≈0.13 s. Pick one value and pin it in CI.
+    <div class="ar-note"><code>--checkers</code> و<code>--builders</code> لسه experimental، وإعلان Microsoft بيقول كده، وبيقول كمان إن القيم الأعلى لـ <code>--checkers</code> ممكن تغيّر النتايج في حالات نادرة بتعتمد على الترتيب، وإن <code>--builders</code> بيتضرب في <code>--checkers</code>. والأكتر مش دايمًا أحسن: من 4 لـ 8 checkers هنا وفّر ≈0.13 ثانية بس. اختار قيمة واحدة وثبّتها في الـ CI.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question: "Are interfaces faster than type aliases?"</b>
+    Not as a blanket rule. A plain <code>type Order = { ... }</code> costs the same as an interface. The difference is <code>interface extends</code> versus intersections: in these measurements, flat intersections add 50% more types but only ≈5–20% check time, while deep chains reached ≈6–9× check time. Measure with <code>--extendedDiagnostics</code>, and reach for <code>extends</code> in hierarchies. Interfaces also report conflicting properties at the declaration, which intersections don't.
+    <div class="ar-note"><b>السؤال: "الـ interfaces أسرع من الـ type aliases؟"</b> مش كقاعدة عامة. <code>type Order = { ... }</code> العادي نفس تكلفة الـ interface. الفرق بين <code>interface extends</code> والـ intersections: في القياسات دي الـ intersections الـ flat زوّدت الـ types 50% والـ check time ≈5–20% بس، إنما السلاسل العميقة وصلت لـ ≈6–9× في الـ check time. قيس بـ <code>--extendedDiagnostics</code>، واستخدم <code>extends</code> في الـ hierarchies. والـ interfaces كمان بتبلّغ عن الـ properties المتعارضة عند التعريف، والـ intersections لأ.</div>
+  </div>
+
+  <!-- ===================== PART 7 ===================== -->
+  <h2 id="p7">Part 7 — --generateTrace: find the hot type and fix it <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 7 — الـ generateTrace: توصل للـ type البطيء وتصلّحه</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Here's a file of only 48 lines, a permission system. It builds a union of 23,040 strings and scans that union with a distributive conditional type (<a href="./11-conditional-mapped-types.html">lesson 11</a>) on every call to <code>can()</code>. <code>--extendedDiagnostics</code> raises the alarm: 8.8 million instantiations from one short file. <code>--generateTrace &lt;dir&gt;</code> then tells you where. It works on both compilers with different output: TS 6 writes <code>trace.json</code> and <code>types.json</code>, while TS 7 writes <code>trace.json</code>, one <code>types_N.json</code> per checker, and a <code>legend.json</code>. It slows the run down, so use it to investigate rather than in everyday CI.</p>
+    <p><code>trace.json</code> is in Chrome's trace format, so you can open it in <code>chrome://tracing</code> or <a href="https://ui.perfetto.dev">Perfetto</a>. For a quick answer, either run <code>@typescript/analyze-trace</code> or read the JSON with a few lines of code as below. Both name the same spot: all the time is inside <code>export const checks</code>, at roughly the same cost for each <code>can()</code> call, and the biggest union in the types file has 23,040 members. That's the hot type.</p>
+    <p><b>Watch out for one TS 7 difference:</b> in the trace, <code>pos</code> is a UTF-16 character offset on TS 6 but a UTF-8 byte offset on TS 7. <code>analyze-trace</code> 0.11 assumes characters, so on a file with non-ASCII text, such as your Arabic comments, it reports the wrong line on TS 7 traces: line 33 instead of 30. On an ASCII-only copy of the file it's correct. The script below handles both.</p>
+    <p>The fix isn't a smarter conditional type. It's a different data structure: a lookup table instead of a flat union, so <code>PermissionTable[R][A]</code> is one indexed access rather than a scan of 23,040 members. Same call sites, same errors caught, and instantiations go from 8,849,479 to 185. Note what TS 7 did <em>not</em> fix: on the slow file it was only ≈1.7× faster at the median. Everything happens in one file, so one checker does all the work. Native speed doesn't rescue a bad type; the fix was worth vastly more than the compiler upgrade.</p>
+  </section>
+
+<pre data-file="src/slow-types.ts"><code class="language-typescript">// صلاحيات النظام: resource × action × scope = union ضخم
+type Resource =
+  | "orders" | "payments" | "invoices" | "users" | "tenants" | "products" | "carts" | "shipments"
+  | "refunds" | "coupons" | "reports" | "webhooks" | "apiKeys" | "auditLogs" | "notifications" | "jobs";
+type Action =
+  | "read" | "create" | "update" | "delete" | "export" | "import" | "approve" | "reject"
+  | "archive" | "restore" | "assign" | "share";
+type Scope = "own" | "team" | "tenant" | "region" | "global" | "support" | "billing" | "sandbox";
+type Env = "dev" | "staging" | "prod";
+type Version = "v1" | "v2" | "v3" | "v4" | "v5";
+
+// (1) الـ template literal بيضرب كل الاحتمالات في بعض: ⁦16 × 12 × 8 × 3 × 5 = 23,040 member⁩
+export type Permission = `${Version}:${Env}:${Resource}:${Action}:${Scope}`;
+
+// (2) بنعدّي على كل member في الـ union بـ infer: شغل تقيل لكل مرة بنستخدمها
+type ActionsOf&lt;R extends Resource, P extends string = Permission&gt; =
+  P extends `${string}:${string}:${R}:${infer A}:${string}` ? A : never;
+type ScopesOf&lt;R extends Resource, A extends Action, P extends string = Permission&gt; =
+  P extends `${string}:${string}:${R}:${A}:${infer S}` ? S : never;
+
+// (3) الـ helper اللي بيتنادى في كل route
+export function can&lt;R extends Resource, A extends ActionsOf&lt;R&gt;&gt;(
+  resource: R,
+  action: A,
+  scope: ScopesOf&lt;R, A&gt;,
+): string {
+  return `${resource}:${action}:${scope}`;
+}
+
+export const checks = [
+  can("orders", "read", "own"),
+  can("orders", "export", "tenant"),
+  can("payments", "approve", "billing"),
+  can("invoices", "read", "team"),
+  can("users", "update", "own"),
+  can("tenants", "archive", "global"),
+  can("products", "import", "tenant"),
+  can("carts", "read", "own"),
+  can("shipments", "assign", "team"),
+  can("refunds", "approve", "billing"),
+  can("coupons", "create", "tenant"),
+  can("reports", "export", "global"),
+  can("webhooks", "update", "tenant"),
+  can("apiKeys", "delete", "own"),
+  can("auditLogs", "read", "support"),
+  can("notifications", "share", "team"),
+  can("jobs", "restore", "sandbox"),
+];</code></pre>
+
+<pre><code class="language-bash"># الخطوة 1: الأرقام، الـ TS 6 الأول وبعده TS 7
+npx tsc6 --noEmit --strict --skipLibCheck --target es2023 --module nodenext --extendedDiagnostics slow-types.ts
+npx tsc  --noEmit --strict --skipLibCheck --target es2023 --module nodenext --extendedDiagnostics slow-types.ts
+# الخطوة 2: الـ trace على الاتنين
+npx tsc6 --noEmit --strict --skipLibCheck --target es2023 --module nodenext --generateTrace trace6 slow-types.ts
+npx tsc  --noEmit --strict --skipLibCheck --target es2023 --module nodenext --generateTrace trace7 slow-types.ts
+# الخطوة 3: التحليل
+node hot-spots.mjs trace6
+node hot-spots.mjs trace7
+npx @typescript/analyze-trace trace6</code></pre>
+
+<pre data-file="slow-ts6.txt"><code class="language-plaintext">Types:                       72913
+Instantiations:            8849479
+Check time:                  6.58s</code></pre>
+<pre data-file="slow-ts7.txt"><code class="language-plaintext">Types:             73168
+Instantiations:  8849479
+Check time:       3.429s</code></pre>
+  <div class="ar-note">الأرقام الحقيقية، TS 6 الأول وبعده TS 7: <code>Instantiations</code> هي 8,849,479 في الاتنين. 48 سطر بس ووصلنا لـ 8.8 مليون، وده الإنذار. والأوقات هنا من تشغيلة واحدة.</div>
+
+<pre data-file="trace6/"><code class="language-plaintext">trace.json
+types.json</code></pre>
+<pre data-file="trace7/"><code class="language-plaintext">legend.json
+trace.json
+types_0.json
+types_1.json
+types_2.json
+types_3.json</code></pre>
+  <div class="ar-note">الملفات اللي كل compiler كتبها. TS 6: <code>trace.json</code> و<code>types.json</code>. وTS 7: <code>trace.json</code>، وملف <code>types_N.json</code> لكل checker (4 هنا)، و<code>legend.json</code> بيربط بينهم.</div>
+
+<pre data-file="hot-spots.mjs"><code class="language-javascript">// بيقرا الـ trace من ⁦--generateTrace (TS 6⁩ أو TS 7) ويطبع أغلى الأحداث وأكبر الـ unions
+// الاستخدام: ⁦node hot-spots.mjs &lt;trace-dir&gt; [top]⁩
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+
+const dir = process.argv[2] ?? "trace";
+const top = Number(process.argv[3] ?? 5);
+const events = JSON.parse(readFileSync(path.join(dir, "trace.json"), "utf8"));
+
+// (1) فرق مهم: TS 6 بيكتب الـ pos بعدد الحروف، و⁦TS 7 (⁩اسم الـ process فيه tsgo) بعدد الـ bytes
+const isNative = events.some((e) =&gt; e.name === "process_name" &amp;&amp; e.args?.name === "tsgo");
+
+function lineOf(file, pos) {
+  const bytes = readFileSync(file);
+  const before = isNative ? bytes.subarray(0, pos).toString("utf8") : bytes.toString("utf8").slice(0, pos);
+  return before.split("\n").length;
+}
+
+// (2) بناخد أحداث الـ X الجاهزة على ملفاتنا بس، مش lib.d.ts
+const hot = events
+  .filter((e) =&gt; e.ph === "X" &amp;&amp; e.cat === "check")
+  .filter((e) =&gt; e.args?.path &amp;&amp; !e.args.path.includes("/lib.") &amp;&amp; e.args.pos !== undefined)
+  .sort((a, b) =&gt; b.dur - a.dur)
+  .slice(0, top);
+
+console.log(`compiler: ${isNative ? "TS 7 (tsgo)" : "TS 6"}`);
+for (const e of hot) {
+  const where = `${path.basename(e.args.path)}:${lineOf(e.args.path, e.args.pos)}`;
+  console.log(`${String(Math.round(e.dur / 1000)).padStart(7)} ms  ${e.name.padEnd(26)} ${where}`);
+}
+
+// (3) أكبر union في ملفات الـ types: دي عادةً اللي بتاكل الوقت
+const typeFiles = readdirSync(dir).filter((f) =&gt; /^types.*\.json$/.test(f));
+let biggest = { unionTypes: [] };
+for (const file of typeFiles) {
+  for (const type of JSON.parse(readFileSync(path.join(dir, file), "utf8"))) {
+    if ((type.unionTypes?.length ?? 0) &gt; biggest.unionTypes.length) biggest = type;
+  }
+}
+console.log(`biggest union: ${biggest.unionTypes.length} members (type id ${biggest.id})`);</code></pre>
+
+<pre data-file="hot-spots-ts6.txt"><code class="language-plaintext">compiler: TS 6
+   6928 ms  checkVariableDeclaration   slow-types.ts:30
+   6926 ms  checkExpression            slow-types.ts:30
+    568 ms  checkExpression            slow-types.ts:40
+    524 ms  checkExpression            slow-types.ts:44
+biggest union: 23040 members (type id 26360)</code></pre>
+<pre data-file="hot-spots-ts7.txt"><code class="language-plaintext">compiler: TS 7 (tsgo)
+   3339 ms  checkExpression            slow-types.ts:30
+   3339 ms  checkVariableDeclaration   slow-types.ts:30
+    246 ms  checkExpression            slow-types.ts:44
+    242 ms  checkExpression            slow-types.ts:43
+biggest union: 23040 members (type id 26360)</code></pre>
+  <div class="ar-note">الـ output الحقيقي للسكريبت على الـ compiler الاتنين، والاتنين متفقين: السطر 30 وهو <code>export const checks = [</code> واخد كل الوقت، وكل <code>can()</code> واخد نص ثانية تقريبًا على TS 6 وربع ثانية على TS 7، وأكبر union فيه 23,040 member. الأوقات أعلى من الجدول، لإن الـ trace نفسه بيبطّأ التشغيل، والجهاز كان مشغول.</div>
+
+<pre><code class="language-plaintext">Hot Spots
+└─ Check file slow-types.ts (8055ms)
+   └─ Check variable declaration from (line 30, char 14) to (line 48, char 2) (6928ms)
+      └─ Check expression from (line 30, char 23) to (line 48, char 2) (6926ms)
+         ├─ Check expression from (line 41, char 3) to (line 41, char 37) (568ms)
+         ├─ Check expression from (line 45, char 3) to (line 45, char 38) (524ms)
+         └─ Check expression from (line 43, char 3) to (line 43, char 38) (503ms)</code></pre>
+  <div class="ar-note">ده <code>analyze-trace</code> على TS 6، بعد تقصير الـ path وقص السطور: نفس الإجابة بشكل شجرة، الملف ← الـ variable في السطر 30 ← الـ expression ← كل <code>can()</code> لوحده.</div>
+
+<pre data-file="analyze-ts7-slow-types.txt"><code class="language-plaintext">Hot Spots
+└─ Check file slow-types.ts (3902ms)
+   └─ Check expression from (line 33, char 34) to (line 49, char 1) (3339ms)
+      └─ Check variable declaration from (line 33, char 25) to (line 49, char 1) (3339ms)
+
+No duplicate packages found</code></pre>
+<pre data-file="analyze-ts7-slow-ascii.txt"><code class="language-plaintext">Hot Spots
+└─ Check file slow-ascii.ts (4207ms)
+   └─ Check expression from (line 26, char 23) to (line 44, char 2) (3603ms)
+      └─ Check variable declaration from (line 26, char 14) to (line 44, char 2) (3603ms)
+
+No duplicate packages found</code></pre>
+  <div class="ar-note">نفس الأداة على TS 7. أول trace على الملف اللي فيه كومنتات عربي: قال السطر 33، والحقيقي 30. والتاني على نسخة <code>slow-ascii.ts</code> من غير كومنتات: قال 26، وده صح في النسخة دي. فالمشكلة في الـ offsets مش في الأداة كلها، والوقت والشجرة لسه صح. فلو كودك فيه عربي، متعتمدش على رقم السطر في trace بتاع TS 7 من الأداة دي.</div>
+
+<pre data-file="src/fast-types.ts"><code class="language-typescript">type Resource =
+  | "orders" | "payments" | "invoices" | "users" | "tenants" | "products" | "carts" | "shipments"
+  | "refunds" | "coupons" | "reports" | "webhooks" | "apiKeys" | "auditLogs" | "notifications" | "jobs";
+type Action =
+  | "read" | "create" | "update" | "delete" | "export" | "import" | "approve" | "reject"
+  | "archive" | "restore" | "assign" | "share";
+type Scope = "own" | "team" | "tenant" | "region" | "global" | "support" | "billing" | "sandbox";
+
+// (1) بدل union مفرود: جدول lookup، والوصول ليه indexed access من غير أي مسح
+type PermissionTable = { [R in Resource]: { [A in Action]: Scope } };
+
+// (2) نفس الـ call sites ونفس الأمان: الـ scope لسه مربوط بالـ resource والـ action
+export function can&lt;R extends Resource, A extends keyof PermissionTable[R]&gt;(
+  resource: R,
+  action: A,
+  scope: PermissionTable[R][A],
+): string {
+  return `${resource}:${String(action)}:${String(scope)}`;
+}
+
+export const checks = [
+  can("orders", "read", "own"),
+  can("orders", "export", "tenant"),
+  can("payments", "approve", "billing"),
+  can("invoices", "read", "team"),
+  can("users", "update", "own"),
+  can("tenants", "archive", "global"),
+  can("products", "import", "tenant"),
+  can("carts", "read", "own"),
+  can("shipments", "assign", "team"),
+  can("refunds", "approve", "billing"),
+  can("coupons", "create", "tenant"),
+  can("reports", "export", "global"),
+  can("webhooks", "update", "tenant"),
+  can("apiKeys", "delete", "own"),
+  can("auditLogs", "read", "support"),
+  can("notifications", "share", "team"),
+  can("jobs", "restore", "sandbox"),
+];
+
+// (3) لسه بيمسك الغلط زي الأول
+// @ts-expect-error -- ⁧الـ action مش موجودة⁩
+can("orders", "fly", "own");
+// @ts-expect-error -- ⁧الـ scope مش موجود⁩
+can("orders", "read", "galaxy");</code></pre>
+
+  <table>
+    <tr><th>Same 17 calls (median of 5, wall time)</th><th>Instantiations</th><th>TS 6.0.3</th><th>TS 7.0.2</th><th>TS 7 vs TS 6</th></tr>
+    <tr><td>Flat union + conditional types</td><td>8,849,479</td><td>≈8.1 s (2.3–13.2)</td><td>≈4.9 s (0.9–6.3)</td><td>≈1.7×</td></tr>
+    <tr><td>Lookup table</td><td>185</td><td>≈0.64 s</td><td>≈0.08 s</td><td>≈8×</td></tr>
+    <tr><td>Fix vs original</td><td>≈47,800× fewer</td><td>≈13× faster</td><td>≈61× faster</td><td></td></tr>
+  </table>
+  <div class="ar-note">سطر سطر، بنفس الـ 17 call:
+    <ul>
+      <li><b>الـ union مع الـ conditional types:</b> 8.8 مليون instantiation، وTS 6 ≈8.1 ثانية وTS 7 ≈4.9، يعني ≈1.7× بس. والمدى واسع لإن الجهاز كان مشغول، وفي أحسن تشغيلة لكل واحد النسبة كانت ≈2.4×.</li>
+      <li><b>الـ lookup table:</b> 185 instantiation، و≈0.64 ثانية و≈0.08. الوقت اللي فاضل تحميل lib files، والـ check نفسه أقل من 0.05 ثانية.</li>
+      <li><b>الإصلاح مقارنةً بالأصل:</b> ≈47,800× instantiations أقل، و≈13× أسرع على TS 6، و≈61× على TS 7. يعني إصلاح الـ type أهم بكتير من ترقية الـ compiler.</li>
+    </ul>
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>عندك ملف فيه 48 سطر بس، سيستم صلاحيات. بيبني union فيه 23,040 string، وبيمسحه بـ distributive conditional type (<a href="./11-conditional-mapped-types.html">الدرس 11</a>) مع كل نداء لـ <code>can()</code>. <code>--extendedDiagnostics</code> بيدّي الإنذار: 8.8 مليون instantiation من ملف قصير. و<code>--generateTrace &lt;dir&gt;</code> بيقولك فين. شغال على الـ compiler الاتنين بـ output مختلف: TS 6 بيكتب <code>trace.json</code> و<code>types.json</code>، وTS 7 بيكتب <code>trace.json</code> وملف <code>types_N.json</code> لكل checker و<code>legend.json</code>. وهو بيبطّأ التشغيل، فاستخدمه في التحقيق مش في الـ CI اليومي.</p>
+    <p><code>trace.json</code> بصيغة Chrome trace، فتقدر تفتحه في <code>chrome://tracing</code> أو <a href="https://ui.perfetto.dev">Perfetto</a>. ولإجابة سريعة، شغّل <code>@typescript/analyze-trace</code> أو اقرا الـ JSON بكام سطر كود زي اللي فوق. الاتنين بيشاوروا على نفس المكان: الوقت كله جوه <code>export const checks</code>، وتكلفة كل <code>can()</code> قريبة من بعض، وأكبر union في ملف الـ types فيه 23,040 member. ده الـ hot type.</p>
+    <p><b>وخد بالك من فرق في TS 7:</b> في الـ trace، الـ <code>pos</code> هو UTF-16 character offset في TS 6، وUTF-8 byte offset في TS 7. و<code>analyze-trace</code> 0.11 بيفترض حروف، فعلى ملف فيه نص مش ASCII زي الكومنتات العربي بتاعتك، بيقول سطر غلط على traces بتاعة TS 7: 33 بدل 30. وعلى نسخة ASCII بس من الملف بيطلع صح. والسكريبت اللي فوق بيتعامل مع الاتنين.</p>
+    <p>والإصلاح مش conditional type أذكى، الإصلاح data structure مختلفة: lookup table بدل union مفرود، فـ <code>PermissionTable[R][A]</code> بقت indexed access واحدة بدل مسح 23,040 member. نفس الـ call sites، ونفس الـ errors بتتمسك، والـ instantiations نزلت من 8,849,479 لـ 185. وبص TS 7 <em>ماحلّش</em> إيه: على الملف البطيء كان أسرع بـ ≈1.7× بس في الـ median. الشغل كله في ملف واحد، فـ checker واحد بيعمله كله. السرعة الـ native مش بتنقذ type وحش، والإصلاح كان أهم بكتير من ترقية الـ compiler.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      حد في الفريق عمل <code>Paths&lt;Config&gt;</code> أو <code>Permission</code> ذكي، وبعدها الـ editor بقى يهنج في ملف واحد بس. <code>tsc --generateTrace</code> بيوصلك للسطر في دقايق، وتيجي تقول في الـ PR بأرقام: "الـ type ده بيكلّف 8 مليون instantiation، وبـ lookup table بقوا 185، ونفس الأمان". وده بالظبط النوع اللي <a href="./12-template-literal-type-level.html">الدرس 12</a> بيحذر منه في type-level programming. والغلطة الشائعة: تعمل upgrade لـ TS 7 وتفتكر الموضوع اتحل، فالـ type البطيء بيفضل بطيء وبيكبر مع الوقت.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: "The type-check got slow after a recent merge. How do you investigate?"</b>
+    Compare <code>--extendedDiagnostics</code> before and after, focusing on Instantiations and Types, since those don't depend on the machine. A big jump means a type problem rather than a code-size problem. Run <code>--generateTrace</code>, find the hot spot with <code>analyze-trace</code> or the JSON, and look at the biggest unions in the types file. Fix by changing the data structure, usually a lookup instead of a scan. Then add an instantiation budget in CI so it can't return.
+    <div class="ar-note"><b>السؤال: "الـ type-check بقى بطيء بعد merge قريب. هتحقق إزاي؟"</b> قارن <code>--extendedDiagnostics</code> قبل وبعد، وركّز على Instantiations وTypes، لإنهم مش بيعتمدوا على الجهاز. لو فيه قفزة كبيرة يبقى المشكلة في type مش في حجم الكود. شغّل <code>--generateTrace</code>، ووصل للـ hot spot بـ <code>analyze-trace</code> أو الـ JSON، وبص على أكبر unions في ملف الـ types. الإصلاح بتغيير الـ data structure، غالبًا lookup بدل scan. وبعدها حط instantiation budget في الـ CI عشان ماترجعش.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Forcing the peer range</b>
+<pre><code class="language-bash"># بيتسطّب، و ESLint بيقع أول ما يبدأ
+npm i -D typescript@7 typescript-eslint \
+  --legacy-peer-deps</code></pre>
+    </div>
+    <div class="good"><b>✅ Two aliases</b>
+<pre><code class="language-bash"># الـ aliases في ⁦package.json (⁩الجزء 1)
+npm install
+# دلوقتي tsc هو TS 7 و tsc6 هو TS 6
+npx tsc --version
+npx tsc6 --version</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>--legacy-peer-deps</code> بتسكّت npm بس، وtypescript-eslint بيرمي <code>does not support TS 7.0</code> عند الـ import، لإن <code>createProgram</code> مش موجودة. ✅ الـ aliases بتدّي كل حد اللي محتاجه: <code>require("typescript")</code> بيرجّع TS 6، و<code>tsc</code> بيبقى TS 7. والـ <code>package.json</code> الكامل في الجزء 1.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>@ts-ignore</code></b>
+<pre><code class="language-typescript">// @ts-ignore
+export const total: string = invoice.totalCents;
+// ساكت حتى بعد ما الـ error يتصلّح، وبيخبي أي error جديد</code></pre>
+    </div>
+    <div class="good"><b>✅ <code>@ts-expect-error</code> + ticket</b>
+<pre><code class="language-typescript">// @ts-expect-error -- ⁧الكود القديم (TICKET-812)⁩
+export const total: string = invoice.totalCents;
+// لما الـ error يروح بتاخد TS2578 وتشيل السطر</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>@ts-ignore</code> بيسكّت أي error في السطر اللي بعده، ودلوقتي ولبعدين، وحتى لو اتصلّح هيفضل قاعد. ✅ <code>@ts-expect-error</code> بتطلّع <code>TS2578: Unused '@ts-expect-error' directive</code> أول ما الـ error يروح، فالتنضيف بيحصل لوحده، والـ ticket بيقول ليه موجودة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Counting a flag on its own</b>
+<pre><code class="language-bash"># النتيجة صفر، بس ده كداب
+tsc --noEmit --strict false \
+  --noUncheckedIndexedAccess</code></pre>
+    </div>
+    <div class="good"><b>✅ Cumulative ladder</b>
+<pre><code class="language-bash"># كل flag فوق اللي قبله، فالزيادة حقيقية
+node scripts/strict-count.ts</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ من غير <code>strictNullChecks</code>، <code>| undefined</code> بتختفي، فـ <code>noUncheckedIndexedAccess</code> بيطلّع صفر من غير أي تحذير، وتفتكر إن تفعيله ببلاش. ✅ السلّم التراكمي طلّع +3 errors حقيقية للـ flag ده على نفس الكود.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A time-based gate</b>
+<pre><code class="language-bash"># بيقع لما الـ runner يبقى مشغول، وبيعدّي type وحش على جهاز سريع
+timeout 60 npx tsc --noEmit</code></pre>
+    </div>
+    <div class="good"><b>✅ A count-based gate</b>
+<pre><code class="language-bash"># نفس الرقم على أي جهاز وأي compiler
+node perf-budget.ts npx tsc --noEmit</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ على الجهاز ده نفس الملف أخد بين 2.3 و13.2 ثانية على TS 6، فأي سقف بالوقت هيقع عشوائي أو هيبقى واسع لدرجة إنه مايمسكش حاجة. ✅ الـ Instantiations طلعت 8,849,479 في كل التشغيلات، فالـ gate عليها ثابت. السكريبت في التمرين 3.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Your own types in <code>.d.ts</code> + <code>skipLibCheck</code></b>
+<pre><code class="language-typescript">// ملف ⁦.d.ts⁩ بتاعنا، وفيه غلطة: الـ Money مش متعرف في أي حتة
+export declare function chargeCard(amount: Money): { id: string };</code></pre>
+    </div>
+    <div class="good"><b>✅ Your own types in <code>.ts</code></b>
+<pre><code class="language-typescript">// الأنواع بتاعتنا في ملف ⁦.ts⁩ عادي: بيتفحص دايمًا، حتى مع skipLibCheck
+export interface Money { cents: number; currency: "EGP" | "USD" }
+
+export function chargeCard(amount: Money): { id: string } {
+  return { id: `ch_${amount.cents}` };
+}</code></pre>
+<pre><code class="language-typescript">import { chargeCard } from "./payments-sdk.js";
+
+// دلوقتي الـ compiler بيمسك الاستخدام الغلط
+// ✗ TS2345: Argument of type 'string' is not assignable to parameter of type 'Money'.
+export const receipt = chargeCard("not-a-number");</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>skipLibCheck</code> مش بيفرّق بين مكتبة في <code>node_modules</code> وملف <code>.d.ts</code> إنت كاتبه، فـ <code>Money</code> اللي مش متعرفة بقت <code>any</code>، و<code>chargeCard("not-a-number")</code> عدّت. ✅ في ملف <code>.ts</code> الفحص بيفضل شغال مع <code>skipLibCheck</code>، والـ compiler بيطلّع <code>TS2345</code>. سيب <code>skipLibCheck</code> مفتوح، وخلي <code>.d.ts</code> للي مفيش غيرها، زي <code>declare module</code> لمكتبة من غير types.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Fix the index access <span class="lvl lvl-1">🟢 easy</span></b>
+    Copy <code>unchecked-index.ts</code> from Part 3 and run it with <code>--noUncheckedIndexedAccess</code>. Fix both errors without <code>!</code>: an empty array returns <code>null</code>, and an unknown currency throws. Then run it to confirm <code>NaN</code> is gone.
+    <div class="ar-note">انسخ <code>unchecked-index.ts</code> من الجزء 3 وشغّله بـ <code>--noUncheckedIndexedAccess</code>. صلّح الـ 2 errors من غير <code>!</code>: الـ array الفاضية ترجّع <code>null</code>، والعملة المجهولة ترمي error. وبعدها شغّله عشان تتأكد إن <code>NaN</code> راحت.</div>
+    <details><summary>Solution · الحل</summary>
+      The fixed version is <code>unchecked-index-fixed.ts</code> in Part 3. It printed <code>null</code> and <code>48500</code>.
+      <div class="ar-note">النسخة المصلّحة هي <code>unchecked-index-fixed.ts</code> في الجزء 3. وطبعت <code>null</code> و<code>48500</code>.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Set up side by side <span class="lvl lvl-2">🟡 medium</span></b>
+    In an empty folder, install TS 7 and typescript-eslint together with the aliases. Make <code>npm run verify</code> pass on a clean file, then add a call to an async function with no <code>await</code> and watch <code>no-floating-promises</code> fire while <code>tsc</code> stays quiet.
+    <div class="ar-note">في فولدر فاضي، سطّب TS 7 وtypescript-eslint مع بعض بالـ aliases. خلي <code>npm run verify</code> ينجح على ملف نضيف، وبعدها ضيف نداء لـ async function من غير <code>await</code>، وشوف <code>no-floating-promises</code> بتزعق و<code>tsc</code> ساكت.</div>
+    <details><summary>Hint · تلميح</summary>
+      Use the <code>package.json</code> and <code>eslint.config.mjs</code> from Part 1. Check <code>npx tsc --version</code> and <code>npx tsc6 --version</code> first.
+      <div class="ar-note">استخدم <code>package.json</code> و<code>eslint.config.mjs</code> من الجزء 1. واتأكد الأول من <code>npx tsc --version</code> و<code>npx tsc6 --version</code>.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. An instantiation budget for CI <span class="lvl lvl-3">🔴 hard</span></b>
+    Write a script that runs <code>tsc</code> with <code>--extendedDiagnostics</code>, reads Instantiations, and exits with 1 if it's over a budget. It must work on both compilers. Test it on <code>slow-types.ts</code> and <code>fast-types.ts</code> from Part 7.
+    <div class="ar-note">اكتب سكريبت بيشغّل <code>tsc</code> بـ <code>--extendedDiagnostics</code>، ويقرا Instantiations، ويخرج بـ 1 لو عدّى السقف. ولازم يشتغل على الـ compiler الاتنين. وجرّبه على <code>slow-types.ts</code> و<code>fast-types.ts</code> من الجزء 7.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="perf-budget.ts"><code class="language-typescript">import { spawnSync } from "node:child_process";
+
+// (1) السقف بيتحدد من الرقم الحالي للمشروع + هامش صغير
+const BUDGET = Number(process.env.INSTANTIATION_BUDGET ?? 1_000_000);
+const [tsc = "tsc", ...tscArgs] = process.argv.slice(2);
+
+const { stdout } = spawnSync(tsc, [...tscArgs, "--extendedDiagnostics", "--pretty", "false"], {
+  encoding: "utf8",
+  shell: true,
+});
+
+// (2) بنقرا العدد مش الوقت: نفس الرقم على أي جهاز وأي نسخة compiler
+const match = /^Instantiations:\s+(\d+)/m.exec(stdout);
+if (!match?.[1]) {
+  console.error("could not read Instantiations from tsc output");
+  process.exit(2);
+}
+
+const instantiations = Number(match[1]);
+console.log(`instantiations=${instantiations} budget=${BUDGET}`);
+process.exit(instantiations &gt; BUDGET ? 1 : 0);</code></pre>
+<pre><code class="language-plaintext">instantiations=8849479 budget=1000000
+exit code: 1
+instantiations=185 budget=1000000
+exit code: 0
+instantiations=8849479 budget=1000000
+exit code: 1</code></pre>
+      <div class="ar-note">التشغيل الحقيقي: <code>slow-types.ts</code> على TS 7 خرج بـ 1، و<code>fast-types.ts</code> خرج بـ 0، و<code>slow-types.ts</code> على TS 6 طلّع نفس الرقم بالظبط. وحدد الـ budget من رقم مشروعك الحالي زائد هامش صغير، وارفعه بقرار في الـ PR.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project / at work <span class="lvl lvl-3">🔴 project</span></b>
+    Take your side project or a service at work. Run the ladder script and paste the table into a note. Add the ratchet to CI. Run <code>--extendedDiagnostics</code> on TS 6 and TS 7 side by side and write down Instantiations, Check time and Total time. If the number looks high for the code size, run <code>--generateTrace</code> and name the hottest type. Then fix one flag's errors in one folder in a small PR.
+    <div class="ar-note">خد مشروعك الجانبي أو service في شغلك. شغّل سكريبت السلّم وحط الجدول في note. ضيف الـ ratchet للـ CI. شغّل <code>--extendedDiagnostics</code> على TS 6 وTS 7 جنب بعض، واكتب Instantiations وCheck time وTotal time. ولو الرقم عالي بالنسبة لحجم الكود، شغّل <code>--generateTrace</code> وسمّي أبطأ type. وبعدها صلّح errors بتاعة flag واحد في فولدر واحد في PR صغير.</div>
+    <details><summary>Hint · تلميح</summary>
+      Copy <code>strict-count.ts</code> and <code>ratchet.ts</code> from Part 5 as they are, and change only the flag lists. For a monorepo, run them once per package.
+      <div class="ar-note">انسخ <code>strict-count.ts</code> و<code>ratchet.ts</code> من الجزء 5 زي ما هما، وغيّر قوايم الـ flags بس. ولو monorepo، شغّلهم مرة لكل package.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li><code>tsc</code> and type-aware lint catch different bugs: 5 real bugs here, 0 <code>tsc</code> errors, 8 lint problems. <code>strict-boolean-expressions</code> and <code>switch-exhaustiveness-check</code> must be enabled by hand.</li>
+    <li>typescript-eslint 8.72 peers on <code>typescript &lt;6.1</code> and throws on TS 7, because 7.0 has no JS API. Setup: <code>typescript</code> → <code>npm:@typescript/typescript6</code>, <code>@typescript/native</code> → <code>npm:typescript@7</code>. Then <code>tsc</code> is TS 7 and <code>tsc6</code> is TS 6.</li>
+    <li>esbuild/SWC/tsx don't check types: CI needs <code>tsc --noEmit</code> as a required step, plus <code>tsc6 --stableTypeOrdering</code> while you run both.</li>
+    <li>Project references: <code>composite</code> + <code>references</code> + <code>tsc -b</code>. An internal change doesn't rebuild dependents; a <code>.d.ts</code> change does.</li>
+    <li><code>noUncheckedIndexedAccess</code> needs <code>strictNullChecks</code> or silently does nothing. <code>exactOptionalPropertyTypes</code> stops <code>{ ...user, ...patch }</code> from wiping fields. <code>tsc --init</code> now enables both.</li>
+    <li><code>noImplicitOverride</code>, <code>noFallthroughCasesInSwitch</code> and <code>noPropertyAccessFromIndexSignature</code> are outside <code>strict</code>; <code>useUnknownInCatchVariables</code> is inside. <code>strict</code> is the default since TS 6.</li>
+    <li>Old codebase: cumulative ladder, ratchet keyed by file + code, one flag at a time, small PRs. A folder config also reports errors in what it imports. <code>@ts-expect-error</code>, never <code>@ts-ignore</code>.</li>
+    <li>Track Instantiations rather than time: identical on TS 6 and TS 7 here, on any machine load.</li>
+    <li>TS 7 vs TS 6 on the same code: ≈3.2× as one huge file, ≈7.5× as 300 files. Parallelism is per file, so split giant generated files. A slow type gains only ≈1.7×.</li>
+    <li>Flat intersections cost little (≈5–20% check time); deep chains ≈6–9×. Use <code>interface extends</code> for hierarchies.</li>
+    <li><code>skipLibCheck</code>: ≈3–7× faster, but your own <code>.d.ts</code> errors become silent <code>any</code>. <code>incremental</code>: a no-change run does zero checking.</li>
+    <li><code>--generateTrace</code> works on both, with different files. On TS 7, <code>pos</code> is in bytes, so <code>analyze-trace</code> 0.11 gets lines wrong on non-ASCII files. Fix the data structure: lookup, not scan.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li><code>tsc</code> والـ type-aware lint بيمسكوا bugs مختلفة: 5 bugs حقيقية هنا، و0 errors من <code>tsc</code>، و8 مشاكل من الـ lint. و<code>strict-boolean-expressions</code> و<code>switch-exhaustiveness-check</code> لازم يتفعّلوا بإيدك.</li>
+      <li>typescript-eslint 8.72 الـ peer بتاعه <code>typescript &lt;6.1</code>، وبيرمي error على TS 7، لإن 7.0 مفيهوش JS API. الـ setup: <code>typescript</code> لـ <code>npm:@typescript/typescript6</code>، و<code>@typescript/native</code> لـ <code>npm:typescript@7</code>. فـ <code>tsc</code> بيبقى TS 7، و<code>tsc6</code> بيبقى TS 6.</li>
+      <li>esbuild وSWC وtsx مش بيفحصوا الـ types: الـ CI محتاج <code>tsc --noEmit</code> كـ step إجباري، ومعاه <code>tsc6 --stableTypeOrdering</code> طول ما إنت شغال بالاتنين.</li>
+      <li>الـ project references: <code>composite</code> و<code>references</code> و<code>tsc -b</code>. التعديل الداخلي مش بيعيد بناء اللي معتمدين عليه، وتغيير الـ <code>.d.ts</code> بيعيد.</li>
+      <li><code>noUncheckedIndexedAccess</code> محتاج <code>strictNullChecks</code> وإلا مش بيعمل حاجة من غير صوت. و<code>exactOptionalPropertyTypes</code> بيمنع <code>{ ...user, ...patch }</code> من مسح الـ fields. و<code>tsc --init</code> بقى بيفعّل الاتنين.</li>
+      <li><code>noImplicitOverride</code> و<code>noFallthroughCasesInSwitch</code> و<code>noPropertyAccessFromIndexSignature</code> برّه <code>strict</code>، و<code>useUnknownInCatchVariables</code> جواه. و<code>strict</code> هو الـ default من TS 6.</li>
+      <li>الكود القديم: سلّم تراكمي، وratchet بمفتاح ملف + كود، وflag واحد في المرة، وPRs صغيرة. والـ config بتاع فولدر بيبلّغ كمان عن errors في اللي بيعمله import. و<code>@ts-expect-error</code>، مش <code>@ts-ignore</code> أبدًا.</li>
+      <li>تابع الـ Instantiations مش الوقت: نفس الرقم على TS 6 وTS 7 هنا، مهما كان الجهاز مشغول.</li>
+      <li>TS 7 مقارنةً بـ TS 6 على نفس الكود: ≈3.2× كملف واحد ضخم، و≈7.5× كـ 300 ملف. الـ parallelism بالملف، فقسّم الملفات الـ generated الضخمة. والـ type البطيء بيكسب ≈1.7× بس.</li>
+      <li>الـ intersections الـ flat تكلفتها قليلة (≈5–20% check time)، والسلاسل العميقة ≈6–9×. استخدم <code>interface extends</code> في الـ hierarchies.</li>
+      <li><code>skipLibCheck</code>: أسرع ≈3–7×، بس errors ملفات <code>.d.ts</code> بتاعتك بتبقى <code>any</code> ساكتة. و<code>incremental</code>: التشغيل من غير تغيير مش بيعمل أي check.</li>
+      <li><code>--generateTrace</code> شغال على الاتنين بملفات مختلفة. وعلى TS 7 الـ <code>pos</code> بالـ bytes، فـ <code>analyze-trace</code> 0.11 بيغلط في السطور على الملفات اللي فيها non-ASCII. وصلّح الـ data structure: lookup مش scan.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 03 · 2.8 — typescript-eslint: الـ rules المهمة (<code>no-floating-promises</code>، <code>no-explicit-any</code>، <code>strict-boolean-expressions</code>، <code>switch-exhaustiveness-check</code>)</label>
+    <label><input type="checkbox" data-key="r2"> 03 · 2.8 — <code>tsc --noEmit</code> كـ type-check في CI، وesbuild/SWC/tsx للـ transpile</label>
+    <label><input type="checkbox" data-key="r3"> 03 · 2.8 — Project references للـ monorepos (<code>composite</code>، <code>references</code>)</label>
+    <label><input type="checkbox" data-key="r4"> 03 · 3.7 — <code>noUncheckedIndexedAccess</code>: <code>arr[0]</code> بيبقى <code>T | undefined</code> — وليه ده بيمسك bugs حقيقية</label>
+    <label><input type="checkbox" data-key="r5"> 03 · 3.7 — <code>exactOptionalPropertyTypes</code>: الفرق بين <code>prop?: string</code> و <code>prop: string | undefined</code></label>
+    <label><input type="checkbox" data-key="r6"> 03 · 3.7 — <code>noImplicitOverride</code>، <code>noPropertyAccessFromIndexSignature</code>، <code>noFallthroughCasesInSwitch</code></label>
+    <label><input type="checkbox" data-key="r7"> 03 · 3.7 — <code>useUnknownInCatchVariables</code> (جوه <code>strict</code>)</label>
+    <label><input type="checkbox" data-key="r8"> 03 · 3.7 — إزاي تفعّلهم على codebase قديم تدريجيًا</label>
+    <label><input type="checkbox" data-key="r9"> 03 · 3.10 — ليه الـ <code>tsc</code> بطيء في المشاريع الكبيرة: deep conditional types، big unions، <code>--extendedDiagnostics</code></label>
+    <label><input type="checkbox" data-key="r10"> 03 · 3.10 — Project references و <code>incremental</code> للـ monorepos</label>
+    <label><input type="checkbox" data-key="r11"> 03 · 3.10 — <code>skipLibCheck</code> وإمتى</label>
+    <label><input type="checkbox" data-key="r12"> 03 · 3.10 — Interface vs type للـ performance (interfaces cached، intersections لأ)</label>
+    <label><input type="checkbox" data-key="r13"> 03 · 3.10 — <code>--generateTrace</code> لتحليل الـ slow types</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/">Announcing TypeScript 7.0 — side-by-side setup, API status, flags</a></li>
+    <li><a href="https://github.com/typescript-eslint/typescript-eslint/issues/10940">typescript-eslint #10940 — tracking TS 7 support</a></li>
+    <li><a href="https://github.com/microsoft/TypeScript/wiki/Performance">TypeScript wiki — Performance</a></li>
+    <li><a href="https://github.com/microsoft/TypeScript/wiki/Performance-Tracing">TypeScript wiki — Performance Tracing</a></li>
+    <li><a href="https://www.typescriptlang.org/docs/handbook/project-references.html">TypeScript Handbook — Project References</a></li>
+    <li><a href="https://github.com/microsoft/typescript-analyze-trace">microsoft/typescript-analyze-trace</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./09-typescript-react.html"><small>← Previous</small>09 · TS with React</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./11-conditional-mapped-types.html"><small>Next →</small>11 · Conditional &amp; Mapped Types</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
