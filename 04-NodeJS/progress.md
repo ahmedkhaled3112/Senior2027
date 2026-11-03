@@ -1,7 +1,7 @@
 <!-- AUTO:START -->
 # 04 — Node.js — Progress
 
-> آخر تحديث: 2026-11-01 · شغّل `node _tools/update-progress.js` بعد أي تعديل.
+> آخر تحديث: 2026-11-03 · شغّل `node _tools/update-progress.js` بعد أي تعديل.
 
 **الإجمالي:** 0 / 190 بند · **0%**
 
@@ -20,8 +20,6 @@
 _لسه مفيش دروس. أول درس بيتعمل بـ `_template/lesson.html` ويتحط في `04-NodeJS/lessons/`._
 
 <!-- AUTO:END -->
-
-
 
 ## ملاحظاتي (يدوي — مش بيتمسح)
 

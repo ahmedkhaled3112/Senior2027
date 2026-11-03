@@ -66,11 +66,14 @@ function listLessons(dir) {
   if (!fs.existsSync(ldir)) return [];
   return fs
     .readdirSync(ldir)
-    .filter((f) => f.endsWith(".html"))
+    .filter((f) => /^\d{2}-.*\.html$/.test(f)) // lesson files only, not index.html
     .sort()
     .map((f) => {
       const html = fs.readFileSync(path.join(ldir, f), "utf8");
-      const t = (html.match(/<title>([^<]*)<\/title>/i) || [, f])[1].trim();
+      const t = (html.match(/<title>([^<]*)<\/title>/i) || [, f])[1]
+        .replace(/\s+—\s+\d{2}\s.*$/, "") // drop the " — 01 CS Fundamentals" suffix
+        .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+        .trim();
       const level = (html.match(/<meta name="level" content="([^"]*)"/i) || [, ""])[1];
       const time = (html.match(/<meta name="time" content="([^"]*)"/i) || [, ""])[1];
       return { file: f, title: t, level, time };
@@ -81,7 +84,8 @@ function replaceAuto(existing, autoBlock, fallbackTail) {
   if (existing && existing.includes(AUTO_START) && existing.includes(AUTO_END)) {
     const a = existing.indexOf(AUTO_START);
     const b = existing.indexOf(AUTO_END) + AUTO_END.length;
-    return existing.slice(0, a) + autoBlock + existing.slice(b);
+    // Exactly one blank line after the marker, so repeated runs don't pile up newlines in the manual part
+    return existing.slice(0, a) + autoBlock.trimEnd() + "\n\n" + existing.slice(b).replace(/^\s+/, "");
   }
   return autoBlock + "\n" + fallbackTail;
 }
