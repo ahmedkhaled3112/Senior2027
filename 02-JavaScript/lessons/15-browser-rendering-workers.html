@@ -1,0 +1,2314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Browser Internals: Rendering, Observers &amp; Workers — 02 JavaScript</title>
+<meta name="section" content="02-JavaScript">
+<meta name="level" content="🟡 → 🔴">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">02 · JavaScript</a></span>
+    <span>·</span>
+    <span>Lesson 15 / 20</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+<!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Browser Internals: Rendering, Observers &amp; Workers</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 15 of 20 — 02 JavaScript</p>
+    <div class="meta">
+      <span class="chip">🟡 → 🔴</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Chrome 156 · TypeScript strict · Node 22+</span>
+      <span class="chip">Prereq: 08 Event Loop, 14 DOM &amp; Events</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>02 · 2.7 — Observers: <code>IntersectionObserver</code> (lazy loading، infinite scroll)، <code>MutationObserver</code>، <code>ResizeObserver</code></li>
+        <li>02 · 2.7 — Web Workers: offload CPU work، <code>postMessage</code>، إيه اللي مش متاح جواه (DOM)</li>
+        <li>02 · 2.7 — Service Workers كمفهوم (offline، caching، PWA)</li>
+        <li>02 · 2.7 — <code>requestAnimationFrame</code> و <code>requestIdleCallback</code></li>
+        <li>02 · 3.5 — Rendering pipeline: parse HTML → DOM، parse CSS → CSSOM → render tree → layout → paint → composite</li>
+        <li>02 · 3.5 — Reflow vs repaint: إيه اللي بيسبب كل واحد، layout thrashing (قراءة وكتابة الـ layout في loop) وإزاي تتجنبه</li>
+        <li>02 · 3.5 — Critical rendering path: render-blocking CSS، parser-blocking JS، <code>async</code> vs <code>defer</code> vs <code>type="module"</code></li>
+        <li>02 · 3.5 — <code>requestAnimationFrame</code> للـ animations والـ 16ms budget</li>
+        <li>02 · 3.5 — Compositor layers و <code>will-change</code>، <code>transform</code> و <code>opacity</code> ليه رخاص</li>
+        <li>02 · 3.5 — Long tasks و الـ main thread، وتقيسهم بـ Performance tab</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — The rendering pipeline</a></li>
+      <li><a href="#p2">Part 2 — Reflow vs repaint &amp; layout thrashing</a></li>
+      <li><a href="#p3">Part 3 — The critical rendering path</a></li>
+      <li><a href="#p4">Part 4 — Frames, rAF &amp; compositor layers</a></li>
+      <li><a href="#p5">Part 5 — Long tasks</a></li>
+      <li><a href="#p6">Part 6 — Observers</a></li>
+      <li><a href="#p7">Part 7 — Web Workers &amp; Service Workers</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>"The page feels slow" is the vaguest bug you'll get, and this lesson is how you turn it into a specific one. A backend engineer can reason about a slow query because they know what the database does. The browser deserves the same model: which step of the pipeline is expensive, what's blocking the main thread, why a chart stutters while a CSS spinner stays smooth, why an analytics tag delayed first paint by three seconds. Core Web Vitals (LCP, INP) affect search ranking and revenue, and "what happens between typing a URL and seeing pixels?" is a staple senior interview question.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>"الصفحة تقيلة" أكتر bug مبهم ممكن يوصلك، والدرس ده هو اللي بيحوّله لـ bug محدد. الـ backend engineer بيفكر في query بطيئة لأنه عارف الـ database بتعمل إيه. والـ browser يستاهل نفس الـ model: أنهي خطوة في الـ pipeline غالية، إيه اللي قافل الـ main thread، ليه الـ chart بيقطّع والـ CSS spinner ناعم، وليه analytics tag أخّر أول paint 3 ثواني. والـ Core Web Vitals (LCP و INP) بتأثر على ترتيب البحث والفلوس، و"إيه اللي بيحصل من ساعة ما تكتب URL لحد ما تشوف pixels؟" سؤال ثابت في interviews السنيور.</p>
+  </section>
+
+  <div class="callout ok">
+    <b>How these examples were run, and what couldn't be</b>
+    Everything ran in real headless Chrome 156 on Windows over the DevTools Protocol (CDP), with no virtual time, so timers are real. Counts of Layout and Paint come from Chrome's own trace events and metrics, not from guesses. The machine was loaded and <code>--disable-gpu</code> was on, so milliseconds are approximate (≈): trust counts and ratios. <b>Not exercised headlessly:</b> the Performance tab's UI (the same trace data was read through CDP instead), a real GPU and real phone hardware, a PWA install prompt, and push notifications. "Offline" means the server stopped answering, not a real network drop. Browser support claims come from MDN, because only Chrome was run. To run the page demos yourself, put these files next to <code>dev-server.ts</code> from <a href="./14-dom-events-fetch-storage.html">lesson 14</a> and open <code>?demo=name</code>.
+    <div class="ar-note">كل حاجة اشتغلت في Chrome 156 headless حقيقي على Windows عن طريق DevTools Protocol (CDP)، من غير virtual time، يعني الـ timers حقيقية. أعداد الـ Layout والـ Paint جاية من trace events و metrics بتاعة Chrome نفسه، مش تخمين. الجهاز كان عليه ضغط و<code>--disable-gpu</code> كان شغال، فالـ milliseconds تقريبية (≈)، واعتمد على الأعداد والنِسَب. <b>اللي ماتجربش في الـ headless:</b> واجهة الـ Performance tab (قريت نفس بيانات الـ trace عن طريق CDP بدلها)، و GPU حقيقي وموبايل حقيقي، و PWA install prompt، و push notifications. و"offline" هنا معناها إن السيرفر بطّل يرد، مش انقطاع شبكة حقيقي. ومعلومات دعم الـ browsers من MDN لأن Chrome بس هو اللي اشتغل. ولو عايز تشغّل الأمثلة بنفسك، حط الملفات جنب <code>dev-server.ts</code> من <a href="./14-dom-events-fetch-storage.html">الدرس 14</a> وافتح <code>?demo=name</code>.</div>
+  </div>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — The rendering pipeline <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — مراحل الـ rendering</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Turning bytes into pixels takes a fixed sequence of steps, and <b>every step feeds the next</b>, so the earlier a change enters, the more work follows it:</p>
+    <ul>
+      <li><b>HTML → DOM:</b> the parser builds the tree incrementally as bytes arrive.</li>
+      <li><b>CSS → CSSOM:</b> stylesheets are parsed into a rule tree. Unlike HTML, it isn't usable until complete, since a later rule can override an earlier one.</li>
+      <li><b>Style / render tree:</b> DOM plus CSSOM gives each <em>visible</em> node its final styles. <code>display: none</code> nodes are left out entirely; <code>visibility: hidden</code> nodes stay in, occupying space.</li>
+      <li><b>Layout (reflow):</b> computes every box's geometry. It's usually the most expensive step, because one box can affect many others.</li>
+      <li><b>Paint:</b> records the draw commands: text, colours, borders, shadows.</li>
+      <li><b>Composite:</b> layers are rasterized and combined into the final frame on the <b>compositor thread</b>, separate from the main thread where your JS runs.</li>
+    </ul>
+    <p>The table below isn't copied from a reference. It's Chrome's own trace, counted while each kind of change repeated for 60 frames. Three levels show up clearly: <code>width</code> and <code>left</code> re-run layout and paint; <code>background-color</code> skips layout but paints; <code>transform</code> and <code>opacity</code> skip both. And a CSS <code>@keyframes</code> transform needed almost no main-thread work in a full second.</p>
+  </section>
+
+<pre class="diagram">
+  HTML --parse--&gt; DOM ----+
+                          +--&gt; Style --&gt; Layout --&gt; Paint --&gt; Composite --&gt; pixels
+  CSS  --parse--&gt; CSSOM --+    (render    (reflow)            (compositor
+                                tree)                          thread)
+
+  What a change re-runs:
+  width, left, font-size   Style  Layout  Paint  Composite
+  color, background        Style          Paint  Composite
+  transform, opacity       Style                 Composite   (JS-driven)
+  transform (CSS anim)                           Composite   (no main thread)
+</pre>
+  <div class="ar-note">كل مرحلة بتغذي اللي بعدها: الـ DOM والـ CSSOM بيتجمعوا في الـ style، وبعدها layout، paint، composite. وتحت: تغيير <code>width</code> بيعيد كل حاجة من الـ style، و<code>color</code> بيعدّي فوق الـ layout، و<code>transform</code> و<code>opacity</code> من JS بيعدّوا فوق الـ layout والـ paint، و animation بـ CSS على <code>transform</code> مش محتاج الـ main thread أصلًا.</div>
+
+<pre data-file="pipeline-animate.ts"><code class="language-typescript">// اختار نوع التغيير من الـ URL، زي ⁦?change=width (⁩القيم في writers تحت، و css-transform و css-left)
+const change = new URLSearchParams(location.search).get("change") ?? "width";
+
+const style = document.createElement("style");
+style.textContent = `
+  #card { position: absolute; left: 10px; top: 10px; width: 200px; height: 100px; background: #2563eb; color: #fff; }
+  #card.hinted { will-change: transform, opacity; }
+  @keyframes slide { to { transform: translateX(300px); } }
+  @keyframes slide-left { to { left: 300px; } }
+  #card.css-transform { animation: slide 1s linear infinite; }
+  #card.css-left { animation: slide-left 1s linear infinite; }
+`;
+document.head.append(style);
+
+const card = document.createElement("div");
+card.id = "card";
+card.textContent = "Order #1001";
+document.body.append(card);
+
+// باقي الصفحة: عشان الـ layout يبقى ليه تكلفة حقيقية
+for (let i = 0; i &lt; 200; i++) {
+  const row = document.createElement("div");
+  row.textContent = `row ${i}`;
+  document.body.append(row);
+}
+
+// كل نوع تغيير بيتكرر مرة في كل frame
+const writers: Record&lt;string, (i: number) =&gt; void&gt; = {
+  width: (i) =&gt; { card.style.width = `${200 + (i % 40)}px`; },
+  left: (i) =&gt; { card.style.left = `${10 + i}px`; },
+  background: (i) =&gt; { card.style.backgroundColor = `rgb(${(i * 3) % 255},80,200)`; },
+  transform: (i) =&gt; { card.style.transform = `translateX(${i}px)`; },
+  "transform-hinted": (i) =&gt; { card.style.transform = `translateX(${i}px)`; },
+  "opacity-hinted": (i) =&gt; { card.style.opacity = String(0.4 + (i % 50) / 100); },
+};
+
+if (change.endsWith("-hinted")) card.classList.add("hinted");
+if (change.startsWith("css-")) card.classList.add(change);
+
+// الـ runner بينادي الـ function دي وهو بيسجّل trace
+(window as unknown as { run: () =&gt; Promise&lt;void&gt; }).run = async () =&gt; {
+  const write = writers[change];
+  if (!write) {
+    // الـ CSS animation مش محتاجة أي JS: بنستنى ثانية بس
+    await new Promise((r) =&gt; setTimeout(r, 1_000));
+    return;
+  }
+  for (let i = 1; i &lt;= 60; i++) {
+    write(i);
+    await new Promise(requestAnimationFrame);
+  }
+};
+
+export {};
+</code></pre>
+
+<pre><code class="language-plaintext">change             UpdateLayoutTree  Layout  PrePaint  Paint  Commit
+width                    59            59       60      118     60
+left                     59            59       60      118     60
+background               59             0       60      118     61
+transform                59             1       60        2     60
+transform-hinted         59             0       60        0     60
+opacity-hinted           59             0       60        0     60
+css-transform             2             0        1        0      1
+css-left                 60            60       60      120     60
+</code></pre>
+  <div class="ar-note">الأعداد على 60 frame (وآخر سطرين على ثانية من غير أي JS). <code>UpdateLayoutTree</code> هو الـ style recalc. الـ <code>Paint</code> بيتسجل مرتين في الـ frame في الـ trace ده، فاقراه كـ "حصل ولا لأ" مش كعدد مظبوط. <code>width</code> و<code>left</code>: layout و paint في كل frame. <code>background</code>: paint بس. <code>transform</code> من غير hint: paint مرتين في الأول بس. مع <code>will-change</code>: صفر. و<code>css-transform</code>: الـ main thread تقريبًا ماشتغلش، بينما <code>css-left</code> شغّله في كل frame.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p>The render tree is measurable too. CDP reports <code>LayoutObjects</code>, roughly the size of the render tree. With 2,000 cards, hiding them with <code>display: none</code> removed them from the render tree, while <code>visibility: hidden</code> kept every one.</p>
+  </section>
+
+  <table>
+    <tr><th>Container style</th><th>DOM nodes</th><th>LayoutObjects</th><th><code>offsetHeight</code></th></tr>
+    <tr><td>visible</td><td>6,020</td><td>6,009</td><td>36,000</td></tr>
+    <tr><td><code>visibility: hidden</code></td><td>6,020</td><td>6,009</td><td>36,000</td></tr>
+    <tr><td><code>display: none</code></td><td>6,020</td><td>8</td><td>0</td></tr>
+  </table>
+  <div class="ar-note">
+    <ul>
+      <li><b>ظاهر:</b> 6,020 node في الـ DOM و 6,009 layout object، وارتفاع 36,000.</li>
+      <li><b><code>visibility: hidden</code>:</b> نفس الأرقام بالظبط: مش باين، بس لسه بياخد مكان وليه تكلفة layout.</li>
+      <li><b><code>display: none</code>:</b> الـ DOM زي ما هو، بس الـ layout objects نزلت لـ 8 والارتفاع 0: خرج من الـ render tree خالص.</li>
+    </ul>
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>تحويل الـ bytes لـ pixels بيمشي في خطوات ثابتة، و<b>كل خطوة بتغذي اللي بعدها</b>، فكل ما التغيير يدخل بدري، الشغل اللي وراه بيبقى أكتر:</p>
+    <ul>
+      <li><b>HTML ← DOM:</b> الـ parser بيبني الشجرة حتة حتة مع وصول الـ bytes.</li>
+      <li><b>CSS ← CSSOM:</b> الـ stylesheets بتتحول لشجرة rules. وبعكس الـ HTML، مينفعش تتستخدم غير لما تكمل، لأن rule جاية ممكن تغيّر rule قبلها.</li>
+      <li><b>الـ style والـ render tree:</b> الـ DOM مع الـ CSSOM بيدّوا كل node <em>ظاهر</em> الـ styles النهائية بتاعته. الـ <code>display: none</code> بيخرج خالص، و<code>visibility: hidden</code> بيفضل وبياخد مكان.</li>
+      <li><b>الـ layout (reflow):</b> بيحسب مكان وحجم كل box. غالبًا أغلى خطوة، لأن box واحد ممكن يأثر على كتير غيره.</li>
+      <li><b>الـ paint:</b> بيسجّل أوامر الرسم: النص، الألوان، الـ borders، الـ shadows.</li>
+      <li><b>الـ composite:</b> الـ layers بتترسم وتتجمع في الـ frame النهائي على <b>compositor thread</b>، منفصل عن الـ main thread اللي الـ JS بتاعك شغال عليه.</li>
+    </ul>
+    <p>الجدول مش منقول من مرجع، ده الـ trace بتاع Chrome نفسه، متعدّ وكل نوع تغيير بيتكرر 60 frame. وبان 3 مستويات: <code>width</code> و<code>left</code> بيعيدوا layout و paint، و<code>background-color</code> بيعدّي فوق الـ layout بس بيعمل paint، و<code>transform</code> و<code>opacity</code> بيعدّوا فوق الاتنين. و<code>@keyframes</code> على <code>transform</code> كان محتاج شغل main thread شبه معدوم طول ثانية كاملة. والـ render tree كمان بيتقاس: CDP بيقول عدد <code>LayoutObjects</code>، و 2000 كارت بـ <code>display: none</code> خرجوا منه، و<code>visibility: hidden</code> سابهم كلهم.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو بتعمل animation لـ sidebar بيفتح في dashboard: تغيير <code>width</code> بيعيد layout للصفحة كلها في كل frame وفيها جدول فيه آلاف الصفوف، و<code>transform: translateX()</code> مش بيلمس الـ layout. ونفس الـ model بيجاوب "أخفي الـ tab ده إزاي؟": <code>display: none</code> لو عايز توفر تكلفة الـ layout. ولو <code>visibility: hidden</code> على جدول ضخم، التكلفة لسه موجودة والـ user مش شايفه.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Walk me through what happens from receiving the HTML to pixels on screen." → Parse HTML into the DOM and CSS into the CSSOM; combine them into the render tree of visible nodes; layout computes geometry; paint records draw commands; the compositor rasterizes layers and combines them on its own thread. Then the part that shows seniority: a change re-enters at a specific step, so <code>width</code> costs layout and paint, <code>color</code> costs paint, and <code>transform</code> can stay on the compositor.
+    <div class="ar-note">"احكيلي إيه اللي بيحصل من استلام الـ HTML لحد الـ pixels على الشاشة." ← الـ HTML بيتحول لـ DOM والـ CSS لـ CSSOM، بيتجمعوا في render tree فيه العناصر الظاهرة، والـ layout بيحسب الأماكن، والـ paint بيسجل أوامر الرسم، والـ compositor بيرسم الـ layers ويجمعها على thread لوحده. والجزء اللي بيبيّن إنك سنيور: كل تغيير بيدخل من خطوة معينة، فـ <code>width</code> بيكلف layout و paint، و<code>color</code> بيكلف paint، و<code>transform</code> ممكن يفضل على الـ compositor.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Reflow vs repaint &amp; layout thrashing <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — الـ reflow والـ repaint والـ layout thrashing</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Reflow</b> recomputes geometry, triggered by anything that changes size or position: <code>width</code>, <code>margin</code>, adding nodes, changing text, fonts loading. <b>Repaint</b> redraws without moving anything: <code>color</code>, <code>background</code>, <code>visibility</code>. Reflow normally implies repaint too.</p>
+    <p>Normally the browser batches: your writes only mark layout as dirty, and it recalculates once before the next frame. <b>A read breaks the batching.</b> If you ask for a geometry value while layout is dirty, the browser has to recalculate right now to give you a correct answer. That's a <b>forced synchronous layout</b>. Doing it in a loop is <b>layout thrashing</b>: write, read, recalculate, for every element.</p>
+    <p>On the 2,000-card dashboard below, <code>LayoutCount</code> came to 14,011 over 7 rounds each of both versions: 2,000 layouts per thrashing round, one per batched round. Time followed: ≈5.8 seconds vs ≈17 ms per round, around 346× (an earlier run on the same machine gave 256×, so read it as "a few hundred times"). The fix changes no logic at all. It only moves the reads ahead of the writes.</p>
+  </section>
+
+<pre data-file="layout-thrash.ts"><code class="language-typescript">// الـ dashboard: 2,000 كارت في grid، وكل كارت جواه رقم و chart bar
+const style = document.createElement("style");
+style.textContent = `
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+  .card { border: 1px solid #ccc; padding: 8px; font: 14px system-ui; }
+  .bar { background: #2563eb; height: 8px; }
+`;
+document.head.appendChild(style);
+
+const grid = document.createElement("div");
+grid.className = "grid";
+grid.innerHTML = Array.from(
+  { length: 2_000 },
+  (_, i) =&gt; `&lt;div class="card"&gt;&lt;b&gt;Tenant ${i}&lt;/b&gt;&lt;div&gt;Revenue ${i * 37} EGP&lt;/div&gt;&lt;div class="bar"&gt;&lt;/div&gt;&lt;/div&gt;`,
+).join("");
+document.body.appendChild(grid);
+
+const bars = [...grid.querySelectorAll&lt;HTMLElement&gt;(".bar")];
+const ratio = (i: number, round: number) =&gt; 0.2 + (((i + round) * 7) % 80) / 100;
+
+// ❌ قراءة ثم كتابة جوه نفس الـ loop: كل قراءة بتلاقي الـ layout متوسّخ من الكتابة اللي قبلها
+function thrashing(round: number): void {
+  bars.forEach((bar, i) =&gt; {
+    const width = bar.parentElement!.clientWidth;
+    bar.style.width = `${Math.round(width * ratio(i, round))}px`;
+  });
+}
+
+// ✅ اقرا كله الأول، وبعدين اكتب كله: layout واحد بس
+function batched(round: number): void {
+  const widths = bars.map((bar) =&gt; bar.parentElement!.clientWidth);
+  bars.forEach((bar, i) =&gt; {
+    bar.style.width = `${Math.round(widths[i]! * ratio(i, round))}px`;
+  });
+}
+
+const median = (xs: number[]) =&gt; [...xs].sort((a, b) =&gt; a - b)[Math.floor(xs.length / 2)]!;
+
+function bench(fn: (round: number) =&gt; void): number {
+  const runs: number[] = [];
+  for (let round = 1; round &lt;= 7; round++) {
+    const t0 = performance.now();
+    fn(round);
+    // القراءة دي بتحسب الـ layout الأخير في الاتنين، عشان المقارنة تبقى عادلة
+    void grid.offsetHeight;
+    runs.push(performance.now() - t0);
+  }
+  return median(runs);
+}
+
+const slow = bench(thrashing);
+const fast = bench(batched);
+console.log(`thrashing ${slow.toFixed(0)} ms | batched ${fast.toFixed(1)} ms | ratio x${(slow / fast).toFixed(0)}`);
+
+export {};
+</code></pre>
+
+<pre><code class="language-plaintext">thrashing 5843 ms | batched 16.9 ms | ratio x346
+LayoutCount=14011 RecalcStyleCount=14010
+</code></pre>
+  <div class="ar-note">السطر الأول: الـ thrashing حوالي 5.8 ثانية للفة الواحدة ضد حوالي 17ms. السطر التاني من CDP على الـ 14 لفة كلها: 7 لفات thrashing في كل واحدة 2000 layout، و 7 لفات batched في كل واحدة layout واحد، يعني 14,007 layout، والـ 4 الزيادة من تحميل الصفحة.</div>
+
+<pre class="diagram">
+  Thrashing: every read forces the layout the last write dirtied
+
+    write  read  write  read  write  read
+           [L]          [L]          [L]     ...2,000 layouts
+
+  Batched: all reads, then all writes
+
+    read read read ... write write write  [L]   ...1 layout
+</pre>
+  <div class="ar-note">فوق: كل قراءة بتلاقي الـ layout متوسّخ من الكتابة اللي قبلها، فبتجبر layout (<code>[L]</code>)، فبقوا 2000 layout. تحت: القراءات كلها الأول على layout نضيف، وبعدها الكتابات كلها، فـ layout واحد في الآخر.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Which reads force layout?</b> Measured here: write a width, read something, 100 times. Reading style properties or text is free. Geometry reads each force a layout. Note <code>getComputedStyle</code> depends on the property: <code>.color</code> forced style recalculation only, while <code>.width</code> forced layout. The rule isn't "never read". A read on a clean layout is cheap; it's the read right after a write that costs.</p>
+  </section>
+
+<pre><code class="language-typescript">// الكود ده اتكرر لكل قراءة في الجدول، مع تغيير السطر التاني بس
+const el = document.getElementById("box")!;
+for (let i = 0; i &lt; 100; i++) {
+  el.style.width = `${100 + i}px`;
+  void el.offsetWidth;
+}
+</code></pre>
+
+  <table>
+    <tr><th>Read after the write</th><th>Layouts (of 100)</th><th>Style recalcs</th></tr>
+    <tr><td><code>el.style.width</code>, <code>el.textContent</code>, <code>el.dataset.x</code></td><td>0</td><td>1</td></tr>
+    <tr><td><code>getComputedStyle(el).color</code></td><td>1</td><td>100</td></tr>
+    <tr><td><code>offsetWidth</code>, <code>offsetHeight</code>, <code>clientWidth</code>, <code>scrollHeight</code></td><td>100</td><td>100</td></tr>
+    <tr><td><code>getBoundingClientRect()</code>, <code>getComputedStyle(el).width</code></td><td>100</td><td>100</td></tr>
+    <tr><td><code>el.innerText</code>, <code>window.scrollY</code></td><td>100</td><td>100</td></tr>
+  </table>
+  <div class="ar-note">
+    <ul>
+      <li><b><code>el.style.width</code> و<code>el.textContent</code> و<code>el.dataset.x</code>:</b> ببلاش، صفر layout.</li>
+      <li><b><code>getComputedStyle(el).color</code>:</b> جبر style recalc في كل لفة، بس مش layout.</li>
+      <li><b><code>offsetWidth</code> و<code>offsetHeight</code> و<code>clientWidth</code> و<code>scrollHeight</code>:</b> layout في كل قراءة.</li>
+      <li><b><code>getBoundingClientRect()</code> و<code>getComputedStyle(el).width</code>:</b> layout في كل قراءة.</li>
+      <li><b><code>el.innerText</code> و<code>window.scrollY</code>:</b> layout في كل قراءة، ودول اللي بيفاجئوا الناس. <code>innerText</code> محتاج الـ layout عشان يعرف إيه الظاهر، وده فرقه عن <code>textContent</code>.</li>
+    </ul>
+    <p>القائمة الكاملة في gist بتاع Paul Irish في المصادر.</p>
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>reflow</b> بيعيد حساب الأماكن، وبيحصل مع أي حاجة بتغيّر الحجم أو المكان: <code>width</code>، <code>margin</code>، إضافة nodes، تغيير النص، تحميل الخطوط. الـ <b>repaint</b> بيعيد الرسم من غير تحريك: <code>color</code>، <code>background</code>، <code>visibility</code>. والـ reflow عادة بييجي معاه repaint.</p>
+    <p>الطبيعي إن الـ browser بيجمّع: الكتابات بتعلّم الـ layout إنه متوسّخ بس، وبيحسبه مرة واحدة قبل الـ frame الجاي. <b>القراءة هي اللي بتكسر التجميع:</b> لو طلبت قيمة geometry والـ layout متوسّخ، الـ browser لازم يحسب حالًا عشان يديك إجابة صح. ده اسمه <b>forced synchronous layout</b>. ولو حصل في loop يبقى <b>layout thrashing</b>: كتابة، قراءة، إعادة حساب، لكل عنصر.</p>
+    <p>على الـ dashboard بتاع الـ 2000 كارت، <code>LayoutCount</code> طلع 14,011 على 7 لفات من كل نسخة: 2000 layout في لفة الـ thrashing وواحد في لفة الـ batched. والوقت مشي معاه: حوالي 5.8 ثانية ضد حوالي 17ms للفة، يعني حوالي 346 مرة (وتجربة قبلها على نفس الجهاز طلّعت 256، فاقراها "كام مئة مرة"). والحل مش بيغيّر أي منطق، بس بينقل القراءات قبل الكتابات.</p>
+    <p><b>أنهي قراءات بتجبر layout؟</b> قسناها هنا: كتابة width وقراءة حاجة، 100 مرة. قراءة الـ style أو النص ببلاش، وقراءات الـ geometry كل واحدة بتجبر layout. و<code>getComputedStyle</code> حسب الـ property: <code>.color</code> جبر style recalc بس، و<code>.width</code> جبر layout. والقاعدة مش "متقراش خالص". القراءة على layout نضيف رخيصة، اللي غالي هي القراءة اللي جاية بعد كتابة على طول.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      <code>useLayoutEffect</code> في React بيقيس عناصر ويعدّل عليها في list، أو كود "خلي كل الكروت نفس الارتفاع" بيشتغل مع كل resize. لو لقيت في Performance tab شريط Layout كبير عليه علامة حمرا و"Forced reflow"، دور على قراءة geometry جوه loop كتابة. ونفس الشكل بيظهر في jQuery plugins قديمة وفي مكتبات charts، وغالبًا مش بتبان غير لما الـ data تكبر في production.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: batching across components</b>
+    Inside one function, reorder the code. Across unrelated components you can't, so schedule writes in <code>requestAnimationFrame</code> and keep reads before them (the idea behind the fastdom library). The cost is a frame of delay and a less direct flow, so reach for it only when profiling shows forced layouts.
+    <div class="ar-note">جوه function واحدة، رتّب الكود وخلاص. بين components مالهاش علاقة ببعض مش هتقدر، فأجّل الكتابات لـ <code>requestAnimationFrame</code> وخلي القراءات قبلها (وده أساس فكرة مكتبة fastdom). التكلفة frame تأخير وكود أقل مباشرة، فاستخدمها بس لما الـ profiling يبيّن forced layouts.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — The critical rendering path <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — الـ critical rendering path</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The critical rendering path is the minimum work before the first pixels: HTML, the CSS it needs, and anything blocking those. Two kinds of blocking matter. <b>CSS is render-blocking</b>: the browser won't paint until pending stylesheets arrive, to avoid a flash of unstyled content. <b>A classic script is parser-blocking</b>: the HTML parser stops, because the script might call <code>document.write</code> or query the DOM. And they interact: a script after a pending stylesheet waits for it too, since the script might read computed styles.</p>
+    <p>The lab below serves real delayed files (800 ms CSS, 800 ms JS) so the blocking is unmistakable. Run it and open any scenario, then read the numbers with the snippet.</p>
+  </section>
+
+<pre data-file="crp-lab.ts"><code class="language-typescript">import { createServer } from "node:http";
+
+const body = `&lt;h1&gt;Orders dashboard&lt;/h1&gt;&lt;p&gt;Content the user wants to see.&lt;/p&gt;&lt;div id="footer"&gt;footer&lt;/div&gt;`;
+
+// كل سيناريو: إيه اللي في الـ head، وإيه اللي في آخر الـ body
+const scenarios: Record&lt;string, { head?: string; end?: string }&gt; = {
+  baseline: {},
+  "css-head": { head: `&lt;link rel="stylesheet" href="/slow.css?ms=800"&gt;` },
+  "css-print-swap": { head: `&lt;link rel="stylesheet" href="/slow.css?ms=800" media="print" onload="this.media='all'"&gt;` },
+  "css-then-inline": { head: `&lt;link rel="stylesheet" href="/slow.css?ms=800"&gt;&lt;script&gt;window.inlineAt = performance.now()&lt;/script&gt;` },
+  "sync-head": { head: `&lt;script src="/slow.js?ms=800&amp;name=sync"&gt;&lt;/script&gt;` },
+  "sync-end": { end: `&lt;script src="/slow.js?ms=800&amp;name=sync-end"&gt;&lt;/script&gt;` },
+  "defer": { head: `&lt;script defer src="/slow.js?ms=800&amp;name=defer"&gt;&lt;/script&gt;` },
+  "async": { head: `&lt;script async src="/slow.js?ms=800&amp;name=async"&gt;&lt;/script&gt;` },
+  "module": { head: `&lt;script type="module" src="/slow.js?ms=800&amp;name=module"&gt;&lt;/script&gt;` },
+  "two-sync": { head: `&lt;script src="/slow.js?ms=400&amp;name=A"&gt;&lt;/script&gt;&lt;script src="/slow.js?ms=50&amp;name=B"&gt;&lt;/script&gt;` },
+  "two-defer": { head: `&lt;script defer src="/slow.js?ms=400&amp;name=A"&gt;&lt;/script&gt;&lt;script defer src="/slow.js?ms=50&amp;name=B"&gt;&lt;/script&gt;` },
+  "two-async": { head: `&lt;script async src="/slow.js?ms=400&amp;name=A"&gt;&lt;/script&gt;&lt;script async src="/slow.js?ms=50&amp;name=B"&gt;&lt;/script&gt;` },
+  "two-module": { head: `&lt;script type="module" src="/slow.js?ms=400&amp;name=A"&gt;&lt;/script&gt;&lt;script type="module" src="/slow.js?ms=50&amp;name=B"&gt;&lt;/script&gt;` },
+  // نفس الـ analytics على 3 ثواني، بطرق تحميل مختلفة
+  "analytics-sync": { head: `&lt;script src="/slow.js?ms=3000&amp;name=analytics"&gt;&lt;/script&gt;` },
+  "analytics-defer": { head: `&lt;script defer src="/slow.js?ms=3000&amp;name=analytics"&gt;&lt;/script&gt;` },
+  "analytics-async": { head: `&lt;script async src="/slow.js?ms=3000&amp;name=analytics"&gt;&lt;/script&gt;` },
+  "analytics-after-load": {
+    end: `&lt;script&gt;addEventListener("load", () =&gt; {
+      const s = document.createElement("script");
+      s.src = "/slow.js?ms=3000&amp;name=analytics";
+      document.head.append(s);
+    })&lt;/script&gt;`,
+  },
+};
+
+const server = createServer(async (req, res) =&gt; {
+  const url = new URL(req.url!, "http://localhost");
+  const ms = Number(url.searchParams.get("ms") ?? 0);
+  const noCache = { "cache-control": "no-store" };
+
+  if (url.pathname === "/slow.css") {
+    await new Promise((r) =&gt; setTimeout(r, ms));
+    res.writeHead(200, { "content-type": "text/css", ...noCache });
+    res.end("body { color: #111 }");
+    return;
+  }
+  if (url.pathname === "/slow.js") {
+    await new Promise((r) =&gt; setTimeout(r, ms));
+    res.writeHead(200, { "content-type": "text/javascript", ...noCache });
+    // السكريبت بيسجّل نفسه: اشتغل إمتى، والـ parser كان وصل لفين
+    const name = JSON.stringify(url.searchParams.get("name"));
+    res.end(`(window.order ??= []).push({ name: ${name}, at: Math.round(performance.now()), footerParsed: !!document.getElementById("footer") });`);
+    return;
+  }
+  const scenario = scenarios[url.pathname.slice(1)];
+  if (!scenario) {
+    res.writeHead(404, { "content-type": "text/html" });
+    res.end(Object.keys(scenarios).map((n) =&gt; `&lt;a href="/${n}"&gt;${n}&lt;/a&gt;`).join("&lt;br&gt;"));
+    return;
+  }
+  res.writeHead(200, { "content-type": "text/html; charset=utf-8", ...noCache });
+  res.end(`&lt;!doctype html&gt;&lt;html&gt;&lt;head&gt;&lt;title&gt;lab&lt;/title&gt;${scenario.head ?? ""}&lt;/head&gt;&lt;body&gt;${body}${scenario.end ?? ""}&lt;/body&gt;&lt;/html&gt;`);
+});
+
+server.listen(0, "127.0.0.1", () =&gt; {
+  const { port } = server.address() as { port: number };
+  console.log(`open http://127.0.0.1:${port}/`);
+});
+</code></pre>
+
+<pre data-file="crp-report.js"><code class="language-javascript">// الصق ده في الـ Console بعد ما الصفحة تخلص تحميل
+(() =&gt; {
+  const nav = performance.getEntriesByType("navigation")[0];
+  const fcp = performance.getEntriesByName("first-contentful-paint")[0];
+  return {
+    fcp: Math.round(fcp?.startTime ?? -1),
+    dcl: Math.round(nav.domContentLoadedEventStart),
+    load: Math.round(nav.loadEventStart),
+    inlineAt: window.inlineAt &amp;&amp; Math.round(window.inlineAt),
+    order: window.order,
+  };
+})();
+</code></pre>
+
+<pre><code class="language-plaintext">baseline               FCP=28 DCL=7 load=7
+css-head               FCP=832 DCL=7 load=819
+css-print-swap         FCP=40 DCL=7 load=818
+css-then-inline        FCP=832 DCL=821 load=821 inlineAt=808
+sync-head              FCP=828 DCL=820 load=820  [sync@820/footer=false]
+sync-end               FCP=32 DCL=816 load=816  [sync-end@807/footer=true]
+defer                  FCP=20 DCL=819 load=819  [defer@821/footer=true]
+async                  FCP=32 DCL=7 load=810  [async@812/footer=true]
+module                 FCP=32 DCL=823 load=823  [module@822/footer=true]
+two-sync               FCP=428 DCL=412 load=412  [A@411/footer=false, B@412/footer=false]
+two-defer              FCP=28 DCL=415 load=415  [A@414/footer=true, B@415/footer=true]
+two-async              FCP=28 DCL=8 load=417  [B@71/footer=true, A@417/footer=true]
+two-module             FCP=28 DCL=412 load=412  [A@411/footer=true, B@412/footer=true]
+</code></pre>
+  <div class="ar-note">
+    <p>FCP و DCL و load median بتاع 3 مرات، والـ <code>[...]</code> من آخر مرة، فممكن يختلفوا كام ms. <code>FCP</code> أول حاجة اترسمت، و<code>DCL</code> هو DOMContentLoaded.</p>
+    <ul>
+      <li><b><code>css-head</code>:</b> الـ FCP اتأخر لحوالي 830ms، بس الـ DCL فضل 7ms: الـ CSS بيوقف الرسم مش الـ parser.</li>
+      <li><b><code>css-print-swap</code>:</b> نفس الملف بـ <code>media="print"</code> مابقاش بيوقف الرسم، والـ FCP 40ms.</li>
+      <li><b><code>css-then-inline</code>:</b> الـ inline script استنى الـ CSS لحد حوالي 808ms، فالـ DCL اتأخر كمان.</li>
+      <li><b><code>sync-head</code>:</b> الـ parser وقف، فالرسم والـ DCL اتأخروا، و<code>footer=false</code> لأن الـ DOM لسه ماتبناش.</li>
+      <li><b><code>sync-end</code>:</b> نفس السكريبت في آخر الـ body: الـ FCP 32ms لأن المحتوى اللي قبله اترسم.</li>
+      <li><b><code>defer</code> و<code>module</code>:</b> FCP بدري، بس الـ DCL استناهم.</li>
+      <li><b><code>async</code>:</b> FCP و DCL بدري، بس الـ <code>load</code> استناه.</li>
+      <li><b><code>two-sync</code>:</b> الوقت 412ms مش 450ms: B اتحمّل بالتوازي (preload scanner)، بس اتنفذ بعد A بالترتيب.</li>
+      <li><b><code>two-defer</code> و<code>two-module</code>:</b> بالترتيب. <b><code>two-async</code>:</b> B الأسرع اشتغل الأول عند 71ms، فالترتيب مش مضمون.</li>
+    </ul>
+  </div>
+
+  <table>
+    <tr><th></th><th>Blocks parser while downloading?</th><th>Execution order</th><th>Runs when</th><th>Delays DOMContentLoaded?</th><th>Delays <code>load</code>?</th></tr>
+    <tr><td><code>&lt;script&gt;</code></td><td><b>Yes</b></td><td>Document order</td><td>Immediately, mid-parse</td><td>Yes</td><td>Yes</td></tr>
+    <tr><td><code>defer</code></td><td>No</td><td>Document order</td><td>After parsing, before DCL</td><td>Yes</td><td>Yes</td></tr>
+    <tr><td><code>async</code></td><td>No</td><td><b>Whichever finishes first</b></td><td>As soon as it's downloaded</td><td>No</td><td>Yes</td></tr>
+    <tr><td><code>type="module"</code></td><td>No</td><td>Document order</td><td>Like <code>defer</code></td><td>Yes</td><td>Yes</td></tr>
+    <tr><td><code>type="module" async</code></td><td>No</td><td>Whichever finishes first</td><td>As soon as ready</td><td>No</td><td>Yes</td></tr>
+  </table>
+  <div class="ar-note">
+    <ul>
+      <li><b><code>&lt;script&gt;</code> عادي:</b> بيوقف الـ parser وهو بيتحمّل، بالترتيب، بيتنفذ في نص الـ parsing، وبيأخر DCL و load.</li>
+      <li><b><code>defer</code>:</b> مش بيوقف الـ parser، بالترتيب، بيتنفذ بعد الـ parsing وقبل DCL، وبيأخر DCL و load.</li>
+      <li><b><code>async</code>:</b> مش بيوقف الـ parser، اللي يخلص الأول يشتغل الأول، أول ما يتحمّل، ومش بيأخر DCL بس بيأخر load.</li>
+      <li><b><code>type="module"</code>:</b> زي <code>defer</code> بالظبط من غير ما تكتبها.</li>
+      <li><b><code>type="module" async</code>:</b> زي <code>async</code>، وده اتقاس في تجربة تانية (B عند 69ms و A عند 430ms، والـ DCL 13ms).</li>
+    </ul>
+  </div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>A third-party analytics script</b> is where this bites in production, because you don't control that server. Same script, 3-second response:</p>
+  </section>
+
+<pre><code class="language-plaintext">analytics-sync         FCP=3036 DCL=3015 load=3016  [analytics@3012/footer=false]
+analytics-defer        FCP=20 DCL=3013 load=3013  [analytics@3011/footer=true]
+analytics-async        FCP=24 DCL=6 load=3015  [analytics@3013/footer=true]
+analytics-after-load   FCP=32 DCL=5 load=5
+</code></pre>
+  <div class="ar-note">
+    <ul>
+      <li><b>sync:</b> شاشة بيضا 3 ثواني بسبب server مش بتاعك. لو السيرفر ده علّق، صفحتك بتعلّق معاه.</li>
+      <li><b>defer:</b> الرسم بدري، بس كل الكود اللي مستني <code>DOMContentLoaded</code> اتأخر 3 ثواني.</li>
+      <li><b>async:</b> الرسم و DCL بدري، بس <code>load</code> اتأخر 3 ثواني.</li>
+      <li><b>بعد <code>load</code>:</b> مفيش حاجة اتأخرت، وآخر الأرقام 5ms. التكلفة إن أول pageviews بتتسجل متأخر، أو بتضيع لو الـ user مشي بدري.</li>
+    </ul>
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ critical rendering path هو أقل شغل لازم يحصل قبل أول pixels: الـ HTML، والـ CSS اللي محتاجه، وأي حاجة بتوقفهم. فيه نوعين وقف مهمين: <b>الـ CSS بيوقف الرسم (render-blocking)</b>: الـ browser مش هيرسم لحد ما الـ stylesheets توصل، عشان ميطلعش محتوى من غير styles لحظة. و<b>الـ classic script بيوقف الـ parser (parser-blocking)</b>: الـ HTML parser بيقف، لأن السكريبت ممكن ينادي <code>document.write</code> أو يدور في الـ DOM. وهما بيأثروا على بعض: سكريبت بعد stylesheet لسه بتتحمل بيستناها، لأنه ممكن يقرا computed styles.</p>
+    <p>الـ lab بيبعت ملفات متأخرة بجد (CSS و JS كل واحد 800ms) عشان الوقف يبان بوضوح. شغّله وافتح أي سيناريو واقرا الأرقام بالـ snippet. والجدول فوق بيلخص الفروق: <code>defer</code> هو الاختيار الافتراضي للكود بتاعك، و<code>module</code> بيتصرف زيه من غير ما تكتبها، و<code>async</code> للسكريبتات المستقلة اللي مش معتمدة على ترتيب. والـ <code>load</code> event بيستنى <code>async</code> كمان، وناس كتير فاكرة إنه مالوش تأثير خالص.</p>
+    <p><b>الـ analytics بتاع الطرف التالت</b> هو المكان اللي ده بيوجعك فيه في production، لأنك مش متحكم في السيرفر بتاعهم. ونفس السكريبت برد 3 ثواني عمل الفروق اللي فوق: sync بيدّيك شاشة بيضا، و defer بيأخر كل اللي مستني DCL، و async بيأخر <code>load</code>، وبعد <code>load</code> مش بيأخر حاجة.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ marketing طلب يضيف tag في الـ <code>&lt;head&gt;</code>. بدل "اتفضل"، حطه <code>async</code> على الأقل، ولو مش محتاج أول لحظة حمّله بعد <code>load</code>. وفي Next.js، <code>next/script</code> بـ <code>strategy="afterInteractive"</code> أو <code>"lazyOnload"</code> هو نفس الفكرة. والـ incident الكلاسيكي: موقعك كله بقى شاشة بيضا والسيرفرات سليمة، والسبب script من CDN خارجي بيعلّق، وده اللي اسمه single point of failure من طرف تالت.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "What's the difference between <code>async</code> and <code>defer</code>, and which would you use for an analytics tag?" → Both download without blocking the parser. <code>defer</code> runs in document order after parsing, before DOMContentLoaded. <code>async</code> runs as soon as it's downloaded, in any order. Use <code>defer</code> or modules for your app code. For analytics use <code>async</code> or load it after <code>load</code>. A slow <code>defer</code> delays DOMContentLoaded, and a slow <code>async</code> delays <code>load</code>, so neither is free.
+    <div class="ar-note">"إيه الفرق بين <code>async</code> و<code>defer</code>، وهتستخدم إيه لـ analytics tag؟" ← الاتنين بيتحمّلوا من غير ما يوقفوا الـ parser. <code>defer</code> بيتنفذ بالترتيب بعد الـ parsing وقبل DOMContentLoaded. <code>async</code> بيتنفذ أول ما يتحمّل بأي ترتيب. استخدم <code>defer</code> أو modules لكود التطبيق، وللـ analytics استخدم <code>async</code> أو حمّله بعد <code>load</code>. و<code>defer</code> البطيء بيأخر DOMContentLoaded، و<code>async</code> البطيء بيأخر <code>load</code>، فمفيش واحد فيهم ببلاش.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Frames, rAF &amp; compositor layers <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ frames والـ rAF والـ compositor layers</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>The budget.</b> At 60 Hz the browser has 16.7 ms per frame (8.3 ms at 120 Hz), and that covers your JS plus style, layout and paint. In practice leave a margin. <code>requestAnimationFrame</code> runs your callback once per frame, right before style and layout, so a write there lands in that frame. The order below is measured: microtasks finish first, then a timer, then rAF, with ResizeObserver and IntersectionObserver after layout. (Timer vs rAF depends on where in the frame you are, so don't rely on that pair.) For the wider event loop, see <a href="./08-event-loop-promises.html">lesson 08</a>.</p>
+    <p><b><code>setTimeout</code> for animation is wrong</b> even at 16 ms, because it isn't synchronized with frames. Over 180 frames here, 7 frames got no update (a visible stutter) and 5 got two (work thrown away). rAF got exactly one per frame by construction. It also stops in hidden tabs: with another tab in front, rAF ran <b>0</b> times in 3 seconds, and a 16 ms timer ran 3 times, throttled to about one per second. So animate by elapsed time from rAF's timestamp, never by frame count, or a 120 Hz screen runs your animation at double speed.</p>
+  </section>
+
+<pre class="diagram">
+  One frame at 60 Hz
+  |&lt;---------------------------- 16.7 ms ----------------------------&gt;|
+  | tasks + microtasks | rAF | style | layout | RO, IO | paint | commit |
+       your JS          your  ...... browser ......              |
+                        JS                                       v
+                                         compositor thread: raster + draw
+                                         (keeps going if main thread is busy)
+</pre>
+  <div class="ar-note">في كل frame عندك 16.7ms لكل حاجة: الـ tasks والـ microtasks، وبعدها الـ rAF، وبعدها style و layout، وبعدها ResizeObserver و IntersectionObserver، وبعدها paint و commit. وبعد الـ commit الشغل بيتنقل للـ compositor thread، وده بيكمّل رسم حتى لو الـ main thread مشغول.</div>
+
+<pre data-file="frame-order.ts"><code class="language-typescript">const log: string[] = [];
+
+const card = document.createElement("div");
+card.style.cssText = "width:100px;height:40px;background:#2563eb";
+document.body.appendChild(card);
+
+new ResizeObserver(() =&gt; log.push("ResizeObserver (after layout)")).observe(card);
+new IntersectionObserver(() =&gt; log.push("IntersectionObserver (after layout)")).observe(card);
+
+// بنستنى frame الأول عشان الـ observers يخلصوا أول تقرير ليهم
+await new Promise((r) =&gt; requestAnimationFrame(() =&gt; setTimeout(r, 50)));
+log.length = 0;
+
+setTimeout(() =&gt; log.push("setTimeout(0) (next task)"));
+void Promise.resolve().then(() =&gt; log.push("microtask"));
+requestAnimationFrame(() =&gt; {
+  log.push("rAF (before style and layout)");
+  // الكتابة هنا هتتحسب في نفس الـ frame، والـ RO هيشوفها قبل الـ paint
+  card.style.width = "200px";
+  card.style.marginTop = "2000px";
+  void Promise.resolve().then(() =&gt; log.push("microtask inside rAF"));
+});
+log.push("sync code");
+
+await new Promise((r) =&gt; setTimeout(r, 200));
+console.log(log.join("\n"));
+
+export {};
+</code></pre>
+
+<pre><code class="language-plaintext">sync code
+microtask
+setTimeout(0) (next task)
+rAF (before style and layout)
+microtask inside rAF
+ResizeObserver (after layout)
+IntersectionObserver (after layout)
+</code></pre>
+  <div class="ar-note">الترتيب المتقاس: الكود المتزامن، الـ microtask، الـ timer، الـ rAF، الـ microtask اللي جوه الـ rAF (بيخلص قبل الـ layout)، وبعدها الـ observers بعد الـ layout. الـ timer جه قبل الـ rAF هنا، بس الترتيب بينهم مش مضمون وبيعتمد على توقيت الـ frame.</div>
+
+<pre data-file="raf-vs-timeout.ts"><code class="language-typescript">// بنعدّ كام tick لكل واحد في نفس الفترة، وكام tick وقع في كل frame
+const DURATION = 3_000;
+const end = performance.now() + DURATION;
+
+let ticksInThisFrame = 0;
+const perFrame: number[] = [];
+const rafDeltas: number[] = [];
+let timeoutTicks = 0;
+
+function timeoutLoop(): void {
+  if (performance.now() &gt;= end) return;
+  timeoutTicks++;
+  ticksInThisFrame++;
+  setTimeout(timeoutLoop, 16);
+}
+
+let last = 0;
+function rafLoop(now: DOMHighResTimeStamp): void {
+  if (performance.now() &gt;= end) return;
+  if (last) rafDeltas.push(now - last);
+  last = now;
+  perFrame.push(ticksInThisFrame);
+  ticksInThisFrame = 0;
+  requestAnimationFrame(rafLoop);
+}
+
+timeoutLoop();
+requestAnimationFrame(rafLoop);
+await new Promise((r) =&gt; setTimeout(r, DURATION + 100));
+
+const sorted = [...rafDeltas].sort((a, b) =&gt; a - b);
+const count = (n: number) =&gt; perFrame.filter((x) =&gt; x === n).length;
+console.log({
+  rafPerSecond: Math.round(perFrame.length / (DURATION / 1000)),
+  timeoutPerSecond: Math.round(timeoutTicks / (DURATION / 1000)),
+  medianFrameMs: Number(sorted[Math.floor(sorted.length / 2)]!.toFixed(1)),
+});
+// الـ timeout مش متزامن مع الـ frames: فريمات من غير تحديث، وفريمات بتحديثين واحد منهم ضايع
+console.log({ framesWith0Updates: count(0), framesWith1Update: count(1), framesWith2Plus: perFrame.filter((x) =&gt; x &gt;= 2).length });
+
+export {};
+</code></pre>
+
+<pre><code class="language-plaintext">{"rafPerSecond":60,"timeoutPerSecond":59,"medianFrameMs":16.7}
+{"framesWith0Updates":7,"framesWith1Update":168,"framesWith2Plus":5}
+</code></pre>
+  <div class="ar-note">الرقمين قريبين جدًا (60 و 59 في الثانية)، بس الـ timer مش متزامن: 7 frames من غير تحديث، يعني قطعة باينة، و 5 frames فيها تحديثين، واحد منهم شغل على الفاضي. الـ rAF بطبيعته مرة واحدة في كل frame.</div>
+
+<pre data-file="animate-progress.ts"><code class="language-typescript">// ❌ الحركة بعدد الـ frames: على شاشة 120Hz الشريط بيخلص في نص الوقت
+function animateByFrames(el: HTMLElement, pxPerFrame: number): void {
+  let x = 0;
+  const step = () =&gt; {
+    x += pxPerFrame;
+    el.style.transform = `translateX(${x}px)`;
+    if (x &lt; 300) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+// ✅ الحركة بالوقت: الـ timestamp بتاع الـ rAF هو مرجع الحساب، فالمدة ثابتة على أي شاشة
+function animateByTime(el: HTMLElement, distance: number, durationMs: number): Promise&lt;number&gt; {
+  return new Promise((resolve) =&gt; {
+    let start: number | undefined;
+    let frames = 0;
+    const step = (now: DOMHighResTimeStamp) =&gt; {
+      start ??= now;
+      frames++;
+      const progress = Math.min((now - start) / durationMs, 1);
+      el.style.transform = `translateX(${progress * distance}px)`;
+      if (progress &lt; 1) requestAnimationFrame(step);
+      else resolve(frames);
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+const bar = document.createElement("div");
+bar.style.cssText = "width:40px;height:10px;background:#2563eb;will-change:transform";
+document.body.appendChild(bar);
+
+const t0 = performance.now();
+const frames = await animateByTime(bar, 300, 500);
+console.log({ frames, elapsedMs: Math.round(performance.now() - t0), finalTransform: bar.style.transform });
+
+// الـ cancelAnimationFrame بيلغي الـ frame الجاي، زي clearTimeout بالظبط
+let ran = false;
+const id = requestAnimationFrame(() =&gt; { ran = true; });
+cancelAnimationFrame(id);
+await new Promise((r) =&gt; setTimeout(r, 100));
+console.log("cancelled frame ran:", ran);
+
+void animateByFrames;
+
+export {};
+</code></pre>
+
+<pre><code class="language-plaintext">{"frames":31,"elapsedMs":508,"finalTransform":"translateX(300px)"}
+cancelled frame ran: false
+</code></pre>
+  <div class="ar-note">animation طولها 500ms خلصت في حوالي 508ms و 31 frame، ووصلت للقيمة الصح بالظبط. على شاشة 120Hz هتاخد نفس الوقت بعدد frames أكبر، بعكس <code>animateByFrames</code>. والـ <code>cancelAnimationFrame</code> لغى الـ callback فعلًا.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b><code>requestIdleCallback</code></b> runs low-priority work when the main thread has nothing to do, such as sending analytics or precomputing. The callback gets a deadline: <code>timeRemaining()</code> reached a maximum of 50 ms here, and you stop when it runs out. Without a <code>timeout</code>, a busy page can starve it. In the run below, tasks ran back to back and work waited until the 300 ms timeout forced it (<code>didTimeout</code>). Don't touch the DOM in there, because idle time may land right before the next frame, and writes could force layout. MDN lists rIC as limited availability, so feature-detect and fall back to <code>setTimeout</code>.</p>
+  </section>
+
+<pre data-file="idle-queue.ts"><code class="language-typescript">type AnalyticsEvent = { name: string; orderId: number };
+
+// الـ queue بتتفضى في وقت فراغ الـ main thread، ومن غير ما تعدّي الـ deadline
+function createIdleQueue(process: (e: AnalyticsEvent) =&gt; void, maxWaitMs = 2_000) {
+  const queue: AnalyticsEvent[] = [];
+  let scheduled = false;
+  const stats = { idleCallbacks: 0, processed: 0, forcedByTimeout: 0, maxRemainingMs: 0 };
+
+  function drain(deadline: IdleDeadline): void {
+    scheduled = false;
+    stats.idleCallbacks++;
+    stats.maxRemainingMs = Math.max(stats.maxRemainingMs, deadline.timeRemaining());
+    if (deadline.didTimeout) stats.forcedByTimeout++;
+    // لو الـ timeout ضرب: timeRemaining ممكن تبقى 0، فبنشغّل عنصر واحد على الأقل
+    while (queue.length &amp;&amp; (deadline.timeRemaining() &gt; 1 || deadline.didTimeout)) {
+      process(queue.shift()!);
+      stats.processed++;
+      if (deadline.didTimeout) break;
+    }
+    if (queue.length) schedule();
+  }
+
+  function schedule(): void {
+    if (scheduled) return;
+    scheduled = true;
+    requestIdleCallback(drain, { timeout: maxWaitMs });
+  }
+
+  return {
+    stats,
+    push(e: AnalyticsEvent) { queue.push(e); schedule(); },
+    get pending() { return queue.length; },
+  };
+}
+
+// كل event بياخد حوالي 2ms عشان نقلّد serialization تقيل
+const busyFor = (ms: number) =&gt; { const end = performance.now() + ms; while (performance.now() &lt; end); };
+
+// الحالة الأولى: الـ main thread فاضي
+const q1 = createIdleQueue(() =&gt; busyFor(2));
+for (let i = 0; i &lt; 200; i++) q1.push({ name: "order_viewed", orderId: i });
+const t1 = performance.now();
+while (q1.pending) await new Promise((r) =&gt; setTimeout(r, 20));
+console.log("idle page:", { ...q1.stats, drainedInMs: Math.round(performance.now() - t1) });
+
+// الحالة التانية: tasks ورا بعض طول الوقت، فمفيش idle خالص لمدة ثانية
+const q2 = createIdleQueue(() =&gt; busyFor(2), 300);
+for (let i = 0; i &lt; 5; i++) q2.push({ name: "order_viewed", orderId: i });
+const t2 = performance.now();
+let firstProcessedAt = 0;
+await new Promise&lt;void&gt;((resolve) =&gt; {
+  const channel = new MessageChannel();
+  channel.port1.onmessage = () =&gt; {
+    if (!firstProcessedAt &amp;&amp; q2.stats.processed &gt; 0) firstProcessedAt = performance.now() - t2;
+    if (performance.now() - t2 &gt; 1_000) return resolve();
+    busyFor(5);
+    channel.port2.postMessage(0);
+  };
+  channel.port2.postMessage(0);
+});
+await new Promise((r) =&gt; setTimeout(r, 200));
+console.log("busy page:", { ...q2.stats, pending: q2.pending, firstProcessedAtMs: Math.round(firstProcessedAt) });
+console.log("rIC available:", typeof requestIdleCallback);
+
+export {};
+</code></pre>
+
+<pre><code class="language-plaintext">idle page: {"idleCallbacks":20,"processed":200,"forcedByTimeout":0,"maxRemainingMs":50,"drainedInMs":511}
+busy page: {"idleCallbacks":4,"processed":5,"forcedByTimeout":3,"maxRemainingMs":24.7,"pending":0,"firstProcessedAtMs":309}
+rIC available: function
+</code></pre>
+  <div class="ar-note">في الصفحة الفاضية: 200 event اتعالجوا على 20 idle callback، وأقصى <code>timeRemaining</code> كان 50ms. في الصفحة المشغولة: أول event اتعالج عند حوالي 309ms، يعني الـ timeout (300ms) هو اللي جبره، و3 callbacks جم بـ <code>didTimeout</code>.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Why <code>transform</code> and <code>opacity</code> are cheap.</b> When an element has its own compositor layer, changing these doesn't re-rasterize it: the compositor moves or fades an existing texture on its own thread. The proof that matters most: I blocked the main thread for 1.5 seconds with an animation running. With a <code>transform</code> keyframe animation, the compositor drew <b>90 frames</b> during the freeze, so the animation kept moving. With a <code>left</code> animation it drew <b>0</b>, and the page froze. That's why a spinner can stay smooth while the page is stuck, and why a smooth spinner doesn't prove the page is healthy.</p>
+    <p><b><code>will-change</code> and its cost.</b> <code>will-change: transform</code> asks for a layer in advance. Layers aren't free, since each one holds a texture in memory. On a 500-card page, hinting every card raised layers from 5 to 80 and tile memory from ≈12.1 MB to ≈19.7 MB, about 60% more, while hinting one card cost ≈0.6 MB. Chrome created layers only for part of the page rather than all 500 here. These figures come from software compositing, so real GPU numbers will differ. The rule: hint only the element about to animate, then remove the hint.</p>
+  </section>
+
+<pre><code class="language-css">/* العنصر اللي بيتحرك بس، مش كل الكروت */
+.card:hover { will-change: transform; }
+
+/* بيفضل ماشي على الـ compositor حتى والـ main thread واقف */
+@keyframes slide { to { transform: translateX(300px); } }
+.spinner { animation: slide 1s linear infinite; }
+
+/* بيحتاج layout و paint في كل frame، وبيقف مع الـ main thread */
+@keyframes slide-left { to { left: 300px; } }
+.janky { position: absolute; animation: slide-left 1s linear infinite; }
+</code></pre>
+
+<pre><code class="language-plaintext">main thread blocked 1500 ms     DrawFrame  BeginFrame  Layout  Paint
+css-transform                       90         90         0      0
+css-left                             0         90         1      2
+
+500 cards                       layers   drawing   cc/tile_memory
+no hint                            5        3         12.1 MB
+will-change: transform on all     80       78         19.7 MB
+will-change on 1 card              6        4         12.7 MB
+</code></pre>
+  <div class="ar-note">الجدول الأول: والـ main thread واقف 1.5 ثانية، <code>transform</code> رسم 90 frame و<code>left</code> رسم صفر، رغم إن الاتنين وصلهم 90 <code>BeginFrame</code>. الجدول التاني: <code>will-change</code> على كل الكروت طلّع الـ layers من 5 لـ 80 والـ memory من حوالي 12.1MB لحوالي 19.7MB، وعلى كارت واحد زاد حوالي 0.6MB بس. Chrome عمل 80 layer مش 500. والأرقام دي من software compositing، فعلى GPU حقيقي هتختلف.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الميزانية:</b> على 60Hz عند الـ browser حوالي 16.7ms لكل frame (و 8.3ms على 120Hz)، وده شامل الـ JS بتاعك مع style و layout و paint، فسيب هامش. <code>requestAnimationFrame</code> بيشغّل الـ callback مرة في كل frame، قبل style و layout على طول، فالكتابة جواه بتدخل في نفس الـ frame. والترتيب متقاس فوق. وللـ event loop بشكل أوسع شوف <a href="./08-event-loop-promises.html">الدرس 08</a>.</p>
+    <p><b><code>setTimeout</code> غلط للـ animation</b> حتى لو 16ms، لأنه مش متزامن مع الـ frames. على 180 frame هنا: 7 frames من غير تحديث (قطعة باينة)، و 5 فيها تحديثين (شغل ضايع). والـ rAF كمان بيقف في التابات المخفية: وتاب تاني قدام، الـ rAF اشتغل <b>0</b> مرة في 3 ثواني، والـ timer بتاع 16ms اشتغل 3 مرات بس لأنه اتحدّ لحوالي مرة في الثانية. فحرّك بالوقت المنقضي من الـ timestamp بتاع الـ rAF، مش بعدد الـ frames، وإلا شاشة 120Hz هتشغّل الـ animation بضعف السرعة.</p>
+    <p><b><code>requestIdleCallback</code></b> بيشغّل الشغل قليل الأولوية لما الـ main thread يبقى فاضي، زي بعت analytics أو حسابات مسبقة. الـ callback بياخد deadline: <code>timeRemaining()</code> وصل لأقصاه 50ms هنا، وبتقف لما يخلص. ومن غير <code>timeout</code>، الصفحة المشغولة ممكن تجوّعه: في التجربة الـ tasks كانت ورا بعض، والشغل استنى لحد ما الـ timeout بتاع 300ms جبره (<code>didTimeout</code>). ومتلمسش الـ DOM جواه، لأن وقت الفراغ ممكن ييجي قبل الـ frame الجاي على طول والكتابة ممكن تجبر layout. و MDN كاتبه limited availability، فاعمل feature detection وارجع لـ <code>setTimeout</code> لو مش موجود.</p>
+    <p><b>ليه <code>transform</code> و<code>opacity</code> رخاص؟</b> لما العنصر يبقى ليه compositor layer لوحده، تغييرهم مش بيعيد الرسم: الـ compositor بيحرّك أو يخفّت texture موجودة على الـ thread بتاعه. وأهم إثبات: قفلت الـ main thread 1.5 ثانية والـ animation شغالة. مع <code>transform</code>، الـ compositor رسم <b>90 frame</b> أثناء الوقفة، فالحركة كملت. ومع <code>left</code> رسم <b>0</b> والصفحة اتجمدت. وعشان كده الـ spinner ممكن يفضل ناعم والصفحة واقفة، يعني spinner ناعم مش دليل إن الصفحة سليمة.</p>
+    <p><b><code>will-change</code> وتكلفته:</b> <code>will-change: transform</code> بيطلب layer مقدمًا. والـ layers مش ببلاش لأن كل واحدة بتمسك texture في الـ memory. في صفحة 500 كارت، الـ hint على كل الكروت طلّع الـ layers من 5 لـ 80، والـ tile memory من حوالي 12.1MB لحوالي 19.7MB، يعني حوالي 60% زيادة، وعلى كارت واحد زاد حوالي 0.6MB. و Chrome عمل layers لجزء من الصفحة بس مش الـ 500. والأرقام دي من software compositing، فأرقام الـ GPU الحقيقي هتختلف. القاعدة: حط الـ hint على العنصر اللي هيتحرك دلوقتي بس، وشيله بعد ما يخلص.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      progress bar لرفع ملف أو sidebar بيفتح: استخدم <code>transform</code> مع CSS transition أو rAF بالوقت، مش <code>width</code>. وrIC لبعت events الـ analytics في batches من غير ما تأثر على الـ UI. والغلطة الشائعة في الـ review: <code>* { will-change: transform; }</code> أو على كل كروت الـ list "عشان تبقى أسرع"، وده بياكل memory ولو على موبايل ضعيف ممكن يبوّظ الأداء بدل ما يحسّنه.
+    </div>
+  </section>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Long tasks <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — الـ long tasks</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A <b>long task</b> keeps the main thread busy for 50 ms or longer. While it runs, the browser can't respond to clicks, run other JS, or paint, so the user sees a frozen page. <code>new PerformanceObserver(…).observe({ type: "longtask" })</code> reports them in the field, not just on your laptop.</p>
+    <p><b>Breaking up the work.</b> The cure isn't doing less, it's <b>yielding</b>: do a slice, give the main thread back so input and rendering can happen, then continue. Below, the same calculation over 1,000,000 orders produced one ≈114 ms long task when done at once, and <b>zero</b> when split, with total time about the same (≈121 ms). <code>scheduler.yield()</code> is the purpose-built API, and MDN lists it as limited availability, so fall back to <code>setTimeout</code>. Under DevTools-style 4× CPU throttling, the blocking version took ≈1.1 s, while the chunked one still had zero long tasks. That throttle is your cheapest stand-in for a mid-range phone.</p>
+  </section>
+
+<pre data-file="long-tasks.ts"><code class="language-typescript">type Order = { id: number; total: number; status: "paid" | "pending" };
+
+const orders: Order[] = Array.from({ length: 1_000_000 }, (_, i) =&gt; ({
+  id: i,
+  total: (i * 13) % 997,
+  status: i % 3 ? "paid" : "pending",
+}));
+
+// بنسجّل كل long task: أي task أطول من 50ms على الـ main thread
+const longTasks: number[] = [];
+new PerformanceObserver((list) =&gt; {
+  for (const entry of list.getEntries()) longTasks.push(Math.round(entry.duration));
+}).observe({ type: "longtask", buffered: true });
+
+// الحساب لكل order: ضريبة وتقريب، زي ما بيحصل وقت تجهيز تقرير
+const add = (sum: number, o: Order) =&gt;
+  o.status === "paid" ? sum + Number((o.total * 1.14).toFixed(2)) : sum;
+
+// ❌ الحساب كله في task واحدة
+function blocking(rows: Order[]): number {
+  return rows.reduce(add, 0);
+}
+
+// اليولد: scheduler.yield لو موجود، وإلا setTimeout
+const yieldToMain: () =&gt; Promise&lt;void&gt; =
+  "scheduler" in globalThis &amp;&amp; "yield" in (globalThis as unknown as { scheduler: object }).scheduler
+    ? () =&gt; (globalThis as unknown as { scheduler: { yield(): Promise&lt;void&gt; } }).scheduler.yield()
+    : () =&gt; new Promise((r) =&gt; setTimeout(r));
+
+// ✅ نفس الحساب مقسّم: نرجّع الـ main thread كل حوالي 10ms
+async function chunked(rows: Order[], budgetMs = 10): Promise&lt;number&gt; {
+  let sum = 0;
+  let sliceStart = performance.now();
+  for (let i = 0; i &lt; rows.length; i++) {
+    sum = add(sum, rows[i]!);
+    if (i % 1024 === 0 &amp;&amp; performance.now() - sliceStart &gt; budgetMs) {
+      await yieldToMain();
+      sliceStart = performance.now();
+    }
+  }
+  return sum;
+}
+
+const settle = () =&gt; new Promise((r) =&gt; setTimeout(r, 300));
+function report(label: string, sum: number, ms: number): void {
+  console.log(label.padEnd(9), {
+    sum,
+    totalMs: Math.round(ms),
+    longTasks: longTasks.length,
+    worstMs: longTasks.length ? Math.max(...longTasks) : 0,
+  });
+  longTasks.length = 0;
+}
+
+await settle();
+longTasks.length = 0;
+
+let t0 = performance.now();
+const a = blocking(orders);
+const blockingMs = performance.now() - t0;
+await settle();
+report("blocking", a, blockingMs);
+
+t0 = performance.now();
+const b = await chunked(orders);
+const chunkedMs = performance.now() - t0;
+await settle();
+report("chunked", b, chunkedMs);
+
+export {};
+</code></pre>
+
+<pre><code class="language-plaintext">blocking  {"sum":378476530.97998935,"totalMs":115,"longTasks":1,"worstMs":114}
+chunked   {"sum":378476530.97998935,"totalMs":121,"longTasks":0,"worstMs":0}
+
+with Emulation.setCPUThrottlingRate { rate: 4 }:
+blocking  {"sum":378476530.97998935,"totalMs":1125,"longTasks":1,"worstMs":1127}
+chunked   {"sum":378476530.97998935,"totalMs":547,"longTasks":0,"worstMs":0}
+</code></pre>
+  <div class="ar-note">نفس الـ <code>sum</code> في الحالتين. عادي: long task واحدة حوالي 114ms ضد صفر، والوقت الكلي قريب. مع throttle 4 مرات: حوالي 1.1 ثانية متجمدة ضد صفر long tasks. الرقم ده أعلى من 4 أضعاف وده ضوضاء من الجهاز المشغول، فمتاخدش منه نسبة دقيقة.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>INP (Interaction to Next Paint)</b> is the Core Web Vital this affects: the time from a user's input to the next paint. web.dev counts ≤200 ms as good and &gt;500 ms as poor. The demo below uses real mouse input sent over CDP. The blocking handler scored 608 ms, a clear fail, and the status text couldn't paint until the work ended. The version that updates the UI, waits for a frame, then works in slices reported no interaction above the 16 ms observation threshold, and no long animation frame. <code>long-animation-frame</code> entries are also useful because they attribute slow frames to scripts.</p>
+    <p><b>The Performance tab workflow</b>, which is GUI only and wasn't run here: open DevTools → Performance, set CPU throttling to 4×, record while doing the slow action, then look for red-flagged long tasks on the Main track. Click one and read the Bottom-Up tab for the function responsible; purple Layout blocks with a "Forced reflow" warning point back to Part 2. Fix one thing and record again. Measure with real users too, since your laptop isn't their phone.</p>
+  </section>
+
+<pre data-file="inp-click.ts"><code class="language-typescript">// اختار الوضع من الـ URL: ?mode=blocking أو ⁦?mode=yield⁩، وزرار "Export" بيعمل حساب تقيل عند الضغط
+const mode = new URLSearchParams(location.search).get("mode") ?? "blocking";
+
+const button = document.createElement("button");
+button.id = "export";
+button.textContent = "Export report";
+button.style.cssText = "position:fixed;left:40px;top:40px;width:200px;height:60px";
+const status = document.createElement("div");
+status.style.cssText = "position:fixed;left:40px;top:120px";
+document.body.append(button, status);
+
+const busyFor = (ms: number) =&gt; { const end = performance.now() + ms; while (performance.now() &lt; end); };
+
+// الـ event timing: المدة من الـ input لحد الـ paint اللي بعده، ودي اللي INP بيتحسب منها
+const interactions: { name: string; duration: number; blockedInput: number }[] = [];
+new PerformanceObserver((list) =&gt; {
+  for (const e of list.getEntries() as PerformanceEventTiming[]) {
+    if (e.interactionId) {
+      interactions.push({
+        name: e.name,
+        duration: Math.round(e.duration),
+        blockedInput: Math.round(e.processingStart - e.startTime),
+      });
+    }
+  }
+}).observe({ type: "event", durationThreshold: 16, buffered: true } as PerformanceObserverInit);
+
+// أول interaction بتتسجل دايمًا، حتى لو أسرع من الـ threshold
+let firstInput: { name: string; inputDelay: number } | null = null;
+new PerformanceObserver((list) =&gt; {
+  const e = list.getEntries()[0] as PerformanceEventTiming;
+  firstInput = { name: e.name, inputDelay: Math.round(e.processingStart - e.startTime) };
+}).observe({ type: "first-input", buffered: true });
+
+const longFrames: number[] = [];
+new PerformanceObserver((list) =&gt; {
+  for (const e of list.getEntries()) longFrames.push(Math.round(e.duration));
+}).observe({ type: "long-animation-frame", buffered: true });
+
+button.addEventListener("click", async () =&gt; {
+  if (mode === "blocking") {
+    // ❌ الـ handler كله جوه task واحدة: الـ ⁦"Exporting⁩…" مش هيترسم غير بعد ما يخلص
+    status.textContent = "Exporting…";
+    busyFor(600);
+    status.textContent = "Done";
+  } else {
+    // ✅ حدّث الـ UI الأول، وبعدين ارجع للـ main thread قبل الشغل التقيل
+    status.textContent = "Exporting…";
+    await new Promise((resolve) =&gt; requestAnimationFrame(() =&gt; setTimeout(resolve)));
+    for (let i = 0; i &lt; 60; i++) {
+      busyFor(10);
+      await new Promise((resolve) =&gt; setTimeout(resolve));
+    }
+    status.textContent = "Done";
+  }
+  (window as unknown as { __clicked: boolean }).__clicked = true;
+});
+
+(window as unknown as { __report: () =&gt; unknown }).__report = () =&gt; ({
+  mode,
+  firstInput,
+  statusNow: status.textContent,
+  interactions: interactions.filter((x) =&gt; x.name === "click" || x.name === "pointerup"),
+  longAnimationFrames: longFrames,
+});
+
+export {};
+</code></pre>
+
+<pre><code class="language-plaintext">{"mode":"blocking","firstInput":{"name":"pointerdown","inputDelay":0},"statusNow":"Done","interactions":[{"name":"pointerup","duration":608,"blockedInput":0},{"name":"click","duration":608,"blockedInput":0}],"longAnimationFrames":[606]}
+{"mode":"yield","firstInput":{"name":"pointerdown","inputDelay":1},"statusNow":"Done","interactions":[],"longAnimationFrames":[]}
+</code></pre>
+  <div class="ar-note">في <code>blocking</code>: الـ <code>click</code> أخد 608ms لحد الـ paint اللي بعده، و long animation frame واحد 606ms، وده فوق حد الـ "poor" (500ms). في <code>yield</code>: مفيش interaction فوق 16ms ولا long animation frame، رغم إن الشغل نفسه حوالي 600ms. و<code>inputDelay</code> قريب من 0 في الاتنين لأن الـ thread كان فاضي لحظة الـ click، فالمشكلة في الـ handler نفسه.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>long task</b> هي أي task بتشغل الـ main thread 50ms أو أكتر. وطول ما هي شغالة الـ browser مش هيرد على clicks ولا يشغّل JS تاني ولا يرسم، فالـ user شايف صفحة متجمدة. <code>new PerformanceObserver(…).observe({ type: "longtask" })</code> بيبلّغك عنها عند الـ users الحقيقيين، مش على اللابتوب بتاعك بس.</p>
+    <p><b>تقسيم الشغل:</b> العلاج مش إنك تعمل شغل أقل، العلاج هو الـ <b>yielding</b>: اعمل حتة، ورجّع الـ main thread عشان الـ input والرسم يلحقوا، وبعدين كمّل. نفس الحساب على مليون order طلّع long task واحدة حوالي 114ms لما اتعمل مرة واحدة، و<b>صفر</b> لما اتقسم، والوقت الكلي تقريبًا هو هو (حوالي 121ms). <code>scheduler.yield()</code> هو الـ API المعمول لده، و MDN كاتبه limited availability، فارجع لـ <code>setTimeout</code> لو مش موجود. ومع 4× CPU throttling زي DevTools، النسخة الـ blocking أخدت حوالي 1.1 ثانية، والمقسمة صفر long tasks. والـ throttle ده أرخص بديل لموبايل متوسط.</p>
+    <p><b>الـ INP (Interaction to Next Paint)</b> هو الـ Core Web Vital اللي بيتأثر بده: الوقت من الـ input لحد الـ paint اللي بعده. و web.dev بيعتبر 200ms أو أقل كويس، وأكتر من 500ms وحش. المثال بيستخدم mouse input حقيقي متبعت عن طريق CDP. الـ handler الـ blocking جاب 608ms، يعني راسب، والنص ماتقدرش يترسم غير لما الشغل خلص. والنسخة اللي بتحدّث الـ UI الأول وتستنى frame وبعدين تشتغل حتت ماسجلتش أي interaction فوق حد الملاحظة (16ms) ولا long animation frame. ومفيد كمان إن <code>long-animation-frame</code> بينسب الـ frames البطيئة للـ scripts المسؤولة.</p>
+    <p><b>طريقة الشغل في Performance tab</b> (واجهة بس، وماتجربتش هنا): افتح DevTools ← Performance، وحط CPU throttling على 4×، وسجّل وإنت بتعمل الحركة البطيئة، ودور على الـ long tasks اللي عليها علامة حمرا في الـ Main track. دوس على واحدة واقرا Bottom-Up عشان تعرف الـ function المسؤولة، وبلوكات Layout البنفسجي مع تحذير "Forced reflow" بترجعك للجزء 2. صلّح حاجة واحدة وسجّل تاني. وقيس عند users حقيقيين كمان، لأن اللابتوب بتاعك مش موبايلهم.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      زرار "Export" في dashboard بيحسب تقرير على الـ client، والـ user بيدوس ومفيش حاجة بتحصل ثانية، فيدوس تاني. الحل: اعرض "Exporting…" الأول، واستنى frame، وقسّم الشغل، أو انقله لـ worker (الجزء 7). وفي الـ monitoring، ابعت الـ long tasks و INP لـ RUM زي ما بتبعت latency الـ API، عشان تعرف الصفحة وحشة عند مين. وفي React، <code>useTransition</code> مبني على نفس فكرة إن الـ rendering يقدر يرجّع الـ thread.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "A button click feels laggy but the API is fast. How do you investigate and fix it?" → Reproduce with 4× CPU throttling in the Performance tab and find the long task on the main thread; check the bottom-up view for the culprit, and watch for forced layouts. Fixes in order: remove unnecessary work; paint feedback first, then yield and split the work; move pure CPU work to a worker. Verify with INP from real users, not only the lab.
+    <div class="ar-note">"الـ click على زرار حاسس إنه تقيل، بس الـ API سريع. هتحقق وتصلّح إزاي؟" ← كرّر المشكلة بـ 4× CPU throttling في Performance tab ولاقي الـ long task على الـ main thread، واقرا bottom-up عشان تعرف المتهم، وخلي بالك من الـ forced layouts. والحلول بالترتيب: شيل الشغل اللي مالوش لازمة، واعرض feedback الأول وبعدين yield وقسّم الشغل، وانقل شغل الـ CPU الخالص لـ worker. واتأكد بالـ INP من users حقيقيين مش الـ lab بس.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Observers <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ Observers</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Observers replace polling with notifications. <b><code>IntersectionObserver</code></b> tells you when an element enters or leaves the viewport (or a container). <code>rootMargin</code> starts early, so the image is ready before the user reaches it. Below, 300 products loaded 20 images at the top, and jumping to the bottom only loaded what was near that spot: 64 of 300. For plain images, native <code>loading="lazy"</code> is simpler: on a similar page it made 10 requests at the top against 300 without it. Use the observer when you need custom logic, such as fetching data or an infinite list.</p>
+  </section>
+
+<pre data-file="lazy-images.ts"><code class="language-typescript">// 300 منتج في grid، والصور بتتحمل بس لما تقرّب من الـ viewport
+const PIXEL = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+
+const grid = document.createElement("div");
+grid.style.cssText = "display:grid;grid-template-columns:repeat(4,1fr);gap:8px";
+grid.innerHTML = Array.from(
+  { length: 300 },
+  (_, i) =&gt; `&lt;article style="height:220px"&gt;&lt;img alt="Product ${i}" data-src="${PIXEL}#p${i}" width="200" height="160"&gt;&lt;p&gt;Product ${i}&lt;/p&gt;&lt;/article&gt;`,
+).join("");
+document.body.appendChild(grid);
+
+let loaded = 0;
+const io = new IntersectionObserver(
+  (entries, observer) =&gt; {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const img = entry.target as HTMLImageElement;
+      img.src = img.dataset.src!;
+      loaded++;
+      // الصورة اتحملت: مش محتاجين نراقبها تاني
+      observer.unobserve(img);
+    }
+  },
+  // الـ rootMargin بيبدأ التحميل قبل ما الصورة تظهر بـ 300px عشان الـ user ميشوفش فراغ
+  { rootMargin: "300px 0px" },
+);
+grid.querySelectorAll("img").forEach((img) =&gt; io.observe(img));
+
+const frames = (n: number) =&gt;
+  new Promise&lt;void&gt;((resolve) =&gt; {
+    const tick = () =&gt; (n-- &gt; 0 ? requestAnimationFrame(tick) : resolve());
+    tick();
+  });
+
+await frames(3);
+console.log("at top:", loaded, "of 300");
+window.scrollTo(0, 3_000);
+await frames(3);
+console.log("after scroll to 3000px:", loaded, "of 300");
+window.scrollTo(0, document.documentElement.scrollHeight);
+await frames(3);
+console.log("jumped to the bottom:", loaded, "of 300");
+io.disconnect();
+
+export {};
+</code></pre>
+
+<pre><code class="language-plaintext">at top: 20 of 300
+after scroll to 3000px: 48 of 300
+jumped to the bottom: 64 of 300
+</code></pre>
+  <div class="ar-note">عند أول الصفحة 20 صورة بس من 300. بعد الـ scroll لـ 3000px بقوا 48. ولما نطينا للآخر بقوا 64، يعني الصور اللي في النص اتعدّت خالص ومتحملتش.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Infinite scroll: observer vs scroll listener.</b> Same list and the same real scroll gestures sent over CDP. The scroll listener ran 253 times; the observer callback ran 6 times. Both loaded the same 3 pages. To be precise about why it's better: the layout count during scrolling was the same (2 for each), because reading a rect on a clean layout doesn't force anything. So the cost of the scroll listener here was 253 main-thread runs, about 40× more than needed, plus the risk that someone adds a write to that handler and turns it into thrashing. Keep the <code>loading</code> guard in both versions, or a page gets fetched twice.</p>
+  </section>
+
+<pre data-file="infinite-scroll.ts"><code class="language-typescript">// اختار الوضع من الـ URL: ?mode=observer أو ⁦?mode=scroll⁩، ونفس الـ infinite list بطريقتين
+const mode = new URLSearchParams(location.search).get("mode") ?? "observer";
+
+type Product = { id: number; name: string };
+const PAGE_SIZE = 40;
+const TOTAL_PAGES = 5;
+
+// تقليد لـ GET /products?page=N
+async function fetchProducts(page: number): Promise&lt;Product[]&gt; {
+  await new Promise((r) =&gt; setTimeout(r, 30));
+  if (page &gt; TOTAL_PAGES) return [];
+  return Array.from({ length: PAGE_SIZE }, (_, i) =&gt; ({ id: (page - 1) * PAGE_SIZE + i, name: `Product ${i}` }));
+}
+
+const list = document.createElement("div");
+const sentinel = document.createElement("div");
+sentinel.style.height = "1px";
+document.body.append(list, sentinel);
+
+let page = 0;
+let loading = false;
+let finished = false;
+const counters = { pagesLoaded: 0, handlerCalls: 0, layoutReads: 0 };
+
+async function loadNext(): Promise&lt;void&gt; {
+  // الـ guard ده مهم: من غيره نفس الصفحة هتتجاب مرتين لو الـ callback اتنادى تاني
+  if (loading || finished) return;
+  loading = true;
+  const items = await fetchProducts(++page);
+  if (items.length === 0) {
+    finished = true;
+    loading = false;
+    stop();
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const p of items) {
+    const row = document.createElement("article");
+    row.style.height = "120px";
+    row.textContent = p.name;
+    frag.appendChild(row);
+  }
+  list.appendChild(frag);
+  counters.pagesLoaded++;
+  loading = false;
+}
+
+let stop = () =&gt; {};
+
+if (mode === "observer") {
+  // ✅ الـ browser بيحسب التقاطع ضمن الـ frame نفسه، و الـ callback بييجي لما الحالة تتغير بس
+  const io = new IntersectionObserver((entries) =&gt; {
+    counters.handlerCalls++;
+    if (entries.some((e) =&gt; e.isIntersecting)) void loadNext();
+  }, { rootMargin: "400px 0px" });
+  io.observe(sentinel);
+  stop = () =&gt; io.disconnect();
+} else {
+  // ❌ الـ handler بيشتغل مع كل scroll event، ومعاه قراءة layout
+  const onScroll = () =&gt; {
+    counters.handlerCalls++;
+    counters.layoutReads++;
+    if (sentinel.getBoundingClientRect().top &lt; innerHeight + 400) void loadNext();
+  };
+  addEventListener("scroll", onScroll);
+  stop = () =&gt; removeEventListener("scroll", onScroll);
+  onScroll();
+}
+
+(window as unknown as { __counters: () =&gt; unknown }).__counters = () =&gt; ({ mode, ...counters, finished, rows: list.children.length });
+
+export {};
+</code></pre>
+
+<pre><code class="language-plaintext">{"mode":"observer","pagesLoaded":3,"handlerCalls":6,"layoutReads":0,"finished":false,"rows":120}
+layouts during scroll: 2
+{"mode":"scroll","pagesLoaded":3,"handlerCalls":253,"layoutReads":253,"finished":false,"rows":120}
+layouts during scroll: 2
+</code></pre>
+  <div class="ar-note">الاتنين حمّلوا 3 صفحات و 120 row. الـ observer اشتغل 6 مرات، والـ scroll listener اشتغل 253 مرة ومعاها 253 قراءة. وعدد الـ layouts متساوي (2) لأن القراءة على layout نضيف مش بتجبر حاجة. <code>finished: false</code> لأن الـ gestures خلصت قبل آخر صفحة.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b><code>MutationObserver</code></b> reports DOM changes in a batch, delivered as a <b>microtask</b>: 1,000 appends produced one callback, right after the sync code and before a later-queued promise. Use it when you don't own the code making the changes, such as waiting for a third-party widget. <b><code>ResizeObserver</code></b> watches an element's own size, which <code>window.resize</code> can't do, and is the basis of JS-driven responsive components. It runs after layout, and intermediate sizes within one frame aren't reported (299px never appeared). If its callback keeps changing the observed size, the browser stops the loop and reports "ResizeObserver loop completed with undelivered notifications" to <code>window.onerror</code>, a line you've probably seen in your error tracker.</p>
+  </section>
+
+<pre data-file="mutation-resize.ts"><code class="language-typescript">const log: string[] = [];
+
+// (1) الـ MutationObserver: الـ callback بيتجمّع ويشتغل كـ microtask مرة واحدة
+const feed = document.createElement("ul");
+document.body.appendChild(feed);
+const mo = new MutationObserver((records) =&gt; {
+  const added = records.reduce((n, r) =&gt; n + r.addedNodes.length, 0);
+  log.push(`mutation callback: ${records.length} records, ${added} nodes`);
+});
+mo.observe(feed, { childList: true });
+
+log.push("sync start");
+for (let i = 0; i &lt; 1_000; i++) feed.appendChild(document.createElement("li"));
+log.push("sync end");
+void Promise.resolve().then(() =&gt; log.push("promise microtask"));
+setTimeout(() =&gt; log.push("setTimeout macrotask"));
+await new Promise((r) =&gt; setTimeout(r, 50));
+console.log(log.join(" -&gt; "));
+
+// الاستخدام الحقيقي: widget من طرف تالت بيضيف عنصر للصفحة، وعايز تعرف إمتى
+log.length = 0;
+const whenAdded = (selector: string) =&gt;
+  new Promise&lt;Element&gt;((resolve) =&gt; {
+    const found = document.querySelector(selector);
+    if (found) return resolve(found);
+    const obs = new MutationObserver(() =&gt; {
+      const el = document.querySelector(selector);
+      if (el) {
+        obs.disconnect();
+        resolve(el);
+      }
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+  });
+setTimeout(() =&gt; document.body.insertAdjacentHTML("beforeend", `&lt;div id="chat-widget"&gt;chat&lt;/div&gt;`), 50);
+console.log("widget appeared:", (await whenAdded("#chat-widget")).id);
+mo.disconnect();
+
+// الـ takeRecords بيفضّي الـ queue من غير callback: مفيد قبل disconnect
+const mo2 = new MutationObserver(() =&gt; log.push("never"));
+mo2.observe(feed, { childList: true });
+feed.appendChild(document.createElement("li"));
+console.log("takeRecords:", mo2.takeRecords().length);
+mo2.disconnect();
+
+// (2) الـ ResizeObserver: بيراقب حجم العنصر نفسه، مش الـ window
+const panel = document.createElement("div");
+panel.style.cssText = "width:600px;height:100px";
+document.body.appendChild(panel);
+const sizes: string[] = [];
+const ro = new ResizeObserver((entries) =&gt; {
+  for (const entry of entries) {
+    const { inlineSize, blockSize } = entry.contentBoxSize[0]!;
+    sizes.push(`${inlineSize}x${blockSize}`);
+    // الـ dashboard بيغيّر عدد الأعمدة حسب مساحته الفعلية
+    panel.dataset.layout = inlineSize &lt; 400 ? "compact" : "full";
+  }
+});
+ro.observe(panel);
+
+const frame = () =&gt; new Promise((r) =&gt; requestAnimationFrame(() =&gt; setTimeout(r)));
+await frame();
+panel.style.width = "300px";
+await frame();
+panel.style.width = "299px";
+panel.style.width = "300px";
+await frame();
+console.log("sizes seen:", sizes, "layout:", panel.dataset.layout);
+ro.disconnect();
+
+// ❌ الـ callback بيغيّر حجم نفس العنصر: الـ browser بيوقف الـ loop ويطلّع error
+const errors: string[] = [];
+addEventListener("error", (e) =&gt; { errors.push(e.message); e.preventDefault(); });
+const looping = document.createElement("div");
+looping.style.cssText = "width:100px;height:50px";
+document.body.appendChild(looping);
+let calls = 0;
+const badRo = new ResizeObserver(() =&gt; {
+  calls++;
+  looping.style.width = `${100 + calls}px`;
+});
+badRo.observe(looping);
+await frame();
+await frame();
+await frame();
+badRo.disconnect();
+console.log("loop errors:", [...new Set(errors)], "callbacks in 3 frames:", calls);
+
+export {};
+</code></pre>
+
+<pre><code class="language-plaintext">sync start -&gt; sync end -&gt; mutation callback: 1000 records, 1000 nodes -&gt; promise microtask -&gt; setTimeout macrotask
+widget appeared: chat-widget
+takeRecords: 1
+sizes seen: ["600x100","300x100"] layout: compact
+loop errors: ["ResizeObserver loop completed with undelivered notifications."] callbacks in 3 frames: 3
+</code></pre>
+  <div class="ar-note">السطر الأول: 1000 إضافة طلّعوا callback واحد فيه 1000 record، بعد الكود المتزامن وقبل الـ promise اللي اتحطت بعد الإضافات. <code>whenAdded</code> لقى الـ widget. <code>takeRecords</code> رجّع الـ record من غير callback. الـ ResizeObserver شاف 600 و 300 بس، والـ 299 اللي اتغيرت في نفس الـ frame ماظهرتش. وآخر سطر: الـ callback اللي بيغيّر حجم نفس العنصر طلّع error الـ loop، وبيشتغل مرة في الـ frame مش loop لا نهائي.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ observers بتبدّل الـ polling بإشعارات. <b><code>IntersectionObserver</code></b> بيقولك إمتى العنصر دخل أو خرج من الـ viewport أو من container. و<code>rootMargin</code> بيبدأ بدري عشان الصورة تبقى جاهزة قبل ما الـ user يوصلها. في المثال، 300 منتج حمّلوا 20 صورة في الأول، ولما نطينا للآخر اتحمّل اللي قريب من المكان ده بس: 64 من 300. وللصور العادية، <code>loading="lazy"</code> الجاهز أبسط: على صفحة شبهها عمل 10 requests في الأول ضد 300 من غيره. واستخدم الـ observer لما تحتاج منطق خاص، زي جلب data أو infinite list.</p>
+    <p><b>الـ infinite scroll بالـ observer ضد الـ scroll listener:</b> نفس الـ list ونفس الـ scroll gestures الحقيقية عن طريق CDP. الـ listener اشتغل 253 مرة، والـ observer 6 مرات، والاتنين حمّلوا نفس الـ 3 صفحات. وخليني دقيق في السبب: عدد الـ layouts كان واحد (2 لكل واحد)، لأن قراءة rect على layout نضيف مش بتجبر حاجة. فتكلفة الـ listener هنا هي 253 مرة شغل على الـ main thread، حوالي 40 مرة أكتر من اللازم، ومعاها خطر إن حد يضيف كتابة في الـ handler فيبقى thrashing. وسيب الـ guard بتاع <code>loading</code> في النسختين، وإلا الصفحة هتتجاب مرتين.</p>
+    <p><b><code>MutationObserver</code></b> بيبلّغك بتغييرات الـ DOM في batch، كـ <b>microtask</b>: 1000 إضافة طلّعوا callback واحد، بعد الكود المتزامن على طول وقبل promise اتحطت بعدهم. استخدمه لما الكود اللي بيغيّر مش بتاعك، زي استنى widget من طرف تالت. <b><code>ResizeObserver</code></b> بيراقب حجم العنصر نفسه، وده اللي <code>window.resize</code> مش بيعرف يعمله، وهو أساس الـ components اللي بتتجاوب بالـ JS. وبيشتغل بعد الـ layout، والأحجام اللي بتتغير جوه نفس الـ frame مش بتتبلّغ (الـ 299 ماظهرتش). ولو الـ callback فضل يغيّر الحجم اللي بيراقبه، الـ browser بيوقف الـ loop ويبلّغ "ResizeObserver loop completed with undelivered notifications" لـ <code>window.onerror</code>، وغالبًا شفت السطر ده في error tracker.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      صفحة products في Next: <code>loading="lazy"</code> للصور، و IntersectionObserver على sentinel في آخر الـ list لجلب <code>GET /products?page=N</code>. و ResizeObserver لـ chart في dashboard لازم يترسم تاني لما الـ sidebar يتقفل، وده مش بيغيّر حجم الـ window أصلًا. و MutationObserver لما تستنى widget بتاع chat من طرف تالت عشان تعدّل عليه. ولما الـ component يتشال، <code>disconnect()</code> في الـ cleanup دايمًا، وإلا عندك memory leak.
+    </div>
+  </section>
+
+  <!-- ===================== PART 7 ===================== -->
+  <h2 id="p7">Part 7 — Web Workers &amp; Service Workers <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 7 — الـ Web Workers والـ Service Workers</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A <b>Web Worker</b> is a real OS thread with its own JS heap and event loop. It communicates with the page only by messages: <code>postMessage</code> and <code>onmessage</code>. It has <b>no DOM</b>: the probe below shows <code>document</code>, <code>window</code>, <code>localStorage</code> and <code>alert</code> are undefined, while <code>fetch</code>, <code>indexedDB</code>, <code>WebSocket</code>, timers and <code>crypto</code> work. <code>requestAnimationFrame</code> exists too in this Chrome, and it pairs with <code>OffscreenCanvas</code>. So the shape is always: do the CPU work in the worker, send the result back, update the DOM on the main thread.</p>
+    <p>Below is a 55 MB CSV of 1.5M orders. On the main thread the page froze for ≈816 ms, one long task. In the worker, the worst main-thread gap was ≈26 ms with no long tasks. Note <b>the work didn't get faster</b>: ≈952 ms vs ≈815 ms, and ≈1,003 ms with the round trip. A worker buys responsiveness, not speed.</p>
+  </section>
+
+<pre data-file="csv-core.ts"><code class="language-typescript">export type OrdersSummary = {
+  rows: number;
+  revenueByStatus: Record&lt;string, number&gt;;
+  badRows: number;
+};
+
+// الـ parser نفسه: نفس الكود بيشتغل في الـ main thread وفي الـ worker
+export function summarizeCsv(csv: string): OrdersSummary {
+  const summary: OrdersSummary = { rows: 0, revenueByStatus: {}, badRows: 0 };
+  const lines = csv.split("\n");
+  // السطر الأول headers: id,customer,status,total
+  for (let i = 1; i &lt; lines.length; i++) {
+    const line = lines[i]!;
+    if (!line) continue;
+    const [, , status, total] = line.split(",");
+    const amount = Number(total);
+    if (!status || Number.isNaN(amount)) {
+      summary.badRows++;
+      continue;
+    }
+    summary.rows++;
+    summary.revenueByStatus[status] = (summary.revenueByStatus[status] ?? 0) + amount;
+  }
+  return summary;
+}
+
+export function makeCsv(rows: number): string {
+  const statuses = ["paid", "pending", "refunded"];
+  const parts = ["id,customer,status,total"];
+  for (let i = 0; i &lt; rows; i++) {
+    parts.push(`${i},customer-${i},${statuses[i % 3]},${(i % 500) + 0.5}`);
+  }
+  return parts.join("\n");
+}
+</code></pre>
+
+<pre data-file="csv-worker.ts"><code class="language-typescript">/// &lt;reference lib="webworker" /&gt;
+import { summarizeCsv } from "./csv-core.js";
+
+type Request = { id: number; csv: string } | { id: number; bytes: ArrayBuffer } | { id: number; probe: true };
+
+// جوه الـ worker مفيش window: الـ global اسمه self
+self.addEventListener("message", (e: MessageEvent&lt;Request&gt;) =&gt; {
+  const msg = e.data;
+  if ("probe" in msg) {
+    const g = globalThis as unknown as Record&lt;string, unknown&gt;;
+    const names = ["document", "window", "localStorage", "alert", "fetch", "indexedDB", "WebSocket", "setTimeout", "crypto", "OffscreenCanvas", "requestAnimationFrame"];
+    self.postMessage({ id: msg.id, available: Object.fromEntries(names.map((n) =&gt; [n, typeof g[n]])) });
+    return;
+  }
+  const t0 = performance.now();
+  try {
+    const csv = "csv" in msg ? msg.csv : new TextDecoder().decode(msg.bytes);
+    const summary = summarizeCsv(csv);
+    self.postMessage({ id: msg.id, summary, ms: performance.now() - t0 });
+  } catch (err) {
+    // الـ error اللي مش بيتمسك هنا بيوصل كـ error event، فبنبعته رسالة منظمة أحسن
+    self.postMessage({ id: msg.id, error: String(err) });
+  }
+});
+</code></pre>
+
+<pre data-file="csv-main.ts"><code class="language-typescript">import { makeCsv, summarizeCsv, type OrdersSummary } from "./csv-core.js";
+
+type WorkerReply = { id: number; summary: OrdersSummary; ms: number; error?: string };
+
+// الـ wrapper بيحوّل postMessage لـ Promise، ومعاه id عشان كل رد يروح لطلبه
+function createCsvClient(worker: Worker) {
+  let nextId = 0;
+  const pending = new Map&lt;number, { resolve: (s: WorkerReply) =&gt; void; reject: (e: Error) =&gt; void }&gt;();
+  worker.onmessage = (e: MessageEvent&lt;WorkerReply&gt;) =&gt; {
+    const p = pending.get(e.data.id);
+    if (!p) return;
+    pending.delete(e.data.id);
+    e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data);
+  };
+  worker.onerror = (e) =&gt; {
+    for (const p of pending.values()) p.reject(new Error(e.message));
+    pending.clear();
+  };
+  return {
+    parse(csv: string): Promise&lt;WorkerReply&gt; {
+      const id = ++nextId;
+      return new Promise((resolve, reject) =&gt; {
+        pending.set(id, { resolve, reject });
+        worker.postMessage({ id, csv });
+      });
+    },
+  };
+}
+
+// الـ heartbeat بيقيس الـ UI: أكبر فترة الـ main thread ماردش فيها
+function watchMainThread() {
+  let last = performance.now();
+  let worstGap = 0;
+  const timer = setInterval(() =&gt; {
+    const now = performance.now();
+    worstGap = Math.max(worstGap, now - last);
+    last = now;
+  }, 16);
+  return () =&gt; { clearInterval(timer); return Math.round(worstGap); };
+}
+
+const longTasks: number[] = [];
+new PerformanceObserver((l) =&gt; l.getEntries().forEach((e) =&gt; longTasks.push(Math.round(e.duration))))
+  .observe({ type: "longtask" });
+
+const csv = makeCsv(1_500_000);
+console.log("csv size MB:", Math.round(csv.length / 1e6));
+
+const settle = () =&gt; new Promise((r) =&gt; setTimeout(r, 300));
+await settle();
+longTasks.length = 0;
+
+// ❌ في الـ main thread
+let stop = watchMainThread();
+await settle();
+const t1 = performance.now();
+const onMain = summarizeCsv(csv);
+const mainMs = performance.now() - t1;
+await settle();
+console.log("main thread:", { rows: onMain.rows, parseMs: Math.round(mainMs), worstGapMs: stop(), longTasks: longTasks.length, worstTaskMs: Math.max(0, ...longTasks) });
+
+// ✅ في الـ worker: الـ main thread فاضل حر
+longTasks.length = 0;
+const worker = new Worker(new URL("./csv-worker.js", import.meta.url), { type: "module" });
+const client = createCsvClient(worker);
+await settle();
+stop = watchMainThread();
+const t2 = performance.now();
+const reply = await client.parse(csv);
+const roundTrip = performance.now() - t2;
+await settle();
+console.log("worker:", { rows: reply.summary.rows, parseMs: Math.round(reply.ms), roundTripMs: Math.round(roundTrip), worstGapMs: stop(), longTasks: longTasks.length, worstTaskMs: Math.max(0, ...longTasks) });
+console.log("same result:", JSON.stringify(onMain) === JSON.stringify(reply.summary));
+
+// جوه الـ worker: إيه الموجود وإيه لأ
+worker.postMessage({ id: 999, probe: true });
+const probe = await new Promise&lt;{ available: Record&lt;string, string&gt; }&gt;((resolve) =&gt; {
+  worker.onmessage = (e) =&gt; resolve(e.data);
+});
+console.log("inside worker:", probe.available);
+
+worker.terminate();
+
+export {};
+</code></pre>
+
+<pre><code class="language-plaintext">csv size MB: 55
+main thread: {"rows":1500000,"parseMs":815,"worstGapMs":816,"longTasks":1,"worstTaskMs":815}
+worker: {"rows":1500000,"parseMs":952,"roundTripMs":1003,"worstGapMs":26,"longTasks":0,"worstTaskMs":0}
+same result: true
+inside worker: {"document":"undefined","window":"undefined","localStorage":"undefined","alert":"undefined","fetch":"function","indexedDB":"object","WebSocket":"function","setTimeout":"function","crypto":"object","OffscreenCanvas":"function","requestAnimationFrame":"function"}
+</code></pre>
+  <div class="ar-note">في الـ main thread: الصفحة وقفت حوالي 816ms في long task واحدة. في الـ worker: أكبر توقف حوالي 26ms ومفيش long tasks. والحساب نفسه مابقاش أسرع (حوالي 952ms)، والنتيجة نفسها بالظبط. وآخر سطر: الـ DOM والـ <code>window</code> و<code>localStorage</code> و<code>alert</code> مش موجودين جوه الـ worker، لكن <code>fetch</code> و<code>indexedDB</code> و<code>WebSocket</code> والـ timers و<code>crypto</code> موجودين.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Copy vs transfer.</b> <code>postMessage</code> uses structured clone, a full copy. For large binary data, pass the buffer in the transfer list: ownership moves, there's no copy, and your side's buffer becomes empty. Measured on 200 MB: ≈141 ms blocking the sender vs ≈0.2 ms. Note that cloning itself blocks the main thread, so a huge message can undo the benefit of the worker.</p>
+    <p><b>Where it runs.</b> A worker from a file is blocked on <code>file://</code>, and so is a service worker, as the output shows, while a Blob URL worker still runs. In real projects your bundler handles this: <code>new Worker(new URL("./w.ts", import.meta.url), { type: "module" })</code> is the form Vite and webpack understand. A hung worker can't be stopped by message; only <code>terminate()</code> stops it (Exercise 3).</p>
+  </section>
+
+<pre data-file="transfer-vs-clone.ts"><code class="language-typescript">// الـ worker بيرجّع الـ buffer زي ما هو
+const code = `self.onmessage = (e) =&gt; self.postMessage(e.data, e.data instanceof ArrayBuffer ? [e.data] : []);`;
+const worker = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
+
+const reply = () =&gt; new Promise&lt;ArrayBuffer&gt;((resolve) =&gt; { worker.onmessage = (e) =&gt; resolve(e.data); });
+const SIZE = 200 * 1024 * 1024;
+
+// ❌ الـ structured clone: نسخة كاملة في كل اتجاه
+async function viaClone(): Promise&lt;{ sendMs: number; sameBufferUsable: boolean }&gt; {
+  const buffer = new ArrayBuffer(SIZE);
+  const got = reply();
+  const t0 = performance.now();
+  worker.postMessage(buffer);
+  const sendMs = performance.now() - t0;
+  await got;
+  return { sendMs, sameBufferUsable: buffer.byteLength === SIZE };
+}
+
+// ✅ الـ transfer: الـ ownership بينتقل، والـ buffer عندك بيبقى فاضي
+async function viaTransfer(): Promise&lt;{ sendMs: number; sameBufferUsable: boolean }&gt; {
+  const buffer = new ArrayBuffer(SIZE);
+  const got = reply();
+  const t0 = performance.now();
+  worker.postMessage(buffer, [buffer]);
+  const sendMs = performance.now() - t0;
+  await got;
+  return { sendMs, sameBufferUsable: buffer.byteLength === SIZE };
+}
+
+const median = (xs: number[]) =&gt; [...xs].sort((a, b) =&gt; a - b)[Math.floor(xs.length / 2)]!;
+const cloneRuns: number[] = [];
+const transferRuns: number[] = [];
+let clone = { sameBufferUsable: false };
+let transfer = { sameBufferUsable: false };
+for (let i = 0; i &lt; 5; i++) {
+  const c = await viaClone();
+  cloneRuns.push(c.sendMs);
+  clone = c;
+  const t = await viaTransfer();
+  transferRuns.push(t.sendMs);
+  transfer = t;
+}
+console.log("200MB clone:", { blocksSenderMs: Number(median(cloneRuns).toFixed(1)), bufferStillUsable: clone.sameBufferUsable });
+console.log("200MB transfer:", { blocksSenderMs: Number(median(transferRuns).toFixed(1)), bufferStillUsable: transfer.sameBufferUsable });
+worker.terminate();
+
+export {};
+</code></pre>
+
+<pre><code class="language-plaintext">200MB clone: {"blocksSenderMs":141.5,"bufferStillUsable":true}
+200MB transfer: {"blocksSenderMs":0.2,"bufferStillUsable":false}
+</code></pre>
+  <div class="ar-note">النسخ قفل الـ main thread حوالي 141ms والـ buffer فضل عندك. النقل أخد حوالي 0.2ms، والـ buffer عندك بقى فاضي (<code>byteLength</code> بقى 0) لأن الملكية انتقلت.</div>
+
+<pre><code class="language-plaintext">origin: file:// protocol: file:
+serviceWorker in navigator: true
+new Worker(file) threw: SecurityError: Failed to construct 'Worker': Script at 'file:///.../worker-file.js' cannot be accessed from origin 'null'.
+sw register rejected: TypeError: Failed to register a ServiceWorker: The URL protocol of the current origin ('null') is not supported.
+blob worker replied: blob pong: ping
+</code></pre>
+  <div class="ar-note">ده الـ output من صفحة اتفتحت بـ <code>file://</code> (المسار متقصّر بـ <code>...</code>): الـ worker من ملف رمى <code>SecurityError</code>، والـ service worker اترفض، والـ worker من Blob URL اشتغل عادي. وعشان كده شغّل الأمثلة بالـ <code>dev-server.ts</code> من <a href="./14-dom-events-fetch-storage.html">الدرس 14</a>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>Web Worker</b> هو OS thread حقيقي ليه JS heap و event loop خاصين بيه، وبيكلم الصفحة بالرسايل بس: <code>postMessage</code> و<code>onmessage</code>. مفيهوش <b>DOM</b>: الفحص فوق بيبيّن إن <code>document</code> و<code>window</code> و<code>localStorage</code> و<code>alert</code> كلهم undefined، لكن <code>fetch</code> و<code>indexedDB</code> و<code>WebSocket</code> والـ timers و<code>crypto</code> شغالين. و<code>requestAnimationFrame</code> موجود كمان في Chrome ده، وبيشتغل مع <code>OffscreenCanvas</code>. فالشكل دايمًا: شغل الـ CPU في الـ worker، والنتيجة ترجع، والـ DOM يتحدّث في الـ main thread.</p>
+    <p>المثال CSV حجمه 55MB فيه 1.5 مليون order. في الـ main thread الصفحة وقفت حوالي 816ms في long task واحدة. في الـ worker أكبر توقف حوالي 26ms ومفيش long tasks. وخلي بالك: <b>الشغل مابقاش أسرع</b>: حوالي 952ms ضد حوالي 815ms، وحوالي 1003ms مع الرايح والجاي. الـ worker بيشتريلك استجابة، مش سرعة.</p>
+    <p><b>النسخ ضد النقل:</b> <code>postMessage</code> بيستخدم structured clone، يعني نسخة كاملة. وللـ data الـ binary الكبيرة، حط الـ buffer في الـ transfer list: الملكية بتنتقل من غير نسخ، والـ buffer عندك بيفضى. على 200MB: حوالي 141ms قفل للي بيبعت ضد حوالي 0.2ms. والنسخ نفسه بيقفل الـ main thread، فرسالة ضخمة ممكن تضيّع فايدة الـ worker.</p>
+    <p><b>بيشتغل فين:</b> الـ worker من ملف ممنوع على <code>file://</code> والـ service worker كمان، وأي worker من Blob URL شغال، زي ما الـ output بيبيّن. وفي المشاريع الحقيقية الـ bundler بيتصرف: <code>new Worker(new URL("./w.ts", import.meta.url), { type: "module" })</code> هو الشكل اللي Vite و webpack بيفهموه. والـ worker اللي علّق مش بيقف برسالة، <code>terminate()</code> بس هو اللي بيوقفه (التمرين 3).</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      صفحة import في SaaS: الـ user بيرفع CSV فيه مليون order، وإنت عايز تعمل preview و validation قبل الرفع. لو في الـ main thread الـ tab بيتجمد ويطلع "Page unresponsive". في worker الـ progress bar يفضل شغال. نفس الشيء لضغط الصور والـ PDF والبحث في بيانات كبيرة على الـ client. ومتستخدموش لـ fetch عادي لأن الـ fetch أصلًا مش بيقفل الـ thread، والـ <code>JSON.parse</code> بتاع الرد الكبير هو اللي يستاهل.
+    </div>
+  </section>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p>A <b>Service Worker</b> is a different thing: a background script that sits <b>between your pages and the network</b> for its scope, intercepts their <code>fetch</code> events, and isn't tied to any one tab: the browser starts and stops it as needed. That enables offline support, caching strategies and PWAs. It requires a secure context (HTTPS, or localhost and 127.0.0.1 for development), and this whole lifecycle ran for real on <code>http://127.0.0.1</code>. Three strategies cover most cases (the first two ran below; stale-while-revalidate is described only):</p>
+    <ul>
+      <li><b>Cache-first:</b> the cache answers, the network only on a miss. Fast and offline-ready, but stale until the next version. Good for files with a content hash in their name.</li>
+      <li><b>Network-first:</b> the network answers, with the cache as fallback when it fails. Fresh, but as slow as the network. Good for API data and HTML.</li>
+      <li><b>Stale-while-revalidate:</b> answer from the cache now and refresh it in the background. Fast and eventually fresh, so the user sees old data once. Good for non-critical content.</li>
+    </ul>
+    <p><b>The real risk is staleness</b>, and the run shows it: after deploying v2 with cache-first on the shell, two reloads still showed v1. A new <code>sw.js</code> gets installed but then <b>waits</b> until no tab uses the old one, so even a plain reload stays on v1. Shipping a broken service worker is the nightmare case, since it can pin users to a bad version. So always plan the update path: never cache <code>sw.js</code> itself, keep HTML network-first or give users an "update available" prompt, and know how to ship a replacement that clears caches.</p>
+  </section>
+
+<pre class="diagram">
+  register()
+     |
+     v
+  installing  -- precache the app shell; one failed file fails the install
+     |
+     v
+  waiting     -- old SW still controls open tabs; a reload is NOT enough
+     |            (leave when: all tabs close, or skipWaiting())
+     v
+  activating  -- delete old caches
+     |
+     v
+  activated   -- fetch events now pass through this SW
+</pre>
+  <div class="ar-note">دورة الحياة: <code>register</code>، وبعدها installing بيخزّن ملفات الـ app shell (ولو ملف واحد فشل الـ install كله بيفشل). وبعدها waiting: الـ SW القديم لسه ماسك التابات المفتوحة، والـ reload العادي مش كفاية، وبيخرج منها لما كل التابات تتقفل أو مع <code>skipWaiting()</code>. وبعدها activating بيمسح الـ caches القديمة، وبعدها activated والـ fetch events كلها بتعدّي عليه.</div>
+
+<pre data-file="sw.ts"><code class="language-typescript">/// &lt;reference lib="webworker" /&gt;
+declare const self: ServiceWorkerGlobalScope;
+
+// غيّر الـ version مع كل deploy: أي byte مختلف في الملف هو اللي بيخلي الـ browser يشوفه update
+const VERSION = "__VERSION__";
+const STATIC_CACHE = `static-${VERSION}`;
+const API_CACHE = "api-v1";
+const APP_SHELL = ["/shop/", "/shop/app.js"];
+
+self.addEventListener("install", (event) =&gt; {
+  // الـ install يفشل كله لو ملف واحد من الـ shell فشل
+  event.waitUntil(caches.open(STATIC_CACHE).then((c) =&gt; c.addAll(APP_SHELL)));
+});
+
+self.addEventListener("activate", (event) =&gt; {
+  // امسح الـ caches القديمة بعد ما الـ version الجديد يستلم
+  event.waitUntil(
+    caches.keys().then((keys) =&gt;
+      Promise.all(
+        keys.filter((k) =&gt; k.startsWith("static-") &amp;&amp; k !== STATIC_CACHE).map((k) =&gt; caches.delete(k)),
+      ),
+    ),
+  );
+});
+
+// الـ tab بيقرر إمتى الـ version الجديد يستلم، عشان ميبدّلش الملفات تحت رجل الـ user
+self.addEventListener("message", (event) =&gt; {
+  if (event.data === "SKIP_WAITING") void self.skipWaiting();
+});
+
+self.addEventListener("fetch", (event) =&gt; {
+  const url = new URL(event.request.url);
+  if (event.request.method !== "GET" || url.origin !== location.origin) return;
+
+  if (url.pathname.startsWith("/shop/api/")) {
+    event.respondWith(networkFirst(event.request));
+  } else if (url.pathname.startsWith("/shop/")) {
+    event.respondWith(cacheFirst(event.request));
+  }
+});
+
+// الـ cache-first: سريع ومستقل عن الشبكة، بس بيفضل يرجّع القديم لحد version جديد
+async function cacheFirst(request: Request): Promise&lt;Response&gt; {
+  const hit = await caches.match(request, { cacheName: STATIC_CACHE });
+  return hit ?? fetch(request);
+}
+
+// الـ network-first: أحدث data، ولو الشبكة وقعت نرجع لآخر نسخة
+async function networkFirst(request: Request): Promise&lt;Response&gt; {
+  const cache = await caches.open(API_CACHE);
+  try {
+    const res = await fetch(request);
+    if (res.ok) await cache.put(request, res.clone());
+    return res;
+  } catch {
+    const hit = await cache.match(request);
+    if (hit) return hit;
+    return new Response(JSON.stringify({ error: "offline" }), { status: 503, headers: { "content-type": "application/json" } });
+  }
+}
+
+export {};
+</code></pre>
+
+<pre><code class="language-typescript">// ده كود الصفحة: التسجيل، وزرار "update available"
+const reg = await navigator.serviceWorker.register("/shop/sw.js", { scope: "/shop/" });
+
+function applyUpdate(): void {
+  navigator.serviceWorker.addEventListener("controllerchange", () =&gt; location.reload(), { once: true });
+  reg.waiting?.postMessage("SKIP_WAITING");
+}
+</code></pre>
+
+  <table>
+    <tr><th>Step</th><th>Page shows</th><th>Controlled</th><th>Waiting SW</th><th>Caches</th></tr>
+    <tr><td>1. First visit, after register</td><td>v1</td><td>no</td><td>none</td><td><code>static-v1</code></td></tr>
+    <tr><td>2. Reload</td><td>v1</td><td><b>yes</b></td><td>none</td><td><code>static-v1</code></td></tr>
+    <tr><td>3. Server deploys v2, reload</td><td><b>v1 (stale)</b></td><td>yes</td><td>none</td><td><code>static-v1</code></td></tr>
+    <tr><td>4. Reload again</td><td><b>v1 (stale)</b></td><td>yes</td><td>none</td><td><code>static-v1</code></td></tr>
+    <tr><td>5. New <code>sw.js</code>, <code>update()</code></td><td>v1</td><td>yes</td><td><b>installed</b></td><td>v1, v2</td></tr>
+    <tr><td>6. Plain reload</td><td><b>v1</b></td><td>yes</td><td><b>installed</b></td><td>v1, v2</td></tr>
+    <tr><td>7. <code>SKIP_WAITING</code></td><td>v1 (not reloaded yet)</td><td>yes</td><td>none</td><td>v1, v2</td></tr>
+    <tr><td>8. Reload</td><td><b>v2</b></td><td>yes</td><td>none</td><td><code>static-v2</code></td></tr>
+    <tr><td>9. Server down, reload</td><td>v2 from cache</td><td>yes</td><td>none</td><td><code>api-v1</code>, <code>static-v2</code></td></tr>
+  </table>
+  <div class="ar-note">
+    <ul>
+      <li><b>1:</b> أول زيارة: الـ SW اشتغل بس مش ماسك الصفحة لسه. <b>2:</b> بعد الـ reload بقى ماسكها.</li>
+      <li><b>3 و 4:</b> السيرفر فيه v2، والصفحة لسه v1 حتى بعد reload مرتين. دي الـ staleness.</li>
+      <li><b>5 و 6:</b> الـ <code>sw.js</code> الجديد اتنزل واتخزن cache بتاعه، بس واقف في waiting، والـ reload العادي مش بيغيّر حاجة.</li>
+      <li><b>7:</b> <code>SKIP_WAITING</code> نقل التحكم، والصفحة المفتوحة لسه شايلة v1 لحد ما تتعمل reload.</li>
+      <li><b>8:</b> بعد الـ reload بقت v2 والـ cache القديم اتمسح.</li>
+      <li><b>9:</b> السيرفر واقف والصفحة فتحت من الـ cache.</li>
+    </ul>
+    <p>وفي نفس التجربة بعد كده: الـ API بـ network-first رجّع <code>{"laptop":1001}</code> و<code>{"laptop":1002}</code> والسيرفر شغال، ولما وقع رجّع آخر نسخة <code>{"laptop":1002}</code>. وملف مش في الـ cache رجّع <code>TypeError: Failed to fetch</code>. وفي التجربة الـ <code>__VERSION__</code> السيرفر بيستبدله بكل deploy.</p>
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>Service Worker</b> حاجة تانية خالص: script في الخلفية قاعد <b>بين صفحاتك والشبكة</b> في الـ scope بتاعه، بيمسك الـ <code>fetch</code> events بتاعتهم، ومش مربوط بتاب معين: الـ browser بيشغّله ويوقفه حسب الحاجة. وده اللي بيخلي الـ offline والـ caching والـ PWAs ممكنين. لازم secure context (HTTPS، أو localhost و 127.0.0.1 في التطوير)، ودورة الحياة كلها اشتغلت بجد على <code>http://127.0.0.1</code>. وفيه 3 استراتيجيات بيغطوا أغلب الحالات (أول اتنين اشتغلوا تحت، و stale-while-revalidate مشروح بس):</p>
+    <ul>
+      <li><b>Cache-first:</b> الـ cache بيرد، والشبكة بس لو مش موجود. سريع وجاهز للـ offline، بس قديم لحد الـ version الجاي. كويس للملفات اللي في اسمها content hash.</li>
+      <li><b>Network-first:</b> الشبكة بترد، والـ cache احتياطي لو فشلت. جديد، بس بطيء قد الشبكة. كويس للـ API data والـ HTML.</li>
+      <li><b>Stale-while-revalidate:</b> رد من الـ cache دلوقتي وحدّثه في الخلفية. سريع وبيتحدث بعدين، والـ user بيشوف data قديمة مرة. كويس للمحتوى اللي مش حرج.</li>
+    </ul>
+    <p><b>الخطر الحقيقي هو الـ staleness</b>، والتجربة بتبيّنه: بعد deploy لـ v2 مع cache-first على الـ shell، reload مرتين لسه بيعرض v1. والـ <code>sw.js</code> الجديد بيتنزل بس بعدين <b>بيستنى</b> لحد ما مفيش تاب بيستخدم القديم، فحتى الـ reload العادي بيفضل على v1. وأسوأ سيناريو إنك تبعت service worker بايظ، لأنه ممكن يحبس الـ users على version وحش. فخطط لطريق التحديث دايمًا: متعملش cache لـ <code>sw.js</code> نفسه، وخلي الـ HTML network-first أو اعرض رسالة "update available"، واعرف إزاي تبعت بديل بيمسح الـ caches.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      تطبيق field sales بيشتغل على موبايل بشبكة ضعيفة: الـ shell من الـ cache، والـ catalog بـ stale-while-revalidate، والطلبات اللي اتعملت offline في queue على IndexedDB. والـ incident المشهور: "صلّحنا الـ bug وعملنا deploy، وبعض الـ users لسه شايفينه بعد يومين"، وبعد التحقيق تلاقي service worker قديم بيرد من الـ cache. أول حاجة تعملها في الحالة دي: DevTools ← Application ← Service Workers. ولو الموقع مش محتاج offline بجد، غالبًا الـ HTTP caching العادي مع hashed files كفاية، ومن غير التعقيد ده.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: <code>skipWaiting</code> right away, or wait?</b>
+    Calling <code>skipWaiting()</code> during install updates everyone at once, but the new worker can then serve new files to a page still running old JS, and lazy-loaded chunks from the old version may no longer exist. Waiting is safe but slow, since users can stay on the old version for days. The usual middle ground is what this demo does: wait, show "update available", and let the user trigger <code>SKIP_WAITING</code> plus a reload.
+    <div class="ar-note"><code>skipWaiting()</code> وقت الـ install بيحدّث الكل مرة واحدة، بس الـ worker الجديد ممكن يبعت ملفات جديدة لصفحة لسه شغالة بـ JS قديم، والـ chunks القديمة اللي بتتحمل lazy ممكن تكون اتمسحت. الانتظار آمن بس بطيء، والـ users ممكن يفضلوا على القديم أيام. والحل الوسط المعتاد هو اللي المثال بيعمله: استنى، اعرض "update available"، وسيب الـ user يطلق <code>SKIP_WAITING</code> مع reload.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "What's the difference between a Web Worker and a Service Worker?" → A Web Worker is a thread your page creates to run CPU work; it lives with the page and talks to it by messages. A Service Worker is a browser-managed proxy between your origin's pages and the network; it has its own lifecycle (install, waiting, activate), intercepts fetches, and outlives tabs. Neither has DOM access. Use the first for responsiveness, the second for offline and caching, and mention the staleness risk.
+    <div class="ar-note">"إيه الفرق بين Web Worker و Service Worker؟" ← الـ Web Worker هو thread صفحتك بتعمله لشغل الـ CPU، بيعيش مع الصفحة وبيكلمها برسايل. الـ Service Worker هو proxy بيديره الـ browser بين صفحات الـ origin والشبكة، ليه دورة حياة لوحده (install و waiting و activate)، وبيمسك الـ fetches، وبيعيش بعد التابات. والاتنين مفيهمش DOM. الأول للاستجابة، والتاني للـ offline والـ caching، واذكر خطر الـ staleness.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Read and write in one loop</b>
+<pre><code class="language-typescript">// كل قراءة بتجبر layout من الكتابة اللي قبلها
+bars.forEach((bar) =&gt; {
+  const w = bar.parentElement!.clientWidth;
+  bar.style.width = `${w / 2}px`;
+});
+</code></pre>
+</div>
+    <div class="good"><b>✅ All reads, then all writes</b>
+<pre><code class="language-typescript">// القراءة كلها على layout نضيف، وبعدها الكتابة
+const widths = bars.map((b) =&gt; b.parentElement!.clientWidth);
+bars.forEach((bar, i) =&gt; {
+  bar.style.width = `${widths[i]! / 2}px`;
+});
+</code></pre>
+</div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ على 2000 كارت ده 2000 layout، وحوالي 5.8 ثانية في اللفة. ✅ نفس النتيجة بـ layout واحد وحوالي 17ms. الفرق كام مئة مرة والمنطق هو هو.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Sync third-party script in <code>head</code></b>
+<pre><code class="language-html">&lt;!-- سيرفر مش بتاعك بيتحكم في أول paint عندك --&gt;
+&lt;head&gt;
+  &lt;script src="https://analytics.example.com/tag.js"&gt;&lt;/script&gt;
+&lt;/head&gt;
+</code></pre>
+</div>
+    <div class="good"><b>✅ Load it after <code>load</code></b>
+<pre><code class="language-html">&lt;!-- الصفحة بتترسم من غير ما تستناه --&gt;
+&lt;script&gt;
+  addEventListener("load", () =&gt; {
+    const s = document.createElement("script");
+    s.src = "https://analytics.example.com/tag.js";
+    document.head.append(s);
+  });
+&lt;/script&gt;
+</code></pre>
+</div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ لو سيرفرهم رد في 3 ثواني، عندك شاشة بيضا 3 ثواني (FCP حوالي 3036ms). ولو علّق، الصفحة بتعلّق معاه. ✅ الـ FCP حوالي 32ms والـ <code>load</code> حوالي 5ms. والتكلفة إن الـ tag بيبدأ متأخر، فممكن تفوّت زيارات قصيرة جدًا، و<code>async</code> هو الحل الوسط لو ده مهم.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Animate <code>left</code>, hint everything</b>
+<pre><code class="language-css">/* بيعمل layout و paint في كل frame، وبيقف مع الـ main thread */
+.drawer { transition: left 300ms; }
+/* كل كارت layer: بياكل memory على الفاضي */
+.card { will-change: transform; }
+</code></pre>
+</div>
+    <div class="good"><b>✅ <code>transform</code>, hint on demand</b>
+<pre><code class="language-css">/* بيفضل ماشي على الـ compositor */
+.drawer { transition: transform 300ms; }
+/* العنصر اللي هيتحرك دلوقتي بس */
+.card:hover { will-change: transform; }
+</code></pre>
+</div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>left</code> طلّع layout و paint في كل frame، ولما الـ main thread وقف رسم 0 frame. و<code>will-change</code> على كل الكروت زوّد الـ tile memory حوالي 60%. ✅ <code>transform</code> صفر layout وصفر paint، ورسم 90 frame والـ main thread واقف. والـ hint على العنصر اللي هيتحرك بس زوّد حوالي 0.6MB.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Heavy work before any paint</b>
+<pre><code class="language-typescript">// الـ ⁦"Exporting⁩…" مش هيتشاف: الـ paint بييجي بعد الشغل
+button.onclick = () =&gt; {
+  status.textContent = "Exporting…";
+  buildReport();
+  status.textContent = "Done";
+};
+</code></pre>
+</div>
+    <div class="good"><b>✅ Paint, then work in slices or a worker</b>
+<pre><code class="language-typescript">// استنى frame عشان الـ feedback يترسم، وبعدين قسّم الشغل
+button.onclick = async () =&gt; {
+  status.textContent = "Exporting…";
+  await new Promise((r) =&gt; requestAnimationFrame(() =&gt; setTimeout(r)));
+  await processInChunks(rows, addToReport);
+  status.textContent = "Done";
+};
+</code></pre>
+</div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ user بيدوس ومفيش حاجة بتتغير طول الشغل: 608ms INP في التجربة، فبيدوس تاني. ✅ الـ rAF مع <code>setTimeout</code> بيضمن إن الـ frame اترسم قبل ما الشغل يبدأ، والتقسيم بيخلي الصفحة ترد، ومفيش interaction فوق 16ms. و<code>requestAnimationFrame</code> لوحده مش كفاية لأنه بيشتغل <em>قبل</em> الـ paint.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Cache-first on everything, no update path</b>
+<pre><code class="language-typescript">// الـ HTML من الـ cache للأبد، والـ deploy الجديد مش هيوصل
+self.addEventListener("fetch", (event) =&gt; {
+  event.respondWith(
+    caches.match(event.request).then((hit) =&gt; hit ?? fetch(event.request)),
+  );
+});
+</code></pre>
+</div>
+    <div class="good"><b>✅ Choose per resource, version the cache</b>
+<pre><code class="language-typescript">// الـ API من الشبكة الأول، والـ cache بالـ version اللي بيتمسح
+if (url.pathname.startsWith("/shop/api/")) {
+  event.respondWith(networkFirst(event.request));
+} else if (url.pathname.startsWith("/shop/")) {
+  event.respondWith(cacheFirst(event.request));
+}
+</code></pre>
+</div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ كده الـ API والـ HTML بيترجعوا قديمين من غير حد أقصى، ومفيش version يتمسح، فأسعار قديمة وأي deploy مش بيوصل. ✅ كل نوع ليه استراتيجية: الـ API network-first، والـ shell من cache عليه version، و<code>activate</code> بيمسح القديم، وخطوة التحديث معلنة بـ <code>SKIP_WAITING</code>. وحتى كده الـ v1 فضل ظاهر لحد الـ update، فلازم تخطط للرسالة بتاعة "update available".</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Fix the equal-heights thrash <span class="lvl lvl-1">🟢 easy</span></b>
+    A function makes all invoice cards as tall as the tallest one: it sets <code>height: auto</code> and reads <code>offsetHeight</code> in the same loop. Rewrite it without changing the result, and measure both.
+    <div class="ar-note">عندك function بتخلي كل كروت الفواتير بارتفاع أطول واحد: بتحط <code>height: auto</code> وتقرا <code>offsetHeight</code> في نفس الـ loop. اكتبها تاني من غير ما النتيجة تتغير، وقيس النسختين.</div>
+    <details><summary>Hint · تلميح</summary>
+      Three phases: write all, read all, write all.
+      <div class="ar-note">3 مراحل: كتابة كلها، قراءة كلها، كتابة كلها.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+      Same result, ≈21× faster on 500 cards. An earlier fixture that started from <code>height: auto</code> showed no difference at all, because nothing dirtied the layout, so thrashing only shows when the write really changes something.
+      <div class="ar-note">نفس النتيجة، وأسرع حوالي 21 مرة على 500 كارت. و fixture قبلها كانت بادئة من <code>height: auto</code> ماطلّعتش أي فرق، لأن مفيش حاجة وسّخت الـ layout، يعني الـ thrashing بيبان بس لما الكتابة تغيّر حاجة فعلًا.</div>
+<pre data-file="ex-equalize.ts"><code class="language-typescript">// الـ fixture: 500 كارت بنصوص أطوالها مختلفة
+const grid = document.createElement("div");
+grid.style.cssText = "display:flex;flex-wrap:wrap;align-items:flex-start;gap:4px";
+grid.innerHTML = Array.from(
+  { length: 500 },
+  (_, i) =&gt; `&lt;div class="card" style="width:140px"&gt;Invoice ${i} ${"x ".repeat(i % 40)}&lt;/div&gt;`,
+).join("");
+document.body.append(grid);
+const cards = [...grid.querySelectorAll&lt;HTMLElement&gt;(".card")];
+
+// الكروت بتبدأ بارتفاع ثابت قديم، زي حالة resize بعد أول equalize
+const reset = () =&gt; { cards.forEach((c) =&gt; { c.style.height = "90px"; }); void grid.offsetHeight; };
+
+// ❌ النسخة الأصلية: قراءة بعد كتابة في كل لفة
+function equalizeBad(items: HTMLElement[]): number {
+  let max = 0;
+  for (const card of items) {
+    card.style.height = "auto";
+    max = Math.max(max, card.offsetHeight);
+  }
+  for (const card of items) card.style.height = `${max}px`;
+  return max;
+}
+
+// ✅ ثلاث مراحل: كتابة كلها، قراءة كلها، كتابة كلها
+function equalizeGood(items: HTMLElement[]): number {
+  for (const card of items) card.style.height = "auto";
+  const heights = items.map((card) =&gt; card.offsetHeight);
+  const max = Math.max(...heights);
+  for (const card of items) card.style.height = `${max}px`;
+  return max;
+}
+
+const time = (fn: (x: HTMLElement[]) =&gt; number) =&gt; {
+  reset();
+  const t0 = performance.now();
+  const max = fn(cards);
+  void grid.offsetHeight;
+  return { max, ms: Number((performance.now() - t0).toFixed(1)) };
+};
+
+const bad = time(equalizeBad);
+const good = time(equalizeGood);
+console.log({ bad, good, sameResult: bad.max === good.max });
+
+export {};
+</code></pre>
+<pre><code class="language-plaintext">{"bad":{"max":72,"ms":142.5},"good":{"max":72,"ms":6.7},"sameResult":true}
+</code></pre>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. A reusable chunked processor <span class="lvl lvl-2">🟡 medium</span></b>
+    Write <code>processInChunks(items, handle, { budgetMs, signal, onProgress })</code>. It must yield to the main thread, report progress, stop on abort, and produce zero long tasks on 300,000 invoices.
+    <div class="ar-note">اكتب <code>processInChunks(items, handle, { budgetMs, signal, onProgress })</code>. لازم يرجّع الـ main thread، ويبلّغ بالـ progress، ويقف مع الـ abort، ومايطلّعش أي long task على 300,000 فاتورة.</div>
+    <details><summary>Solution · الحل</summary>
+      Checking elapsed time beats a fixed item count, since item cost varies.
+      <div class="ar-note">فحص الوقت المنقضي أحسن من عدد عناصر ثابت، لأن تكلفة العنصر بتختلف. الـ output: صفر long tasks، و 13 تحديث progress، والإلغاء رمى <code>AbortError</code> قبل ما يخلص.</div>
+<pre data-file="ex-chunks.ts"><code class="language-typescript">type ChunkOptions = {
+  budgetMs?: number;
+  signal?: AbortSignal;
+  onProgress?: (done: number, total: number) =&gt; void;
+};
+
+const yieldToMain = () =&gt;
+  new Promise&lt;void&gt;((resolve) =&gt; {
+    // الـ MessageChannel أسرع من setTimeout المتداخل اللي بيتحد بـ 4ms
+    const { port1, port2 } = new MessageChannel();
+    port1.onmessage = () =&gt; { port1.close(); resolve(); };
+    port2.postMessage(0);
+  });
+
+export async function processInChunks&lt;T&gt;(
+  items: readonly T[],
+  handle: (item: T) =&gt; void,
+  { budgetMs = 8, signal, onProgress }: ChunkOptions = {},
+): Promise&lt;number&gt; {
+  let slice = performance.now();
+  for (let i = 0; i &lt; items.length; i++) {
+    // الإلغاء بيتفحص بين العناصر: الـ throwIfAborted بترمي AbortError
+    signal?.throwIfAborted();
+    handle(items[i]!);
+    if (performance.now() - slice &gt;= budgetMs) {
+      onProgress?.(i + 1, items.length);
+      await yieldToMain();
+      slice = performance.now();
+    }
+  }
+  onProgress?.(items.length, items.length);
+  return items.length;
+}
+
+const longTasks: number[] = [];
+new PerformanceObserver((l) =&gt; l.getEntries().forEach((e) =&gt; longTasks.push(Math.round(e.duration))))
+  .observe({ type: "longtask" });
+
+const invoices = Array.from({ length: 300_000 }, (_, i) =&gt; ({ id: i, amount: (i % 900) + 0.25 }));
+let total = 0;
+const handle = (inv: { amount: number }) =&gt; { total += Number((inv.amount * 1.14).toFixed(2)); };
+
+let updates = 0;
+await processInChunks(invoices, handle, { onProgress: () =&gt; { updates++; } });
+await new Promise((r) =&gt; setTimeout(r, 200));
+console.log("finished:", { total: Math.round(total), progressUpdates: updates, longTasks: longTasks.length });
+
+// الإلغاء في النص
+const controller = new AbortController();
+let handled = 0;
+const run = processInChunks(invoices, () =&gt; { handled++; }, {
+  signal: controller.signal,
+  budgetMs: 1,
+  onProgress: (done) =&gt; { if (done &gt; 1_000) controller.abort(); },
+});
+try {
+  await run;
+} catch (err) {
+  console.log("cancelled:", (err as Error).name, "handled &lt; total:", handled &lt; invoices.length);
+}
+</code></pre>
+<pre><code class="language-plaintext">finished: {"total":153710473,"progressUpdates":13,"longTasks":0}
+cancelled: AbortError handled &lt; total: true
+</code></pre>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. A worker with a timeout and cancel <span class="lvl lvl-3">🔴 hard</span></b>
+    Write <code>runInWorker(source, input, { timeoutMs, signal })</code> returning a promise. A crash rejects, a hang is killed at the timeout, a user can cancel, and the main thread stays alive through all of it. Clean up the worker and the Blob URL every time.
+    <div class="ar-note">اكتب <code>runInWorker(source, input, { timeoutMs, signal })</code> ترجّع promise. الـ crash يعمل reject، والتعليق يتقتل عند الـ timeout، والـ user يقدر يلغي، والـ main thread يفضل شغال في كل ده. ونضّف الـ worker والـ Blob URL كل مرة.</div>
+    <details><summary>Hint · تلميح</summary>
+      A busy worker never processes a "stop" message, so only <code>worker.terminate()</code> works. Put the cleanup in one <code>finish</code> function that every path calls.
+      <div class="ar-note">الـ worker المشغول عمره ما هيقرا رسالة "stop"، فـ <code>worker.terminate()</code> بس هو اللي بينفع. وحط التنضيف في function واحدة اسمها <code>finish</code> وكل طريق ينادي عليها.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+      Timings in the output are rounded to the nearest 100 ms on purpose, so the line is stable across runs.
+      <div class="ar-note">الأوقات في الـ output متقرّبة لأقرب 100ms عن قصد، عشان تبقى ثابتة بين التشغيلات. الـ hang اتقتل عند 500ms والـ main thread فضل شغال، والإلغاء حصل عند 200ms.</div>
+<pre data-file="ex-worker-timeout.ts"><code class="language-typescript">// الـ worker اللي بيعلق مش بيتلغي بـ message: الـ terminate بس هو اللي بيوقفه
+function runInWorker&lt;T&gt;(source: string, input: unknown, { timeoutMs = 2_000, signal }: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise&lt;T&gt; {
+  const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+  const worker = new Worker(url);
+
+  return new Promise&lt;T&gt;((resolve, reject) =&gt; {
+    const finish = (fn: () =&gt; void) =&gt; {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      worker.terminate();
+      URL.revokeObjectURL(url);
+      fn();
+    };
+    const onAbort = () =&gt; finish(() =&gt; reject(signal!.reason));
+    const timer = setTimeout(() =&gt; finish(() =&gt; reject(new Error(`worker timed out after ${timeoutMs}ms`))), timeoutMs);
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    worker.onmessage = (e: MessageEvent&lt;T&gt;) =&gt; finish(() =&gt; resolve(e.data));
+    worker.onerror = (e) =&gt; finish(() =&gt; reject(new Error(e.message)));
+    worker.postMessage(input);
+  });
+}
+
+const SUM = `self.onmessage = (e) =&gt; self.postMessage(e.data.reduce((a, b) =&gt; a + b, 0));`;
+const HANG = `self.onmessage = () =&gt; { while (true) {} };`;
+const CRASH = `self.onmessage = () =&gt; { throw new Error("bad csv row 42"); };`;
+
+const report = async (label: string, run: () =&gt; Promise&lt;unknown&gt;) =&gt; {
+  const t0 = performance.now();
+  try {
+    console.log(label, "-&gt;", await run(), `(${Math.round((performance.now() - t0) / 100) * 100}ms)`);
+  } catch (err) {
+    console.log(label, "-&gt; rejected:", (err as Error).message, `(${Math.round((performance.now() - t0) / 100) * 100}ms)`);
+  }
+};
+
+await report("sum", () =&gt; runInWorker&lt;number&gt;(SUM, [1, 2, 3]));
+await report("crash", () =&gt; runInWorker(CRASH, null));
+
+// الـ main thread فاضل حي والـ worker في infinite loop
+let heartbeats = 0;
+const beat = setInterval(() =&gt; { heartbeats++; }, 50);
+await report("hang", () =&gt; runInWorker(HANG, null, { timeoutMs: 500 }));
+clearInterval(beat);
+console.log("heartbeats during hang:", heartbeats &gt; 5 ? "kept running" : "blocked");
+
+const user = new AbortController();
+setTimeout(() =&gt; user.abort(new Error("user pressed cancel")), 200);
+await report("cancel", () =&gt; runInWorker(HANG, null, { signal: user.signal }));
+
+export {};
+</code></pre>
+<pre><code class="language-plaintext">sum -&gt; 6 (0ms)
+crash -&gt; rejected: Uncaught Error: bad csv row 42 (0ms)
+hang -&gt; rejected: worker timed out after 500ms (500ms)
+heartbeats during hang: kept running
+cancel -&gt; rejected: user pressed cancel (200ms)
+</code></pre>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project / at work <span class="lvl lvl-3">🔴 project</span></b>
+    Pick your side project's heaviest page. Record it in the Performance tab at 4× CPU throttling, list every long task and forced reflow, and fix the worst. Then add a <code>PerformanceObserver</code> for <code>longtask</code> and <code>event</code> that sends results to your backend, add <code>loading="lazy"</code> or an IntersectionObserver to its list, and audit every third-party script for how it loads.
+    <div class="ar-note">اختار أتقل صفحة في مشروعك الجانبي. سجّلها في Performance tab بـ 4× CPU throttling، واكتب كل long task و forced reflow، وصلّح الأسوأ. وبعدين ضيف <code>PerformanceObserver</code> لـ <code>longtask</code> و<code>event</code> يبعت النتايج للـ backend، وضيف <code>loading="lazy"</code> أو IntersectionObserver للـ list بتاعتها، وراجع كل script من طرف تالت بيتحمّل إزاي.</div>
+    <details><summary>Hint · تلميح</summary>
+      Write down the numbers before and after: INP, long task count, first contentful paint. Use <code>navigator.sendBeacon</code> so reports survive the page closing. A fix without a before-and-after number isn't finished.
+      <div class="ar-note">اكتب الأرقام قبل وبعد: INP، وعدد الـ long tasks، وأول paint. واستخدم <code>navigator.sendBeacon</code> عشان التقارير تتبعت حتى لو الصفحة اتقفلت. وأي تحسين من غير رقم قبل وبعد لسه ماخلصش.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Pipeline: DOM + CSSOM → style/render tree → layout → paint → composite. A change re-enters at its step. <code>display: none</code> leaves the render tree, <code>visibility: hidden</code> stays.</li>
+    <li><code>width</code>/<code>left</code>: layout + paint. <code>color</code>/<code>background</code>: paint. <code>transform</code>/<code>opacity</code> on a layer: neither.</li>
+    <li>Thrashing: geometry read after a write, in a loop (2,000 layouts vs 1, a few hundred times slower). Fix: reads first, then writes. <code>innerText</code> and <code>scrollY</code> force layout too.</li>
+    <li>CSS blocks render; classic scripts block the parser; a script after pending CSS waits for it. <code>media="print"</code> swap makes CSS non-blocking.</li>
+    <li><code>defer</code>/<code>module</code>: in order, after parsing, delay DCL. <code>async</code>: any order, delays <code>load</code>. Third-party tags: <code>async</code> or after <code>load</code>, never sync in <code>head</code>.</li>
+    <li>16.7 ms per frame at 60 Hz. rAF runs once per frame before style and layout, and stops in hidden tabs. Animate by elapsed time, never by frame count.</li>
+    <li>rIC is for low-priority work, needs a <code>timeout</code>, shouldn't touch the DOM, and needs a fallback (limited availability on MDN).</li>
+    <li>Compositor animations survive a blocked main thread (90 frames vs 0). <code>will-change</code> costs memory (≈60% more tile memory on all cards): hint only what's about to move.</li>
+    <li>Long task: 50 ms or more on the main thread. Yield with <code>scheduler.yield()</code> or a <code>setTimeout</code> fallback. INP good ≤200 ms, poor &gt;500 ms. Profile at 4× CPU throttling.</li>
+    <li>IntersectionObserver for lazy loading and infinite lists (6 callbacks vs 253 scroll handlers). <code>loading="lazy"</code> for plain images. MutationObserver delivers in a microtask batch; ResizeObserver watches one element's size. Always <code>disconnect()</code>.</li>
+    <li>Web Worker: real thread, no DOM, buys responsiveness not speed. Transfer big buffers (≈0.2 ms vs ≈141 ms for 200 MB). Only <code>terminate()</code> stops a hung worker. Blocked on <code>file://</code>.</li>
+    <li>Service Worker: proxy for offline and caching. Install → waiting → activate. Staleness is the main risk, and a plain reload doesn't move past waiting: plan the update path and version your caches.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ pipeline: الـ DOM مع الـ CSSOM ← style/render tree ← layout ← paint ← composite. وكل تغيير بيدخل من خطوته. <code>display: none</code> بيخرج من الـ render tree، و<code>visibility: hidden</code> بيفضل.</li>
+      <li><code>width</code>/<code>left</code>: layout و paint. <code>color</code>/<code>background</code>: paint. <code>transform</code>/<code>opacity</code> على layer: ولا واحدة فيهم.</li>
+      <li>الـ thrashing: قراءة geometry بعد كتابة في loop (2000 layout ضد 1، وأبطأ كام مئة مرة). الحل: القراءات الأول وبعدين الكتابات. و<code>innerText</code> و<code>scrollY</code> بيجبروا layout كمان.</li>
+      <li>الـ CSS بيوقف الرسم، والـ classic script بيوقف الـ parser، والسكريبت بعد CSS لسه بيتحمل بيستناه. وتبديل <code>media="print"</code> بيخلي الـ CSS مش بيوقف حاجة.</li>
+      <li><code>defer</code>/<code>module</code>: بالترتيب وبعد الـ parsing، وبيأخروا DCL. <code>async</code>: أي ترتيب، وبيأخر <code>load</code>. وسكريبتات الطرف التالت: <code>async</code> أو بعد <code>load</code>، وعمرها ما تبقى sync في الـ <code>head</code>.</li>
+      <li>16.7ms لكل frame على 60Hz. الـ rAF بيشتغل مرة في الـ frame قبل style و layout، وبيقف في التابات المخفية. حرّك بالوقت المنقضي مش بعدد الـ frames.</li>
+      <li>الـ rIC للشغل قليل الأولوية، ومحتاج <code>timeout</code>، ومايلمسش الـ DOM، ومحتاج fallback (limited availability في MDN).</li>
+      <li>الـ animations على الـ compositor بتعيش والـ main thread واقف (90 frame ضد 0). و<code>will-change</code> بياكل memory (حوالي 60% tile memory زيادة على كل الكروت): حطه على اللي هيتحرك بس.</li>
+      <li>الـ long task: 50ms أو أكتر على الـ main thread. اعمل yield بـ <code>scheduler.yield()</code> أو fallback بـ <code>setTimeout</code>. الـ INP كويس لحد 200ms ووحش فوق 500ms. واعمل profiling بـ 4× CPU throttling.</li>
+      <li>الـ IntersectionObserver للـ lazy loading والـ infinite lists (6 callbacks ضد 253 scroll handler). و<code>loading="lazy"</code> للصور العادية. الـ MutationObserver بيبلّغ في batch كـ microtask، والـ ResizeObserver بيراقب حجم عنصر. و<code>disconnect()</code> دايمًا.</li>
+      <li>الـ Web Worker: thread حقيقي، من غير DOM، بيشتري استجابة مش سرعة. انقل الـ buffers الكبيرة (حوالي 0.2ms ضد حوالي 141ms لـ 200MB). و<code>terminate()</code> بس بيوقف worker معلّق. وممنوع على <code>file://</code>.</li>
+      <li>الـ Service Worker: proxy للـ offline والـ caching. install ← waiting ← activate. والـ staleness هو الخطر الأساسي، والـ reload العادي مش بيعدّي الـ waiting: خطط لطريق التحديث واعمل version للـ caches.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 02 · 2.7 — Observers: <code>IntersectionObserver</code> (lazy loading، infinite scroll)، <code>MutationObserver</code>، <code>ResizeObserver</code></label>
+    <label><input type="checkbox" data-key="r2"> 02 · 2.7 — Web Workers: offload CPU work، <code>postMessage</code>، إيه اللي مش متاح جواه (DOM)</label>
+    <label><input type="checkbox" data-key="r3"> 02 · 2.7 — Service Workers كمفهوم (offline، caching، PWA)</label>
+    <label><input type="checkbox" data-key="r4"> 02 · 2.7 — <code>requestAnimationFrame</code> و <code>requestIdleCallback</code></label>
+    <label><input type="checkbox" data-key="r5"> 02 · 3.5 — Rendering pipeline: parse HTML → DOM، parse CSS → CSSOM → render tree → layout → paint → composite</label>
+    <label><input type="checkbox" data-key="r6"> 02 · 3.5 — Reflow vs repaint: إيه اللي بيسبب كل واحد، layout thrashing (قراءة وكتابة الـ layout في loop) وإزاي تتجنبه</label>
+    <label><input type="checkbox" data-key="r7"> 02 · 3.5 — Critical rendering path: render-blocking CSS، parser-blocking JS، <code>async</code> vs <code>defer</code> vs <code>type="module"</code></label>
+    <label><input type="checkbox" data-key="r8"> 02 · 3.5 — <code>requestAnimationFrame</code> للـ animations والـ 16ms budget</label>
+    <label><input type="checkbox" data-key="r9"> 02 · 3.5 — Compositor layers و <code>will-change</code>، <code>transform</code> و <code>opacity</code> ليه رخاص</label>
+    <label><input type="checkbox" data-key="r10"> 02 · 3.5 — Long tasks و الـ main thread، وتقيسهم بـ Performance tab</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://web.dev/articles/rendering-performance">web.dev — Rendering performance</a></li>
+    <li><a href="https://gist.github.com/paulirish/5d52fb081b3570c81e3a">Paul Irish — What forces layout / reflow</a></li>
+    <li><a href="https://web.dev/articles/critical-rendering-path">web.dev — Understand the critical path</a></li>
+    <li><a href="https://web.dev/articles/optimize-long-tasks">web.dev — Optimize long tasks</a></li>
+    <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Using_web_workers">MDN — Using Web Workers</a></li>
+    <li><a href="https://web.dev/articles/service-worker-lifecycle">web.dev — The service worker lifecycle</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./14-dom-events-fetch-storage.html"><small>← Previous</small>14 · DOM, Events &amp; fetch</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./16-regular-expressions.html"><small>Next →</small>16 · Regular Expressions</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
