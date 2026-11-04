@@ -645,7 +645,6 @@ const server = http.createServer(async (req, res) =&gt; {
   res.writeHead(200, { "content-type": "application/json" }).end('{"orderId":42}\n');
 });
 server.keepAliveTimeout = 65_000;            // لازم أكبر من الـ ⁦ALB idle timeout (60 s) —⁩ شوف الـ 502 bug في الجزء الجاي
-server.headersTimeout = 66_000;              // لازم أكبر من keepAliveTimeout
 server.listen(3000, () =&gt; console.log(`orders-api pid=${process.pid} listening on :3000`));
 
 process.once("SIGTERM", async () =&gt; {
@@ -689,7 +688,7 @@ $ curl -s -w "[%{http_code}]\n" localhost:3000/orders/42       # دي connection
   <h3>The classic intermittent 502: <code>keepAliveTimeout</code><span class="ar-sub">الـ 502 الكلاسيكية اللي بتظهر وتختفي: <code>keepAliveTimeout</code></span></h3>
   <section class="en">
     <span class="label">English</span>
-    <p>An ALB keeps a pool of idle connections to each target and reuses them for up to its <strong>idle timeout (60 s)</strong>. Node's HTTP server closes an idle keep-alive socket after <code>server.keepAliveTimeout</code> — <strong>5 s</strong> by default (recent releases such as Node 22.19 add a 1 s <code>keepAliveTimeoutBuffer</code>, so ~6 s in practice — still far below 60 s). So Node closes sockets the ALB still considers reusable. If the ALB sends a request on a socket at the same moment Node closes it, the request hits a dead connection and the user gets <strong>502 Bad Gateway</strong>. It's rare per request, so it shows up as a steady trickle of 502s on low-traffic endpoints, and nothing in your app logs (the request never reached your code). The rule: <strong>the upstream's keep-alive timeout must be longer than the proxy's idle timeout</strong> — and <code>headersTimeout</code> must be larger than <code>keepAliveTimeout</code>.</p>
+    <p>An ALB keeps a pool of idle connections to each target and reuses them for up to its <strong>idle timeout (60 s)</strong>. Node's HTTP server closes an idle keep-alive socket after <code>server.keepAliveTimeout</code> — <strong>5 s</strong> by default (recent releases such as Node 22.19 add a 1 s <code>keepAliveTimeoutBuffer</code>, so ~6 s in practice — still far below 60 s). So Node closes sockets the ALB still considers reusable. If the ALB sends a request on a socket at the same moment Node closes it, the request hits a dead connection and the user gets <strong>502 Bad Gateway</strong>. It's rare per request, so it shows up as a steady trickle of 502s on low-traffic endpoints, and nothing in your app logs (the request never reached your code). The rule: <strong>the upstream's keep-alive timeout must be longer than the proxy's idle timeout</strong>. Older guides also require <code>headersTimeout</code> to be larger than <code>keepAliveTimeout</code>; that no longer reproduces on Node 22.19 (<a href="../../04-NodeJS/lessons/10-http-internals-undici.html#p2">04-Node lesson 10, part 2</a>).</p>
   </section>
 
 <pre class="diagram">
@@ -717,7 +716,6 @@ const GET = "GET /orders/42 HTTP/1.1\r\nHost: orders-api\r\n\r\n";
 async function scenario(keepAliveTimeout: number, idleMs: number): Promise&lt;void&gt; {
   const server = http.createServer((_req, res) =&gt; res.end('{"id":42}'));
   server.keepAliveTimeout = keepAliveTimeout;
-  server.headersTimeout = keepAliveTimeout + 1_000; // لازم يفضل أكبر من keepAliveTimeout
   server.listen(0);
   await once(server, "listening");
   const { port } = server.address() as net.AddressInfo;
@@ -750,17 +748,16 @@ await scenario(65_000, 7_000);</code></pre>
 
 <pre data-file="output — node keepalive-502.ts"><code class="language-plaintext">BUG: keepAliveTimeout=5000 (Node default), LB idle timeout=60s
   [lb]   req 1 -&gt; HTTP/1.1 200 OK
-  [lb]   FIN from Node at +6015 ms — socket still in LB pool
-  [lb]   req 2 (same socket, +8039 ms) -&gt; no response, upstream already closed it -&gt; user gets 502 Bad Gateway
+  [lb]   FIN from Node at +6011 ms — socket still in LB pool
+  [lb]   req 2 (same socket, +8013 ms) -&gt; no response, upstream already closed it -&gt; user gets 502 Bad Gateway
 FIX: keepAliveTimeout=65000 (&gt; LB idle timeout)
   [lb]   req 1 -&gt; HTTP/1.1 200 OK
-  [lb]   req 2 (same socket, +7016 ms) -&gt; HTTP/1.1 200 OK</code></pre>
-  <div class="ar-note">في سيناريو الـ BUG: الـ request الأول رجع 200، وعند +6015 ms جه FIN من Node والـ socket لسه في الـ pool بتاع الـ LB، فالـ request التاني على نفس الـ socket عند +8039 ms مرجعلوش أي رد، يعني اليوزر ياخد 502. في سيناريو الـ FIX (لما <code>keepAliveTimeout=65000</code>) مجاش FIN خالص، والـ request التاني عند +7016 ms رجع 200 عادي.</div>
+  [lb]   req 2 (same socket, +7013 ms) -&gt; HTTP/1.1 200 OK</code></pre>
+  <div class="ar-note">في سيناريو الـ BUG: الـ request الأول رجع 200، وعند +6011 ms جه FIN من Node والـ socket لسه في الـ pool بتاع الـ LB، فالـ request التاني على نفس الـ socket عند +8013 ms مرجعلوش أي رد، يعني اليوزر ياخد 502. في سيناريو الـ FIX (لما <code>keepAliveTimeout=65000</code>) مجاش FIN خالص، والـ request التاني عند +7013 ms رجع 200 عادي.</div>
 
 <pre data-file="src/server.ts — the same fix in Express and Fastify"><code class="language-typescript">// في ⁦Express (⁩بيستخدم http.Server بتاع ⁦Node -&gt;⁩ فبيورث الـ default اللي هو 5 s)
 const server = app.listen(3000);
 server.keepAliveTimeout = 65_000;   // لازم أكبر من الـ ⁦ALB idle timeout (60 s) /⁩ ومن الـ keepalive_timeout بتاع Nginx upstream
-server.headersTimeout = 66_000;     // لازم يبقى أكبر من keepAliveTimeout
 
 // في Fastify: الـ default بتاع keepAliveTimeout أصلًا 72 s للسبب ده بالظبط، بس اكتبه صراحة
 const app = Fastify({ keepAliveTimeout: 65_000, logger: true });</code></pre>
@@ -771,8 +768,8 @@ const app = Fastify({ keepAliveTimeout: 65_000, logger: true });</code></pre>
     <p>والأرقام: الـ defaults بتاعة الـ ALB هي interval كل 30 s، و timeout بعد 5 s، و unhealthy threshold = 2، و healthy threshold = 5. والـ passive في Nginx open-source بيتعمل بـ <code>max_fails=3 fail_timeout=10s</code>، وفي Envoy اسمه outlier detection. ومحتاج الاتنين: الـ passive بيتحرك في milliseconds، والـ active هو اللي بيرجّع الـ node تاني لما يصحى.</p>
     <p>والـ <b>connection draining</b> (في الـ ALB اسمه "deregistration delay" والـ default بتاعه 300 s): لما target يتشال، الـ LB يبطّل يبعتله requests <b>جديدة</b> بس يسيب اللي شغالة تخلص. والـ process بتاعك لازم يتعاون مع الـ <code>SIGTERM</code>، وكل ده بـ hard timeout قبل ما الـ orchestrator يبعت <code>SIGKILL</code>.</p>
     <p>ولما يجيلك <code>SIGTERM</code> وقت الـ deploy: متقفلش على طول! خلي الـ readiness ترجع 503، استنى الـ LB يفهم ويبطّل يبعتلك، بعدين <code>server.close()</code> اللي بيستنى الـ requests اللي شغالة تخلص، وبعدين اقفل الـ pool واخرج. شوف الـ output: الـ request البطيء خلص بـ 200 رغم إن الـ server كان بيقفل.</p>
-    <p>وبعدين الـ bug الكلاسيكي: الـ ALB بيحتفظ بالـ connections مفتوحة لحد 60 ثانية، وNode بيقفل الـ idle connection بعد 5 ثواني. فالـ ALB ممكن يبعت request على socket لسه Node قافله → <b>502</b>. ومش هتلاقي أي حاجة في الـ logs بتاعتك لأن الـ request موصلش للكود أصلًا. الحل سطرين: <code>keepAliveTimeout = 65_000</code> و<code>headersTimeout = 66_000</code>.</p>
-    <p>وتفصيلة: في النسخ الجديدة زي Node 22.19 فيه <code>keepAliveTimeoutBuffer</code> ثانية زيادة، فعمليًا ~6 ثواني — برضه أقل بكتير من 60. وعشان الحكاية دي نادرة لكل request، بتظهر كـ 502 قليلة ومستمرة على الـ endpoints اللي عليها traffic قليل. القاعدة: <b>الـ keep-alive timeout بتاع الـ upstream لازم يبقى أطول من الـ idle timeout بتاع الـ proxy</b>، و<code>headersTimeout</code> لازم يبقى أكبر من <code>keepAliveTimeout</code>. والكلام ده نفسه في Express (بيورث الـ 5 s default)، وFastify أصلًا الـ default بتاعه 72 s للسبب ده — بس اكتبه صراحة.</p>
+    <p>وبعدين الـ bug الكلاسيكي: الـ ALB بيحتفظ بالـ connections مفتوحة لحد 60 ثانية، وNode بيقفل الـ idle connection بعد 5 ثواني. فالـ ALB ممكن يبعت request على socket لسه Node قافله → <b>502</b>. ومش هتلاقي أي حاجة في الـ logs بتاعتك لأن الـ request موصلش للكود أصلًا. الحل سطر واحد: <code>keepAliveTimeout = 65_000</code>.</p>
+    <p>وتفصيلة: في النسخ الجديدة زي Node 22.19 فيه <code>keepAliveTimeoutBuffer</code> ثانية زيادة، فعمليًا ~6 ثواني — برضه أقل بكتير من 60. وعشان الحكاية دي نادرة لكل request، بتظهر كـ 502 قليلة ومستمرة على الـ endpoints اللي عليها traffic قليل. القاعدة: <b>الـ keep-alive timeout بتاع الـ upstream لازم يبقى أطول من الـ idle timeout بتاع الـ proxy</b>. والـ guides القديمة بتقول كمان إن <code>headersTimeout</code> لازم يبقى أكبر من <code>keepAliveTimeout</code>، بس ده مبقاش بيحصل على Node 22.19 (<a href="../../04-NodeJS/lessons/10-http-internals-undici.html#p2">04-Node الدرس 10، الجزء 2</a>). والكلام ده نفسه في Express (بيورث الـ 5 s default)، وFastify أصلًا الـ default بتاعه 72 s للسبب ده — بس اكتبه صراحة.</p>
     <div class="use">
       <b>فين هستخدمه في شغلي؟</b>
       أول حاجة تعملها لما تمسك service ورا ALB أو Nginx: افتح الـ <code>server.ts</code> ودوّر على <code>keepAliveTimeout</code>. لو مش موجود والـ app Express → ده bug مستني يحصل. ولو الـ dashboard فيه 502 قليلة ومنتظمة (0.01%) خصوصًا بعد فترات هدوء — ده غالبًا السبب. وفي الـ deploy pipeline (ECS/K8s): اتأكد إن الـ readiness بتقلب 503 مع SIGTERM وإن الـ deregistration delay (أو <code>preStop</code> sleep في K8s) أكبر من أطول request عندك — مش 300 ثانية default وإنت أطول request عندك 2 ثانية (deploys هتبقى بطيئة على الفاضي).
@@ -1642,13 +1639,12 @@ dns=0.010174s tcp=0.146774s tls=0.209380s ttfb=0.288509s total=0.288628s</code><
     <div class="good"><b>✅ Upstream keep-alive outlives the proxy's</b>
 <pre><code class="language-typescript">const server = app.listen(3000);
 server.keepAliveTimeout = 65_000; // أكبر من الـ ⁦LB idle (60 s)⁩
-server.headersTimeout = 66_000;   // أكبر من keepAliveTimeout
 // وفي Nginx: الـ keepalive_timeout 60s في الـ upstream block
 //        بيفضل أقل من 65 s هو كمان</code></pre></div>
   </div>
   <section class="ar">
     <span class="label">بالعامية</span>
-    <p>❌ الغلط: Express ورا ALB بالـ defaults بتاعة Node — الـ <code>keepAliveTimeout</code> بتاع Node 5 ثواني والـ idle timeout بتاع الـ ALB 60 ثانية، فالـ ALB بيعيد استخدام sockets Node قفلها خلاص، والنتيجة من 0.01% لـ 0.1% من الـ requests بترجع 502 عشوائي، ومفيش أي حاجة في الـ app logs. ✅ الصح: <code>keepAliveTimeout = 65_000</code> (أكبر من الـ LB idle) و<code>headersTimeout = 66_000</code> (أكبر من الـ keepAliveTimeout)، وفي Nginx الـ <code>keepalive_timeout 60s</code> في الـ upstream block برضه أقل من 65.</p>
+    <p>❌ الغلط: Express ورا ALB بالـ defaults بتاعة Node — الـ <code>keepAliveTimeout</code> بتاع Node 5 ثواني والـ idle timeout بتاع الـ ALB 60 ثانية، فالـ ALB بيعيد استخدام sockets Node قفلها خلاص، والنتيجة من 0.01% لـ 0.1% من الـ requests بترجع 502 عشوائي، ومفيش أي حاجة في الـ app logs. ✅ الصح: <code>keepAliveTimeout = 65_000</code> (أكبر من الـ LB idle)، وفي Nginx الـ <code>keepalive_timeout 60s</code> في الـ upstream block برضه أقل من 65.</p>
     <p>القاعدة: اللي <b>ورا</b> (Node) لازم يستنى أطول من اللي <b>قدام</b> (ALB/Nginx)، عشان الـ proxy هو اللي يقفل الـ connection الأول دايمًا ومحدش يبعت على socket ميت.</p>
   </section>
 
@@ -1763,15 +1759,14 @@ services:
   </div>
 
   <div class="exercise"><b>2. Map your timeouts <span class="lvl lvl-2">🟡 medium</span></b>
-    Run <code>keepalive-502.ts</code> and see both scenarios. Then write down every idle/keep-alive timeout in a real stack you own, from the outside in (CDN → LB idle timeout → Nginx <code>keepalive_timeout</code> in the upstream → Node <code>keepAliveTimeout</code>/<code>headersTimeout</code>). Each inner one must be <em>longer</em> than the one in front of it.
-    <div class="ar-note">شغّل <code>keepalive-502.ts</code> وشوف السيناريوهين. وبعدين اكتب كل idle/keep-alive timeout في stack حقيقي إنت مسؤول عنه، من برا لجوا: الـ CDN، بعده الـ idle timeout بتاع الـ LB، بعده الـ <code>keepalive_timeout</code> بتاع Nginx في الـ upstream، وفي الآخر <code>keepAliveTimeout</code>/<code>headersTimeout</code> بتوع Node. كل واحد جوا لازم يبقى <b>أطول</b> من اللي قدامه.</div>
+    Run <code>keepalive-502.ts</code> and see both scenarios. Then write down every idle/keep-alive timeout in a real stack you own, from the outside in (CDN → LB idle timeout → Nginx <code>keepalive_timeout</code> in the upstream → Node <code>keepAliveTimeout</code>). Each inner one must be <em>longer</em> than the one in front of it.
+    <div class="ar-note">شغّل <code>keepalive-502.ts</code> وشوف السيناريوهين. وبعدين اكتب كل idle/keep-alive timeout في stack حقيقي إنت مسؤول عنه، من برا لجوا: الـ CDN، بعده الـ idle timeout بتاع الـ LB، بعده الـ <code>keepalive_timeout</code> بتاع Nginx في الـ upstream، وفي الآخر <code>keepAliveTimeout</code> بتاع Node. كل واحد جوا لازم يبقى <b>أطول</b> من اللي قدامه.</div>
     <details><summary>Solution (typical AWS + Nginx stack) · الحل</summary>
 <pre><code class="language-plaintext">ALB idle timeout ............................. 60 s
 Nginx upstream keepalive_timeout ............. 60 s   (only matters between Nginx and Node)
 Node server.keepAliveTimeout ................. 65 s   &gt; both of the above
-Node server.headersTimeout ................... 66 s   &gt; keepAliveTimeout
 Node server.requestTimeout ................... 300 s (default) — lower it for APIs, e.g. 30 s</code></pre>
-      <div class="ar-note">الحل لـ stack عادي على AWS + Nginx: الـ idle timeout بتاع الـ ALB = 60 s؛ والـ <code>keepalive_timeout</code> بتاع Nginx upstream = 60 s (وده بيفرق بس بين Nginx و Node)؛ والـ <code>server.keepAliveTimeout</code> في Node = 65 s، أكبر من الاتنين اللي فوق؛ والـ <code>headersTimeout</code> = 66 s، أكبر من الـ keepAliveTimeout؛ والـ <code>requestTimeout</code> الـ default بتاعه 300 s — نزّله للـ APIs، مثلًا 30 s.</div>
+      <div class="ar-note">الحل لـ stack عادي على AWS + Nginx: الـ idle timeout بتاع الـ ALB = 60 s؛ والـ <code>keepalive_timeout</code> بتاع Nginx upstream = 60 s (وده بيفرق بس بين Nginx و Node)؛ والـ <code>server.keepAliveTimeout</code> في Node = 65 s، أكبر من الاتنين اللي فوق؛ والـ <code>requestTimeout</code> الـ default بتاعه 300 s — نزّله للـ APIs، مثلًا 30 s.</div>
     </details>
   </div>
 
@@ -1836,7 +1831,7 @@ Node server.requestTimeout ................... 300 s (default) — lower it for 
     <li>Round robin is blind to load — uneven endpoints need <b>least outstanding requests</b> or <b>P2C</b>; IP hash gives stickiness but hot-spots behind NAT; consistent hashing for cache affinity.</li>
     <li><b>Liveness</b> = process alive, no dependencies. <b>Readiness</b> = can take traffic (checks DB), 503 while draining.</li>
     <li>SIGTERM → readiness 503 → wait for LB to deregister → <code>server.close()</code> → close pools → exit, with a hard timeout.</li>
-    <li>Random 502s behind ALB/Nginx: <code>keepAliveTimeout</code> (65 s) &gt; LB idle (60 s), <code>headersTimeout</code> &gt; <code>keepAliveTimeout</code>.</li>
+    <li>Random 502s behind ALB/Nginx: <code>keepAliveTimeout</code> (65 s) &gt; LB idle (60 s).</li>
     <li>Nginx upstream keepalive needs <code>proxy_http_version 1.1</code> + <code>Connection ""</code>; SSE needs <code>proxy_buffering off</code>; uploads need <code>client_max_body_size</code>.</li>
     <li><code>trust proxy</code> = number of hops you own; leftmost XFF is attacker-controlled.</li>
     <li>CDN: cache key = URL (+Vary); <code>s-maxage</code> for the edge, <code>stale-while-revalidate</code>; hashed filenames + <code>immutable</code> instead of purges; personalized = <code>private, no-store</code>.</li>
@@ -1852,7 +1847,7 @@ Node server.requestTimeout ................... 300 s (default) — lower it for 
       <li>الـ round robin أعمى عن الحِمل — الـ endpoints المختلفة في التقل محتاجة <b>least outstanding requests</b> أو <b>P2C</b>؛ الـ IP hash بيدي stickiness بس بيعمل hot-spots ورا الـ NAT؛ والـ consistent hashing للـ cache affinity.</li>
       <li>الـ <b>Liveness</b> = الـ process عايش، من غير أي dependencies. الـ <b>Readiness</b> = يقدر ياخد traffic (بيشيّك على الـ DB)، وبيرجّع 503 وقت الـ draining.</li>
       <li>مع الـ SIGTERM: الـ readiness تبقى 503، استنى الـ LB يشيلك، بعدين <code>server.close()</code>، اقفل الـ pools، واخرج — وكله بـ hard timeout.</li>
-      <li>الـ 502 العشوائية ورا ALB/Nginx: الـ <code>keepAliveTimeout</code> (65 s) لازم أكبر من الـ LB idle (60 s)، و<code>headersTimeout</code> أكبر من <code>keepAliveTimeout</code>.</li>
+      <li>الـ 502 العشوائية ورا ALB/Nginx: الـ <code>keepAliveTimeout</code> (65 s) لازم أكبر من الـ LB idle (60 s).</li>
       <li>الـ upstream keepalive في Nginx محتاج <code>proxy_http_version 1.1</code> + <code>Connection ""</code>؛ والـ SSE محتاج <code>proxy_buffering off</code>؛ والـ uploads محتاجة <code>client_max_body_size</code>.</li>
       <li>الـ <code>trust proxy</code> = عدد الـ hops اللي إنت مسيطر عليها؛ وأول قيمة على الشمال في الـ XFF الـ attacker هو اللي بيتحكم فيها.</li>
       <li>الـ CDN: الـ cache key = الـ URL (+Vary)؛ <code>s-maxage</code> للـ edge، و<code>stale-while-revalidate</code>؛ أسماء ملفات فيها hash + <code>immutable</code> بدل الـ purges؛ والـ personalized = <code>private, no-store</code>.</li>
