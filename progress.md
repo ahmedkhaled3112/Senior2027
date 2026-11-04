@@ -1,11 +1,11 @@
 <!-- AUTO:START -->
 # Senior 2027 — Overall Progress
 
-> آخر تحديث: 2026-11-03 · مصدر الحقيقة = الـ checkboxes في `README.md` بتاع كل قسم · التحديث بـ `node _tools/update-progress.js`
+> آخر تحديث: 2026-11-04 · مصدر الحقيقة = الـ checkboxes في `README.md` بتاع كل قسم · التحديث بـ `node _tools/update-progress.js`
 
 ## الإجمالي
 
-**0 / 1996 بند · 0%** · **52 درس** متعمل
+**0 / 1996 بند · 0%** · **114 درس** متعمل
 
 `░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░` 0%
 
@@ -14,8 +14,8 @@
 | 01 | [CS Fundamentals](./01-CS-Fundamentals/progress.md) | 0/31 | 0/44 | 0/32 | 0 / 107 | 0% `░░░░░░░░░░` | 18 |
 | 02 | [JavaScript](./02-JavaScript/progress.md) | 0/33 | 0/67 | 0/41 | 0 / 141 | 0% `░░░░░░░░░░` | 20 |
 | 03 | [TypeScript](./03-TypeScript/progress.md) | 0/31 | 0/51 | 0/52 | 0 / 134 | 0% `░░░░░░░░░░` | 14 |
-| 04 | [NodeJS](./04-NodeJS/progress.md) | 0/32 | 0/103 | 0/55 | 0 / 190 | 0% `░░░░░░░░░░` | 0 |
-| 05 | [React](./05-React/progress.md) | 0/38 | 0/63 | 0/45 | 0 / 146 | 0% `░░░░░░░░░░` | 0 |
+| 04 | [NodeJS](./04-NodeJS/progress.md) | 0/32 | 0/103 | 0/55 | 0 / 190 | 0% `░░░░░░░░░░` | 39 |
+| 05 | [React](./05-React/progress.md) | 0/38 | 0/63 | 0/45 | 0 / 146 | 0% `░░░░░░░░░░` | 23 |
 | 06 | [NextJS](./06-NextJS/progress.md) | 0/27 | 0/50 | 0/37 | 0 / 114 | 0% `░░░░░░░░░░` | 0 |
 | 07 | [Databases](./07-Databases/progress.md) | 0/28 | 0/89 | 0/58 | 0 / 175 | 0% `░░░░░░░░░░` | 0 |
 | 08 | [Design Patterns](./08-Design-Patterns/progress.md) | 0/24 | 0/67 | 0/57 | 0 / 148 | 0% `░░░░░░░░░░` | 0 |

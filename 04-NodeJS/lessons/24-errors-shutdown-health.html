@@ -1,0 +1,1938 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Error Architecture, Graceful Shutdown &amp; Health Checks — 04 Node.js</title>
+<meta name="section" content="04-NodeJS">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">04 · Node.js</a></span>
+    <span>·</span>
+    <span>Lesson 24 / 39</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Error Architecture, Graceful Shutdown &amp; Health Checks</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 24 of 39 — 04 Node.js</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Node 22.19 · Express 5.3 · Fastify 5.12 · Postgres 18 · BullMQ 6.5 · TypeScript 7</span>
+      <span class="chip">Prereq: 09 Express, 02-JS 11 Errors</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>04 · 2.10 — <b>Operational errors</b> (DB down، invalid input، timeout) vs <b>programmer errors</b> (bug، <code>undefined is not a function</code>) — الأول تتعامل معاه، التاني crash و restart</li>
+        <li>04 · 2.10 — Centralized error handling: error classes hierarchy (<code>AppError</code> → <code>NotFoundError</code>، <code>ValidationError</code>...)، <code>isOperational</code> flag، error codes، mapping للـ HTTP status</li>
+        <li>04 · 2.10 — لا تـ swallow errors، لا تـ log وترمي تاني (double logging)</li>
+        <li>04 · 2.10 — <b>Graceful shutdown</b>: <code>SIGTERM</code> → stop accepting new connections → finish in-flight requests → close DB pools/queues → <code>process.exit(0)</code>، مع timeout للـ force exit</li>
+        <li>04 · 2.10 — Health endpoints: <code>/health/live</code> (الـ process شغال) vs <code>/health/ready</code> (جاهز يستقبل traffic: DB متصلة، queue متصلة)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Operational vs programmer errors</a></li>
+      <li><a href="#p2">Part 2 — Centralized handling</a></li>
+      <li><a href="#p3">Part 3 — Swallowing &amp; double logging</a></li>
+      <li><a href="#p4">Part 4 — Crash handlers</a></li>
+      <li><a href="#p5">Part 5 — Graceful shutdown</a></li>
+      <li><a href="#p6">Part 6 — Health endpoints</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Failure is the normal state of a production service: the database restarts, a card gets declined, a deploy kills your process every week. What separates a senior's service is that each of those has a planned path. Expected failures become clean HTTP responses, bugs stop the process before they corrupt more data, a deploy loses zero requests, and the load balancer always knows who can take traffic. Below, the same load test fails between 10 and 50 requests with the common shutdown mistakes and 0 with the right order. "Explain graceful shutdown step by step" is on this section's exit test, and liveness vs readiness is a standard interview question.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الفشل هو الحالة العادية لأي service في production: الـ DB بتعمل restart، كارت بيترفض، deploy بيقتل الـ process بتاعك كل أسبوع. اللي بيفرّق service سنيور إن كل واحدة من دول ليها مسار متخطط. الفشل المتوقع بيبقى HTTP response نضيف، والـ bug بيوقّف الـ process قبل ما يبوّظ data أكتر، والـ deploy مبيضيّعش ولا request، والـ load balancer دايمًا عارف مين يقدر ياخد traffic. تحت هتشوف نفس الـ load test بيفشل فيه من 10 لـ 50 request مع غلطات الـ shutdown المشهورة، وصفر مع الترتيب الصح. وسؤال "اشرح graceful shutdown خطوة بخطوة" موجود في اختبار الخروج بتاع القسم ده، والفرق بين liveness و readiness سؤال ثابت في الـ interviews.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Operational vs programmer errors <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الـ operational ضد الـ programmer errors</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The language side of errors is in <a href="../../02-JavaScript/lessons/11-error-handling.html">JS lesson 11</a>. This part is about what to <em>do</em> with one, and that depends on a single question: is the program still correct? An <b>operational error</b> is a failure the correct program expects: the DB is down, the input is invalid, a timeout fired, a card was declined. The process is healthy, so you handle it: respond, retry, degrade. A <b>programmer error</b> is a bug: <code>undefined is not a function</code>, a broken invariant, a negative stock count. The program is wrong, and you can't know what it left half done.</p>
+    <p>That's why carrying on after a bug is dangerous. The handler below reserves stock and then throws a <code>TypeError</code> for guest customers. A <code>catch</code> turns it into a 500, and everything looks handled. But the reservation already happened, and it stays in shared memory. After three guest requests the stock is 0 with nothing sold, and a real customer gets a 409 "out of stock". Exit on the bug instead, and the supervisor starts a process with clean memory, so the same customer gets a 201. A restart only cleans memory, though: database writes need their own protection from transactions.</p>
+    <table>
+      <tr><th>What happened</th><th>Kind</th><th>Response</th></tr>
+      <tr><td>Invalid input, broken JSON</td><td>Operational</td><td>400 or 422, log at warn</td></tr>
+      <tr><td>Not found, duplicate (<code>23505</code>)</td><td>Operational</td><td>404 or 409, log at warn</td></tr>
+      <tr><td>Bad or missing token</td><td>Operational</td><td>401 or 403</td></tr>
+      <tr><td>DB or Redis down, <code>ECONNREFUSED</code>, <code>57P01</code></td><td>Operational</td><td>503, readiness fails, keep running</td></tr>
+      <tr><td>Timeout from the payment API</td><td>Operational</td><td>Retry within a budget or 504 (<a href="./25-timeouts-retries-circuit-breakers.html">lesson 25</a>)</td></tr>
+      <tr><td><code>TypeError</code>, failed invariant</td><td>Programmer</td><td>500 with no details, log at error, alert, drain and exit 1</td></tr>
+      <tr><td>Unknown table <code>42P01</code> after a deploy</td><td>Programmer (deploy bug)</td><td>500, alert, roll back. A restart won't fix it</td></tr>
+      <tr><td><code>uncaughtException</code>, <code>unhandledRejection</code></td><td>Treat as programmer</td><td>Log, bounded drain, exit 1 (Part 4)</td></tr>
+    </table>
+    <div class="ar-note">الجدول صف صف:
+      <ul>
+        <li><b>input غلط أو JSON بايظ:</b> operational، رد 400 أو 422، و log على مستوى warn.</li>
+        <li><b>مش موجود أو مكرر (<code>23505</code>):</b> operational، رد 404 أو 409، و log على مستوى warn.</li>
+        <li><b>token غلط أو مش موجود:</b> operational، رد 401 أو 403.</li>
+        <li><b>الـ DB أو Redis واقعين (<code>ECONNREFUSED</code> أو <code>57P01</code>):</b> operational، رد 503، والـ readiness تفشل، والـ process يفضل شغال.</li>
+        <li><b>timeout من الـ payment API:</b> operational، retry في حدود budget أو 504 (<a href="./25-timeouts-retries-circuit-breakers.html">درس 25</a>).</li>
+        <li><b><code>TypeError</code> أو invariant اتكسر:</b> programmer، رد 500 من غير تفاصيل، و log على مستوى error، و alert، وبعدين drain و exit 1.</li>
+        <li><b>جدول مش موجود <code>42P01</code> بعد deploy:</b> programmer (bug في الـ deploy)، رد 500 و alert و rollback. الـ restart مش هيصلّحها.</li>
+        <li><b><code>uncaughtException</code> و <code>unhandledRejection</code>:</b> اعتبرهم programmer: log، و drain بحد أقصى، و exit 1 (الجزء 4).</li>
+      </ul>
+    </div>
+  </section>
+
+<pre data-file="src/corrupted-state.ts"><code class="language-typescript">// بنشوف الفرق بين "نكمّل بعد الـ ⁦bug"⁩ و"نقع ونرجع نضاف" على HTTP server حقيقي
+// شغّله كده: node src/corrupted-state.ts
+import { fork, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+
+type OrderRequest = { customerId: string; sku: string; address?: { city: string } };
+
+function runServer(mode: string): void {
+  // ده state في الـ memory مشترك بين كل الـ requests
+  const stock = new Map([["sku_phone", 3]]);
+  const sold: string[] = [];
+
+  function placeOrder(input: OrderRequest): void {
+    const left = stock.get(input.sku) ?? 0;
+    if (left === 0) throw Object.assign(new Error("out of stock"), { status: 409 });
+    // الخطوة 1: حجزنا الـ stock
+    stock.set(input.sku, left - 1);
+    // ❌ الـ bug: الـ guest مالوش address، فالسطر ده بيرمي TypeError بعد ما الحجز حصل
+    const city = input.address!.city;
+    // الخطوة 2: عمرها ما بتتنفذ للـ guest، والحجز مش بيرجع
+    sold.push(`${input.customerId}:${city}`);
+  }
+
+  const server = http.createServer(async (req, res) =&gt; {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    try {
+      placeOrder(JSON.parse(raw) as OrderRequest);
+      res.writeHead(201).end(`created, stock=${stock.get("sku_phone")} sold=${sold.length}`);
+    } catch (err) {
+      const e = err as Error &amp; { status?: number };
+      res.writeHead(e.status ?? 500, { connection: "close" }).end(`${e.message}, stock=${stock.get("sku_phone")} sold=${sold.length}`);
+      // الـ programmer error في وضع crash: رد 500 وبعدين اخرج، والـ supervisor يرجّعك بـ state نضيف
+      if (mode === "crash" &amp;&amp; e.status === undefined) res.once("finish", () =&gt; process.exit(1));
+    }
+  });
+  server.listen(0, "127.0.0.1", () =&gt; process.send!({ port: (server.address() as AddressInfo).port }));
+}
+
+async function client(mode: string): Promise&lt;void&gt; {
+  let child: ChildProcess;
+  let port = 0;
+  const start = async () =&gt; {
+    child = fork(process.argv[1]!, [mode], { execArgv: ["--disable-warning=ExperimentalWarning"] });
+    const [msg] = await once(child, "message");
+    port = (msg as { port: number }).port;
+  };
+  const post = (body: OrderRequest) =&gt;
+    new Promise&lt;string&gt;((resolve, reject) =&gt; {
+      const req = http.request({ port, method: "POST", agent: false }, (res) =&gt; {
+        let text = "";
+        res.on("data", (c) =&gt; (text += c));
+        res.on("end", () =&gt; resolve(`${res.statusCode} ${text}`));
+      });
+      req.on("error", reject);
+      req.end(JSON.stringify(body));
+    });
+
+  await start();
+  console.log(`mode: ${mode}`);
+  const guest = { customerId: "guest", sku: "sku_phone" };
+  for (let i = 1; i &lt;= 3; i++) {
+    console.log(`  guest ${i}  -&gt; ${await post(guest)}`);
+    // الـ supervisor: لو الـ process وقع شغّله تاني
+    if (child!.exitCode !== null || mode === "crash") {
+      if (child!.exitCode === null) await once(child!, "exit");
+      console.log(`  process exited with code ${child!.exitCode}, restarted`);
+      await start();
+    }
+  }
+  console.log(`  alice    -&gt; ${await post({ customerId: "alice", sku: "sku_phone", address: { city: "Cairo" } })}`);
+  child!.kill();
+}
+
+const mode = process.argv[2];
+if (mode === "carry-on" || mode === "crash") runServer(mode);
+else {
+  await client("carry-on");
+  await client("crash");
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/corrupted-state.ts
+mode: carry-on
+  guest 1  -&gt; 500 Cannot read properties of undefined (reading 'city'), stock=2 sold=0
+  guest 2  -&gt; 500 Cannot read properties of undefined (reading 'city'), stock=1 sold=0
+  guest 3  -&gt; 500 Cannot read properties of undefined (reading 'city'), stock=0 sold=0
+  alice    -&gt; 409 out of stock, stock=0 sold=0
+mode: crash
+  guest 1  -&gt; 500 Cannot read properties of undefined (reading 'city'), stock=2 sold=0
+  process exited with code 1, restarted
+  guest 2  -&gt; 500 Cannot read properties of undefined (reading 'city'), stock=2 sold=0
+  process exited with code 1, restarted
+  guest 3  -&gt; 500 Cannot read properties of undefined (reading 'city'), stock=2 sold=0
+  process exited with code 1, restarted
+  alice    -&gt; 201 created, stock=2 sold=1</code></pre>
+  <div class="ar-note">في <code>carry-on</code>: كل guest بياخد 500 والـ stock بينزل 2 ثم 1 ثم 0، والـ <code>sold=0</code>، يعني 3 قطع اتحجزوا لحد ما اتحجزش له حاجة. وبعدين alice، وهي عميلة سليمة، بتاخد 409 "out of stock" رغم إن مفيش حاجة اتباعت. في <code>crash</code>: كل guest بياخد نفس الـ 500، بس الـ process بيخرج بـ 1 وبيرجع بـ memory نضيفة، فـ alice بتاخد 201.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الجانب بتاع اللغة في الـ errors موجود في <a href="../../02-JavaScript/lessons/11-error-handling.html">درس 11 في JS</a>. الجزء ده عن <em>تعمل إيه</em> لما يحصل، وده معتمد على سؤال واحد: هل البرنامج لسه سليم؟ الـ <b>operational error</b> فشل البرنامج السليم متوقعه: الـ DB واقعة، الـ input غلط، timeout حصل، كارت اترفض. الـ process سليم، فبتتعامل معاه: ترد، أو تعيد، أو تشتغل بإمكانيات أقل. أما الـ <b>programmer error</b> فده bug: <code>undefined is not a function</code>، أو invariant اتكسر، أو stock بالسالب. البرنامج نفسه غلط، ومش عارف سايب إيه متعمل نصه.</p>
+    <p>وعشان كده الكمالة بعد bug خطر. الـ handler فوق بيحجز stock وبعدين بيرمي <code>TypeError</code> للـ guest. الـ <code>catch</code> بيحوّلها لـ 500، وكله شكله متعامل معاه. بس الحجز حصل خلاص وفضل في الـ memory المشتركة. بعد 3 guests الـ stock بقى 0 ومفيش حاجة اتباعت، وعميل حقيقي بياخد 409 "out of stock". لو خرجت عند الـ bug، الـ supervisor بيشغّل process بـ memory نضيفة، ونفس العميل بياخد 201. بس خد بالك: الـ restart بينضّف الـ memory بس، أما كتابات الـ DB فحمايتها في الـ transactions.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عندك cache في الـ memory لأسعار المنتجات، أو عداد rate limit، أو Map فيها sessions. أي <code>try/catch</code> عريض حوالين كود بيعدّل فيهم بيخفي نص تعديل. لما تفتح incident بيقول "الـ API بيرجّع بيانات غلط من يومين ولما عملنا restart اتصلح"، ده غالبًا الشكل ده بالظبط. وفي الـ code review: أي <code>catch</code> بيرد 500 ويكمّل، اسأل "لو ده <code>TypeError</code>، إيه اللي اتساب في النص؟".
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: crash on every bug?</b>
+    "Crash on a bug" has a price. If one request can trigger the <code>TypeError</code>, then a user who keeps sending it can restart your whole fleet, and every restart drops capacity. So don't call <code>process.exit</code> in the handler: answer 500, finish in-flight requests, and exit with a drain (Part 5), so each restart costs less, and page someone, because the real fix is a rollback or a patch. Some teams keep serving for a <code>TypeError</code> caught at a request boundary when the handler touches no shared state. That's a defensible decision only if you've checked that it really touches none, and the alert still has to fire. Unknown errors outside any request boundary always exit.
+    <div class="ar-note"><b>الـ Trade-off، نقع مع كل bug؟</b> "نقع مع الـ bug" ليها تمن. لو request واحد يقدر يطلّع الـ <code>TypeError</code>، يبقى يوزر فضل يبعته يقدر يعمل restart للـ fleet كلها، وكل restart بيقلل الـ capacity. فمتندهش <code>process.exit</code> في الـ handler: رد 500، وخلّص الـ in-flight requests، واخرج بـ drain (الجزء 5) عشان كل restart يبقى تمنه أقل، وبلّغ حد من الفريق، لأن الحل الحقيقي rollback أو patch. فيه فرق بتفضل شغالة مع <code>TypeError</code> اتمسك عند حدود الـ request لو الـ handler مش بيلمس state مشترك. ده قرار ينفع تدافع عنه بس لو اتأكدت فعلًا إنه مش بيلمس حاجة، والـ alert لازم يطلع برضه. أما الـ errors المجهولة بره حدود أي request فدايمًا خروج.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "What's the difference between operational and programmer errors, and why does it matter?" → Operational errors are expected failures of a correct program, such as a DB outage or bad input: handle them and keep running. Programmer errors are bugs: state may already be inconsistent, so continuing can corrupt later requests. Answer 500, log at error level, alert, drain and exit non-zero, and let the supervisor restart you with clean memory.
+    <div class="ar-note"><b>السؤال:</b> "إيه الفرق بين operational و programmer errors، وليه ده مهم؟" ← <b>الإجابة:</b> الـ operational فشل متوقع في برنامج سليم، زي DB واقعة أو input غلط: اتعامل معاه وكمّل. الـ programmer ده bug: الـ state ممكن تكون بايظة خلاص، فالكمالة ممكن تبوّظ requests جاية. رد 500، و log على مستوى error، و alert، و drain، واخرج بـ non-zero، وسيب الـ supervisor يشغّلك بـ memory نضيفة.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Centralized handling <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — التعامل مع الـ errors في مكان واحد</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>If every route decides its own status code and error shape, your API has as many error formats as routes. Centralize it. Business code throws a class from one hierarchy; each class carries a stable <code>code</code> for clients, a <code>status</code> for HTTP, a <code>title</code>, and <code>isOperational = true</code>. Custom classes themselves are in <a href="../../02-JavaScript/lessons/11-error-handling.html#p2">JS lesson 11, part 2</a>; what's new here is what they connect to. The repository is the only layer that knows about Postgres, so that's where <code>23505</code> becomes a <code>ConflictError</code>, keeping the driver's error as <code>cause</code> (<a href="../../02-JavaScript/lessons/11-error-handling.html#p3">part 3</a>) so the root reason survives in the log.</p>
+    <p>One boundary then does three jobs: turn the error into <a href="./14-rest-api-design.html#p5">Problem Details</a> (RFC 9457), log it exactly once, and decide what happens to the process. The rule is <code>isOperational</code>. Operational errors expose their message and the process carries on. Anything else gets a generic 500 with no details, because a stack trace or SQL text in a response is an information leak, and it starts the shutdown after the response is sent.</p>
+    <p>In Express 5 the boundary is the four-argument middleware, registered last; async errors reach it by themselves, as <a href="./09-http-server-express-basics.html#p7">lesson 09</a> showed. In Fastify it's <code>setErrorHandler</code>, and unknown routes need <code>setNotFoundHandler</code> as well. Both frameworks also throw errors of their own, such as a broken JSON body or a failed schema, and those aren't <code>AppError</code>s. Normalize them at the boundary, or they fall into the 500 path and a client's typo restarts your server. Check <code>res.headersSent</code> too: once a response has started you can't change its status, so hand off to <code>next(err)</code>.</p>
+  </section>
+
+<pre data-file="src/errors.ts"><code class="language-typescript">// الـ hierarchy: كل error متوقع ليه code ثابت للـ client و status للـ HTTP
+type AppErrorOptions = { code: string; status: number; title: string; cause?: unknown; extras?: Record&lt;string, unknown&gt; };
+
+export class AppError extends Error {
+  readonly code: string;
+  readonly status: number;
+  readonly title: string;
+  readonly extras: Record&lt;string, unknown&gt;;
+  // الـ operational: حاجة متوقعة في الشغل العادي، والـ process لسه سليم
+  readonly isOperational = true;
+
+  constructor(message: string, { code, status, title, cause, extras = {} }: AppErrorOptions) {
+    super(message, { cause });
+    this.name = new.target.name;
+    this.code = code;
+    this.status = status;
+    this.title = title;
+    this.extras = extras;
+  }
+}
+
+export class ValidationError extends AppError {
+  constructor(message: string, errors: { field: string; message: string }[], cause?: unknown) {
+    super(message, { code: "VALIDATION_FAILED", status: 422, title: "Validation failed", cause, extras: { errors } });
+  }
+}
+export class NotFoundError extends AppError {
+  constructor(resource: string, id: string) {
+    super(`${resource} ${id} was not found`, { code: "NOT_FOUND", status: 404, title: "Not found" });
+  }
+}
+export class ConflictError extends AppError {
+  constructor(message: string, cause?: unknown) {
+    super(message, { code: "CONFLICT", status: 409, title: "Conflict", cause });
+  }
+}
+export class UnavailableError extends AppError {
+  constructor(message: string, cause?: unknown) {
+    super(message, { code: "DEPENDENCY_UNAVAILABLE", status: 503, title: "Service unavailable", cause });
+  }
+}
+
+export const isOperational = (err: unknown): err is AppError =&gt; err instanceof AppError &amp;&amp; err.isOperational;
+
+// الترجمة من أكواد Postgres لأخطاء الـ domain في مكان واحد
+const PG_CONNECTION_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "57P01", "57P03", "08006", "08001"]);
+export function fromPg(err: unknown, conflictMessage = "The resource already exists"): unknown {
+  const code = (err as { code?: string }).code;
+  if (code === "23505") return new ConflictError(conflictMessage, err);
+  if (code === "23514") return new ValidationError("A value breaks a database rule", [], err);
+  if (code === "40001" || code === "40P01") return new UnavailableError("Please retry the request", err);
+  if (code !== undefined &amp;&amp; PG_CONNECTION_CODES.has(code)) return new UnavailableError("The database is unavailable", err);
+  // أي كود تاني (زي 42P01 جدول مش موجود) غالبًا bug: سيبه يطلع زي ما هو
+  return err;
+}
+
+// الـ chain: بنمشي على cause لحد السبب الأصلي عشان سطر الـ log الواحد يبقى كامل
+export function causeChain(err: unknown): string {
+  const parts: string[] = [];
+  for (let e = err; e instanceof Error; e = e.cause) {
+    const code = (e as { code?: string }).code;
+    parts.push(`${e.name}${code ? `[${code}]` : ""}: ${e.message}`);
+  }
+  return parts.join(" &lt;- ");
+}
+
+export type Problem = {
+  type: string;
+  title: string;
+  status: number;
+  detail?: string;
+  instance: string;
+  code: string;
+  [extra: string]: unknown;
+};
+
+// الشكل اللي الـ client بيشوفه: RFC 9457. الـ bug مبيطلعش منه أي تفاصيل
+export function toProblem(err: unknown, instance: string): Problem {
+  if (isOperational(err)) {
+    return {
+      type: `https://api.shop.example/problems/${err.code.toLowerCase().replaceAll("_", "-")}`,
+      title: err.title,
+      status: err.status,
+      detail: err.message,
+      instance,
+      code: err.code,
+      ...err.extras,
+    };
+  }
+  return { type: "about:blank", title: "Internal Server Error", status: 500, instance, code: "INTERNAL" };
+}</code></pre>
+<pre data-file="src/invoices.ts"><code class="language-typescript">// الـ repository: هنا بس بنعرف إن فيه Postgres، وأي error بيطلع منه متترجم
+import type pg from "pg";
+import { fromPg, NotFoundError, ValidationError } from "./errors.ts";
+
+export type Invoice = { id: string; number: string; total_cents: number };
+export type NewInvoice = { number?: unknown; totalCents?: unknown };
+
+export async function createInvoice(pool: pg.Pool, input: NewInvoice): Promise&lt;Invoice&gt; {
+  if (typeof input.number !== "string" || !Number.isInteger(input.totalCents)) {
+    throw new ValidationError("Invalid invoice", [{ field: "number,totalCents", message: "number is a string, totalCents is an integer" }]);
+  }
+  try {
+    const { rows } = await pool.query&lt;Invoice&gt;(
+      "INSERT INTO invoices (number, total_cents) VALUES ($1, $2) RETURNING id, number, total_cents",
+      [input.number, input.totalCents],
+    );
+    return rows[0]!;
+  } catch (err) {
+    throw fromPg(err, `Invoice ${input.number} already exists`);
+  }
+}
+
+export async function getInvoice(pool: pg.Pool, id: string): Promise&lt;Invoice&gt; {
+  try {
+    const { rows } = await pool.query&lt;Invoice&gt;("SELECT id, number, total_cents FROM invoices WHERE id = $1", [id]);
+    if (rows[0] === undefined) throw new NotFoundError("Invoice", id);
+    return rows[0];
+  } catch (err) {
+    throw fromPg(err);
+  }
+}
+
+// ده bug مقصود عشان نشوف المسار بتاع الـ programmer error
+export function buggyDiscount(invoice: Invoice &amp; { coupon?: { apply: (n: number) =&gt; number } }): number {
+  return invoice.coupon!.apply(invoice.total_cents);
+}</code></pre>
+<pre data-file="src/express-app.ts"><code class="language-typescript">// الـ Express 5: الـ async errors بتوصل لوحدها للـ error middleware
+import express, { type NextFunction, type Request, type Response } from "express";
+import type pg from "pg";
+import { AppError, causeChain, isOperational, NotFoundError, toProblem } from "./errors.ts";
+import { buggyDiscount, createInvoice, getInvoice } from "./invoices.ts";
+
+type Deps = { pool: pg.Pool; log: (line: object) =&gt; void; onBug: (err: unknown) =&gt; void };
+
+// أخطاء Express الداخلية (زي JSON بايظ) مش من عندنا، فبنحوّلها لـ AppError عند الحدود
+function normalize(err: unknown): unknown {
+  const e = err as { status?: number; type?: string; message?: string };
+  if (e.type === "entity.parse.failed") {
+    return new AppError("The request body is not valid JSON", { code: "BAD_REQUEST", status: 400, title: "Bad request", cause: err });
+  }
+  if (typeof e.status === "number" &amp;&amp; e.status &lt; 500 &amp;&amp; !(err instanceof AppError)) {
+    return new AppError(e.message ?? "Bad request", { code: "BAD_REQUEST", status: e.status, title: "Bad request", cause: err });
+  }
+  return err;
+}
+
+export function buildExpressApp({ pool, log, onBug }: Deps): express.Express {
+  const app = express();
+  app.use(express.json());
+
+  app.post("/invoices", async (req, res) =&gt; {
+    res.status(201).json(await createInvoice(pool, req.body ?? {}));
+  });
+  app.get("/invoices/:id", async (req, res) =&gt; {
+    res.json(await getInvoice(pool, req.params.id));
+  });
+  app.get("/invoices/:id/discount", async (req, res) =&gt; {
+    res.json({ discounted: buggyDiscount(await getInvoice(pool, req.params.id)) });
+  });
+
+  // أي route مش موجود بقى error زي أي error تاني
+  app.use((req, _res, next) =&gt; next(new NotFoundError("Route", req.path)));
+
+  // الـ 4 arguments هي اللي بتخليها error middleware، ولازم تبقى آخر حاجة
+  app.use((rawErr: unknown, req: Request, res: Response, next: NextFunction) =&gt; {
+    const err = normalize(rawErr);
+    const problem = toProblem(err, req.originalUrl);
+    // المكان الوحيد اللي بيعمل log للـ error ده
+    log({
+      level: isOperational(err) &amp;&amp; problem.status &lt; 500 ? "warn" : "error",
+      method: req.method,
+      path: req.originalUrl,
+      status: problem.status,
+      chain: causeChain(err),
+    });
+    // لو الـ response بدأ يتبعت مينفعش نغيّر الـ status: سيب Express يقفل الـ connection
+    if (res.headersSent) return next(err);
+    res.status(problem.status).type("application/problem+json").json(problem);
+    // الـ bug: رد 500 الأول، وبعدين ابدأ الـ shutdown
+    if (!isOperational(err)) onBug(err);
+  });
+  return app;
+}</code></pre>
+<pre><code class="language-plaintext"># real run: Express 5.3 on Postgres 18
+POST /invoices
+  -&gt; 201 application/json
+  body: {"id":"1","number":"INV-1","total_cents":4200}
+POST /invoices
+  -&gt; 409 application/problem+json
+  body: {"type":"https://api.shop.example/problems/conflict","title":"Conflict","status":409,"detail":"Invoice INV-1 already exists","instance":"/invoices","code":"CONFLICT"}
+  log : warn ConflictError[CONFLICT]: Invoice INV-1 already exists &lt;- error[23505]: duplicate key value violates unique constraint "invoices_number_key"
+POST /invoices
+  -&gt; 422 application/problem+json
+  body: {"type":"https://api.shop.example/problems/validation-failed","title":"Validation failed","status":422,"detail":"A value breaks a database rule","instance":"/invoices","code":"VALIDATION_FAILED","errors":[]}
+  log : warn ValidationError[VALIDATION_FAILED]: A value breaks a database rule &lt;- error[23514]: new row for relation "invoices" violates check constraint "invoices_total_cents_check"
+POST /invoices
+  -&gt; 422 application/problem+json
+  body: {"type":"https://api.shop.example/problems/validation-failed","title":"Validation failed","status":422,"detail":"Invalid invoice","instance":"/invoices","code":"VALIDATION_FAILED","errors":[{"field":"number,totalCents","message":"number is a string, totalCents is an integer"}]}
+  log : warn ValidationError[VALIDATION_FAILED]: Invalid invoice
+POST /invoices (broken JSON)
+  -&gt; 400 application/problem+json
+  body: {"type":"https://api.shop.example/problems/bad-request","title":"Bad request","status":400,"detail":"The request body is not valid JSON","instance":"/invoices","code":"BAD_REQUEST"}
+  log : warn AppError[BAD_REQUEST]: The request body is not valid JSON &lt;- SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)
+GET /invoices/999
+  -&gt; 404 application/problem+json
+  body: {"type":"https://api.shop.example/problems/not-found","title":"Not found","status":404,"detail":"Invoice 999 was not found","instance":"/invoices/999","code":"NOT_FOUND"}
+  log : warn NotFoundError[NOT_FOUND]: Invoice 999 was not found
+GET /nope
+  -&gt; 404 application/problem+json
+  body: {"type":"https://api.shop.example/problems/not-found","title":"Not found","status":404,"detail":"Route /nope was not found","instance":"/nope","code":"NOT_FOUND"}
+  log : warn NotFoundError[NOT_FOUND]: Route /nope was not found
+GET /invoices/1/discount
+  -&gt; 500 application/problem+json
+  body: {"type":"about:blank","title":"Internal Server Error","status":500,"instance":"/invoices/1/discount","code":"INTERNAL"}
+  log : error TypeError: Cannot read properties of undefined (reading 'apply')
+  shutdown started because of: TypeError</code></pre>
+  <div class="ar-note">كل response بنفس الشكل، و <code>content-type</code> هو <code>application/problem+json</code>. الـ 409 جاي من <code>23505</code> حقيقي، والـ log فيه السبب الأصلي بعد <code>&lt;-</code>، بس الـ client مبيشوفش اسم الـ constraint. الـ <code>-5</code> عدّت من الكود ووقفها الـ CHECK في Postgres فطلعت 422. الـ JSON البايظ 400. الـ route المش موجود 404 بنفس الشكل. وآخر واحد هو الـ bug: الـ client شاف <code>Internal Server Error</code> من غير أي تفاصيل، والـ log فيه الـ <code>TypeError</code>، والـ shutdown بدأ.</div>
+
+<pre data-file="src/fastify-app.ts"><code class="language-typescript">// الـ Fastify: نفس الـ classes ونفس toProblem، والـ handler الوحيد اللي بيتغيّر
+import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
+import type pg from "pg";
+import { AppError, causeChain, isOperational, NotFoundError, toProblem, ValidationError } from "./errors.ts";
+import { buggyDiscount, createInvoice, getInvoice, type NewInvoice } from "./invoices.ts";
+
+type Deps = { pool: pg.Pool; log: (line: object) =&gt; void; onBug: (err: unknown) =&gt; void };
+
+function normalize(err: FastifyError): unknown {
+  // الـ schema validation بتيجي بـ err.validation
+  if (err.validation) {
+    const fields = err.validation.map((v) =&gt; ({ field: v.instancePath || "body", message: v.message ?? "invalid" }));
+    return new ValidationError("Invalid request", fields, err);
+  }
+  // أخطاء Fastify الداخلية (FST_ERR_*) معاها statusCode أقل من 500
+  if (!(err instanceof AppError) &amp;&amp; typeof err.statusCode === "number" &amp;&amp; err.statusCode &lt; 500) {
+    return new AppError(err.message, { code: "BAD_REQUEST", status: err.statusCode, title: "Bad request", cause: err });
+  }
+  return err;
+}
+
+export function buildFastifyApp({ pool, log, onBug }: Deps): FastifyInstance {
+  const app = Fastify({ logger: false });
+
+  app.setErrorHandler((rawErr: FastifyError, req, reply) =&gt; {
+    const err = normalize(rawErr);
+    const problem = toProblem(err, req.url);
+    log({
+      level: isOperational(err) &amp;&amp; problem.status &lt; 500 ? "warn" : "error",
+      method: req.method,
+      path: req.url,
+      status: problem.status,
+      chain: causeChain(err),
+    });
+    if (!isOperational(err)) reply.raw.once("finish", () =&gt; onBug(err));
+    return reply.code(problem.status).type("application/problem+json").send(problem);
+  });
+  // الـ setErrorHandler مش بيمسك الـ routes اللي مش موجودة: دي ليها handler لوحدها
+  app.setNotFoundHandler((req) =&gt; {
+    throw new NotFoundError("Route", req.url);
+  });
+
+  app.post&lt;{ Body: NewInvoice }&gt;(
+    "/invoices",
+    { schema: { body: { type: "object", required: ["number"], properties: { number: { type: "string" } } } } },
+    async (req, reply) =&gt; reply.code(201).send(await createInvoice(pool, req.body)),
+  );
+  app.get&lt;{ Params: { id: string } }&gt;("/invoices/:id", async (req) =&gt; getInvoice(pool, req.params.id));
+  app.get&lt;{ Params: { id: string } }&gt;("/invoices/:id/discount", async (req) =&gt; ({
+    discounted: buggyDiscount(await getInvoice(pool, req.params.id)),
+  }));
+  return app;
+}</code></pre>
+<pre><code class="language-plaintext"># real run: Fastify 5.12, the two requests that behave differently inside (broken JSON, the bug)
+POST /invoices (broken JSON)
+  -&gt; 400 application/problem+json
+  body: {"type":"https://api.shop.example/problems/bad-request","title":"Bad request","status":400,"detail":"Body is not valid JSON but content-type is set to 'application/json'","instance":"/invoices","code":"BAD_REQUEST"}
+  log : warn AppError[BAD_REQUEST]: Body is not valid JSON but content-type is set to 'application/json' &lt;- FastifyError[FST_ERR_CTP_INVALID_JSON_BODY]: Body is not valid JSON but content-type is set to 'application/json'
+GET /invoices/1/discount
+  -&gt; 500 application/problem+json
+  body: {"type":"about:blank","title":"Internal Server Error","status":500,"instance":"/invoices/1/discount","code":"INTERNAL"}
+  log : error TypeError: Cannot read properties of undefined (reading 'apply')
+  shutdown started because of: TypeError</code></pre>
+  <div class="ar-note">نفس الـ <code>errors.ts</code> ونفس شكل الـ response، والـ handler بس هو اللي اتغيّر. الـ JSON البايظ في Fastify جاي كـ <code>FST_ERR_CTP_INVALID_JSON_BODY</code>، وعدّى من <code>normalize</code> فبقى 400 بدل ما يبقى 500 ويقفل الـ server. والـ bug طلع زي Express بالظبط.</div>
+
+<pre class="diagram">
+ route / service            repository                error boundary
+ ───────────────            ──────────                ──────────────
+ throw NotFoundError  ──────────────────────────────▶ toProblem(err)
+                            pg error 23505                 │
+                            └─ throw ConflictError ───────▶│  log exactly once
+                               { cause: pgError }          │
+ TypeError (a bug)    ──────────────────────────────▶      ├─ operational: 4xx/503, keep running
+                                                           └─ otherwise: generic 500, then shutdown
+</pre>
+  <div class="ar-note">الـ errors كلها بتروح لمكان واحد. الـ route بيرمي <code>NotFoundError</code> مباشرة. الـ repository بيحوّل <code>23505</code> لـ <code>ConflictError</code> ومعاه الأصلي في <code>cause</code>. والـ bug بيوصل زي ما هو. وعند الحدود: <code>toProblem</code>، و log مرة واحدة، وبعدين لو operational رد 4xx أو 503 وكمّل، وأي حاجة تانية 500 عام وبعدها shutdown.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>لو كل route بيحدد الـ status وشكل الـ error بنفسه، الـ API عندك هيبقى فيه عدد أشكال errors قد عدد الـ routes. لمّهم في مكان واحد. الكود بيرمي class من hierarchy واحدة، وكل class فيها <code>code</code> ثابت للـ clients، و <code>status</code> للـ HTTP، و <code>title</code>، و <code>isOperational = true</code>. الـ custom classes نفسها في <a href="../../02-JavaScript/lessons/11-error-handling.html#p2">الجزء 2 من درس 11 في JS</a>، والجديد هنا هو بتتوصل بإيه. الـ repository هو الطبقة الوحيدة اللي عارفة Postgres، فهناك <code>23505</code> بيبقى <code>ConflictError</code>، ومعاه error الـ driver في <code>cause</code> (<a href="../../02-JavaScript/lessons/11-error-handling.html#p3">الجزء 3</a>) عشان السبب الأصلي يفضل في الـ log.</p>
+    <p>وبعدين نقطة حدود واحدة بتعمل 3 حاجات: تحوّل الـ error لـ <a href="./14-rest-api-design.html#p5">Problem Details</a> (RFC 9457)، وتعمل log مرة واحدة بالظبط، وتقرر الـ process هيعمل إيه. والقاعدة هي <code>isOperational</code>. الـ operational بيظهر رسالته والـ process بيكمّل. أي حاجة تانية بتاخد 500 عام من غير تفاصيل، لأن stack trace أو نص SQL في response يعتبر تسريب معلومات، وبيبدأ الـ shutdown بعد ما الـ response يتبعت.</p>
+    <p>في Express 5 الحدود دي هي الـ middleware أبو 4 arguments، وبيتسجل في الآخر، والـ async errors بتوصله لوحدها زي ما <a href="./09-http-server-express-basics.html#p7">درس 09</a> وضّح. في Fastify هي <code>setErrorHandler</code>، والـ routes المش موجودة محتاجة <code>setNotFoundHandler</code> كمان. والاتنين بيرموا errors من عندهم، زي JSON بايظ أو schema فشلت، ودول مش <code>AppError</code>. حوّلهم عند الحدود، وإلا هيقعوا في مسار الـ 500، وغلطة كتابة من client تعمل restart للـ server. وكمان شيّك على <code>res.headersSent</code>: لو الـ response بدأ مينفعش تغيّر الـ status، فسلّمها لـ <code>next(err)</code>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ frontend عنده <code>if (err.message.includes("duplicate"))</code> عشان يظهر رسالة "الفاتورة موجودة". أول ما حد يغيّر نص الرسالة الـ UI بتقع. مع <code>code: "CONFLICT"</code> الثابت الـ Next.js app بيعمل switch على الـ code، والـ message تتغيّر براحتها. وفي الـ Sentry، لما كل حاجة بتعدي من نقطة واحدة، تقدر تبعت الـ non-operational بس وتبطّل ضوضاء الـ 404. والغلطة الشائعة: <code>res.status(500).json({ error: err.message })</code>، وده بيطلّع رسايل Postgres واسم الجدول لأي حد على الإنترنت.
+    </div>
+  </section>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Swallowing &amp; double logging <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — بلع الـ errors وتكرار الـ logs</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Swallowing.</b> <code>catch {}</code> around a payment means the API returns 200 and the order is marked paid while the gateway declined the card. Nothing fails, no log, no alert, no metric. In the run below, 10 orders report 500 EGP while the gateway captured 350. You find that a month later, from finance. If a failure really is acceptable (a cache write, a metric), the <code>catch</code> must still say so: log at warn, count it, and write a comment saying why.</p>
+    <p><b>Double logging.</b> The opposite mistake is <code>catch (e) { log(e); throw e }</code> at every layer. One database error becomes 4 log lines, with the same message and no extra information. Your error rate looks four times worse, alerts fire on noise, and someone reading the logs thinks four things failed. The rule: <b>a layer either handles an error or adds context and rethrows; only the boundary logs.</b> Context goes on the way up with <code>cause</code>, so the single line at the boundary holds the full story: which invoice, which order, and the root <code>57P01</code>.</p>
+    <p><b>Floating promises</b> are the accidental form of swallowing. <code>chargeCustomer(id)</code> with no <code>await</code> escapes every <code>try/catch</code> above it, and when it rejects, the process dies with an <code>unhandledRejection</code> (Part 4). <code>tsc</code> accepts it. The type-aware rule <code>no-floating-promises</code> catches it, and <code>no-misused-promises</code> catches the <code>async</code> callback in <code>forEach</code>; setup is in <a href="../../03-TypeScript/lessons/10-tooling-strict-performance.html#p1">TS lesson 10, part 1</a>, including why typescript-eslint still needs TS 6 while <code>tsc</code> is on 7.</p>
+  </section>
+
+<pre data-file="src/swallow.ts"><code class="language-typescript">// الـ catch الفاضي: كل حاجة شكلها تمام لحد ما المالية تراجع الأرقام
+// شغّله كده: node src/swallow.ts
+type Order = { id: number; cents: number; status: "pending" | "paid" | "payment_failed" };
+
+// الـ gateway بيرفض كل كارت تالت
+async function capturePayment(order: Order, ledger: number[]): Promise&lt;void&gt; {
+  if (order.id % 3 === 0) throw new Error(`card declined for order ${order.id}`);
+  ledger.push(order.cents);
+}
+
+const makeOrders = (): Order[] =&gt; Array.from({ length: 10 }, (_, i) =&gt; ({ id: i + 1, cents: 5_000, status: "pending" }));
+const sum = (values: number[]) =&gt; values.reduce((a, b) =&gt; a + b, 0);
+
+// ❌ الـ ⁦try/catch "⁩عشان الـ API ميقعش"
+async function checkoutSwallow(order: Order, ledger: number[]): Promise&lt;number&gt; {
+  try {
+    await capturePayment(order, ledger);
+  } catch {
+    // مفيش log، مفيش rethrow، مفيش metric
+  }
+  order.status = "paid";
+  return 200;
+}
+
+// ✅ الفشل بيبان: الـ status صح والـ client عارف، والـ log مرة واحدة عند الحدود
+async function checkoutHonest(order: Order, ledger: number[]): Promise&lt;number&gt; {
+  try {
+    await capturePayment(order, ledger);
+    order.status = "paid";
+    return 200;
+  } catch (err) {
+    order.status = "payment_failed";
+    console.log(`  warn order=${order.id} ${(err as Error).message}`);
+    return 402;
+  }
+}
+
+async function report(label: string, checkout: (o: Order, l: number[]) =&gt; Promise&lt;number&gt;): Promise&lt;void&gt; {
+  const orders = makeOrders();
+  const ledger: number[] = [];
+  console.log(label);
+  const codes = await Promise.all(orders.map((o) =&gt; checkout(o, ledger)));
+  const paid = orders.filter((o) =&gt; o.status === "paid");
+  console.log(`  responses: ${codes.filter((c) =&gt; c === 200).length} x 200, ${codes.filter((c) =&gt; c !== 200).length} x 402`);
+  console.log(`  orders marked paid: ${paid.length}, revenue in our DB: ${sum(paid.map((o) =&gt; o.cents)) / 100} EGP`);
+  console.log(`  captured at the gateway: ${sum(ledger) / 100} EGP`);
+}
+
+await report("catch {}", checkoutSwallow);
+await report("honest", checkoutHonest);</code></pre>
+<pre><code class="language-plaintext">$ node src/swallow.ts
+catch {}
+  responses: 10 x 200, 0 x 402
+  orders marked paid: 10, revenue in our DB: 500 EGP
+  captured at the gateway: 350 EGP
+honest
+  warn order=3 card declined for order 3
+  warn order=6 card declined for order 6
+  warn order=9 card declined for order 9
+  responses: 7 x 200, 3 x 402
+  orders marked paid: 7, revenue in our DB: 350 EGP
+  captured at the gateway: 350 EGP</code></pre>
+  <div class="ar-note">مع <code>catch {}</code>: 10 responses كلهم 200، و 500 EGP في الـ DB، و 350 بس في الـ gateway. فرق 150 EGP ومفيش ولا سطر log. مع النسخة الصح: 7 × 200 و 3 × 402، و 3 سطور warn، والرقمين متساويين.</div>
+
+<pre data-file="src/double-log.ts"><code class="language-typescript">// الـ double logging: error واحد بيطلع كام سطر؟ بنعدّ بجد
+// شغّله كده: node src/double-log.ts
+import { causeChain } from "./errors.ts";
+
+let lines = 0;
+const logError = (where: string, detail: string): void =&gt; {
+  lines += 1;
+  console.log(`  [${lines}] error ${where}: ${detail}`);
+};
+const dbFails = async (): Promise&lt;never&gt; =&gt; {
+  throw Object.assign(new Error("connection terminated unexpectedly"), { code: "57P01" });
+};
+
+// ❌ كل طبقة بتسجّل وترمي تاني
+async function repoBad(): Promise&lt;void&gt; {
+  try {
+    await dbFails();
+  } catch (e) {
+    logError("repository", (e as Error).message);
+    throw e;
+  }
+}
+async function serviceBad(): Promise&lt;void&gt; {
+  try {
+    await repoBad();
+  } catch (e) {
+    logError("service", (e as Error).message);
+    throw e;
+  }
+}
+async function controllerBad(): Promise&lt;void&gt; {
+  try {
+    await serviceBad();
+  } catch (e) {
+    logError("controller", (e as Error).message);
+    throw e;
+  }
+}
+
+// ✅ كل طبقة بتزوّد معلومة بـ cause ومبتسجّلش
+async function repoGood(orderId: string): Promise&lt;void&gt; {
+  try {
+    await dbFails();
+  } catch (e) {
+    throw new Error(`loading order ${orderId}`, { cause: e });
+  }
+}
+async function serviceGood(orderId: string): Promise&lt;void&gt; {
+  try {
+    await repoGood(orderId);
+  } catch (e) {
+    throw new Error(`building invoice for order ${orderId}`, { cause: e });
+  }
+}
+
+console.log("log and rethrow at every layer:");
+try {
+  await controllerBad();
+} catch (e) {
+  logError("error middleware", (e as Error).message);
+}
+console.log(`  lines for one error: ${lines}`);
+
+lines = 0;
+console.log("cause on the way up, one log at the boundary:");
+try {
+  await serviceGood("ord_1001");
+} catch (e) {
+  logError("error middleware", causeChain(e));
+}
+console.log(`  lines for one error: ${lines}`);</code></pre>
+<pre><code class="language-plaintext">$ node src/double-log.ts
+log and rethrow at every layer:
+  [1] error repository: connection terminated unexpectedly
+  [2] error service: connection terminated unexpectedly
+  [3] error controller: connection terminated unexpectedly
+  [4] error error middleware: connection terminated unexpectedly
+  lines for one error: 4
+cause on the way up, one log at the boundary:
+  [1] error error middleware: Error: building invoice for order ord_1001 &lt;- Error: loading order ord_1001 &lt;- Error[57P01]: connection terminated unexpectedly
+  lines for one error: 1</code></pre>
+  <div class="ar-note">نفس الـ error طلّع 4 سطور فيهم نفس الرسالة، ومفيش ولا واحد قال أنهي order. وفي النسخة الصح سطر واحد فيه كل حاجة: <code>building invoice</code> عشان <code>loading order</code> عشان <code>57P01</code>.</div>
+
+<pre data-file="src/checkout.ts"><code class="language-typescript">// الـ lint بيمسك الـ promise اللي محدش مستنيه: tsc لوحده بيعدّيها
+declare function chargeCustomer(orderId: string): Promise&lt;void&gt;;
+declare function sendReceipt(orderId: string): Promise&lt;void&gt;;
+declare const orderIds: string[];
+
+export async function checkout(orderId: string): Promise&lt;number&gt; {
+  // ❌ لو الـ charge فشل، الـ catch عمره ما هيشوفه والـ process ممكن يقع
+  chargeCustomer(orderId);
+
+  // ❌ الـ forEach مش بيستنى، فالدالة بترجع قبل ما الـ emails تخلص
+  orderIds.forEach(async (id) =&gt; {
+    await sendReceipt(id);
+  });
+
+  // ✅ مقصودة: الـ void بتقول للي بيقرا إن ده fire and forget، ولازم يتمسك فيها الـ error
+  void sendReceipt(orderId).catch((err: unknown) =&gt; console.warn("receipt failed", err));
+  return 201;
+}</code></pre>
+<pre data-file="eslint.config.mjs"><code class="language-javascript">import tseslint from "typescript-eslint";
+
+export default [
+  {
+    files: ["**/*.ts"],
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+    },
+    plugins: { "@typescript-eslint": tseslint.plugin },
+    rules: {
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-misused-promises": "error",
+    },
+  },
+];</code></pre>
+<pre><code class="language-plaintext">$ eslint src   (real run: ESLint 10.14, typescript-eslint 8.72 on TS 6.0.3)
+   8:3   error  Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly marked as ignored with the `void` operator  @typescript-eslint/no-floating-promises
+  11:20  error  Promise returned in function argument where a void return was expected                                                                                              @typescript-eslint/no-misused-promises
+✖ 2 problems (2 errors, 0 warnings)</code></pre>
+  <div class="ar-note">الـ rule أمسكت السطرين الغلط: السطر 8 promise محدش مستنيها، والسطر 11 <code>async</code> callback في <code>forEach</code> مش هيستناها. والسطر اللي فيه <code>void</code> و <code>.catch</code> عدّى، لأنه بيقول صراحةً إن ده مقصود، ومعاه error handling. و <code>tsc</code> على نفس الملف نجح من غير ولا error.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>بلع الـ error.</b> الـ <code>catch {}</code> حوالين payment معناها إن الـ API بيرجّع 200 والـ order بيتعلّم paid، والـ gateway رافض الكارت. مفيش حاجة بتفشل: لا log ولا alert ولا metric. في الـ run فوق، 10 orders بيقولوا 500 EGP والـ gateway حصّل 350. وهتعرف ده بعد شهر من المالية. ولو الفشل مقبول فعلًا (كتابة في cache، أو metric)، الـ <code>catch</code> لازم يقول كده برضه: log على warn، وعدّاد، و comment بيشرح ليه.</p>
+    <p><b>تكرار الـ log.</b> الغلطة العكسية هي <code>catch (e) { log(e); throw e }</code> في كل طبقة. error واحد في الـ DB بيبقى 4 سطور، بنفس الرسالة ومن غير معلومة زيادة. الـ error rate شكله 4 أضعاف، والـ alerts بتشتغل على ضوضاء، واللي بيقرا الـ logs فاكر إن 4 حاجات وقعت. القاعدة: <b>الطبقة يا إما تتعامل مع الـ error، يا إما تزوّد context وترميه، وحدود الـ app بس هي اللي بتعمل log.</b> والـ context بيطلع مع <code>cause</code>، فالسطر الواحد عند الحدود فيه الحكاية كلها: أنهي invoice، وأنهي order، و <code>57P01</code> الأصلي.</p>
+    <p><b>الـ floating promises</b> هي الشكل غير المقصود من البلع. <code>chargeCustomer(id)</code> من غير <code>await</code> بتهرب من أي <code>try/catch</code> فوقها، ولما ترفض الـ process بيموت بـ <code>unhandledRejection</code> (الجزء 4). و <code>tsc</code> بيعدّيها. الـ rule اللي بتعتمد على الـ types <code>no-floating-promises</code> بتمسكها، و <code>no-misused-promises</code> بتمسك الـ <code>async</code> callback في <code>forEach</code>. والإعداد في <a href="../../03-TypeScript/lessons/10-tooling-strict-performance.html#p1">الجزء 1 من درس 10 في TS</a>، ومعاه ليه typescript-eslint لسه محتاج TS 6 و <code>tsc</code> على 7.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      افتح أي repo قديم وشغّل <code>rg "catch \(\w*\) \{\s*\}"</code>، أو <code>rg "catch \{"</code>، وهتتفاجئ. ولو عندك Datadog، دوّر على نفس الرسالة بتتكرر 3 أو 4 مرات بنفس الـ trace id: ده double logging، وبتدفع تمن كل سطر. وفي الـ PR: لو شفت <code>logger.error(e); throw e;</code> اطلب تحويله لـ <code>throw new Error("loading order " + id, { cause: e })</code>.
+    </div>
+  </section>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Crash handlers <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ crash handlers</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>What <code>uncaughtException</code> and <code>unhandledRejection</code> are, and all the <code>--unhandled-rejections</code> modes, is in <a href="../../02-JavaScript/lessons/11-error-handling.html#p5">JS lesson 11, part 5</a> and <a href="./09-http-server-express-basics.html#p7">lesson 09, part 7</a>. Here's the production handler. The Node docs say the correct use of <code>uncaughtException</code> is synchronous cleanup before shutting down, and that it's not safe to resume normal operation afterwards. So it does three things: log once, try a <b>bounded</b> drain, and exit 1. An async drain goes a step beyond that advice, and the limit is what makes it acceptable: a drain with no limit can hang forever, for example if it waits on the log server that's down.</p>
+    <p>Exit codes are how the supervisor learns what happened, so they have to be honest. No handler: 1. Your handler throws: 7. Log and carry on: the process lives, and it can end with 0. And <code>process.exit(0)</code> after a crash tells systemd's <code>Restart=on-failure</code> and your dashboards that all is fine. One detail in the code below: set <code>process.exitCode = 1</code> first. The force timer is <code>.unref()</code>'d, so if nothing else keeps the loop alive, the process exits on its own, and the last row of the output would say 0 without that line.</p>
+    <p><b>A supervisor restarts you.</b> Kubernetes, systemd or PM2 own the restart; your process doesn't try to restart itself. But a process that crashes at startup, say on a missing <code>DATABASE_URL</code>, will crash forever, so restarts need <b>backoff</b> and, at some point, an <b>alert</b>. The Kubernetes docs describe its version: 10 s, 20 s, 40 s, capped at 5 minutes, reset after 10 minutes of healthy running. That's the <code>CrashLoopBackOff</code> status. A small supervisor below shows the logic for real. <b>What not to do: keep serving.</b></p>
+  </section>
+
+<pre data-file="src/fatal.ts"><code class="language-typescript">// الـ crash handler: سجّل، جرّب تصفّي في وقت محدد، واخرج بـ 1. عمره ما بيكمّل الشغل
+type CrashOptions = {
+  drain: () =&gt; Promise&lt;void&gt;;
+  timeoutMs: number;
+  log: (line: string) =&gt; void;
+};
+
+export function installCrashHandlers({ drain, timeoutMs, log }: CrashOptions): void {
+  let crashing = false;
+
+  const die = (kind: string, err: unknown): void =&gt; {
+    // المرة التانية معناها إن الـ drain نفسه وقع، فاخرج فورًا
+    if (crashing) process.exit(1);
+    crashing = true;
+    // الـ exitCode الأول: لو الـ event loop فضي لوحده، الخروج يفضل بـ 1 مش 0
+    process.exitCode = 1;
+    log(`fatal ${kind}: ${(err as Error)?.message ?? String(err)}`);
+
+    // الحارس: الـ drain ممكن يعلّق، والـ unref عشان الـ timer ميأخرش خروج طبيعي
+    setTimeout(() =&gt; {
+      log(`drain took more than ${timeoutMs} ms, forcing exit`);
+      process.exit(1);
+    }, timeoutMs).unref();
+
+    drain()
+      .then(() =&gt; log("drain finished"))
+      .catch((drainErr: unknown) =&gt; log(`drain failed: ${String(drainErr)}`))
+      .finally(() =&gt; process.exit(1));
+  };
+
+  process.on("uncaughtException", (err) =&gt; die("uncaughtException", err));
+  process.on("unhandledRejection", (reason) =&gt; die("unhandledRejection", reason));
+}</code></pre>
+<pre data-file="src/crash-codes.ts"><code class="language-typescript">// كل صف بيتشغّل في process لوحده، والـ exit code هو اللي بيطلع فعلًا
+// شغّله كده: node src/crash-codes.ts
+import { fork } from "node:child_process";
+import http from "node:http";
+import { setTimeout as sleep } from "node:timers/promises";
+import { installCrashHandlers } from "./fatal.ts";
+
+const log = (line: string) =&gt; console.log(`    ${line}`);
+const boom = () =&gt; setTimeout(() =&gt; { throw new Error("invariant broken: negative stock"); }, 5);
+const reject = () =&gt; void Promise.reject(new Error("payment API rejected"));
+
+const scenarios: Record&lt;string, () =&gt; void&gt; = {
+  "throw, no handler": boom,
+  "rejection, no handler": reject,
+  "handler logs and carries on": () =&gt; {
+    process.on("uncaughtException", (err) =&gt; log(`logged: ${err.message}`));
+    boom();
+  },
+  "handler throws": () =&gt; {
+    process.on("uncaughtException", () =&gt; {
+      throw new Error("the handler itself failed");
+    });
+    boom();
+  },
+  "handler calls process.exit(0)": () =&gt; {
+    process.on("uncaughtException", () =&gt; process.exit(0));
+    boom();
+  },
+  "installCrashHandlers, drain ok": () =&gt; {
+    installCrashHandlers({ drain: () =&gt; sleep(50).then(() =&gt; undefined), timeoutMs: 1_000, log });
+    boom();
+  },
+  "installCrashHandlers, drain hangs, server open": () =&gt; {
+    const server = http.createServer().listen(0);
+    installCrashHandlers({ drain: () =&gt; new Promise(() =&gt; server.ref()), timeoutMs: 300, log });
+    boom();
+  },
+  "installCrashHandlers, drain hangs, nothing open": () =&gt; {
+    installCrashHandlers({ drain: () =&gt; new Promise(() =&gt; {}), timeoutMs: 300, log });
+    boom();
+  },
+};
+
+const name = process.argv[2];
+if (name !== undefined) {
+  scenarios[name]!();
+} else {
+  for (const scenario of Object.keys(scenarios)) {
+    console.log(scenario);
+    const started = performance.now();
+    const child = fork(process.argv[1]!, [scenario], { execArgv: ["--disable-warning=ExperimentalWarning"], stdio: ["ignore", "inherit", "ignore", "ipc"] });
+    const code = await new Promise&lt;number | null&gt;((resolve) =&gt; child.on("exit", resolve));
+    console.log(`    exit code ${code} after ≈${Math.round(performance.now() - started)} ms`);
+  }
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/crash-codes.ts
+throw, no handler
+    exit code 1 after ≈105 ms
+rejection, no handler
+    exit code 1 after ≈100 ms
+handler logs and carries on
+    logged: invariant broken: negative stock
+    exit code 0 after ≈103 ms
+handler throws
+    exit code 7 after ≈108 ms
+handler calls process.exit(0)
+    exit code 0 after ≈98 ms
+installCrashHandlers, drain ok
+    fatal uncaughtException: invariant broken: negative stock
+    drain finished
+    exit code 1 after ≈174 ms
+installCrashHandlers, drain hangs, server open
+    fatal uncaughtException: invariant broken: negative stock
+    drain took more than 300 ms, forcing exit
+    exit code 1 after ≈420 ms
+installCrashHandlers, drain hangs, nothing open
+    fatal uncaughtException: invariant broken: negative stock
+    exit code 1 after ≈111 ms</code></pre>
+  <div class="ar-note">الصفوف بالترتيب: من غير handler الاتنين بيخرجوا بـ 1. الـ handler اللي بيسجّل ويكمّل خرج بـ 0، وده معناه إن الـ supervisor فاكر كله تمام. الـ handler اللي بيرمي بيخرج بـ 7. و <code>process.exit(0)</code> بيكدب بـ 0. وآخر 3 بـ <code>installCrashHandlers</code>: drain سليم خلص وخرج بـ 1؛ drain علّق و server مفتوح، فالحارس خرج بـ 1 بعد 300 ms؛ و drain علّق ومفيش حاجة مفتوحة، فالـ loop فضي والـ process خرج على طول، وبرضه بـ 1 بفضل <code>process.exitCode</code>.</div>
+
+<pre data-file="src/supervisor.ts"><code class="language-typescript">// الـ supervisor الصغير ده بيشرح اللي systemd و Kubernetes بيعملوه: restart بـ backoff، وبعدين alert
+// شغّله كده: node src/supervisor.ts
+import { fork } from "node:child_process";
+import { setTimeout as sleep } from "node:timers/promises";
+
+// الـ child: بيفشل عند الـ ⁦startup (⁩مثلًا الـ env غلط)، ولو STABLE_AFTER اتحدد بيقوم عادي بعد كام محاولة
+if (process.argv[2] === "child") {
+  const attempt = Number(process.env.ATTEMPT);
+  const stableAfter = Number(process.env.STABLE_AFTER ?? Infinity);
+  if (attempt &lt; stableAfter) throw new Error("DATABASE_URL is missing");
+  setTimeout(() =&gt; process.exit(0), Number(process.env.RUN_MS));
+} else {
+  type Policy = { baseMs: number; maxMs: number; maxCrashes: number; stableMs: number };
+  const alert = (msg: string) =&gt; console.log(`  ALERT -&gt; on-call: ${msg}`);
+
+  async function supervise(stableAfter: number, { baseMs, maxMs, maxCrashes, stableMs }: Policy): Promise&lt;void&gt; {
+    const t0 = performance.now();
+    const now = () =&gt; `t≈${String(Math.round(performance.now() - t0)).padStart(5)} ms`;
+    let crashes = 0;
+    for (let attempt = 1; ; attempt++) {
+      const startedAt = performance.now();
+      const child = fork(process.argv[1]!, ["child"], {
+        env: { ...process.env, ATTEMPT: String(attempt), STABLE_AFTER: String(stableAfter), RUN_MS: String(stableMs + 50) },
+        execArgv: ["--disable-warning=ExperimentalWarning"],
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+      });
+      const code = await new Promise&lt;number | null&gt;((resolve) =&gt; child.on("exit", resolve));
+      const uptime = performance.now() - startedAt;
+      // لو فضل شغال كفاية، الـ crash القديم ميتحسبش عليه
+      if (uptime &gt;= stableMs) crashes = 0;
+      if (code === 0) {
+        console.log(`  ${now()} attempt ${attempt}: ran ≈${Math.round(uptime)} ms and exited 0, backoff reset`);
+        return;
+      }
+      crashes += 1;
+      if (crashes &gt;= maxCrashes) {
+        console.log(`  ${now()} attempt ${attempt}: exit ${code}, ${crashes} crashes in a row`);
+        alert("giving up, crash loop");
+        return;
+      }
+      // الـ delay بيتضاعف لحد سقف، عشان الـ crash loop ميضربش الـ DB والـ logs
+      const delay = Math.min(baseMs * 2 ** (crashes - 1), maxMs);
+      console.log(`  ${now()} attempt ${attempt}: exit ${code}, restart in ${delay} ms`);
+      await sleep(delay);
+    }
+  }
+
+  const policy = { baseMs: 100, maxMs: 800, maxCrashes: 6, stableMs: 300 };
+  console.log("config is broken for good:");
+  await supervise(Infinity, policy);
+  console.log("config fixed after the third attempt:");
+  await supervise(3, policy);
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/supervisor.ts
+config is broken for good:
+  t≈   78 ms attempt 1: exit 1, restart in 100 ms
+  t≈  256 ms attempt 2: exit 1, restart in 200 ms
+  t≈  540 ms attempt 3: exit 1, restart in 400 ms
+  t≈ 1022 ms attempt 4: exit 1, restart in 800 ms
+  t≈ 1915 ms attempt 5: exit 1, restart in 800 ms
+  t≈ 2803 ms attempt 6: exit 1, 6 crashes in a row
+  ALERT -&gt; on-call: giving up, crash loop
+config fixed after the third attempt:
+  t≈   77 ms attempt 1: exit 1, restart in 100 ms
+  t≈  263 ms attempt 2: exit 1, restart in 200 ms
+  t≈  906 ms attempt 3: ran ≈438 ms and exited 0, backoff reset</code></pre>
+  <div class="ar-note">لو الـ config بايظ دايمًا: الـ delay بقى 100 ثم 200 ثم 400 ثم 800 ووقف عند السقف، وبعد 6 وقعات ورا بعض طلع <code>ALERT</code>. ولو الـ config اتصلح في المحاولة التالتة: الـ process اشتغل وقت كفاية فالـ backoff اترستر. الأوقات تقريبية على جهاز عليه ضغط.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>إيه هما <code>uncaughtException</code> و <code>unhandledRejection</code>، وكل modes الـ <code>--unhandled-rejections</code>، موجودين في <a href="../../02-JavaScript/lessons/11-error-handling.html#p5">الجزء 5 من درس 11 في JS</a> و<a href="./09-http-server-express-basics.html#p7">الجزء 7 من درس 09</a>. هنا الـ handler بتاع production. الـ docs بتاعة Node بتقول إن الاستخدام الصح لـ <code>uncaughtException</code> هو cleanup synchronous قبل الإغلاق، وإن مش آمن ترجع تشتغل عادي بعده. فهو بيعمل 3 حاجات: log مرة، و drain <b>بحد أقصى</b>، و exit 1. والـ drain الـ async خطوة أبعد من نصيحة الـ docs، واللي بيخليه مقبول هو الحد الأقصى: من غير حد ممكن يعلّق للأبد، زي لو مستني log server واقع.</p>
+    <p>الـ exit codes هي طريقة الـ supervisor يعرف حصل إيه، فلازم تبقى صادقة. من غير handler: 1. الـ handler بتاعك رمى: 7. سجّل وكمّل: الـ process عايش، وممكن يخلص بـ 0. و <code>process.exit(0)</code> بعد crash بيقول لـ <code>Restart=on-failure</code> بتاع systemd وللـ dashboards بتاعتك إن كله تمام. وتفصيلة في الكود: حط <code>process.exitCode = 1</code> في الأول. الـ force timer عليه <code>.unref()</code>، فلو مفيش حاجة تانية ماسكة الـ loop الـ process بيخرج لوحده، وآخر صف في الـ output كان هيقول 0 من غير السطر ده.</p>
+    <p><b>الـ supervisor هو اللي بيشغّلك تاني.</b> الـ Kubernetes أو systemd أو PM2 مسؤولين عن الـ restart، والـ process مبيحاولش يشغّل نفسه. بس process بيقع عند الـ startup، زي لو <code>DATABASE_URL</code> ناقص، هيفضل يقع للأبد، فالـ restarts محتاجة <b>backoff</b> وفي نقطة معينة <b>alert</b>. والـ docs بتاعة Kubernetes بتوصف نسختها: 10 ثواني، 20، 40، لحد سقف 5 دقايق، وبيترستر بعد 10 دقايق شغل سليم. وده الـ status اللي اسمه <code>CrashLoopBackOff</code>. والـ supervisor الصغير فوق بيوري المنطق بجد. <b>واللي متعملوش: تفضل بتخدم requests.</b></p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      <code>kubectl get pods</code> بيقولك <code>CrashLoopBackOff</code> بعد deploy. بص على <code>lastState.terminated.exitCode</code>: الـ 1 يعني crash من الكود، فاقرا الـ logs. الـ 137 يعني SIGKILL، غالبًا OOM أو الـ grace period خلص. والـ 0 معناها حد عمل <code>process.exit(0)</code> في حالة فشل، ودي أوحشهم في الـ debug. وفي <code>main.ts</code> بتاع كل service حط <code>installCrashHandlers</code> مرة واحدة، و <code>drain</code> بتاعها هو نفس الـ shutdown بتاع الجزء الجاي.
+    </div>
+  </section>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Graceful shutdown <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ graceful shutdown</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Signals and the Kubernetes timeline are in <a href="../../01-CS-Fundamentals/lessons/11-processes-threads-concurrency.html#p9">CS lesson 11, part 9</a>; the LB side and the keep-alive 502 are in <a href="../../01-CS-Fundamentals/lessons/16-load-balancers-proxies-cdn.html#p3">CS lesson 16, part 3</a>; and the raw <code>close</code> family is in <a href="./10-http-internals-undici.html#p3">lesson 10, part 3</a>. This part is the full sequence on a real service with HTTP, a BullMQ worker and a pg pool, and the proof that order matters. The steps are the answer to exit-test question 5:</p>
+    <ol>
+      <li><b>Arm a force-exit timer</b> with <code>.unref()</code>, shorter than the orchestrator's kill deadline.</li>
+      <li><b>Mark not ready</b>: <code>/health/ready</code> returns 503 while everything else still works.</li>
+      <li><b>Wait for the load balancer to notice</b>. In Kubernetes, removing the pod from endpoints and sending SIGTERM happen at the same time, so close immediately and new requests hit a closed port.</li>
+      <li><b><code>server.close()</code></b>: no new connections.</li>
+      <li><b><code>closeIdleConnections()</code></b>, repeated while draining.</li>
+      <li><b>Wait for in-flight requests</b> to finish.</li>
+      <li><b><code>worker.close()</code></b>, which waits for active jobs, then <b><code>queue.close()</code></b>, then <b><code>pool.end()</code></b>. The pool goes last because everything before it uses the pool.</li>
+      <li><b><code>process.exit(0)</code></b>.</li>
+    </ol>
+    <p><b>The trap in step 5.</b> <code>server.close()</code> closes idle connections once, at the moment you call it. A request in flight at that moment is not idle, and when it finishes, its keep-alive connection stays open until <code>keepAliveTimeout</code>, so the close callback doesn't fire. Measured below with a timeout of 8 s: 9.4 s of waiting, for a 500 ms request. With the 65 s you set behind an ALB, you'd hit your force timer every deploy. Either sweep with <code>closeIdleConnections()</code> on an interval, or send <code>Connection: close</code> during the drain. Both took about 0.5 s. <a href="./10-http-internals-undici.html#p3">Lesson 10, part 3</a> measured the same trap, and it also showed that a client still sending on its socket is answered even after <code>close()</code>, so that socket never goes idle. That's one more reason the load balancer has to stop first; if it can't, send <code>Connection: close</code> as well.</p>
+    <p><b>The numbers.</b> <code>drainDelay + longest request + closing dependencies</code> must fit inside the force timer, and the force timer must fit inside <code>terminationGracePeriodSeconds</code> (default 30 s). For example: drain 5 s, requests up to 15 s, force at 25 s.</p>
+    <p><b>On this machine.</b> This is Windows, where a real SIGTERM can't reach a handler: <code>child.kill("SIGTERM")</code> ends the child at once. So the runs below trigger <code>shutdown()</code> with an IPC message from <code>fork()</code>. On Linux, per the Node docs, a listener replaces the default exit, and <code>kill -TERM</code>, <code>docker stop</code> and Kubernetes all reach the <code>process.once("SIGTERM")</code> line. That one line wasn't exercised here, and everything after it is the same code.</p>
+  </section>
+
+<pre data-file="src/shutdown.ts"><code class="language-typescript">// الـ graceful shutdown بالترتيب. كل خطوة فيها سبب، وتبديل خطوتين بيطلّع requests فاشلة
+import type { Server } from "node:http";
+import { setTimeout as sleep } from "node:timers/promises";
+import type { Health } from "./health.ts";
+
+type Options = {
+  server: Server;
+  health: Health;
+  // الترتيب هنا مهم: الأول اللي بيشتغل على الباقي، وآخر واحد الـ DB pool
+  closers: [name: string, close: () =&gt; Promise&lt;unknown&gt;][];
+  drainDelayMs: number;
+  forceAfterMs: number;
+  log: (line: string) =&gt; void;
+};
+
+export function createShutdown({ server, health, closers, drainDelayMs, forceAfterMs, log }: Options) {
+  let started = false;
+
+  return async function shutdown(reason: string): Promise&lt;void&gt; {
+    // تاني SIGTERM أو تاني bug: الـ shutdown شغال خلاص
+    if (started) return;
+    started = true;
+    log(`shutdown started: ${reason}`);
+
+    // (0) الحارس: لازم يخلص قبل الـ SIGKILL بتاع الـ orchestrator، والـ unref عشان ميأخرش الخروج
+    setTimeout(() =&gt; {
+      log(`still not done after ${forceAfterMs} ms, forcing exit 1`);
+      process.exit(1);
+    }, forceAfterMs).unref();
+
+    // (1) الـ readiness بقت 503، والـ server لسه بيرد عادي
+    health.markNotReady();
+    log("readiness is now 503, still serving");
+
+    // (2) استنى الـ load balancer يلاحظ ويبطّل يبعت
+    await sleep(drainDelayMs);
+
+    // (3) مفيش connections جديدة من دلوقتي
+    const closed = new Promise&lt;void&gt;((resolve, reject) =&gt; server.close((err) =&gt; (err ? reject(err) : resolve())));
+    log("server.close(): no new connections");
+
+    // (4) الـ close بيقفل الـ idle مرة واحدة، فالـ request اللي بيخلص بعدها محتاج sweep
+    server.closeIdleConnections();
+    const sweep = setInterval(() =&gt; server.closeIdleConnections(), 250);
+
+    // (5) استنى الـ in-flight requests تخلص
+    await closed;
+    clearInterval(sweep);
+    log("in-flight requests finished");
+
+    // (6) اقفل الـ worker الأول، وبعده الـ queue، وآخر حاجة الـ pool
+    for (const [name, close] of closers) {
+      await close();
+      log(`${name} closed`);
+    }
+
+    // (7) خروج نضيف
+    log("exit 0");
+    process.exit(0);
+  };
+}</code></pre>
+<pre data-file="src/api-server.ts"><code class="language-typescript">// الـ API كامل: HTTP و BullMQ worker و pg pool، وكلهم بيتقفلوا بترتيب
+// شغّله كده: DATABASE_URL=... REDIS_PORT=6379 node src/api-server.ts
+import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+import { Queue, Worker } from "bullmq";
+import express from "express";
+import pg from "pg";
+import { createHealth } from "./health.ts";
+import { createShutdown } from "./shutdown.ts";
+import { badShutdowns } from "./bad-shutdowns.ts";
+
+const t0 = performance.now();
+const log = (line: string) =&gt; console.log(`[+${String(Math.round(performance.now() - t0)).padStart(5)} ms] ${line}`);
+const logJson = (line: object) =&gt; log(JSON.stringify(line));
+
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 5, connectionTimeoutMillis: 800 });
+// من غير الـ listener ده، idle connection بتموت هتوقّع الـ process كله
+pool.on("error", (err: NodeJS.ErrnoException) =&gt; logJson({ level: "warn", msg: "idle pg client died", code: err.code }));
+
+const connection = { host: "127.0.0.1", port: Number(process.env.REDIS_PORT) };
+const queue = new Queue("invoices", { connection });
+const worker = new Worker&lt;{ ms: number }&gt;(
+  "invoices",
+  async (job) =&gt; {
+    log(`job ${job.id} started`);
+    await sleep(job.data.ms);
+    log(`job ${job.id} finished`);
+  },
+  { connection },
+);
+queue.on("error", (err) =&gt; logJson({ level: "warn", msg: "queue redis error", err: err.message }));
+worker.on("error", (err) =&gt; logJson({ level: "warn", msg: "worker redis error", err: err.message }));
+
+const health = createHealth({
+  timeoutMs: 1_000,
+  log: logJson,
+  checks: [
+    { name: "postgres", run: () =&gt; pool.query("SELECT 1") },
+    { name: "queue", run: () =&gt; queue.getJobCounts("waiting") },
+  ],
+});
+
+const app = express();
+app.get("/health/live", (_req, res) =&gt; {
+  res.status(health.live()).json({ status: "ok" });
+});
+app.get("/health/ready", async (_req, res) =&gt; {
+  const status = await health.ready();
+  res.status(status).json({ status: status === 200 ? "ok" : "unavailable" });
+});
+app.get("/orders/slow", async (_req, res) =&gt; {
+  await sleep(2_000);
+  const { rows } = await pool.query&lt;{ n: number }&gt;("SELECT 42 AS n");
+  res.json({ orderId: rows[0]!.n });
+});
+app.get("/orders/fast", async (_req, res) =&gt; {
+  await sleep(20);
+  const { rows } = await pool.query&lt;{ n: number }&gt;("SELECT 42 AS n");
+  res.json({ orderId: rows[0]!.n });
+});
+app.get("/orders/report", async (_req, res) =&gt; {
+  await pool.query("SELECT pg_sleep(3)");
+  res.json({ rows: 0 });
+});
+app.post("/jobs", async (req, res) =&gt; {
+  const job = await queue.add("render-pdf", { ms: Number(req.query.ms ?? 1_000) });
+  res.status(202).json({ jobId: job.id });
+});
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) =&gt; {
+  logJson({ level: "error", msg: err.message });
+  res.status(500).json({ status: "error" });
+});
+
+const server = app.listen(0, "127.0.0.1", () =&gt; {
+  const { port } = server.address() as AddressInfo;
+  log(`listening on ${port}`);
+  process.send?.({ port });
+});
+
+const closers: [string, () =&gt; Promise&lt;unknown&gt;][] = [
+  ["worker", () =&gt; worker.close()],
+  ["queue", () =&gt; queue.close()],
+  ["pg pool", () =&gt; pool.end()],
+];
+const shutdown = createShutdown({
+  server,
+  health,
+  closers,
+  drainDelayMs: Number(process.env.DRAIN_DELAY_MS ?? 5_000),
+  forceAfterMs: Number(process.env.FORCE_AFTER_MS ?? 25_000),
+  log,
+});
+
+// الـ Linux: دي الـ signals اللي Kubernetes و systemd و Ctrl+C بيبعتوها
+process.once("SIGTERM", () =&gt; void shutdown("SIGTERM"));
+process.once("SIGINT", () =&gt; void shutdown("SIGINT"));
+// الـ Windows: الـ child.kill بيقتل على طول من غير handler، فبنشغّله برسالة IPC في الـ demo
+process.on("message", (msg) =&gt; {
+  if (msg !== "shutdown") return;
+  // الـ SHUTDOWN_MODE للمقارنة في الـ load test بس
+  const bad = badShutdowns[process.env.SHUTDOWN_MODE ?? ""];
+  void (bad ? bad({ server, closers }) : shutdown("IPC message"));
+});</code></pre>
+<pre data-file="src/bad-shutdowns.ts"><code class="language-typescript">// ❌ الطرق الغلط اللي هنقارنها بالـ graceful shutdown تحت الضغط
+import type { Server } from "node:http";
+
+type Deps = { server: Server; closers: [string, () =&gt; Promise&lt;unknown&gt;][] };
+
+export const badShutdowns: Record&lt;string, (deps: Deps) =&gt; Promise&lt;void&gt;&gt; = {
+  // الأشهر: الـ handler بيخرج على طول، وكل request شغال بيتقطع
+  "process.exit": async () =&gt; {
+    process.exit(0);
+  },
+  // الترتيب غلط: الـ pool اتقفل والـ requests لسه شغالة ومحتاجاه
+  "pool first": async ({ server, closers }) =&gt; {
+    for (const [, close] of [...closers].reverse()) await close();
+    server.close(() =&gt; process.exit(0));
+    server.closeIdleConnections();
+  },
+};</code></pre>
+<pre><code class="language-plaintext"># real run: shutdown triggered at about +390 ms through IPC, drain delay 500 ms
+[+   58 ms] listening on 57528
+[+   73 ms] job 2 started
+[+  392 ms] shutdown started: IPC message
+[+  392 ms] readiness is now 503, still serving
+client: GET /health/ready during the drain -&gt; 503 {"status":"unavailable"}
+client: GET /health/live  during the drain -&gt; 200 {"status":"ok"}
+client: new connection before close()      -&gt; 200 {"orderId":42}
+[+  893 ms] server.close(): no new connections
+client: new connection after close()       -&gt; error ECONNREFUSED
+client: in-flight GET /orders/slow -&gt; 200 {"orderId":42}
+[+ 2201 ms] in-flight requests finished
+[+ 2682 ms] job 2 finished
+[+ 2685 ms] worker closed
+[+ 2685 ms] queue closed
+[+ 2686 ms] pg pool closed
+[+ 2686 ms] exit 0
+process exit: { code: 0, signal: null }</code></pre>
+  <div class="ar-note">اقرا مع الوقت. عند حوالي +392 ms بدأ الـ shutdown والـ readiness بقت 503، والـ liveness لسه 200، و connection جديدة لسه بتاخد 200 لأن الـ LB لسه ماخدش باله. عند +893 الـ <code>server.close()</code>، فالـ connection الجديدة بقت <code>ECONNREFUSED</code>. الـ request بتاع الثانيتين خلص بـ 200 عند حوالي +2201. والـ job بتاعة 2.6 ثانية خلصت عند +2682، و <code>worker.close()</code> استناها. وبعدين الـ queue والـ pool، و exit 0.</div>
+
+<pre><code class="language-plaintext"># real run: force timer 1500 ms, request needs 2000 ms
+[+   58 ms] listening on 57539
+[+  172 ms] shutdown started: IPC message
+[+  172 ms] readiness is now 503, still serving
+[+  282 ms] server.close(): no new connections
+[+ 1680 ms] still not done after 1500 ms, forcing exit 1
+client: GET /orders/slow -&gt; error ECONNRESET
+process exit: { code: 1, signal: null }</code></pre>
+  <div class="ar-note">الـ request محتاج ثانيتين والحارس 1.5 ثانية، فالـ process خرج بـ <code>code: 1</code> والـ client خد <code>ECONNRESET</code>. ده السيناريو اللي بتختاره بدل ما الـ orchestrator يقتلك بـ SIGKILL: خروج بـ log واضح يقولك إيه اللي فضل.</div>
+
+<pre data-file="src/close-linger.ts"><code class="language-typescript">// الـ ⁦close()⁩ بيقفل الـ idle connections مرة واحدة بس. طب الـ request اللي كان شغال وقتها؟
+// شغّله كده: node src/close-linger.ts
+import { once } from "node:events";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+
+type Strategy = "close only" | "close + Connection: close" | "close + sweep every 250 ms";
+
+async function run(strategy: Strategy): Promise&lt;void&gt; {
+  let closing = false;
+  const server = http.createServer(async (_req, res) =&gt; {
+    await sleep(500);
+    // الاستراتيجية التانية: وإحنا بنقفل قول للـ client إن الـ socket ده مش هيتعاد استخدامه
+    if (closing &amp;&amp; strategy === "close + Connection: close") res.setHeader("connection", "close");
+    res.end("ok");
+  });
+  // ده الرقم اللي بتحطه ورا ALB عشان تتجنب الـ 502
+  server.keepAliveTimeout = 8_000;
+  server.headersTimeout = 9_000;
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  // الـ client بيستخدم keep-alive زي أي load balancer
+  const agent = new http.Agent({ keepAlive: true });
+  const response = new Promise&lt;string&gt;((resolve, reject) =&gt; {
+    http.get({ port, agent }, (res) =&gt; {
+      res.resume();
+      res.on("end", () =&gt; resolve(`status ${res.statusCode}, connection: ${res.headers.connection}`));
+    }).on("error", reject);
+  });
+
+  await sleep(100);
+  closing = true;
+  const t0 = performance.now();
+  const closed = new Promise&lt;void&gt;((resolve) =&gt; server.close(() =&gt; resolve()));
+  const sweep = strategy === "close + sweep every 250 ms" ? setInterval(() =&gt; server.closeIdleConnections(), 250) : undefined;
+  console.log(`${strategy}: ${await response}`);
+  await closed;
+  clearInterval(sweep);
+  console.log(`  server.close callback after ≈${Math.round(performance.now() - t0)} ms`);
+  agent.destroy();
+}
+
+await run("close only");
+await run("close + Connection: close");
+await run("close + sweep every 250 ms");</code></pre>
+<pre><code class="language-plaintext">$ node src/close-linger.ts
+close only: status 200, connection: keep-alive
+  server.close callback after ≈9416 ms
+close + Connection: close: status 200, connection: close
+  server.close callback after ≈411 ms
+close + sweep every 250 ms: status 200, connection: keep-alive
+  server.close callback after ≈503 ms</code></pre>
+  <div class="ar-note">نفس الـ request بتاع 500 ms على connection فيها keep-alive، والـ <code>keepAliveTimeout</code> بـ 8 ثواني. من غير حاجة الـ close callback جه بعد حوالي 9.4 ثانية. مع <code>Connection: close</code> حوالي 411 ms، ومع الـ sweep حوالي 503 ms. يعني لو الـ timeout بتاعك 65 ثانية ورا ALB، الـ deploy هيوصل للـ force timer كل مرة.</div>
+
+<pre><code class="language-plaintext"># real run: two instances behind a small Node proxy with a 100 ms health check, autocannon 20 connections for 4 s, one instance shut down at 1.5 s
+autocannon: 20 connections, 4 s, through the load balancer. One of two instances shut down at 1.5 s.
+process.exit() in the handler  total= 2616 ok= 2566 failed=  50 (5xx=50, socket=0) victim exit=0 after ≈22 ms lb errors={"ECONNRESET":10,"ECONNREFUSED":40}
+pool.end() first               total= 2553 ok= 2543 failed=  10 (5xx=10, socket=0) victim exit=0 after ≈6053 ms lb errors={}
+graceful, no LB wait           total= 2567 ok= 2554 failed=  13 (5xx=13, socket=0) victim exit=0 after ≈292 ms lb errors={"ECONNRESET":9,"ECONNREFUSED":4}
+graceful, 300 ms LB wait       total= 2590 ok= 2590 failed=   0 (5xx=0, socket=0) victim exit=0 after ≈337 ms lb errors={}
+process.exit() in the handler  total= 2564 ok= 2548 failed=  16 (5xx=16, socket=0) victim exit=0 after ≈22 ms lb errors={"ECONNRESET":15,"ECONNREFUSED":1}
+pool.end() first               total= 2580 ok= 2570 failed=  10 (5xx=10, socket=0) victim exit=0 after ≈6059 ms lb errors={}
+graceful, no LB wait           total= 2566 ok= 2553 failed=  13 (5xx=13, socket=0) victim exit=0 after ≈287 ms lb errors={"ECONNRESET":9,"ECONNREFUSED":4}
+graceful, 300 ms LB wait       total= 2560 ok= 2560 failed=   0 (5xx=0, socket=0) victim exit=0 after ≈337 ms lb errors={}
+throwaway postgres stopped and removed</code></pre>
+  <div class="ar-note">ده القياس الأساسي، واتشغّل مرتين. الـ <code>failed</code> هو عدد الـ requests الفاشلة عند الـ client:
+    <ul>
+      <li><b><code>process.exit()</code>:</b> 50 ثم 16 request فشلوا، والـ LB شاف <code>ECONNRESET</code> (requests اتقطعت في نصها) و <code>ECONNREFUSED</code> (لسه بيبعت لـ port مقفول). الرقم بيتغيّر من run للتاني حسب اللي كان في الطريق وقتها.</li>
+      <li><b><code>pool.end()</code> الأول:</b> 10 في المرتين، كلهم 500 من الـ app نفسه لأن الـ requests لقت الـ pool مقفول. وكمان الخروج خد حوالي 6 ثواني لأن مفيش sweep.</li>
+      <li><b>graceful من غير انتظار الـ LB:</b> 13 في المرتين، لأن الـ LB لسه بيبعت لحد الـ health check الجاي.</li>
+      <li><b>graceful بـ انتظار 300 ms:</b> <b>صفر</b> في المرتين، والخروج في حوالي 337 ms.</li>
+    </ul>
+    الـ proxy هنا node script صغير مش ALB، فالأرقام نفسها مش هتتطابق عندك، بس الترتيب هو المهم. والأوقات تقريبية على Windows عليه ضغط.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ signals و timeline بتاع Kubernetes في <a href="../../01-CS-Fundamentals/lessons/11-processes-threads-concurrency.html#p9">الجزء 9 من درس 11 في CS</a>، وناحية الـ LB و 502 بتاعة الـ keep-alive في <a href="../../01-CS-Fundamentals/lessons/16-load-balancers-proxies-cdn.html#p3">الجزء 3 من درس 16 في CS</a>، وعيلة <code>close</code> الخام في <a href="./10-http-internals-undici.html#p3">الجزء 3 من درس 10</a>. الجزء ده هو التسلسل الكامل على service حقيقية فيها HTTP و BullMQ worker و pg pool، وإثبات إن الترتيب بيفرق. والخطوات دي هي إجابة سؤال 5 في اختبار الخروج:</p>
+    <ol>
+      <li><b>شغّل force-exit timer</b> بـ <code>.unref()</code>، وأقصر من deadline القتل بتاع الـ orchestrator.</li>
+      <li><b>علّم نفسك not ready</b>: <code>/health/ready</code> بترجع 503 وكل حاجة تانية شغالة عادي.</li>
+      <li><b>استنى الـ load balancer ياخد باله</b>. في Kubernetes، شيل الـ pod من الـ endpoints وبعت SIGTERM بيحصلوا في نفس الوقت، فلو قفلت على طول الـ requests الجديدة هتخبط في port مقفول.</li>
+      <li><b><code>server.close()</code></b>: مفيش connections جديدة.</li>
+      <li><b><code>closeIdleConnections()</code></b>، وكررها طول الـ drain.</li>
+      <li><b>استنى الـ in-flight requests</b> تخلص.</li>
+      <li><b><code>worker.close()</code></b> وده بيستنى الـ jobs الشغالة، وبعده <b><code>queue.close()</code></b>، وبعده <b><code>pool.end()</code></b>. الـ pool آخر حاجة لأن كل اللي قبله بيستخدمه.</li>
+      <li><b><code>process.exit(0)</code></b>.</li>
+    </ol>
+    <p><b>الفخ في الخطوة 5.</b> الـ <code>server.close()</code> بيقفل الـ idle connections مرة واحدة، لحظة ما تندهه. الـ request الشغال وقتها مش idle، ولما يخلص الـ keep-alive connection بتاعته بتفضل مفتوحة لحد <code>keepAliveTimeout</code>، فالـ close callback مبيشتغلش. القياس فوق بـ timeout 8 ثواني: 9.4 ثانية انتظار عشان request بياخد 500 ms. ومع الـ 65 ثانية اللي بتحطها ورا ALB، هتوصل للـ force timer مع كل deploy. فيا إما تعمل sweep بـ <code>closeIdleConnections()</code> على interval، يا إما تبعت <code>Connection: close</code> وقت الـ drain. والاتنين خدوا حوالي نص ثانية. و<a href="./10-http-internals-undici.html#p3">الجزء 3 من درس 10</a> قاس نفس الفخ، ووضّح كمان إن client لسه بيبعت على الـ socket بتاعه بياخد رد حتى بعد <code>close()</code>، فالـ socket ده عمره ما بيبقى idle. وده سبب زيادة إن الـ load balancer لازم يقف الأول، ولو مش هيقف ابعت <code>Connection: close</code> كمان.</p>
+    <p><b>الأرقام.</b> <code>drainDelay + أطول request + قفل الـ dependencies</code> لازم يخلصوا جوه الـ force timer، والـ force timer لازم يبقى جوه <code>terminationGracePeriodSeconds</code> (الـ default بتاعه 30 ثانية). مثلًا: drain بـ 5 ثواني، و requests لحد 15 ثانية، و force عند 25 ثانية.</p>
+    <p><b>على الجهاز ده.</b> ده Windows، و SIGTERM الحقيقي مبيوصلش لـ handler: الـ <code>child.kill("SIGTERM")</code> بينهي الـ child على طول. فالـ runs فوق بتشغّل <code>shutdown()</code> برسالة IPC من <code>fork()</code>. وعلى Linux، حسب docs بتاعة Node، الـ listener بيستبدل الخروج الافتراضي، و <code>kill -TERM</code> و <code>docker stop</code> و Kubernetes كلهم بيوصلوا لسطر <code>process.once("SIGTERM")</code>. السطر ده بس هو اللي ماتجربش هنا، وكل اللي بعده نفس الكود.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ dashboard بيوريك 502 و 503 زيادة كل مرة بتعمل deploy، والفريق بقى متعود ومسميها "deploy blips". ده مش طبيعي. افتح <code>server.ts</code> ودوّر على <code>SIGTERM</code>: لو مش موجود، أو موجود وجواه <code>process.exit()</code>، ابدأ من هنا. وبعدين شغّل autocannon وعمل rolling deploy على staging، وقيس الـ non2xx: الهدف صفر. وخلي <code>terminationGracePeriodSeconds</code> أكبر من الـ force timer، ومتحطش drain delay أكبر من اللازم عشان الـ deploy ميبقاش بطيء على الفاضي.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question (exit test Q5)</b>
+    "Explain graceful shutdown step by step." → On SIGTERM: arm a force-exit timer with <code>unref</code>, shorter than the kill deadline. Fail readiness and keep serving while the load balancer notices. Then <code>server.close()</code>, closing idle keep-alive connections repeatedly because a request that finishes later leaves its connection open. When in-flight requests are done, close workers, which wait for active jobs, then queues, then the DB pool last. Exit 0. Skipping the wait gives refused connections, closing the pool first gives 500s, and <code>process.exit()</code> cuts everything. All three showed real failures under load, and the right order showed zero.
+    <div class="ar-note"><b>السؤال:</b> "اشرح graceful shutdown خطوة بخطوة." ← <b>الإجابة:</b> مع SIGTERM: شغّل force-exit timer بـ <code>unref</code> أقصر من deadline القتل. فشّل الـ readiness وكمّل خدمة لحد ما الـ load balancer ياخد باله. بعدها <code>server.close()</code>، وكرر قفل الـ idle keep-alive connections لأن request بيخلص بعدين بيسيب الـ connection بتاعته مفتوحة. لما الـ in-flight requests تخلص، اقفل الـ workers وهي بتستنى الـ jobs الشغالة، وبعدها الـ queues، وآخر حاجة الـ DB pool. وبعدين exit 0. لو نطيت الانتظار هتاخد connections مرفوضة، ولو قفلت الـ pool الأول هتاخد 500، و <code>process.exit()</code> بيقطع كل حاجة. التلاتة طلّعوا فشل حقيقي تحت الضغط، والترتيب الصح طلّع صفر.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Health endpoints <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ health endpoints</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b><code>/health/live</code></b> asks one question: is this process alive and able to answer? The orchestrator's response to failure is a <b>restart</b>, so it must check only the process. Put a DB check there and a 10-second database blip restarts every pod at once, which turns a blip into an outage and a thundering herd of reconnects. A restart can't fix someone else's database anyway.</p>
+    <p><b><code>/health/ready</code></b> asks a different question: should you send me traffic right now? The response to failure is <b>removal from the load balancer</b> with no restart, so it can check dependencies. It runs <code>SELECT 1</code> and a queue check, each with a <b>1 s timeout</b>, and it fails as soon as shutdown begins. The timeout isn't decoration. With Redis down, BullMQ's command doesn't reject; it waits for a reconnect, so the probe would hang. The real run below shows it ending at exactly the timeout, about 1007 ms. Set <code>connectionTimeoutMillis</code> on the pool for the same reason: with the pool exhausted, the check fails at about 814 ms instead of queueing behind the slow reports.</p>
+    <p><b>One line that matters: <code>pool.on("error")</code>.</b> When Postgres restarts, idle clients in the pool get an error with no request attached to it. With no listener, Node treats it as an unhandled <code>'error'</code> event and the process exits with code 1, as the last run shows. So a DB restart kills an API that was supposed to fail readiness and survive. Add the listener, and the pool reconnects by itself.</p>
+    <p><b>Don't expose dependency details publicly.</b> "postgres: connect ECONNREFUSED 10.0.3.7:5432" tells an attacker your internal topology, so the response body is only <code>{"status":"unavailable"}</code> and the reason goes to the log. If you want details, serve them on an internal port. Kubernetes probe configuration (<code>livenessProbe</code>, <code>readinessProbe</code>, <code>startupProbe</code>, periods and thresholds) is in <a href="./33-deployment-serverless-edge.html#p4">lesson 33</a>.</p>
+  </section>
+
+<pre data-file="src/health.ts"><code class="language-typescript">// الـ liveness سؤال عن الـ process، والـ readiness سؤال عن الجاهزية لاستقبال traffic
+type Check = { name: string; run: () =&gt; Promise&lt;unknown&gt; };
+type Options = { checks: Check[]; timeoutMs: number; log: (line: object) =&gt; void };
+
+async function withTimeout(work: Promise&lt;unknown&gt;, ms: number): Promise&lt;void&gt; {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise&lt;never&gt;((_, reject) =&gt; {
+    timer = setTimeout(() =&gt; reject(new Error(`timed out after ${ms} ms`)), ms);
+  });
+  try {
+    await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export type Health = ReturnType&lt;typeof createHealth&gt;;
+
+export function createHealth({ checks, timeoutMs, log }: Options) {
+  let acceptingTraffic = true;
+  return {
+    markNotReady(): void {
+      acceptingTraffic = false;
+    },
+    isShuttingDown: () =&gt; !acceptingTraffic,
+    // مفيش أي dependency هنا: لو الـ DB وقعت، الـ restart مش هيصلّحها
+    live: () =&gt; 200,
+    async ready(): Promise&lt;number&gt; {
+      // الـ shutdown بيقلب الـ readiness الأول، من غير ما يسأل أي dependency
+      if (!acceptingTraffic) return 503;
+      const results = await Promise.allSettled(checks.map((c) =&gt; withTimeout(c.run(), timeoutMs)));
+      const failed = checks.flatMap((c, i) =&gt; {
+        const r = results[i]!;
+        return r.status === "rejected" ? [`${c.name}: ${(r.reason as Error).message}`] : [];
+      });
+      // التفاصيل في الـ log بس. الـ endpoint ممكن يبقى متاح من بره
+      if (failed.length &gt; 0) log({ level: "warn", msg: "not ready", failed });
+      return failed.length &gt; 0 ? 503 : 200;
+    },
+  };
+}</code></pre>
+<pre><code class="language-plaintext"># real run: pg_ctl stop and start on the throwaway cluster, Redis stopped and restarted on its port, API running throughout
+all healthy                            live=200 {"status":"ok"}  ready=200 {"status":"ok"}  (≈53 ms)
+
+# stop the throwaway Postgres (pg_ctl stop -m fast)
+postgres stopped                       live=200 {"status":"ok"}  ready=503 {"status":"unavailable"}  (≈4 ms)
+    server log: {"level":"warn","msg":"idle pg client died","code":"57P01"}
+    server log: {"level":"warn","msg":"not ready","failed":["postgres: connect ECONNREFUSED 127.0.0.1:57150"]}
+postgres still stopped                 live=200 {"status":"ok"}  ready=503 {"status":"unavailable"}  (≈4 ms)
+    server log: {"level":"warn","msg":"not ready","failed":["postgres: connect ECONNREFUSED 127.0.0.1:57150"]}
+# start it again
+postgres back                          live=200 {"status":"ok"}  ready=200 {"status":"ok"}  (≈25 ms)
+
+# stop Redis
+redis stopped                          live=200 {"status":"ok"}  ready=503 {"status":"unavailable"}  (≈1007 ms)
+    server log: {"level":"warn","msg":"worker redis error","err":"connect ECONNREFUSED 127.0.0.1:51544"}
+    server log: {"level":"warn","msg":"worker redis error","err":"connect ECONNREFUSED 127.0.0.1:51544"}
+    server log: {"level":"warn","msg":"queue redis error","err":"connect ECONNREFUSED 127.0.0.1:51544"}
+    server log: {"level":"warn","msg":"not ready","failed":["queue: timed out after 1000 ms"]}
+# start Redis again on the same port
+redis back                             live=200 {"status":"ok"}  ready=200 {"status":"ok"}  (≈2 ms)
+
+# pool exhausted: 5 slow reports on a pool of 5
+pool exhausted                         live=200 {"status":"ok"}  ready=503 {"status":"unavailable"}  (≈814 ms)
+    server log: {"level":"warn","msg":"not ready","failed":["postgres: timeout exceeded when trying to connect"]}
+reports finished                       live=200 {"status":"ok"}  ready=200 {"status":"ok"}  (≈3 ms)
+
+# shutdown: readiness flips first
+shutdown started, draining             live=200 {"status":"ok"}  ready=503 {"status":"unavailable"}  (≈2 ms)
+process exit code: 0
+
+# a pool with no 'error' listener, Postgres restarts
+no-listener: exit code 1
+    error: terminating connection due to administrator command
+with-listener: exit code none, still running
+    idle client died (57P01), the pool will reconnect
+</code></pre>
+  <div class="ar-note">اقرا الـ output كحكاية. <b>الـ Postgres وقف:</b> الـ <code>live</code> فضل 200 والـ <code>ready</code> بقى 503، والـ log فيه <code>57P01</code> و <code>ECONNREFUSED</code>، والـ client مشافش ولا كلمة منهم. ولما رجع، الـ ready رجع 200 لوحده من غير restart. <b>الـ Redis وقف:</b> الـ probe خد حوالي 1007 ms، يعني الـ timeout هو اللي أنقذنا لأن الأمر كان معلّق. <b>الـ pool مليان:</b> 5 reports شايلين الـ 5 connections، فالـ ready فشل عند حوالي 814 ms بـ <code>timeout exceeded</code>. <b>الـ shutdown:</b> الـ ready بقى 503 والـ live 200، والخروج بـ 0. وآخر حتة: من غير <code>pool.on("error")</code> الـ process مات بـ exit code 1 مع <code>terminating connection due to administrator command</code>، ومعاه فضل شغال.</div>
+
+<pre class="diagram">
+                                 /health/live     /health/ready    the orchestrator does
+ all good                        200              200              sends traffic
+ Postgres down                   200              503              removes from LB, no restart
+ Redis down                      200              503 (after 1 s)  removes from LB, no restart
+ pool exhausted                  200              503              removes from LB, no restart
+ SIGTERM, draining               200              503              removes from LB, waits
+ event loop blocked or deadlock  no answer        no answer        restarts after the threshold
+</pre>
+  <div class="ar-note">كل صف حالة، والـ orchestrator بيعمل إيه فيها. لما الـ Postgres أو Redis واقعين، أو الـ pool مليان: الـ live 200 والـ ready 503، فبيشيلك من الـ LB من غير restart. وقت الـ drain بعد SIGTERM: نفس الشكل، وبيستناك تخلص. والصف الأخير هو الحالة الوحيدة اللي الـ liveness بتفشل فيها: الـ event loop متعطل أو deadlock، ومفيش رد خالص، فالـ restart هو الحل الصح بعد ما يعدّي الـ threshold.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b><code>/health/live</code></b> بيسأل سؤال واحد: الـ process عايش ويقدر يرد؟ رد الـ orchestrator على الفشل هو <b>restart</b>، فلازم يشيّك على الـ process بس. لو حطيت check على الـ DB هناك، وقعة DB بتاعة 10 ثواني هتعمل restart لكل الـ pods مرة واحدة، وده بيحوّل وقعة صغيرة لـ outage وموجة reconnects. والـ restart أصلًا مش هيصلّح DB حد تاني.</p>
+    <p><b><code>/health/ready</code></b> بيسأل سؤال تاني: تبعتلي traffic دلوقتي؟ الرد على الفشل هنا <b>الشيل من الـ load balancer</b> من غير restart، فينفع يشيّك على الـ dependencies. بيشغّل <code>SELECT 1</code> و check على الـ queue، كل واحد بـ <b>timeout ثانية واحدة</b>، وبيفشل أول ما الـ shutdown يبدأ. والـ timeout مش ديكور. لما Redis يبقى واقع، أمر BullMQ مبيرفضش، بيستنى الـ reconnect، فالـ probe كان هيعلّق. والـ run الحقيقي فوق بيخلص عند الـ timeout بالظبط، حوالي 1007 ms. وحط <code>connectionTimeoutMillis</code> على الـ pool لنفس السبب: لما الـ pool يتملي، الـ check بيفشل عند حوالي 814 ms بدل ما يقف في الطابور ورا الـ reports البطيئة.</p>
+    <p><b>سطر واحد مهم: <code>pool.on("error")</code>.</b> لما Postgres يعمل restart، الـ idle clients في الـ pool بياخدوا error مفيش request مربوط بيه. من غير listener، Node بيعتبره <code>'error'</code> event من غير handler والـ process بيخرج بـ exit code 1، زي ما آخر run بيوري. يعني restart للـ DB بيقتل API كان المفروض يفشّل الـ readiness ويعيش. ضيف الـ listener والـ pool بيعيد الاتصال لوحده.</p>
+    <p><b>متطلّعش تفاصيل الـ dependencies للناس.</b> الرسالة "postgres: connect ECONNREFUSED 10.0.3.7:5432" بتقول لأي attacker شكل الشبكة الداخلية، فالـ response body هو <code>{"status":"unavailable"}</code> بس والسبب في الـ log. ولو عايز تفاصيل، خليها على port داخلي. وإعدادات الـ probes في Kubernetes (<code>livenessProbe</code> و <code>readinessProbe</code> و <code>startupProbe</code> والفترات والـ thresholds) في <a href="./33-deployment-serverless-edge.html#p4">درس 33</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      incident حقيقي بيتكرر: الـ RDS عمل failover لمدة 30 ثانية، وكل الـ pods عملت restart، وكل واحدة فتحت connections جديدة، والـ DB اللي لسه راجعة وقعت تاني. لما تدوّر تلاقي <code>livenessProbe</code> بيشاور على <code>/health</code>، و <code>/health</code> جواه <code>SELECT 1</code>. الحل: endpointين، والـ liveness من غير أي I/O. وتاني حاجة راجعها: <code>new Pool(...)</code> من غير <code>pool.on("error", ...)</code>، ودي بتظهر كـ restarts غامضة كل مرة الـ DB بتعمل failover.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: should readiness check a shared database?</b>
+    If every instance fails readiness together, the load balancer has no targets and clients get its generic 503 instead of your Problem Details. That's fine for an API that can't do anything without the DB. For one that can serve most reads from a cache, check only what this instance can't work without, and return a real 503 from the routes that need the DB. Probes also cost something: instances times probe rate is steady load on your pool, so cache the result for a second or two if you have many instances.
+    <div class="ar-note"><b>الـ Trade-off، الـ readiness يشيّك على DB مشتركة؟</b> لو كل الـ instances فشلت في الـ readiness مع بعض، الـ load balancer مش هيلاقي targets والـ clients هياخدوا الـ 503 العام بتاعه بدل الـ Problem Details بتاعتك. ده مقبول لـ API مش بيعرف يعمل حاجة من غير الـ DB. أما لو بيخدم معظم الـ reads من cache، شيّك بس على اللي الـ instance مش هيقدر يشتغل من غيره، ورجّع 503 حقيقي من الـ routes اللي محتاجة الـ DB. والـ probes ليها تكلفة كمان: عدد الـ instances في معدل الـ probes بيبقى حمل ثابت على الـ pool، فاعمل cache للنتيجة ثانية أو اتنين لو الـ instances كتير.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "What's the difference between liveness and readiness, and what goes wrong if you check the database in liveness?" → Failing liveness means restart; failing readiness means stop sending traffic. Liveness should only prove the process responds. With a DB check there, a short DB outage restarts every instance at once, which adds a reconnect storm to the outage and doesn't fix anything. Readiness can check dependencies with short timeouts, and it should fail first during shutdown.
+    <div class="ar-note"><b>السؤال:</b> "إيه الفرق بين liveness و readiness، وإيه اللي بيحصل لو شيّكت على الـ DB في الـ liveness؟" ← <b>الإجابة:</b> فشل الـ liveness معناه restart، وفشل الـ readiness معناه بطّل تبعت traffic. الـ liveness المفروض يثبت إن الـ process بيرد بس. لو فيه check على الـ DB، وقعة قصيرة للـ DB بتعمل restart لكل الـ instances مرة واحدة، وده بيزوّد موجة reconnects على الوقعة ومش بيصلّح حاجة. والـ readiness تقدر تشيّك على الـ dependencies بـ timeouts قصيرة، ولازم تفشل الأول وقت الـ shutdown.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>process.exit()</code> in the handler</b>
+<pre><code class="language-typescript">process.on("SIGTERM", () =&gt; {
+  // كل request شغال بيتقطع هنا
+  process.exit(0);
+});</code></pre></div>
+    <div class="good"><b>✅ The full sequence</b>
+<pre><code class="language-typescript">const shutdown = createShutdown({
+  server, health, closers,
+  drainDelayMs: 5_000, forceAfterMs: 25_000, log,
+});
+process.once("SIGTERM", () =&gt; void shutdown("SIGTERM"));</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ أول الحلول اللي بتيجي على البال، وفي القياس طلّع 50 و 16 request فاشلين، وكمان الـ handler بيقول exit 0 كأن كل حاجة تمام. ✅ التسلسل الكامل طلّع صفر في المرتين. والـ <code>once</code> مهم: تاني SIGTERM مش هيبدأ shutdown جديد فوق الأول.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Closing the pool first</b>
+<pre><code class="language-typescript">await pool.end();
+// الـ requests الشغالة لسه محتاجة الـ pool
+server.close(() =&gt; process.exit(0));</code></pre></div>
+    <div class="good"><b>✅ Reverse order of dependency</b>
+<pre><code class="language-typescript">await new Promise((r) =&gt; server.close(r));
+await worker.close();
+await queue.close();
+// الـ pool آخر حاجة لأن كله بيستخدمه
+await pool.end();</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ requests الشغالة بتاخد error من الـ pool، وفي القياس طلع 10 responses بـ 500 في كل مرة. ✅ اقفل بعكس ترتيب الاعتماد: الـ HTTP بيعتمد على الـ pool، والـ worker بيعتمد على الـ pool، فالـ pool آخر واحد.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A DB check in liveness</b>
+<pre><code class="language-typescript">app.get("/health/live", async (_req, res) =&gt; {
+  // وقعة DB بتعمل restart لكل الـ pods
+  await pool.query("SELECT 1");
+  res.json({ status: "ok" });
+});</code></pre></div>
+    <div class="good"><b>✅ Liveness with no I/O</b>
+<pre><code class="language-typescript">app.get("/health/live", (_req, res) =&gt; {
+  res.json({ status: "ok" });
+});
+app.get("/health/ready", async (_req, res) =&gt; {
+  const status = await health.ready();
+  res.status(status).json({ status: status === 200 ? "ok" : "unavailable" });
+});</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ query دي كمان ممكن تعلّق لو الـ pool مليان، فالـ probe يفشل والـ pod يتعمله restart وهو سليم. ✅ الـ liveness من غير I/O خالص، وكل الـ checks في الـ readiness، بـ timeout، ومن غير تفاصيل في الـ body. الـ run في الجزء 6 بيوري الـ live 200 طول الوقت والـ DB واقعة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Log and rethrow at every layer</b>
+<pre><code class="language-typescript">catch (e) {
+  logger.error(e);
+  // السطر ده بيتكرر في 4 طبقات
+  throw e;
+}</code></pre></div>
+    <div class="good"><b>✅ Context on the way up, one log</b>
+<pre><code class="language-typescript">catch (e) {
+  // المعلومة بتتزوّد، والـ log مرة واحدة عند الحدود
+  throw new Error(`loading order ${orderId}`, { cause: e });
+}</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ error واحد طلّع 4 سطور في الـ run فوق، بنفس الرسالة ومن غير ما يقول أنهي order. ✅ سطر واحد عند الـ error middleware فيه الـ chain كلها من <code>building invoice</code> لحد <code>57P01</code>.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Exit 0 after a crash, no limit on the drain</b>
+<pre><code class="language-typescript">process.on("uncaughtException", async (err) =&gt; {
+  // لو الـ log server واقع، الـ process بيعلّق للأبد
+  await sendToLogServer(err);
+  // والـ supervisor فاكر إن كل حاجة تمام
+  process.exit(0);
+});</code></pre></div>
+    <div class="good"><b>✅ Exit 1, with a guard</b>
+<pre><code class="language-typescript">installCrashHandlers({
+  // الحارس بيخرج بـ 1 لو الـ drain علّق
+  drain: () =&gt; shutdown("fatal"),
+  timeoutMs: 5_000,
+  log,
+});</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ غلطتين في handler واحد: انتظار من غير حد، و exit code بيكدب. ✅ الـ <code>installCrashHandlers</code> من الجزء 4 بيخرج بـ 1 في كل الحالات اللي جربناها، حتى لو الـ drain علّق.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Map one more Postgres code <span class="lvl lvl-1">🟢 easy</span></b>
+    Add <code>23503</code> (foreign key violation) to the mapping as a <code>ConflictError</code>, and print the Problem Details and the cause chain. What does the client see, and what does only the log see?
+    <div class="ar-note">ضيف <code>23503</code> (كسر foreign key) للـ mapping كـ <code>ConflictError</code>، واطبع الـ Problem Details والـ cause chain. الـ client بيشوف إيه، وإيه اللي بيظهر في الـ log بس؟</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-pg-codes.ts"><code class="language-typescript">// الحل: زوّد 23503 في fromPg من بره، وجرّبها على error حقيقي الشكل
+import { causeChain, ConflictError, fromPg, toProblem } from "./errors.ts";
+
+function fromPgWithForeignKey(err: unknown, message: string): unknown {
+  // الـ 23503 معناها الصف بيشاور على حاجة مش موجودة، أو حد لسه بيشاور عليه
+  if ((err as { code?: string }).code === "23503") return new ConflictError(message, err);
+  return fromPg(err);
+}
+
+const driverError = Object.assign(new Error('insert on table "invoices" violates foreign key constraint'), { code: "23503" });
+const mapped = fromPgWithForeignKey(driverError, "The customer no longer exists");
+console.log(JSON.stringify(toProblem(mapped, "/invoices")));
+console.log(causeChain(mapped));</code></pre>
+<pre><code class="language-plaintext">{"type":"https://api.shop.example/problems/conflict","title":"Conflict","status":409,"detail":"The customer no longer exists","instance":"/invoices","code":"CONFLICT"}
+ConflictError[CONFLICT]: The customer no longer exists &lt;- Error[23503]: insert on table "invoices" violates foreign key constraint</code></pre>
+      <div class="ar-note">الـ client شاف <code>The customer no longer exists</code> بس، واسم الجدول والـ constraint في الـ chain بتاع الـ log.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. Do the budget <span class="lvl lvl-2">🟡 medium</span></b>
+    Your longest request is 20 s, the load balancer checks every 5 s and marks a target unhealthy after 2 failures, and closing dependencies takes up to 2 s. Pick <code>drainDelayMs</code>, <code>forceAfterMs</code> and <code>terminationGracePeriodSeconds</code>. Then set <code>FORCE_AFTER_MS</code> lower than your longest request in the Part 5 server and see what the client gets.
+    <div class="ar-note">أطول request عندك 20 ثانية، والـ load balancer بيشيّك كل 5 ثواني وبيعتبر الـ target مش سليم بعد فشلتين، وقفل الـ dependencies بياخد لحد ثانيتين. اختار <code>drainDelayMs</code> و <code>forceAfterMs</code> و <code>terminationGracePeriodSeconds</code>. وبعدين حط <code>FORCE_AFTER_MS</code> أقل من أطول request في server الجزء 5 وشوف الـ client بياخد إيه.</div>
+    <details><summary>Solution · الحل</summary>
+      Drain: 2 failures × 5 s = 10 s, so use about 12 s. Force: 12 + 20 + 2 = 34 s, so use about 36 s. Grace period: more than that, so 40 s, and the default 30 s is too short here. The real run in Part 5 shows the low-force case: exit code 1, and the client gets <code>ECONNRESET</code>.
+      <div class="ar-note">الـ drain: فشلتين × 5 ثواني = 10 ثواني، فخليها حوالي 12. الـ force: 12 + 20 + 2 = 34، فخليها حوالي 36. الـ grace period أكبر من كده، يعني 40 ثانية، والـ default بتاع 30 أقصر من اللازم هنا. والـ run الحقيقي في الجزء 5 بيوري حالة الـ force الواطي: exit code 1 والـ client بياخد <code>ECONNRESET</code>.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. The same shutdown on Fastify <span class="lvl lvl-2">🟡 medium</span></b>
+    Port the sequence to Fastify: fail readiness, wait, <code>app.close()</code>, and close dependencies in an <code>onClose</code> hook. Keep one keep-alive request in flight during the close, and measure how long <code>app.close()</code> takes. Before you run it, predict the number, knowing that Fastify's default <code>keepAliveTimeout</code> is 72 s.
+    <div class="ar-note">انقل التسلسل لـ Fastify: فشّل الـ readiness، واستنى، و <code>app.close()</code>، واقفل الـ dependencies في <code>onClose</code> hook. خلي request واحد بـ keep-alive شغال وقت الـ close، وقيس <code>app.close()</code> بياخد قد إيه. وقبل ما تشغّله توقع الرقم، وإنت عارف إن الـ <code>keepAliveTimeout</code> الافتراضي في Fastify هو 72 ثانية.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-fastify-shutdown.ts"><code class="language-typescript">// الحل: الـ graceful shutdown على Fastify، مرة من غير sweep ومرة بيه
+// شغّله كده: node src/ex-fastify-shutdown.ts
+import http from "node:http";
+import { setTimeout as sleep } from "node:timers/promises";
+import Fastify from "fastify";
+
+async function run(sweepIdle: boolean): Promise&lt;void&gt; {
+  const app = Fastify({ logger: false });
+  let ready = true;
+  // الـ onClose hook: هنا بتقفل الـ worker والـ pool، وبيشتغل بعد ما الـ requests تخلص
+  app.addHook("onClose", async () =&gt; console.log(`${stamp()} onClose: worker and pool closed`));
+  app.get("/health/ready", async (_req, reply) =&gt; reply.code(ready ? 200 : 503).send({ ready }));
+  app.get("/orders/slow", async () =&gt; {
+    await sleep(1_000);
+    return { orderId: 42 };
+  });
+
+  const url = new URL(await app.listen({ port: 0, host: "127.0.0.1" }));
+  const get = (path: string, agent: http.Agent | false = false) =&gt;
+    new Promise&lt;string&gt;((resolve) =&gt; {
+      http
+        .get({ port: Number(url.port), path, agent, host: "127.0.0.1" }, (res) =&gt; {
+          let body = "";
+          res.on("data", (c) =&gt; (body += c));
+          res.on("end", () =&gt; resolve(`${res.statusCode} ${body}`));
+        })
+        .on("error", (e: NodeJS.ErrnoException) =&gt; resolve(`error ${e.code}`));
+    });
+
+  const t0 = performance.now();
+  function stamp(): string {
+    return `  [+${String(Math.round(performance.now() - t0)).padStart(5)} ms]`;
+  }
+
+  console.log(sweepIdle ? "app.close() + sweep every 250 ms:" : "app.close() alone:");
+  const agent = new http.Agent({ keepAlive: true });
+  const slow = get("/orders/slow", agent).then((r) =&gt; console.log(`${stamp()} in-flight -&gt; ${r}`));
+  await sleep(100);
+  ready = false;
+  console.log(`${stamp()} readiness -&gt; ${await get("/health/ready")}`);
+  await sleep(100);
+
+  // الـ default بتاع Fastify بيقفل الـ idle مرة واحدة، زي server.close بالظبط
+  const sweep = sweepIdle ? setInterval(() =&gt; app.server.closeIdleConnections(), 250) : undefined;
+  const closing = app.close();
+  await sleep(50);
+  console.log(`${stamp()} new connection -&gt; ${await get("/orders/slow")}`);
+  await slow;
+  await closing;
+  clearInterval(sweep);
+  console.log(`${stamp()} app.close() finished`);
+  agent.destroy();
+}
+
+await run(false);
+await run(true);</code></pre>
+<pre><code class="language-plaintext">app.close() alone:
+  [+  106 ms] readiness -&gt; 503 {"ready":false}
+  [+  278 ms] new connection -&gt; error ECONNREFUSED
+  [+ 1015 ms] in-flight -&gt; 200 {"orderId":42}
+  [+74022 ms] onClose: worker and pool closed
+  [+74022 ms] app.close() finished
+app.close() + sweep every 250 ms:
+  [+  103 ms] readiness -&gt; 503 {"ready":false}
+  [+  275 ms] new connection -&gt; error ECONNREFUSED
+  [+ 1009 ms] in-flight -&gt; 200 {"orderId":42}
+  [+ 1246 ms] onClose: worker and pool closed
+  [+ 1246 ms] app.close() finished</code></pre>
+      <div class="ar-note">النتيجة الحقيقية: حوالي 74 ثانية عشان request بياخد ثانية واحدة، مع إن الـ <code>forceCloseConnections</code> الافتراضي بيقفل الـ idle. هو بيقفلهم مرة واحدة بس، زي <code>server.close</code> بالظبط، فده نفس فخ الجزء 5. ومع الـ sweep نزلت لحوالي 1.2 ثانية.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    In your side project: add <code>errors.ts</code> with Problem Details, <code>/health/live</code> and <code>/health/ready</code>, <code>createShutdown</code> and <code>installCrashHandlers</code>. Then on Linux or WSL, run autocannon against two instances behind nginx or your own small proxy, send <code>kill -TERM</code> to one, and get <code>non2xx</code> and <code>errors</code> to 0. Stop Postgres during the run and confirm that nothing restarts.
+    <div class="ar-note">في مشروعك الجانبي: ضيف <code>errors.ts</code> مع Problem Details، و <code>/health/live</code> و <code>/health/ready</code>، و <code>createShutdown</code> و <code>installCrashHandlers</code>. وبعدين على Linux أو WSL، شغّل autocannon على instanceين ورا nginx أو proxy صغير بتاعك، وابعت <code>kill -TERM</code> لواحد، ووصّل <code>non2xx</code> و <code>errors</code> لصفر. ووقّف Postgres وسط الـ run واتأكد إن مفيش حاجة بتعمل restart.</div>
+    <details><summary>Hint · تلميح</summary>
+      Don't copy the numbers from here: the drain delay must cover your own proxy's check interval times its failure threshold. If <code>non2xx</code> isn't 0, look at which step failed: 502s during the drain mean the wait is too short, and 500s mean something closed too early.
+      <div class="ar-note">متنسخش الأرقام من هنا: الـ drain delay لازم يغطي check interval بتاع الـ proxy بتاعك في الـ failure threshold بتاعه. ولو <code>non2xx</code> مش صفر، شوف أنهي خطوة فشلت: 502 وقت الـ drain معناها الانتظار قصير، و 500 معناها حاجة اتقفلت بدري.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Operational: an expected failure of a correct program, so handle it and keep running. Programmer: a bug, so 500, alert, drain and exit 1.</li>
+    <li>Carrying on after a bug corrupts shared state (real: stock 0, nothing sold, a real customer refused). A restart cleans memory only.</li>
+    <li>One hierarchy with <code>code</code>, <code>status</code> and <code>isOperational</code>. One boundary that makes Problem Details and logs once. Normalize the framework's own errors there.</li>
+    <li>The repository maps <code>23505</code> to 409 and keeps the driver error as <code>cause</code>. Bugs never leak details to the client.</li>
+    <li>Never <code>catch {}</code>. A layer either handles an error or adds context with <code>cause</code>; only the boundary logs (real: 4 lines down to 1).</li>
+    <li><code>no-floating-promises</code> catches what <code>tsc</code> lets through. Exit codes: uncaught 1, handler throws 7, and never exit 0 after a crash.</li>
+    <li>Crash handler: <code>exitCode = 1</code> first, log, bounded drain with an <code>unref</code>'d timer, exit 1. The supervisor restarts with backoff and an alert.</li>
+    <li>Shutdown order: force timer, readiness 503, wait for the LB, <code>server.close()</code>, sweep idle connections, in-flight done, worker, queue, pool, exit 0.</li>
+    <li><code>server.close()</code> closes idle connections only once, so a keep-alive request that finishes later holds it open (real: 9.4 s for a 500 ms request, and 74 s on Fastify's defaults).</li>
+    <li>Under load (real, failed requests): <code>process.exit()</code> 50 and 16, pool first 10 and 10, no LB wait 13 and 13, the full sequence 0 and 0.</li>
+    <li>Liveness: no I/O, failure means restart. Readiness: dependencies with a 1 s timeout, failure means no traffic, and it fails first on shutdown. Reasons go to logs, not the body.</li>
+    <li>Always <code>pool.on("error")</code>: without it a Postgres restart kills the process (real: exit code 1).</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ operational فشل متوقع في برنامج سليم: اتعامل معاه وكمّل. الـ programmer ده bug: رد 500، و alert، و drain، و exit 1.</li>
+      <li>الكمالة بعد bug بتبوّظ الـ state المشتركة (حقيقي: stock صفر، ومفيش مبيعات، وعميل حقيقي اترفض). والـ restart بينضّف الـ memory بس.</li>
+      <li>hierarchy واحدة فيها <code>code</code> و <code>status</code> و <code>isOperational</code>. وحدود واحدة بتعمل Problem Details و log مرة. وحوّل errors الـ framework نفسه هناك.</li>
+      <li>الـ repository بيحوّل <code>23505</code> لـ 409 ويحتفظ بـ error الـ driver في <code>cause</code>. والـ bugs عمرها ما بتطلّع تفاصيل للـ client.</li>
+      <li>عمرك ما تكتب <code>catch {}</code>. الطبقة يا إما تتعامل مع الـ error، يا إما تزوّد context بـ <code>cause</code>، والحدود بس هي اللي بتعمل log (حقيقي: من 4 سطور لسطر واحد).</li>
+      <li>الـ <code>no-floating-promises</code> بتمسك اللي <code>tsc</code> بيعدّيه. والـ exit codes: uncaught بـ 1، و handler رمى بـ 7، وعمرك ما تخرج بـ 0 بعد crash.</li>
+      <li>الـ crash handler: <code>exitCode = 1</code> الأول، و log، و drain بحد أقصى بـ timer عليه <code>unref</code>، و exit 1. والـ supervisor بيعمل restart بـ backoff و alert.</li>
+      <li>ترتيب الـ shutdown: force timer، و readiness 503، وانتظار الـ LB، و <code>server.close()</code>، و sweep للـ idle connections، وخلاص الـ in-flight، و worker، و queue، و pool، و exit 0.</li>
+      <li>الـ <code>server.close()</code> بيقفل الـ idle مرة واحدة بس، فـ keep-alive request بيخلص بعدها بيعطّله (حقيقي: 9.4 ثانية لـ request بياخد 500 ms، و 74 ثانية مع defaults بتاعة Fastify).</li>
+      <li>تحت الضغط (حقيقي، requests فاشلة): <code>process.exit()</code> 50 و 16، والـ pool الأول 10 و 10، ومن غير انتظار الـ LB 13 و 13، والتسلسل الكامل 0 و 0.</li>
+      <li>الـ liveness من غير I/O، وفشله معناه restart. الـ readiness على الـ dependencies بـ timeout ثانية، وفشلها معناه مفيش traffic، وبتفشل الأول في الـ shutdown. والأسباب في الـ logs مش في الـ body.</li>
+      <li>دايمًا <code>pool.on("error")</code>: من غيره restart لـ Postgres بيقتل الـ process (حقيقي: exit code 1).</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 04 · 2.10 — <b>Operational errors</b> (DB down، invalid input، timeout) vs <b>programmer errors</b> (bug، <code>undefined is not a function</code>) — الأول تتعامل معاه، التاني crash و restart</label>
+    <label><input type="checkbox" data-key="r2"> 04 · 2.10 — Centralized error handling: error classes hierarchy (<code>AppError</code> → <code>NotFoundError</code>، <code>ValidationError</code>...)، <code>isOperational</code> flag، error codes، mapping للـ HTTP status</label>
+    <label><input type="checkbox" data-key="r3"> 04 · 2.10 — لا تـ swallow errors، لا تـ log وترمي تاني (double logging)</label>
+    <label><input type="checkbox" data-key="r4"> 04 · 2.10 — <b>Graceful shutdown</b>: <code>SIGTERM</code> → stop accepting new connections → finish in-flight requests → close DB pools/queues → <code>process.exit(0)</code>، مع timeout للـ force exit</label>
+    <label><input type="checkbox" data-key="r5"> 04 · 2.10 — Health endpoints: <code>/health/live</code> (الـ process شغال) vs <code>/health/ready</code> (جاهز يستقبل traffic: DB متصلة، queue متصلة)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://nodejs.org/api/process.html">Node.js docs — process: uncaughtException, signal events, exit codes</a></li>
+    <li><a href="https://nodejs.org/api/http.html">Node.js docs — http: server.close, closeIdleConnections, closeAllConnections</a></li>
+    <li><a href="https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/">Kubernetes — Pod lifecycle: termination, restart backoff, CrashLoopBackOff</a></li>
+    <li><a href="https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/">Kubernetes — Liveness, readiness and startup probes</a></li>
+    <li><a href="https://www.rfc-editor.org/rfc/rfc9457.html">RFC 9457 — Problem Details for HTTP APIs</a></li>
+    <li><a href="https://docs.bullmq.io/guide/workers/graceful-shutdown">BullMQ — Graceful shutdown</a></li>
+  </ul>
+
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <!-- ===== Prev / Next ===== -->
+  <nav class="lesson-nav">
+    <a class="prev" href="./23-brokers-rabbitmq-kafka-outbox.html"><small>← Previous</small>23 · Brokers &amp; Outbox</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./25-timeouts-retries-circuit-breakers.html"><small>Next →</small>25 · Timeouts &amp; Breakers</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
