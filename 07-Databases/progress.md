@@ -1,7 +1,7 @@
 <!-- AUTO:START -->
 # 07 — قواعد البيانات والـ Data Layer — Progress
 
-> آخر تحديث: 2026-11-03 · شغّل `node _tools/update-progress.js` بعد أي تعديل.
+> آخر تحديث: 2026-11-04 · شغّل `node _tools/update-progress.js` بعد أي تعديل.
 
 **الإجمالي:** 0 / 175 بند · **0%**
 

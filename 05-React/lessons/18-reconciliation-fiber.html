@@ -1,0 +1,1999 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reconciliation &amp; Fiber: How React Actually Updates — 05 React</title>
+<meta name="section" content="05-React">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">05 · React</a></span>
+    <span>·</span>
+    <span>Lesson 18 / 27</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Reconciliation &amp; Fiber: How React Actually Updates</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 18 of 27 — React</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">React 19.3 · TypeScript 7 · Chrome 156</span>
+      <span class="chip">Prereq: 03 · Events &amp; Render Cycle, 06 · Hooks: Rules &amp; Refs</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>05 · 3.1 — Reconciliation algorithm: diffing heuristics — element type مختلف = unmount/mount الـ subtree كله، نفس النوع = update props، keys للـ lists</li>
+        <li>05 · 3.1 — ليه تغيير الـ component type (أو تعريف component جوه component) بيعمل remount وبيضيّع الـ state</li>
+        <li>05 · 3.1 — Fiber كمفهوم: work units، priority lanes، interruptible rendering، double buffering (current/workInProgress)</li>
+        <li>05 · 3.1 — Concurrent rendering: React ممكن يبدأ render ويوقفه ويرميه — وليه الـ render لازم يكون pure</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Diffing heuristics</a></li>
+      <li><a href="#p2">Part 2 — State belongs to position</a></li>
+      <li><a href="#p3">Part 3 — Remount bugs</a></li>
+      <li><a href="#p4">Part 4 — Fiber: reading the real tree</a></li>
+      <li><a href="#p5">Part 5 — Lanes and priorities</a></li>
+      <li><a href="#p6">Part 6 — Concurrent rendering and purity</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Some React bugs make no sense until you know the update algorithm: an input that loses focus after every letter, a form that keeps the previous customer's note, a tab that forgets its draft, a counter in render that reads #557 on the first row. All of them follow directly from a few rules about types, positions, and renders that can be thrown away. This lesson proves each rule in real Chrome, then opens the real fiber tree and a real performance trace. It's also where senior interviews go: "why is my state being reset?", "what is Fiber?", and "why must render be pure?"</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>فيه bugs في React مالهاش أي معنى غير لما تعرف الـ update algorithm: input بيفقد الـ focus بعد كل حرف، form محتفظة بملاحظة العميل اللي قبله، tab بتنسى الـ draft بتاعها، عداد في الـ render بيطلّع #557 على أول صف. كلهم نتيجة مباشرة لقواعد قليلة عن الأنواع والأماكن والـ renders اللي ممكن تترمي. في الدرس ده هنثبت كل قاعدة في Chrome الحقيقي، وبعدين نفتح الـ fiber tree الحقيقية وperformance trace حقيقي. وده كمان المكان اللي الـ senior interviews بتروحله: "ليه الـ state بيتصفّر؟" و"يعني إيه Fiber؟" و"ليه الـ render لازم يبقى pure؟"</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Diffing heuristics <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — الـ diffing heuristics</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Reconciliation is how React turns "here is the new element tree" into the smallest set of DOM changes. The best general algorithm for the minimum edits between two trees (see <a href="../../01-CS-Fundamentals/lessons/05-trees-bst-btrees.html">trees</a> for the structure) is O(n³). React's old docs put the cost plainly: 1,000 elements would need on the order of a billion comparisons. So React doesn't solve the general problem. It walks both trees once, O(n), by assuming two things that hold in real UIs:</p>
+    <ol>
+      <li><b>A different type means a different tree.</b> If <code>&lt;div&gt;</code> becomes <code>&lt;section&gt;</code>, React doesn't compare what's inside. It unmounts the whole old subtree (DOM destroyed, state gone, effects cleaned up) and mounts a new one, even if the children are identical.</li>
+      <li><b>Keys identify children across renders.</b> Without keys, children match by index; with keys, by key.</li>
+    </ol>
+    <p>With the <b>same type</b>, React keeps what exists. A host element keeps its DOM node and gets only the changed attributes. A component keeps its state and hooks and renders again with the new props. Then React recurses into the children.</p>
+    <p>The first run proves the type rule through DOM node identity. The second shows, with a <code>MutationObserver</code>, what a same-type update really touches. The two <code>name</code> writes on the input are React's own guard in <code>updateInput</code>: it clears <code>name</code> first so that changing several attributes can't disturb a radio group, then restores or removes it. Keys get their own measurement: prepending one order to 1,000 rows.</p>
+  </section>
+<pre data-file="src/lib.ts"><code class="language-typescript">export const log: string[] = [];
+export const say = (...a: unknown[]) =&gt; void log.push(a.map(String).join(" "));
+export const tick = (ms = 0) =&gt; new Promise&lt;void&gt;((r) =&gt; setTimeout(r, ms));
+export function done() {
+  const pre = document.createElement("pre");
+  pre.id = "out";
+  pre.textContent = log.join("\n");
+  document.body.append(pre);
+}
+</code></pre>
+<pre data-file="src/p1-type-change.tsx"><code class="language-tsx">import { useEffect } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import { done, say, tick } from "./lib";
+
+// الـ input بيسجل إمتى اتركّب وإمتى اتشال
+function CouponInput() {
+  useEffect(() =&gt; {
+    say("  CouponInput mount");
+    return () =&gt; say("  CouponInput unmount");
+  }, []);
+  return &lt;input aria-label="Coupon" /&gt;;
+}
+
+// نفس المحتوى، بس الـ wrapper بيتغير نوعه
+function Checkout({ wide }: { wide: boolean }) {
+  return wide ? &lt;section&gt;&lt;CouponInput /&gt;&lt;/section&gt; : &lt;div&gt;&lt;CouponInput /&gt;&lt;/div&gt;;
+}
+
+// نفس النوع، بس الـ props والنص بيتغيروا
+function SameType({ tone }: { tone: string }) {
+  return &lt;div className={tone}&gt;&lt;b&gt;{tone}&lt;/b&gt;&lt;CouponInput /&gt;&lt;/div&gt;;
+}
+
+async function typeChange() {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  flushSync(() =&gt; root.render(&lt;Checkout wide={false} /&gt;));
+  await tick();
+  const before = host.querySelector("input")!;
+  before.value = "SAVE10";
+
+  say("--- div -&gt; section");
+  flushSync(() =&gt; root.render(&lt;Checkout wide={true} /&gt;));
+  await tick();
+  const after = host.querySelector("input")!;
+  say("same DOM node?", before === after, "| value:", JSON.stringify(after.value));
+}
+
+async function sameType() {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  flushSync(() =&gt; root.render(&lt;SameType tone="calm" /&gt;));
+  await tick();
+  const before = host.querySelector("input")!;
+  before.value = "SAVE10";
+
+  // الـ MutationObserver بيعدّ اللي اتغير في الـ DOM فعلًا
+  const mo = new MutationObserver(() =&gt; {});
+  mo.observe(host, { subtree: true, childList: true, attributes: true, characterData: true });
+
+  say("--- same type, new className and text");
+  flushSync(() =&gt; root.render(&lt;SameType tone="alert" /&gt;));
+  const records = mo.takeRecords();
+  const after = host.querySelector("input")!;
+  say("same DOM node?", before === after, "| value:", JSON.stringify(after.value));
+  for (const m of records) say("  mutation:", m.type, m.attributeName ?? "", "on", m.target.nodeName);
+}
+
+void typeChange().then(sameType).then(done);
+</code></pre>
+<pre><code class="language-plaintext">  CouponInput mount
+--- div -&gt; section
+  CouponInput unmount
+  CouponInput mount
+same DOM node? false | value: ""
+  CouponInput mount
+--- same type, new className and text
+same DOM node? true | value: "SAVE10"
+  mutation: characterData  on #text
+  mutation: attributes name on INPUT
+  mutation: attributes name on INPUT
+  mutation: attributes class on DIV
+</code></pre>
+  <div class="ar-note">نتيجة run حقيقي في Chrome. لما <code>div</code> بقى <code>section</code>: الـ component اتشال واتركّب، والـ input بقى node تانية، والقيمة <code>SAVE10</code> ضاعت. وبعدها (سطر mount التالت ده بداية التجربة التانية) لما النوع فضل زي ما هو: نفس الـ node والقيمة موجودة، والتغييرات بس: نص الـ <code>b</code> وclass الـ <code>div</code>، وكتابتين على <code>name</code> بتوع React نفسه. ومفيش <code>childList</code> خالص، يعني مفيش node اتضافت أو اتشالت.</div>
+<pre data-file="src/p1-keys.tsx"><code class="language-tsx">import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import { done, say } from "./lib";
+
+type Order = { id: string; total: number };
+const seed: Order[] = Array.from({ length: 1000 }, (_, i) =&gt; ({ id: `ord_${i + 1}`, total: 100 + i }));
+const fresh: Order = { id: "ord_0", total: 99 };
+
+// الفرق الوحيد بين الاتنين هو الـ key
+function ByIndex({ orders }: { orders: Order[] }) {
+  return &lt;ul&gt;{orders.map((o, i) =&gt; &lt;li key={i}&gt;{o.id}: {o.total}&lt;/li&gt;)}&lt;/ul&gt;;
+}
+function ById({ orders }: { orders: Order[] }) {
+  return &lt;ul&gt;{orders.map((o) =&gt; &lt;li key={o.id}&gt;{o.id}: {o.total}&lt;/li&gt;)}&lt;/ul&gt;;
+}
+
+function prepend(name: string, List: typeof ById) {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  flushSync(() =&gt; root.render(&lt;List orders={seed} /&gt;));
+  const firstLi = host.querySelector("li")!;
+  const mo = new MutationObserver(() =&gt; {});
+  mo.observe(host, { subtree: true, childList: true, characterData: true, attributes: true });
+  flushSync(() =&gt; root.render(&lt;List orders={[fresh, ...seed]} /&gt;));
+  const rec = mo.takeRecords();
+  const count = (t: string) =&gt; rec.filter((m) =&gt; m.type === t).length;
+  say(name.padEnd(9), "childList:", count("childList"), "| text changes:", count("characterData"), "| old first &lt;li&gt; still first?", host.querySelector("li") === firstLi);
+  root.unmount();
+  host.remove();
+}
+
+prepend("key=index", ByIndex);
+prepend("key=id", ById);
+done();
+</code></pre>
+<pre><code class="language-plaintext">key=index childList: 1 | text changes: 2000 | old first &lt;li&gt; still first? true
+key=id    childList: 1 | text changes: 0 | old first &lt;li&gt; still first? false
+</code></pre>
+  <div class="ar-note">إضافة order واحد في أول ليست من 1000 صف. بالـ <code>key=index</code> كل صف بقى شايل بيانات اللي قبله، فـ 2000 تغيير نص (نصين في كل صف) وصف جديد في الآخر. بالـ <code>key=id</code> صفر تغيير نص وصف واحد اتحط في الأول، والصفوف القديمة زي ما هي.</div>
+
+<pre class="diagram">
+  new element vs the old fiber at the same position
+                     |
+              same key? (null = no key on both)
+             /                        \
+           no                         yes
+           |                           |
+   in a list: look it up          same type?
+   by key elsewhere;             /          \
+   otherwise unmount            no           yes
+                                |             |
+                 UNMOUNT the old subtree      |
+                 MOUNT a new one              |
+                 state gone, DOM destroyed    |
+                                     /                 \
+                               host element          component
+                                    |                    |
+                           keep the DOM node        keep state + hooks
+                           patch changed attrs      render with new props
+                                     \                 /
+                                 recurse into the children
+</pre>
+  <div class="ar-note">دي خلاصة الـ reconciliation، وتنفعك للـ artifact رقم 4 في الـ README. React بيقارن العنصر الجديد بالـ fiber القديم في نفس المكان. الأول الـ key: لو مختلف، في الليست بيدوّر عليه بالـ key في مكان تاني، وإلا بيشيله. لو نفس الـ key بيبص على النوع: نوع مختلف معناه unmount للـ subtree القديم كله وmount لواحد جديد، والـ state راح والـ DOM اتكسر. نفس النوع وعنصر host: نفس الـ DOM node وتعديل الـ attributes اللي اتغيرت بس. نفس النوع وcomponent: نفس الـ state والـ hooks وrender بالـ props الجديدة. وفي الحالتين بينزل للـ children.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ reconciliation هي الطريقة اللي React بيحوّل بيها "دي الـ element tree الجديدة" لأقل عدد تغييرات في الـ DOM. أحسن algorithm عام لأقل تعديلات بين شجرتين (راجع <a href="../../01-CS-Fundamentals/lessons/05-trees-bst-btrees.html">الـ trees</a>) هو O(n³). الـ docs القديمة بتاعة React قالتها صريحة: 1000 عنصر محتاجين حوالي مليار مقارنة. فـ React مش بيحل المشكلة العامة، بيمشي على الشجرتين مرة واحدة O(n) بافتراض حاجتين صح في أي UI حقيقي:</p>
+    <ol>
+      <li><b>نوع مختلف يعني شجرة مختلفة.</b> لو <code>&lt;div&gt;</code> بقى <code>&lt;section&gt;</code>، React مش بيقارن اللي جواه. بيعمل unmount للـ subtree كله (الـ DOM بيتكسر، والـ state بيضيع، والـ effects بتتنضف) وmount لواحد جديد، حتى لو الـ children متطابقين.</li>
+      <li><b>الـ keys بتعرّف الـ children بين الـ renders.</b> من غير keys بيطابق بالـ index، وبالـ keys بيطابق بالـ key.</li>
+    </ol>
+    <p>لو <b>نفس النوع</b>، React بيحتفظ باللي موجود. عنصر الـ host بيفضل بنفس الـ DOM node وبياخد الـ attributes اللي اتغيرت بس. والـ component بيفضل بالـ state والـ hooks بتوعه وبيعمل render تاني بالـ props الجديدة. وبعدين React بينزل للـ children.</p>
+    <p>الـ run الأول بيثبت قاعدة النوع عن طريق هوية الـ DOM node. التاني بيوريك بـ <code>MutationObserver</code> الـ update من نفس النوع بيلمس إيه فعلًا. والكتابتين على <code>name</code> دول حماية من React نفسه في <code>updateInput</code>: بيفضّي <code>name</code> الأول عشان تغيير كذا attribute مايلخبطش radio group، وبعدين يرجّعه أو يشيله. والـ keys ليها قياس لوحدها: إضافة order واحد قدام 1000 صف. والـ keys نفسها اتشرحت في <a href="./01-react-model-jsx.html">الدرس 01</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو جالك ticket "الـ form بتتمسح لما الشاشة تكبر" دوّر على wrapper بيتغير نوعه: <code>isDesktop ? &lt;aside&gt;…&lt;/aside&gt; : &lt;div&gt;…&lt;/div&gt;</code>. الحل نفس النوع مع class مختلف. ولو ليست notifications بتجيلها رسايل جديدة من WebSocket في الأول، <code>key=index</code> معناه آلاف التغييرات في الـ DOM مع كل رسالة بدل عملية واحدة، وكمان الـ input اللي في كل صف هيروح لصف غلط.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "What exactly happens to state when <code>&lt;div&gt;</code> becomes <code>&lt;section&gt;</code> around a form?" → React treats a different type as a different tree: it unmounts everything below, runs effect cleanups, destroys the DOM nodes, then mounts new ones. All state below that point is gone, even though the children are identical. It's the O(n) heuristic: React never compares across types.
+    <div class="ar-note">"إيه اللي بيحصل للـ state بالظبط لما <code>&lt;div&gt;</code> يبقى <code>&lt;section&gt;</code> حوالين form؟" ← React بيعتبر النوع المختلف شجرة مختلفة: بيعمل unmount لكل اللي تحت، ويشغّل cleanup للـ effects، ويكسر الـ DOM nodes، وبعدين يركّب جديد. كل الـ state اللي تحت النقطة دي بيروح حتى لو الـ children متطابقين. ده الـ heuristic بتاع O(n): React عمره ما بيقارن بين نوعين مختلفين.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — State belongs to position <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — الـ state بتاع المكان مش الـ component</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>State doesn't live inside your component function. React keeps it in the tree, tied to the <b>position</b> of that component, identified by its parent, its slot and its key. The JSX you wrote is irrelevant: only what ends up in that slot matters. That produces four results that surprise people, all run below:</p>
+    <ol>
+      <li><code>isAdmin ? &lt;OrderForm mode="admin" /&gt; : &lt;OrderForm mode="user" /&gt;</code> <b>keeps</b> the state. Two lines of JSX, but one position and one type.</li>
+      <li><code>key={customerId}</code> <b>resets</b> it. A new key means a new identity. This is the clean way to reset a form per customer, instead of an effect that clears fields.</li>
+      <li><code>{show &amp;&amp; &lt;Banner /&gt;}</code> <b>keeps</b> the sibling's state, because <code>false</code> still occupies slot 0, so the form stays in slot 1.</li>
+      <li>Two separate returns, one with the banner and one without, <b>lose</b> it. The form moves from slot 0 to slot 1, slot 0 changes type, and the old form unmounts.</li>
+    </ol>
+    <p><b><code>&lt;Activity&gt;</code></b>, stable since React 19.2, is a third option between "mounted" and "gone". With <code>mode="hidden"</code> the DOM stays with <code>display: none</code>, state survives, and effects are cleaned up, so subscriptions stop. Switching back re-runs effects with the state intact. The docs add that hidden children still re-render, at low priority.</p>
+  </section>
+<pre data-file="src/p2-position.tsx"><code class="language-tsx">import { useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import { done, say, tick } from "./lib";
+
+// الـ form بتحتفظ بالـ note في state، وزرار بيكتب فيها
+function OrderForm({ mode }: { mode: string }) {
+  const [note, setNote] = useState("");
+  return (
+    &lt;form data-mode={mode}&gt;
+      &lt;output&gt;{note || "(empty)"}&lt;/output&gt;
+      &lt;button type="button" onClick={() =&gt; setNote("urgent")}&gt;Add note&lt;/button&gt;
+    &lt;/form&gt;
+  );
+}
+function Banner() {
+  return &lt;p&gt;Sale ends today&lt;/p&gt;;
+}
+
+// (1) نفس النوع في نفس المكان: الـ state بيفضل
+function SamePosition({ isAdmin }: { isAdmin: boolean }) {
+  return isAdmin ? &lt;OrderForm mode="admin" /&gt; : &lt;OrderForm mode="user" /&gt;;
+}
+// (2) الـ key بيقول لـ React ده عميل تاني
+function KeyedByCustomer({ customerId }: { customerId: string }) {
+  return &lt;OrderForm key={customerId} mode="user" /&gt;;
+}
+// (3) الـ false بيحجز الـ slot، فالـ form فاضلة في slot رقم 1
+function WithSlot({ show }: { show: boolean }) {
+  return &lt;div&gt;{show &amp;&amp; &lt;Banner /&gt;}&lt;OrderForm mode="user" /&gt;&lt;/div&gt;;
+}
+// (4) شجرتين مختلفتين: الـ form بتتنقل من slot 0 لـ slot 1
+function Shifting({ show }: { show: boolean }) {
+  if (show) return &lt;div&gt;&lt;Banner /&gt;&lt;OrderForm mode="user" /&gt;&lt;/div&gt;;
+  return &lt;div&gt;&lt;OrderForm mode="user" /&gt;&lt;/div&gt;;
+}
+
+async function scenario&lt;P extends object&gt;(name: string, C: (p: P) =&gt; ReactNode, a: P, b: P) {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  flushSync(() =&gt; root.render(&lt;C {...a} /&gt;));
+  host.querySelector("button")!.click();
+  await tick();
+  const before = host.querySelector("output")!.textContent;
+  flushSync(() =&gt; root.render(&lt;C {...b} /&gt;));
+  await tick();
+  say(name.padEnd(26), "before:", before, "-&gt; after:", host.querySelector("output")!.textContent);
+  root.unmount();
+  host.remove();
+}
+
+async function main() {
+  await scenario("ternary, same type", SamePosition, { isAdmin: true }, { isAdmin: false });
+  await scenario("key={customerId} changes", KeyedByCustomer, { customerId: "c1" }, { customerId: "c2" });
+  await scenario("{show &amp;&amp; &lt;Banner/&gt;} slot", WithSlot, { show: false }, { show: true });
+  await scenario("two trees, form shifts", Shifting, { show: false }, { show: true });
+  done();
+}
+void main();
+</code></pre>
+<pre><code class="language-plaintext">ternary, same type         before: urgent -&gt; after: urgent
+key={customerId} changes   before: urgent -&gt; after: (empty)
+{show &amp;&amp; &lt;Banner/&gt;} slot   before: urgent -&gt; after: urgent
+two trees, form shifts     before: urgent -&gt; after: (empty)
+</code></pre>
+  <div class="ar-note">الـ 4 حالات متجربين في Chrome. كتبنا note في الـ form وبعدين غيّرنا الـ prop: الـ ternary والـ slot الـ state فضل فيهم، وتغيير الـ key والشجرتين الـ state راح. قبل ما تقرا الشرح حاول تتوقع كل سطر بنفسك.</div>
+<pre data-file="src/p2-activity.tsx"><code class="language-tsx">import { Activity, useEffect, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import { done, say, tick } from "./lib";
+
+// الـ tab فيها draft في state، وeffect بيمثل subscription على WebSocket
+function InvoiceDraft() {
+  const [draft, setDraft] = useState("");
+  useEffect(() =&gt; {
+    say("  effect: subscribe to invoice updates");
+    return () =&gt; say("  cleanup: unsubscribe");
+  }, []);
+  return (
+    &lt;div&gt;
+      &lt;output&gt;{draft || "(empty)"}&lt;/output&gt;
+      &lt;button onClick={() =&gt; setDraft("net 30 days")}&gt;Write draft&lt;/button&gt;
+    &lt;/div&gt;
+  );
+}
+
+function WithActivity({ tab }: { tab: string }) {
+  return &lt;Activity mode={tab === "invoice" ? "visible" : "hidden"}&gt;&lt;InvoiceDraft /&gt;&lt;/Activity&gt;;
+}
+function WithCondition({ tab }: { tab: string }) {
+  return tab === "invoice" ? &lt;InvoiceDraft /&gt; : null;
+}
+
+async function run(name: string, Tabs: (p: { tab: string }) =&gt; ReactNode) {
+  say(`--- ${name}`);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  flushSync(() =&gt; root.render(&lt;Tabs tab="invoice" /&gt;));
+  await tick();
+  host.querySelector("button")!.click();
+  await tick();
+  say("  draft:", host.querySelector("output")?.textContent);
+
+  say("  switch to Orders tab");
+  flushSync(() =&gt; root.render(&lt;Tabs tab="orders" /&gt;));
+  await tick();
+  const box = host.querySelector("div");
+  say("  DOM kept?", !!box, "| display:", box ? getComputedStyle(box).display : "-");
+
+  say("  back to Invoice tab");
+  flushSync(() =&gt; root.render(&lt;Tabs tab="invoice" /&gt;));
+  await tick();
+  say("  draft:", host.querySelector("output")?.textContent);
+  flushSync(() =&gt; root.unmount());
+  host.remove();
+}
+
+async function main() {
+  await run("conditional render", WithCondition);
+  await run("&lt;Activity&gt;", WithActivity);
+  done();
+}
+void main();
+</code></pre>
+<pre><code class="language-plaintext">--- conditional render
+  effect: subscribe to invoice updates
+  draft: net 30 days
+  switch to Orders tab
+  cleanup: unsubscribe
+  DOM kept? false | display: -
+  back to Invoice tab
+  effect: subscribe to invoice updates
+  draft: (empty)
+  cleanup: unsubscribe
+--- &lt;Activity&gt;
+  effect: subscribe to invoice updates
+  draft: net 30 days
+  switch to Orders tab
+  cleanup: unsubscribe
+  DOM kept? true | display: none
+  back to Invoice tab
+  effect: subscribe to invoice updates
+  draft: net 30 days
+  cleanup: unsubscribe
+</code></pre>
+  <div class="ar-note">الفرق في سطرين: في الـ conditional render لما رجعنا الـ draft بقى <code>(empty)</code> والـ DOM كان اتشال. في <code>&lt;Activity&gt;</code> الـ DOM فضل بـ <code>display: none</code> والـ draft رجع <code>net 30 days</code>. والحلو إن الـ effect في الحالتين اتعمله cleanup، يعني الـ subscription وقف في الـ tab المخفية في الاتنين.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ state مش عايش جوه الـ function بتاعة الـ component. React بيحتفظ بيه في الشجرة، مربوط بـ<b>مكان</b> الـ component: الأب بتاعه والـ slot والـ key. الـ JSX اللي كتبته مش فارق، المهم إيه اللي بينتهي في الـ slot ده. وده بيطلّع 4 نتايج بتفاجئ الناس، وكلهم متجربين فوق:</p>
+    <ol>
+      <li><code>isAdmin ? &lt;OrderForm mode="admin" /&gt; : &lt;OrderForm mode="user" /&gt;</code> الـ state <b>بيفضل</b>. سطرين JSX بس مكان واحد ونوع واحد.</li>
+      <li><code>key={customerId}</code> الـ state <b>بيتصفّر</b>. key جديد يعني هوية جديدة. ودي الطريقة النضيفة تصفّر بيها form لكل عميل، بدل effect بيمسح الحقول.</li>
+      <li><code>{show &amp;&amp; &lt;Banner /&gt;}</code> state الـ sibling <b>بيفضل</b>، لأن <code>false</code> حاجز slot 0، فالـ form فاضلة في slot 1.</li>
+      <li>تكتب return منفصل مرة بالـ banner ومرة من غيره، الـ state <b>بيضيع</b>. الـ form بتتنقل من slot 0 لـ slot 1، وslot 0 نوعه بيتغير، فالـ form القديمة بتتشال.</li>
+    </ol>
+    <p><b><code>&lt;Activity&gt;</code></b>، stable من React 19.2، حل تالت بين "متركّب" و"راح". مع <code>mode="hidden"</code> الـ DOM بيفضل بـ <code>display: none</code>، والـ state بيفضل، والـ effects بتتنضف فالـ subscriptions بتقف. ولما ترجع الـ effects بتشتغل تاني والـ state زي ما هو. والـ docs بتضيف إن الـ children المخفيين لسه بيعملوا re-render بأولوية قليلة. واستخدامه لتجهيز tab جاية هتلاقيه في <a href="./20-suspense-data.html#p5">الدرس 20</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      شاشة support بتفتح طلبات العملاء: لما تغيّر العميل والـ note القديمة لسه مكتوبة، ده ممكن يوصّل ملاحظة لعميل غلط، والحل <code>&lt;CustomerNote key={customerId} /&gt;</code>. وصفحة فيها tabs للفاتورة والـ orders: الموظف كتب draft وراح يشوف tab تانية ورجع لقاه اتمسح، هنا <code>&lt;Activity&gt;</code> بيحفظه والـ WebSocket مقفول وهو مخفي.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: hiding vs unmounting</b>
+    <code>&lt;Activity mode="hidden"&gt;</code> keeps DOM and state in memory for every hidden tab, and they still re-render at low priority. Fine for a few tabs with precious input. For a heavy screen the user may never revisit, or for a long list of hidden items, unmount and persist only what matters, such as the draft in a URL or a store.
+    <div class="ar-note"><code>&lt;Activity mode="hidden"&gt;</code> بيفضل ماسك الـ DOM والـ state في الـ memory لكل tab مخفية، وبيعملوا re-render بأولوية قليلة. ده كويس لكام tab فيهم input مهم. لكن لشاشة تقيلة المستخدم ممكن مايرجعلهاش، أو ليست طويلة من العناصر المخفية، اعمل unmount واحفظ المهم بس، زي الـ draft في الـ URL أو في store.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Remount bugs <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — bugs الـ remount</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The type rule compares by identity. A function defined inside a component is a <b>new function on every render</b>, so React sees a new type each time and remounts everything below it. In real Chrome with real key presses, typing <code>SAVE10</code> into a field defined this way produces the value <code>S</code>: the first letter re-renders the parent, the input is destroyed, focus falls to <code>BODY</code>, and the remaining letters go nowhere.</p>
+    <p>The same bug appears as an <b>HOC called in render</b>, and as <b><code>key={Math.random()}</code></b>, which keeps the type but changes the identity. Each took the mount count from 1 to 11 over 10 re-renders.</p>
+    <p><b><code>lazy()</code> in render</b> is a bug with two faces, and I ran both instead of assuming. A new <code>lazy</code> suspends again on every parent render, so the <b>fallback covers the content for ≈310 ms each time</b> (React reveals suspended content at most once per 300 ms; see <a href="./13-routing-code-splitting.html#p5">lesson 13, part 5</a>). If the factory returns the <em>same</em> component, it isn't a remount: reconciliation compares the resolved type (<code>resolveLazy(elementType) === current.type</code> in react-dom), so mounts stayed at 1 and the state survived. If the factory returns a <em>new wrapper</em> each time, the resolved type differs, so it does remount: mounts went from 1 to 6 and the state was lost. With <code>lazy</code> at module level the fallback appeared 0 of 5 times.</p>
+    <p><b>Cost.</b> On 1,000 rows, a remount was ≈3× an update in a production build (≈5.7 ms vs ≈1.7 ms; another run under heavier load gave 25.4 vs 8.9). That's the cheap part. The real cost is what's lost: state, focus, scroll, and every effect re-running, which often means refetching data.</p>
+    <p><b>Lint catches these.</b> <code>react-hooks/static-components</code> from eslint-plugin-react-hooks 7.1.1 flags all three "created during render" cases, and <code>react-hooks/purity</code> flags <code>Math.random</code>. Fixes: define components at module level, call HOCs and <code>lazy</code> at module level, pass values as props, and use a stable key from your data.</p>
+  </section>
+<pre data-file="src/p3-typing.tsx"><code class="language-tsx">import { useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
+
+declare global {
+  interface Window { mounts: number; GOOD?: boolean }
+}
+window.mounts = 0;
+
+// ❌ الـ CouponField بيتعرف من جديد مع كل حرف
+function CheckoutBad() {
+  const [code, setCode] = useState("");
+  function CouponField() {
+    useEffect(() =&gt; {
+      window.mounts++;
+    }, []);
+    return &lt;input aria-label="Coupon" value={code} onChange={(e) =&gt; setCode(e.target.value)} /&gt;;
+  }
+  return &lt;CouponField /&gt;;
+}
+
+// ✅ نفس الشاشة، الـ component بره والـ state جاي props
+function CouponField({ code, onChange }: { code: string; onChange: (v: string) =&gt; void }) {
+  useEffect(() =&gt; {
+    window.mounts++;
+  }, []);
+  return &lt;input aria-label="Coupon" value={code} onChange={(e) =&gt; onChange(e.target.value)} /&gt;;
+}
+function CheckoutGood() {
+  const [code, setCode] = useState("");
+  return &lt;CouponField code={code} onChange={setCode} /&gt;;
+}
+
+createRoot(document.getElementById("root")!).render(window.GOOD ? &lt;CheckoutGood /&gt; : &lt;CheckoutBad /&gt;);
+</code></pre>
+<pre><code class="language-plaintext">defined inside:    {"value":"S","focused":"BODY","mounts":2}
+component outside: {"value":"SAVE10","focused":"INPUT","mounts":1}
+</code></pre>
+  <div class="ar-note">Playwright كتب <code>SAVE10</code> بكيبورد حقيقي. المعرّف جوه: القيمة <code>S</code> بس، والـ focus راح لـ <code>BODY</code>، واتركّب مرتين. المعرّف بره: القيمة كاملة والـ focus في الـ input ومرة mount واحدة.</div>
+<pre data-file="src/p3-remount.tsx"><code class="language-tsx">import { useEffect, type ComponentType } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import { done, say, tick } from "./lib";
+
+let mounts = 0;
+function useMountCounter() {
+  useEffect(() =&gt; {
+    mounts++;
+  }, []);
+}
+function Field() {
+  useMountCounter();
+  return &lt;input aria-label="Coupon" /&gt;;
+}
+
+type P = { tick: number };
+
+// ✅ نوع ثابت معرّف بره الـ render
+function Stable(_: P) {
+  return &lt;Field /&gt;;
+}
+// ⁦❌ (1)⁩ معرّف جوه component: نوع جديد في كل render
+function InnerDefinition(_: P) {
+  function CouponField() {
+    useMountCounter();
+    return &lt;input aria-label="Coupon" /&gt;;
+  }
+  return &lt;CouponField /&gt;;
+}
+// ⁦❌ (2)⁩ الـ HOC بيتنادى جوه الـ render، فبيرجع function جديدة كل مرة
+const withTenant = (C: ComponentType) =&gt; function WithTenant() {
+  return &lt;C /&gt;;
+};
+function HocInRender(_: P) {
+  const Enhanced = withTenant(Field);
+  return &lt;Enhanced /&gt;;
+}
+// ⁦❌ (3)⁩ عشوائي في الـ key: نفس النوع بس شخصية جديدة كل مرة
+function RandomKey(_: P) {
+  return &lt;Field key={Math.random()} /&gt;;
+}
+
+async function run(name: string, C: ComponentType&lt;P&gt;) {
+  mounts = 0;
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  flushSync(() =&gt; root.render(&lt;C tick={0} /&gt;));
+  await tick(20);
+  for (let i = 1; i &lt;= 10; i++) {
+    flushSync(() =&gt; root.render(&lt;C tick={i} /&gt;));
+    await tick(20);
+  }
+  say(name.padEnd(26), "mounts after 1 render + 10 re-renders:", mounts);
+  root.unmount();
+  host.remove();
+}
+
+async function main() {
+  await run("stable type", Stable);
+  await run("defined inside component", InnerDefinition);
+  await run("HOC called in render", HocInRender);
+  await run("key={Math.random()}", RandomKey);
+  done();
+}
+void main();
+</code></pre>
+<pre><code class="language-plaintext">stable type                mounts after 1 render + 10 re-renders: 1
+defined inside component   mounts after 1 render + 10 re-renders: 11
+HOC called in render       mounts after 1 render + 10 re-renders: 11
+key={Math.random()}        mounts after 1 render + 10 re-renders: 11
+</code></pre>
+  <div class="ar-note">النوع الثابت اتركّب مرة واحدة. الـ 3 التانيين اتركّبوا 11 مرة: مع كل re-render الـ state والـ effects اتصفّروا.</div>
+<pre data-file="src/p3-lazy.tsx"><code class="language-tsx">import { lazy, Suspense, useEffect, useState, type ComponentType } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import { done, say, tick } from "./lib";
+
+let mounts = 0;
+// الـ chart فيها state عشان نشوف هيفضل ولا هيضيع
+function SalesChart() {
+  const [range, setRange] = useState("7d");
+  useEffect(() =&gt; {
+    mounts++;
+  }, []);
+  return &lt;button onClick={() =&gt; setRange("30d")}&gt;Chart {range}&lt;/button&gt;;
+}
+const load = async () =&gt; ({ default: SalesChart });
+
+type P = { tick: number };
+
+// ✅ واحد بس على مستوى الـ module
+const StaticChart = lazy(load);
+function Outside(_: P) {
+  return &lt;Suspense fallback={&lt;p&gt;Loading chart…&lt;/p&gt;}&gt;&lt;StaticChart /&gt;&lt;/Suspense&gt;;
+}
+
+// ❌ جوه الـ render، بس الـ factory بترجع نفس الـ component كل مرة
+function InsideSameType(_: P) {
+  const Chart = lazy(load);
+  return &lt;Suspense fallback={&lt;p&gt;Loading chart…&lt;/p&gt;}&gt;&lt;Chart /&gt;&lt;/Suspense&gt;;
+}
+
+// ❌ جوه الـ render، والـ factory بترجع wrapper جديد كل مرة
+function InsideNewWrapper(_: P) {
+  const Chart = lazy(async () =&gt; ({ default: () =&gt; &lt;SalesChart /&gt; }));
+  return &lt;Suspense fallback={&lt;p&gt;Loading chart…&lt;/p&gt;}&gt;&lt;Chart /&gt;&lt;/Suspense&gt;;
+}
+
+const median = (a: number[]) =&gt; (a.length ? [...a].sort((x, y) =&gt; x - y)[Math.floor(a.length / 2)] : 0);
+
+async function waitUntil(ok: () =&gt; boolean) {
+  while (!ok()) await tick(5);
+}
+
+async function run(name: string, C: ComponentType&lt;P&gt;) {
+  mounts = 0;
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  flushSync(() =&gt; root.render(&lt;C tick={0} /&gt;));
+  await waitUntil(() =&gt; host.innerText.startsWith("Chart"));
+  await tick(600);
+  host.querySelector("button")!.click();
+  await tick(20);
+
+  let flashes = 0;
+  const covered: number[] = [];
+  for (let i = 1; i &lt;= 5; i++) {
+    const t0 = performance.now();
+    flushSync(() =&gt; root.render(&lt;C tick={i} /&gt;));
+    // الـ innerText بيتجاهل اللي display: none، يعني ده اللي المستخدم شايفه
+    if (host.innerText.includes("Loading")) {
+      flashes++;
+      await waitUntil(() =&gt; host.innerText.startsWith("Chart"));
+      covered.push(performance.now() - t0);
+    }
+    await tick(600);
+  }
+  say(
+    name.padEnd(26),
+    `fallback ${flashes}/5`,
+    `| covered ≈${Math.round(median(covered))}ms`,
+    `| mounts ${mounts}`,
+    `| state: ${host.innerText}`,
+  );
+  root.unmount();
+  host.remove();
+}
+
+async function main() {
+  await run("lazy outside", Outside);
+  await run("inside, same component", InsideSameType);
+  await run("inside, new wrapper", InsideNewWrapper);
+  done();
+}
+void main();
+</code></pre>
+<pre><code class="language-plaintext">lazy outside               fallback 0/5 | covered ≈0ms | mounts 1 | state: Chart 30d
+inside, same component     fallback 5/5 | covered ≈311ms | mounts 1 | state: Chart 30d
+inside, new wrapper        fallback 5/5 | covered ≈311ms | mounts 6 | state: Chart 7d
+</code></pre>
+  <div class="ar-note">غيّرنا الـ state لـ <code>30d</code> وعملنا 5 re-renders للأب (3 runs طلّعوا نفس الأرقام تقريبًا، ومنهم production build). الـ <code>lazy</code> بره: مفيش fallback خالص. جوه الـ render ونفس الـ component: الـ fallback غطّى الشاشة حوالي 310 ms في كل مرة، بس mount واحد والـ state لسه <code>30d</code>. جوه الـ render وwrapper جديد: نفس الـ fallback، و6 mounts، والـ state رجع <code>7d</code>.</div>
+<pre data-file="src/p3-timing.tsx"><code class="language-tsx">import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+
+type Row = { id: string; total: number };
+const rows: Row[] = Array.from({ length: 1000 }, (_, i) =&gt; ({ id: `ord_${i}`, total: i }));
+
+function OrderRow({ row, tone }: { row: Row; tone: string }) {
+  return (
+    &lt;tr className={tone}&gt;
+      &lt;td&gt;{row.id}&lt;/td&gt;
+      &lt;td&gt;{row.total}&lt;/td&gt;
+      &lt;td&gt;&lt;input aria-label={`Note ${row.id}`} defaultValue="" /&gt;&lt;/td&gt;
+    &lt;/tr&gt;
+  );
+}
+
+// لو الـ generation اتغير، الـ key بيتغير والجدول كله بيتركب من الأول
+function Table({ tone, generation }: { tone: string; generation: number }) {
+  return (
+    &lt;table key={generation}&gt;
+      &lt;tbody&gt;{rows.map((r) =&gt; &lt;OrderRow key={r.id} row={r} tone={tone} /&gt;)}&lt;/tbody&gt;
+    &lt;/table&gt;
+  );
+}
+
+const median = (a: number[]) =&gt; [...a].sort((x, y) =&gt; x - y)[Math.floor(a.length / 2)];
+const time = (fn: () =&gt; void) =&gt; {
+  const t = performance.now();
+  flushSync(fn);
+  return performance.now() - t;
+};
+
+const root = createRoot(document.getElementById("root")!);
+flushSync(() =&gt; root.render(&lt;Table tone="a" generation={0} /&gt;));
+
+const update: number[] = [];
+const remount: number[] = [];
+for (let i = 1; i &lt;= 25; i++) {
+  // تحديث: نفس الأنواع، class بس بيتغير على الـ 1000 صف
+  update.push(time(() =&gt; root.render(&lt;Table tone={i % 2 ? "b" : "a"} generation={0} /&gt;)));
+}
+for (let i = 1; i &lt;= 25; i++) {
+  // الـ remount: key جديد، الـ 1000 صف بيتشالوا ويتبنوا من الأول
+  remount.push(time(() =&gt; root.render(&lt;Table tone="a" generation={i} /&gt;)));
+}
+(window as unknown as { RESULT: object }).RESULT = {
+  updateMs: +median(update).toFixed(1),
+  remountMs: +median(remount).toFixed(1),
+  ratio: +(median(remount) / median(update)).toFixed(1),
+};
+</code></pre>
+<pre><code class="language-plaintext">production: {"updateMs":1.7,"remountMs":5.7,"ratio":3.4}
+development: {"updateMs":15.5,"remountMs":17.8,"ratio":1.1}
+</code></pre>
+  <div class="ar-note">الـ median لـ 25 مرة في Chrome الحقيقي على جهاز Windows عليه ضغط، فالأرقام تقريبية (run تاني أبطأ طلّع 8.9 و25.4، يعني نفس النسبة تقريبًا). الـ remount حوالي 3 أضعاف الـ update في production. وفي development النسبة 1.1 لأن الـ dev build نفسه تقيل، فمتقيسش performance عليه.</div>
+<pre data-file="src/Checkout.tsx"><code class="language-tsx">import { lazy, useState, type ComponentType } from "react";
+
+declare const withTenant: (c: ComponentType) =&gt; ComponentType;
+declare const Field: ComponentType;
+
+export function CheckoutInner() {
+  const [code, setCode] = useState("");
+  function CouponField() {
+    return &lt;input aria-label="Coupon" value={code} onChange={(e) =&gt; setCode(e.target.value)} /&gt;;
+  }
+  return &lt;CouponField /&gt;;
+}
+
+export function CheckoutHoc() {
+  const Enhanced = withTenant(Field);
+  return &lt;Enhanced /&gt;;
+}
+
+export function CheckoutLazy() {
+  const Chart = lazy(async () =&gt; ({ default: Field }));
+  return &lt;Chart /&gt;;
+}
+
+export function CheckoutRandomKey() {
+  return &lt;Field key={Math.random()} /&gt;;
+}
+
+export function ImpureRender({ orders }: { orders: string[] }) {
+  orders.push("x");
+  return &lt;p&gt;{orders.length}&lt;/p&gt;;
+}
+
+let orderCounter = 0;
+export function OrderRowImpure({ id }: { id: string }) {
+  orderCounter++;
+  return &lt;li&gt;{orderCounter}: {id}&lt;/li&gt;;
+}
+</code></pre>
+<pre><code class="language-plaintext">src/Checkout.tsx
+  11:11  error  Error: Cannot create components during render
+
+Components created during render will reset their state each time they are created. Declare components outside of render.
+
+   9 |     return &lt;input aria-label="Coupon" value={code} onChange={(e) =&gt; setCode(e.target.value)} /&gt;;
+  10 |   }
+&gt; 11 |   return &lt;CouponField /&gt;;
+     |           ^^^^^^^^^^^ This component is created during render
+  react-hooks/static-components
+
+  16:11  error  Error: Cannot create components during render    react-hooks/static-components
+  21:11  error  Error: Cannot create components during render    react-hooks/static-components
+  25:22  error  Error: Cannot call impure function during render react-hooks/purity
+</code></pre>
+  <div class="ar-note">رسايل ESLint 10 مع eslint-plugin-react-hooks 7.1.1 (السطور الـ 3 الأخيرة مختصرة لأول سطر من الرسالة). <code>static-components</code> مسك الـ component الداخلي والـ HOC والـ <code>lazy</code>، و<code>purity</code> مسك <code>Math.random</code> في الـ key. لكن آخر دالتين في الملف، <code>orders.push</code> على prop و<code>orderCounter++</code>، ماطلعلهمش أي error، وهنرجعلهم في الجزء 6.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>قاعدة النوع بتقارن بالهوية. والـ function المعرّفة جوه component هي <b>function جديدة في كل render</b>، فـ React شايف نوع جديد كل مرة وبيعمل remount لكل اللي تحتها. في Chrome الحقيقي بكيبورد حقيقي، كتابة <code>SAVE10</code> في حقل متعرّف كده بتطلّع <code>S</code> بس: أول حرف بيعمل re-render للأب، فالـ input بيتكسر، والـ focus بيقع على <code>BODY</code>، وباقي الحروف مابتروحش في أي حتة.</p>
+    <p>نفس الـ bug بيظهر في <b>HOC بيتنادى جوه الـ render</b>، وفي <b><code>key={Math.random()}</code></b> اللي بيسيب النوع ويغيّر الهوية. الاتنين خلّوا عدد الـ mounts يطلع من 1 لـ 11 في 10 re-renders.</p>
+    <p><b><code>lazy()</code> جوه الـ render</b> bug ليه وشّين، وشغّلت الاتنين بدل ما أفترض. الـ <code>lazy</code> الجديد بيعمل suspend من الأول مع كل render للأب، فـ<b>الـ fallback بيغطي المحتوى حوالي 310 ms كل مرة</b> (React مش بيكشف المحتوى المعلّق أكتر من مرة كل 300 ms، راجع <a href="./13-routing-code-splitting.html#p5">الدرس 13، الجزء 5</a>). لو الـ factory بترجّع <em>نفس</em> الـ component، ده مش remount: الـ reconciliation بيقارن النوع اللي الـ lazy رجّعه (<code>resolveLazy(elementType) === current.type</code> في react-dom)، فالـ mounts فضلت 1 والـ state فضل. ولو الـ factory بترجّع <em>wrapper جديد</em> كل مرة، النوع بيختلف فبيعمل remount فعلًا: الـ mounts طلعت من 1 لـ 6 والـ state ضاع. ومع <code>lazy</code> على مستوى الـ module الـ fallback ظهر 0 من 5.</p>
+    <p><b>التكلفة:</b> على 1000 صف، الـ remount حوالي 3 أضعاف الـ update في production build (حوالي 5.7 ms مقابل حوالي 1.7 ms، وrun تاني تحت ضغط أكتر طلّع 25.4 مقابل 8.9). وده الجزء الرخيص. التكلفة الحقيقية في اللي بيضيع: الـ state والـ focus والـ scroll، وكل effect بيشتغل تاني، وده غالبًا معناه fetch تاني للـ data.</p>
+    <p><b>الـ lint بيمسكهم:</b> <code>react-hooks/static-components</code> من eslint-plugin-react-hooks 7.1.1 بيمسك حالات "created during render" الـ 3، و<code>react-hooks/purity</code> بيمسك <code>Math.random</code>. الحلول: عرّف الـ components على مستوى الـ module، ونادي الـ HOCs و<code>lazy</code> على مستوى الـ module، وابعت القيم كـ props، واستخدم key ثابت من الـ data.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      ticket كلاسيكي: "مش عارف أكتب في حقل البحث، بيكتب حرف واحد ويقف". أول سؤال: فيه component معرّف جوه component؟ بيحصل كتير لما حد يكتب <code>const Row = () =&gt; …</code> جوه صفحة عشان يستخدم الـ state بسهولة. وكمان chart بيعمل fetch كل شوية: لو الـ <code>useEffect</code> بتاعه بيشتغل مع كل re-render رغم إن الـ deps فاضية، يبقى بيتركّب من الأول، وده ممكن يبقى requests زيادة كتير على الـ API. وفعّل <code>react-hooks/static-components</code> في الـ CI.
+    </div>
+  </section>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Fiber: reading the real tree <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ Fiber: نقرا الشجرة الحقيقية</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Why Fiber exists.</b> The old stack reconciler walked the tree by recursion. A recursive call on the JS stack can't stop halfway and resume later, so a big update blocked the main thread until it finished. Fiber reimplements that walk as a loop over heap objects, so React can stop between any two units of work.</p>
+    <p><b>A fiber is a plain JS object representing one unit of work</b>: one component, host element or text node. It's linked to others through <code>child</code> (first child), <code>sibling</code> (next one) and <code>return</code> (parent). Those three pointers let a loop walk the whole tree with no recursion. The fields you'll meet: <code>tag</code> (the kind: 0 function, 3 root, 5 host, 6 text), <code>type</code>, <code>stateNode</code> (the DOM node, or the root object), <code>memoizedProps</code>, <code>memoizedState</code> (for a function component, the <a href="./06-hooks-rules-reducer-refs.html#p1">linked list of hooks</a>), <code>lanes</code> and <code>childLanes</code> (pending work here and below), and <code>alternate</code>.</p>
+    <p><b>Double buffering.</b> React keeps up to two versions of each fiber. The <b>current</b> tree is what's on screen. Rendering builds the <b>workInProgress</b> tree out of the alternates, so it can pause or discard that work and the screen stays untouched. Commit applies the DOM changes and flips <code>root.current</code> to the finished tree, so the two swap roles. The run below prints it: <code>root.current</code> alternates between #1 and #2 on each commit, the old current becomes the new alternate, and child fibers have <code>alt=-</code> until their first update creates the pair, as <code>#12</code> does with <code>#3</code>.</p>
+    <p><b>How to watch it.</b> Every DOM node has a <code>__reactFiber$…</code> property pointing to its fiber, and <code>__REACT_DEVTOOLS_GLOBAL_HOOK__.onCommitFiberRoot</code> is called on each commit if the hook exists before react-dom loads. <b>These are internals: fine for learning, never in product code.</b> They have no stability guarantee. The supported view is the React DevTools Components tab, which shows the same tree; its UI couldn't be driven here, so it's <b>not run</b> in this lesson, and all the numbers come from these probes.</p>
+  </section>
+<pre data-file="src/devtools-hook.ts"><code class="language-typescript">// لازم الملف ده يتحمّل قبل react-dom، لأن React بيدوّر على الـ hook وقت التحميل
+type Commit = (root: any, priority: number | undefined) =&gt; void;
+export const commitListeners: Commit[] = [];
+
+(globalThis as any).__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+  supportsFiber: true,
+  isDisabled: false,
+  renderers: new Map(),
+  inject: () =&gt; 1,
+  checkDCE() {},
+  onCommitFiberUnmount() {},
+  onPostCommitFiberRoot() {},
+  onScheduleFiberRoot() {},
+  onCommitFiberRoot(_rendererId: number, root: any, priority?: number) {
+    for (const fn of commitListeners) fn(root, priority);
+  },
+};
+</code></pre>
+<pre data-file="src/fiber-print.ts"><code class="language-typescript">// ⚠️ قراءة internals للتعلّم بس، ممنوع في كود الـ product
+const TAGS: Record&lt;number, string&gt; = { 0: "Function", 1: "Class", 3: "HostRoot", 5: "Host", 6: "Text", 7: "Fragment", 11: "ForwardRef", 13: "Suspense", 14: "Memo", 15: "SimpleMemo" };
+
+// كل fiber بياخد رقم ثابت عشان نعرف نفس الـ object ولا لأ
+const ids = new WeakMap&lt;object, number&gt;();
+let nextId = 1;
+export const idOf = (f: object | null) =&gt; {
+  if (!f) return "-";
+  if (!ids.has(f)) ids.set(f, nextId++);
+  return `#${ids.get(f)}`;
+};
+
+const nameOf = (f: any): string =&gt; {
+  if (typeof f.type === "string") return `&lt;${f.type}&gt;`;
+  if (typeof f.type === "function") return f.type.name;
+  return f.tag === 6 ? JSON.stringify(f.memoizedProps) : "";
+};
+
+// عدد الـ hooks: الـ memoizedState في function component هو linked list
+const hookCount = (f: any) =&gt; {
+  if (f.tag !== 0) return "";
+  let n = 0;
+  for (let h = f.memoizedState; h; h = h.next) n++;
+  return ` hooks=${n}`;
+};
+
+// بنمشي child ثم sibling، وreturn بيرجع للأب
+export function printTree(fiber: any, depth = 0, out: string[] = []): string[] {
+  const tag = TAGS[fiber.tag] ?? `tag${fiber.tag}`;
+  out.push(
+    `${"  ".repeat(depth)}${tag}(${fiber.tag}) ${nameOf(fiber)} ${idOf(fiber)} alt=${idOf(fiber.alternate)} lanes=${fiber.lanes} childLanes=${fiber.childLanes}${hookCount(fiber)}`,
+  );
+  if (fiber.child) printTree(fiber.child, depth + 1, out);
+  if (fiber.sibling) printTree(fiber.sibling, depth, out);
+  return out;
+}
+
+// من أي DOM node للـ fiber بتاعها، ومنها لـ FiberRootNode
+export function rootFromDom(node: Element) {
+  const key = Object.keys(node).find((k) =&gt; k.startsWith("__reactFiber$"))!;
+  let f = (node as any)[key];
+  while (f.return) f = f.return;
+  return f.stateNode;
+}
+</code></pre>
+<pre data-file="src/p4-fiber.tsx"><code class="language-tsx">import { commitListeners } from "./devtools-hook";
+import { useState } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import { idOf, printTree, rootFromDom } from "./fiber-print";
+import { done, say, tick } from "./lib";
+
+function CartBadge({ count }: { count: number }) {
+  return &lt;span&gt;{count} items&lt;/span&gt;;
+}
+function Cart() {
+  const [count, setCount] = useState(1);
+  const [coupon] = useState("SAVE10");
+  return (
+    &lt;section&gt;
+      &lt;CartBadge count={count} /&gt;
+      &lt;button onClick={() =&gt; setCount((c) =&gt; c + 1)}&gt;Add {coupon}&lt;/button&gt;
+    &lt;/section&gt;
+  );
+}
+
+commitListeners.push((root, priority) =&gt; {
+  say(`commit: root.current=${idOf(root.current)} alternate=${idOf(root.current.alternate)} priority=${priority}`);
+});
+
+(async () =&gt; {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  say("=== first commit");
+  flushSync(() =&gt; root.render(&lt;Cart /&gt;));
+  await tick();
+  const fiberRoot = rootFromDom(host.querySelector("button")!);
+  say(printTree(fiberRoot.current).join("\n"));
+
+  for (let i = 1; i &lt;= 3; i++) {
+    say(`=== click ${i}`);
+    const before = fiberRoot.current;
+    host.querySelector("button")!.click();
+    await tick();
+    say(`flipped? ${before !== fiberRoot.current} | old current is the new alternate? ${before === fiberRoot.current.alternate}`);
+  }
+  say("=== tree after 3 clicks");
+  say(printTree(fiberRoot.current).join("\n"));
+  done();
+})();
+</code></pre>
+<pre><code class="language-plaintext">=== first commit
+commit: root.current=#1 alternate=#2 priority=1
+HostRoot(3)  #1 alt=#2 lanes=0 childLanes=0
+  Function(0) Cart #3 alt=- lanes=0 childLanes=0 hooks=2
+    Host(5) &lt;section&gt; #4 alt=- lanes=0 childLanes=0
+      Function(0) CartBadge #5 alt=- lanes=0 childLanes=0 hooks=0
+        Host(5) &lt;span&gt; #6 alt=- lanes=0 childLanes=0
+          Text(6) "1" #7 alt=- lanes=0 childLanes=0
+          Text(6) " items" #8 alt=- lanes=0 childLanes=0
+      Host(5) &lt;button&gt; #9 alt=- lanes=0 childLanes=0
+        Text(6) "Add " #10 alt=- lanes=0 childLanes=0
+        Text(6) "SAVE10" #11 alt=- lanes=0 childLanes=0
+=== click 1
+commit: root.current=#2 alternate=#1 priority=1
+flipped? true | old current is the new alternate? true
+=== click 2
+commit: root.current=#1 alternate=#2 priority=1
+flipped? true | old current is the new alternate? true
+=== click 3
+commit: root.current=#2 alternate=#1 priority=1
+flipped? true | old current is the new alternate? true
+=== tree after 3 clicks
+HostRoot(3)  #2 alt=#1 lanes=0 childLanes=0
+  Function(0) Cart #12 alt=#3 lanes=0 childLanes=0 hooks=2
+    Host(5) &lt;section&gt; #13 alt=#4 lanes=0 childLanes=0
+      Function(0) CartBadge #14 alt=#5 lanes=0 childLanes=0 hooks=0
+        Host(5) &lt;span&gt; #15 alt=#6 lanes=0 childLanes=0
+          Text(6) "4" #16 alt=#7 lanes=0 childLanes=0
+          Text(6) " items" #17 alt=#8 lanes=0 childLanes=0
+      Host(5) &lt;button&gt; #18 alt=#9 lanes=0 childLanes=0
+        Text(6) "Add " #19 alt=#10 lanes=0 childLanes=0
+        Text(6) "SAVE10" #20 alt=#11 lanes=0 childLanes=0
+</code></pre>
+  <div class="ar-note">ده الـ fiber tree الحقيقي بتاع React 19.3.1. أول commit: <code>alt=-</code> على كل الـ children لأن لسه مفيش تانية، و<code>Cart</code> فيه <code>hooks=2</code> لأن عنده 2 <code>useState</code>. وكل click: <code>root.current</code> بيتبادل بين #1 و#2، والقديم بقى الـ alternate. وبعد 3 clicks: كل fiber ليه نسخة، زي <code>#12</code> و<code>#3</code>، والنص بقى <code>"4"</code>. و<code>lanes=0</code> لأننا بنقرا بعد الـ commit ومفيش شغل مستني.</div>
+
+<pre class="diagram">
+  HostRoot
+     | child
+     v
+    Cart
+     | child
+     v
+  &lt;section&gt;
+     | child
+     v
+  CartBadge ---------- sibling ----------&gt; &lt;button&gt;
+     | child                                  | child
+     v                                        v
+   &lt;span&gt;                                   "Add " --sibling--&gt; "SAVE10"
+     | child
+     v
+    "1" --sibling--&gt; " items"
+
+  every fiber also has .return, a pointer back to its parent
+  the walk: go down child; at a leaf go to sibling; no sibling, go up return
+</pre>
+  <div class="ar-note">نفس شجرة الـ output فوق، بس باللينكات. <code>child</code> لأول ابن، و<code>sibling</code> للي بعده، وكل fiber فيه <code>return</code> بيرجع للأب. والمشي: انزل بـ child، ولما توصل لآخر ورقة روح لـ sibling، ولو مفيش اطلع بـ return. ده loop عادي مش recursion، فـ React يقدر يقف بعد أي fiber ويكمّل بعدين.</div>
+
+<pre class="diagram">
+  FiberRootNode
+      | .current
+      v
+  +----------------------+    .alternate    +----------------------+
+  | HostRoot #1          | &lt;--------------&gt; | HostRoot #2          |
+  | current tree         |                  | workInProgress tree  |
+  | matches the screen   |                  | being built          |
+  +----------------------+                  +----------------------+
+
+  render phase: build workInProgress. Can pause or be thrown away.
+                The screen does not change.
+  commit phase: apply DOM changes, then root.current = finished tree.
+                Now #2 is current and #1 is free for the next render.
+
+  real run:  first commit  current=#1  alternate=#2
+             click 1       current=#2  alternate=#1
+             click 2       current=#1  alternate=#2
+             click 3       current=#2  alternate=#1
+</pre>
+  <div class="ar-note">الـ double buffering: شجرتين متربطين بـ <code>alternate</code>. الـ current هي اللي على الشاشة، والـ workInProgress بتتبني في الخلفية. في الـ render phase ممكن React يقف أو يرمي الشغل والشاشة مابتتغيرش. في الـ commit phase بيطبّق تغييرات الـ DOM وبيخلي <code>root.current</code> يشاور على الشجرة الجاهزة، والقديمة بتبقى فاضية للـ render الجاي. وتحت الأرقام الحقيقية من الـ run: #1 و#2 بيتبادلوا مع كل commit.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>ليه Fiber موجود؟</b> الـ stack reconciler القديم كان بيمشي في الشجرة بـ recursion. والـ recursion على الـ JS stack مايقدرش يقف في النص ويكمّل بعدين، فأي update كبير كان بيقفل الـ main thread لحد ما يخلص. Fiber كتب نفس المشي كـ loop على objects في الـ heap، فـ React يقدر يقف بين أي وحدتين شغل.</p>
+    <p><b>الـ fiber هو JS object عادي بيمثل وحدة شغل واحدة:</b> component واحد أو عنصر host أو text node. ومتربط بغيره عن طريق <code>child</code> (أول ابن) و<code>sibling</code> (اللي بعده) و<code>return</code> (الأب). التلات pointers دول بيخلوا loop يمشي الشجرة كلها من غير recursion. والـ fields اللي هتقابلها: <code>tag</code> (النوع: 0 function، 3 root، 5 host، 6 text)، و<code>type</code>، و<code>stateNode</code> (الـ DOM node أو الـ root object)، و<code>memoizedProps</code>، و<code>memoizedState</code> (في الـ function component هو <a href="./06-hooks-rules-reducer-refs.html#p1">الـ linked list بتاعة الـ hooks</a>)، و<code>lanes</code> و<code>childLanes</code> (الشغل المستني هنا وتحت)، و<code>alternate</code>.</p>
+    <p><b>الـ double buffering:</b> React بيحتفظ بنسختين بالكتير من كل fiber. شجرة الـ <b>current</b> هي اللي على الشاشة. والـ render بيبني شجرة الـ <b>workInProgress</b> من الـ alternates، فيقدر يقف أو يرمي الشغل والشاشة مش متأثرة. والـ commit بيطبّق تغييرات الـ DOM ويقلب <code>root.current</code> للشجرة الجاهزة، فالاتنين بيبدلوا أدوارهم. الـ run فوق بيطبع ده: <code>root.current</code> بيتبادل بين #1 و#2 مع كل commit، والقديم بيبقى الـ alternate الجديد، والـ child fibers عندهم <code>alt=-</code> لحد أول update بيعمل النسخة التانية، زي <code>#12</code> مع <code>#3</code>.</p>
+    <p><b>تتفرج عليه إزاي؟</b> كل DOM node فيها property اسمها <code>__reactFiber$…</code> بتشاور على الـ fiber، و<code>__REACT_DEVTOOLS_GLOBAL_HOOK__.onCommitFiberRoot</code> بيتنادى مع كل commit لو الـ hook موجود قبل ما react-dom يتحمّل. <b>دي internals: للتعلم بس، وممنوع في كود الـ product</b>، ومالهاش أي ضمان إنها تفضل كده. الطريقة الرسمية هي Components tab في React DevTools، بيعرض نفس الشجرة، والـ UI بتاعه ماقدرتش أشغّله هنا فهو <b>ماتجربش</b> في الدرس ده، وكل الأرقام من الـ probes دي.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      مش هتقرا fibers في كود الشغل، بس الفهم ده بيختصر debugging: لما الـ Profiler يقولك component اتعمله mount بدل update، إنت عارف إن هويته اتغيرت. ولما حد يسأل ليه تحديث كبير مابيهنّجش الـ input مع <code>useTransition</code>، الإجابة إن الشغل loop بيقف بين الـ fibers. وكمان لو عايز تكتب أداة داخلية تعد الـ commits في صفحة بطيئة وقت الـ debugging، الـ hook ده 10 سطور. واسأل نفسك دايمًا: دي أداة تشخيص محلية ولا كود هيتشحن؟ التانية ممنوعة.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "What is Fiber and what problem does it solve?" → It's React's internal representation of the tree as linked objects, one per unit of work, walked by a loop instead of recursion. That lets React pause between units, assign priorities, and discard unfinished work. Double buffering keeps a current tree and a workInProgress tree, so an unfinished render never reaches the screen and commit is a pointer swap after the DOM changes.
+    <div class="ar-note">"يعني إيه Fiber وبيحل إيه؟" ← التمثيل الداخلي للشجرة في React: objects متربطة، واحد لكل وحدة شغل، بيتمشي عليها بـ loop مش recursion. وده بيخلي React يقف بين الوحدات، ويدّي أولويات، ويرمي شغل ماخلصش. والـ double buffering بيحتفظ بشجرة current وشجرة workInProgress، فالـ render اللي ماخلصش عمره ما يوصل للشاشة، والـ commit في آخره قلب pointer بعد تغييرات الـ DOM.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Lanes and priorities <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — الـ lanes والأولويات</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Every update gets a <b>lane</b>, a bit in a 31-bit mask. A lower bit means higher priority. The event that caused the update picks the lane, and you can read it right after <code>setState</code> from <code>root.pendingLanes</code>. On React 19.3.1 a click got lane 2, a mousemove lane 8, a <code>setTimeout</code> lane 32, and <code>startTransition</code> lane 256, then 512 for the next transition. Those numbers are internals and can change; the ordering is the idea. The Scheduler priority reported at commit matched: 1 (Immediate) for the click, 2 (UserBlocking) for the mousemove, 3 (Normal) for the timeout and the transitions.</p>
+    <p>Why bitmasks? Batching several updates is one <code>|</code>. Picking the next one is <code>lanes &amp; -lanes</code> (the lowest set bit). Asking "does this render cover this update?" is one <code>&amp;</code>. No arrays or sorting on a hot path, and <code>lanes</code> on a fiber can be merged upward into <code>childLanes</code> so React can skip subtrees with no pending work.</p>
+    <p><b>How it yields.</b> For concurrent lanes the work loop checks <code>shouldYield()</code> between fibers. The Scheduler's default slice is 5 ms, and it hands control back through a <code>MessageChannel</code> macrotask in the browser (<code>setImmediate</code> where that exists, as in Node), so input and paint can run between slices. That's the <a href="../../02-JavaScript/lessons/08-event-loop-promises.html">event loop</a> you already know. Synchronous lanes run without yielding, which is why a slow urgent update still blocks.</p>
+    <p><b>You can see it in a trace.</b> Since 19.2 React writes Performance Tracks into Chrome traces: the docs enable them by default in development builds, only Scheduler tracks in profiling builds, and none in production. Below I captured a trace of one click with an urgent update and a transition, and counted the entries: the tracks are <code>Blocking</code>, <code>Transition</code>, <code>Suspense</code>, <code>Idle</code> and <code>Components ⚛</code>, with phases such as <code>Render</code>, <code>Commit</code> and <code>Waiting for Paint</code>. The single click shows up in both <code>Blocking</code> and <code>Transition</code> (which carries <code>Event: click</code>): one event split into two priorities. <code>Suspense</code> has a <code>Throttled</code> entry for the reveal delay. These are counts of entries, not durations. Reading them in the DevTools UI is an exercise for you, and <a href="./23-profiling-react-compiler.html#p3">lesson 23</a> goes further.</p>
+  </section>
+<pre data-file="src/p5-lanes.tsx"><code class="language-tsx">import { commitListeners } from "./devtools-hook";
+import { startTransition, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { rootFromDom } from "./fiber-print";
+import { done, say, tick } from "./lib";
+
+let setCount: (fn: (c: number) =&gt; number) =&gt; void = () =&gt; {};
+let fiberRoot: { pendingLanes: number };
+let last = "";
+
+// بنعمل update، وبعده على طول نقرا الـ lane اللي React اختاره
+const bump = (name: string) =&gt; {
+  setCount((c) =&gt; c + 1);
+  const n = fiberRoot.pendingLanes;
+  say(name.padEnd(24), `pendingLanes = 0b${n.toString(2)} (${n})`);
+  last = name;
+};
+
+function Cart() {
+  const [count, set] = useState(0);
+  setCount = set;
+  return (
+    &lt;button onClick={() =&gt; bump("click")} onMouseMove={() =&gt; bump("mousemove")}&gt;
+      {count}
+    &lt;/button&gt;
+  );
+}
+
+commitListeners.push((_root, priority) =&gt; {
+  if (last) say("".padEnd(24), "commit, scheduler priority =", priority);
+  last = "";
+});
+
+async function main() {
+  const host = document.createElement("div");
+  document.body.append(host);
+  createRoot(host).render(&lt;Cart /&gt;);
+  await tick(20);
+  const btn = host.querySelector("button")!;
+  fiberRoot = rootFromDom(btn);
+
+  btn.click();
+  await tick(20);
+  btn.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+  await tick(20);
+  // بره أي event، زي بعد fetch أو timer
+  setTimeout(() =&gt; bump("setTimeout"));
+  await tick(20);
+  startTransition(() =&gt; bump("startTransition #1"));
+  await tick(50);
+  startTransition(() =&gt; bump("startTransition #2"));
+  await tick(50);
+  done();
+}
+void main();
+</code></pre>
+<pre><code class="language-plaintext">click                    pendingLanes = 0b10 (2)
+                         commit, scheduler priority = 1
+mousemove                pendingLanes = 0b1000 (8)
+                         commit, scheduler priority = 2
+setTimeout               pendingLanes = 0b100000 (32)
+                         commit, scheduler priority = 3
+startTransition #1       pendingLanes = 0b100000000 (256)
+                         commit, scheduler priority = 3
+startTransition #2       pendingLanes = 0b1000000000 (512)
+                         commit, scheduler priority = 3
+</code></pre>
+  <div class="ar-note">كل سطر هو الـ lane اللي React اختاره فعلًا. الـ click أقل bit فأعلى أولوية، وبعده mousemove، وبعده setTimeout، وبعدهم الـ transitions. ولاحظ إن كل transition في event مختلف خد lane مختلف (256 و512)، ودي اللي هتفرق في الجزء 6. والـ priority دي بتاعة الـ Scheduler وبتيجي من الـ devtools hook: 1 Immediate، 2 UserBlocking، 3 Normal.</div>
+<pre data-file="src/lanes-math.ts"><code class="language-typescript">// الأرقام دي طالعة من الـ run، وأسماءها internals ممكن تتغير في أي إصدار
+const Sync = 0b10;
+const Default = 0b100000;
+const Transition1 = 0b100000000;
+
+// الـ lane الأعلى أولوية هو أقل bit، والحيلة دي بتجيبه
+const highest = (lanes: number) =&gt; lanes &amp; -lanes;
+const bin = (n: number) =&gt; "0b" + n.toString(2);
+
+// كذا update في مجموعة واحدة بـ OR، فمش محتاج array ولا sort
+let pending = 0;
+pending |= Transition1;
+pending |= Default;
+pending |= Sync;
+console.log("pending ", bin(pending));
+console.log("next    ", bin(highest(pending)));
+
+// بعد ما الـ sync يخلص بنشيله بـ AND NOT
+pending &amp;= ~Sync;
+console.log("pending ", bin(pending));
+console.log("next    ", bin(highest(pending)));
+
+// السؤال "الـ render ده بيغطي الـ update ده؟" عملية AND واحدة
+const renderLanes = Default;
+console.log("covers default?   ", (renderLanes &amp; Default) !== 0);
+console.log("covers transition?", (renderLanes &amp; Transition1) !== 0);
+</code></pre>
+<pre><code class="language-plaintext">pending  0b100100010
+next     0b10
+pending  0b100100000
+next     0b100000
+covers default?    true
+covers transition? false
+</code></pre>
+  <div class="ar-note">3 updates في رقم واحد. الـ <code>lanes &amp; -lanes</code> طلّع الـ sync الأول، وبعد ما شلناه طلّع الـ default. وسؤال "الـ render ده بيغطي الـ update ده؟" عملية <code>&amp;</code> واحدة.</div>
+<pre data-file="react-dom-client.development.js"><code class="language-javascript">// الكود الحقيقي من react-dom 19.3.1: بين كل fiber والتاني بيسأل هل يقف
+function workLoopConcurrentByScheduler() {
+  for (; null !== workInProgress &amp;&amp; !shouldYield(); )
+    performUnitOfWork(workInProgress);
+}
+</code></pre>
+<pre data-file="scheduler.development.js"><code class="language-javascript">// من scheduler 0.28: الـ slice بتاع الشغل 5ms
+frameInterval = 5,
+function shouldYieldToHost() {
+  return needsPaint
+    ? !0
+    : exports.unstable_now() - startTime &lt; frameInterval
+      ? !1
+      : !0;
+}
+</code></pre>
+  <p>The trace, one click captured in real Chrome and aggregated by track:</p>
+  <div class="ar-note">الـ trace: click واحد متسجل في Chrome الحقيقي، ومتجمّع حسب الـ track.</div>
+<pre data-file="src/p5-trace-app.tsx"><code class="language-tsx">import { memo, startTransition, Suspense, use, useState } from "react";
+import { createRoot } from "react-dom/client";
+
+const burn = (ms: number) =&gt; {
+  const end = performance.now() + ms;
+  while (performance.now() &lt; end);
+};
+const MemoRow = memo(function OrderRow({ id, q }: { id: number; q: string }) {
+  burn(1);
+  return &lt;li&gt;{q} order {id}&lt;/li&gt;;
+});
+const ids = Array.from({ length: 200 }, (_, i) =&gt; i);
+
+const invoice = new Promise&lt;string&gt;((r) =&gt; setTimeout(() =&gt; r("Invoice ready"), 700));
+function Invoice() {
+  return &lt;p&gt;{use(invoice)}&lt;/p&gt;;
+}
+
+function Orders() {
+  const [clicks, setClicks] = useState(0);
+  const [q, setQ] = useState("all");
+  return (
+    &lt;main&gt;
+      &lt;button
+        onClick={() =&gt; {
+          // العداد عاجل، والفلتر في transition، في نفس الـ click
+          setClicks((c) =&gt; c + 1);
+          startTransition(() =&gt; setQ(`paid ${clicks}`));
+        }}
+      &gt;
+        Filter ({clicks})
+      &lt;/button&gt;
+      &lt;Suspense fallback={&lt;p&gt;Loading invoice&lt;/p&gt;}&gt;&lt;Invoice /&gt;&lt;/Suspense&gt;
+      &lt;ul&gt;{ids.map((id) =&gt; &lt;MemoRow key={id} id={id} q={q} /&gt;)}&lt;/ul&gt;
+    &lt;/main&gt;
+  );
+}
+createRoot(document.getElementById("root")!).render(&lt;Orders /&gt;);
+</code></pre>
+<pre data-file="trace-lanes.mjs"><code class="language-javascript">// بيسجل Chrome trace حقيقي لـ click فيه update عاجل وtransition، ويجمّع الـ React Performance Tracks
+import { chromium } from "@playwright/test";
+import { createRequire } from "node:module";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
+const esbuild = require("esbuild");
+
+const built = await esbuild.build({
+  entryPoints: [path.resolve(here, "../r/p5-trace-app.tsx")], bundle: true, format: "iife", jsx: "automatic", write: false,
+  define: { "process.env.NODE_ENV": '"development"' }, logLevel: "error",
+});
+const app = built.outputFiles[0].text;
+
+const browser = await chromium.launch({ channel: "chrome", headless: true });
+const page = await browser.newPage();
+await page.setContent('&lt;!doctype html&gt;&lt;div id="root"&gt;&lt;/div&gt;');
+await browser.startTracing(page, { categories: ["blink.user_timing", "devtools.timeline", "disabled-by-default-devtools.timeline"] });
+await page.addScriptTag({ content: app });
+await page.waitForTimeout(1200);
+await page.getByRole("button").click();
+await page.waitForTimeout(800);
+const buf = await browser.stopTracing();
+await browser.close();
+fs.writeFileSync(path.join(here, "trace.json"), buf);
+
+const trace = JSON.parse(buf.toString());
+const counts = new Map();
+for (const e of trace.traceEvents) {
+  if (e.name !== "TimeStamp") continue;
+  const d = e.args?.data ?? {};
+  const group = d.trackGroup ?? "";
+  if (!String(group).includes("Scheduler") &amp;&amp; !String(d.track ?? "").includes("Components")) continue;
+  const key = `${d.track} | ${d.name ?? d.message}`;
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+console.log("events in trace:", trace.traceEvents.length, "| file bytes:", buf.length);
+for (const [k, v] of [...counts].sort()) console.log(String(v).padStart(4) + "x  " + k);
+const groups = new Set(trace.traceEvents.filter((e) =&gt; e.name === "TimeStamp").map((e) =&gt; `${e.args?.data?.trackGroup ?? ""} / ${e.args?.data?.track ?? ""}`));
+console.log([...groups].join("\n"));
+</code></pre>
+<pre><code class="language-plaintext">events in trace: 4101 | file bytes: 879790
+   5x  Blocking | Blocking Track
+   2x  Blocking | Commit
+   2x  Blocking | Remaining Effects
+   2x  Blocking | Render
+   1x  Blocking | Waiting for Paint
+   1x  Components ⚛ | Blocked
+   3x  Components ⚛ | Invoice
+ 200x  Components ⚛ | OrderRow
+   3x  Components ⚛ | Orders
+   5x  Idle | Idle Track
+   2x  Suspense | Commit
+   2x  Suspense | Remaining Effects
+   2x  Suspense | Render
+   5x  Suspense | Suspense Track
+   1x  Suspense | Throttled
+   2x  Suspense | Waiting for Paint
+   1x  Transition | Commit
+   1x  Transition | Event: click
+   1x  Transition | Remaining Effects
+   1x  Transition | Render
+   5x  Transition | Transition Track
+   1x  Transition | Waiting for Paint
+Scheduler ⚛ / Blocking
+Scheduler ⚛ / Transition
+Scheduler ⚛ / Suspense
+Scheduler ⚛ / Idle
+ / Components ⚛
+</code></pre>
+  <div class="ar-note">الـ tracks تحت مجموعة <code>Scheduler ⚛</code> هي <code>Blocking</code> (الشغل العاجل) و<code>Transition</code> (الخلفية) و<code>Suspense</code> (الـ fallback والـ reveal) و<code>Idle</code>، ومعاهم <code>Components ⚛</code>. والـ click الواحد ظهر في مكانين: جزء في <code>Blocking</code> وجزء في <code>Transition</code> اللي عليه <code>Event: click</code>، يعني نفس الـ event اتقسم لأولويتين. و<code>Suspense</code> عليها <code>Throttled</code>، ودي مهلة الـ reveal. والأرقام هنا عدد entries مش وقت، فالتوقيت هتشوفه لما تفتح الملف في DevTools.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>كل update بياخد <b>lane</b>، يعني bit في mask من 31 bit. والـ bit الأقل معناه أولوية أعلى. الـ event اللي عمل الـ update هو اللي بيختار الـ lane، وتقدر تقراه بعد <code>setState</code> على طول من <code>root.pendingLanes</code>. على React 19.3.1 الـ click خد lane 2، وmousemove خد 8، و<code>setTimeout</code> خد 32، و<code>startTransition</code> خد 256 وبعده 512 للـ transition اللي بعده. الأرقام دي internals وممكن تتغير، والفكرة في الترتيب.</p>
+    <p>ليه bitmasks؟ تجميع كذا update هو <code>|</code> واحدة. واختيار اللي بعده هو <code>lanes &amp; -lanes</code> (أقل bit). وسؤال "الـ render ده بيغطي الـ update ده؟" هو <code>&amp;</code> واحدة. مفيش arrays ولا sort على hot path، و<code>lanes</code> بتاعة الـ fiber بتتجمع لفوق في <code>childLanes</code> فـ React يقدر يتخطى subtrees مالهاش شغل.</p>
+    <p><b>بيقف إزاي؟</b> في الـ concurrent lanes الـ work loop بيسأل <code>shouldYield()</code> بين الـ fibers. والـ slice الافتراضي بتاع الـ Scheduler هو 5 ms، وبيرجّع التحكم عن طريق macrotask بـ <code>MessageChannel</code> في المتصفح (أو <code>setImmediate</code> لو موجودة زي Node)، فالـ input والـ paint يقدروا يشتغلوا بين الـ slices. وده <a href="../../02-JavaScript/lessons/08-event-loop-promises.html">الـ event loop</a> اللي إنت عارفه. والـ sync lanes مش بتقف، وعشان كده الـ update العاجل البطيء بيقفل برضه.</p>
+    <p><b>تقدر تشوفه في trace.</b> من 19.2 React بيكتب Performance Tracks في Chrome traces: الـ docs بتقول شغالة default في development، وScheduler tracks بس في profiling، ومفيش في production. فوق سجلت trace لـ click واحد فيه update عاجل وtransition وعدّيت الـ entries: الـ tracks هي <code>Blocking</code> و<code>Transition</code> و<code>Suspense</code> و<code>Idle</code> و<code>Components ⚛</code>، والمراحل زي <code>Render</code> و<code>Commit</code> و<code>Waiting for Paint</code>. وقرايتها في واجهة DevTools تمرين ليك، و<a href="./23-profiling-react-compiler.html#p3">الدرس 23</a> بيكمّل.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      فلتر في جدول orders كبير: لو حطيت كل حاجة في الـ handler العادي، الـ lane بقى sync والكيبورد بيهنّج. لو حطيت الـ input عاجل والجدول في <code>startTransition</code>، الجدول بياخد lane 256 فيقف كل 5 ms والكتابة شغالة. ولما تيجي تحلل شكوى "الشاشة بطيئة"، سجل trace من الموقع وبص: الشغل في <code>Blocking</code> ولا <code>Transition</code>؟ لو في <code>Blocking</code> يبقى ده اللي بيأثر على INP.
+    </div>
+  </section>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Concurrent rendering and purity <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — الـ concurrent rendering والـ purity</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>With lanes and a yielding loop, a render stops being one atomic step. It can <b>start, yield, get interrupted by something urgent, and be thrown away</b>. Only commit is final. The proof is in numbers: a 300-row list in a transition, each row burning 1 ms, while real keystrokes keep arriving. Across 7 letters, rows rendered 548 times in one run and 599 in another, yet committed exactly 300 times: the work for intermediate letters was discarded. <code>Search</code> rendered 14 times and committed 8. The input stayed responsive and the final screen was right.</p>
+    <p><b>So render must be pure.</b> If a render can run many times and be thrown away, anything it does to the outside world can happen for a screen nobody ever saw. The run shows it: <code>orderCounter++</code> and <code>auditLog.push(...)</code> inside a row. With 300 rows on screen, the first row reads <b>#557</b> and the log holds <b>856</b> entries, where a correct log would have 600 (300 at mount, 300 at the final commit). That's 256 "viewed" records for rows no user saw. And a number on screen that depends on how many renders were abandoned is garbage.</p>
+    <p><b>The rules of a pure render:</b></p>
+    <ul>
+      <li>Same props, state and context give the same JSX.</li>
+      <li>Don't mutate anything that existed before the render: props, state, module variables. Mutating an object you created during this render is fine.</li>
+      <li>No side effects: no fetch, analytics, logging, timers or subscriptions. Those belong in event handlers, or in effects, which run only after a commit.</li>
+      <li>Don't read things that change between calls, like <code>Date.now()</code>, <code>Math.random()</code> or <code>ref.current</code>.</li>
+    </ul>
+    <p><b>Don't rely on lint alone.</b> On eslint-plugin-react-hooks 7.1.1, <code>purity</code> flagged <code>Date.now()</code> and <code>globals</code> flagged <code>orderSeq = orderSeq + 1</code>. But <code>orderCounter++</code>, <code>auditLog.push(id)</code> and a prop's <code>ids.push("x")</code> got no error. StrictMode's double render (<a href="./03-events-forms-render-cycle.html#p6">lesson 03</a>) is your other net, and code review is the third.</p>
+    <p><b>React 19.3 changed transitions.</b> The changelog says it now renders "Transitions independently instead of entangling them into a single render, so a slow Transition no longer holds up unrelated ones". I compared 19.3.1 with 19.2.9 side by side. When a fast and a slow transition are both pending, the fast one now commits at ≈2 ms instead of waiting ≈405 ms. When a transition is waiting on data, an unrelated one commits ≈2 ms after it starts, instead of waiting for the data at ≈810 ms. One limit, which holds on both versions: a transition already rendering isn't interrupted by another transition. In that run the fast one committed about 5 ms after the slow one finished.</p>
+  </section>
+<pre data-file="src/p6-interrupt.tsx"><code class="language-tsx">import { memo, useLayoutEffect, useState, useTransition } from "react";
+import { createRoot } from "react-dom/client";
+
+const stats = { rowRenders: 0, rowCommits: 0, appRenders: 0, appCommits: 0 };
+(window as any).stats = stats;
+
+const ROWS = 300;
+const orders = Array.from({ length: ROWS }, (_, i) =&gt; `ord_${i}`);
+
+// كل صف بياخد 1ms، يعني الليست كلها حوالي 300ms شغل CPU
+const OrderRow = memo(function OrderRow({ id, q }: { id: string; q: string }) {
+  stats.rowRenders++;
+  const end = performance.now() + 1;
+  while (performance.now() &lt; end);
+  // الـ layout effect بيشتغل بعد commit حقيقي بس، فده عدّاد اللي وصل الشاشة
+  useLayoutEffect(() =&gt; {
+    stats.rowCommits++;
+  }, [q]);
+  return &lt;li&gt;{id} {q}&lt;/li&gt;;
+});
+
+function Results({ q }: { q: string }) {
+  return &lt;ul&gt;{orders.map((id) =&gt; &lt;OrderRow key={id} id={id} q={q} /&gt;)}&lt;/ul&gt;;
+}
+
+function Search() {
+  const [text, setText] = useState("");
+  const [q, setQ] = useState("");
+  const [isPending, startTransition] = useTransition();
+  stats.appRenders++;
+  useLayoutEffect(() =&gt; {
+    stats.appCommits++;
+  });
+  return (
+    &lt;&gt;
+      &lt;input
+        aria-label="Search orders"
+        value={text}
+        onChange={(e) =&gt; {
+          // الـ input عاجل، والليست في transition يتقطع
+          setText(e.target.value);
+          startTransition(() =&gt; setQ(e.target.value));
+        }}
+      /&gt;
+      &lt;p&gt;{isPending ? "updating" : "idle"}&lt;/p&gt;
+      &lt;Results q={q} /&gt;
+    &lt;/&gt;
+  );
+}
+
+createRoot(document.getElementById("root")!).render(&lt;Search /&gt;);
+</code></pre>
+<pre><code class="language-plaintext">mount: {"rowRenders":300,"rowCommits":300,"appRenders":1,"appCommits":1}
+after typing 7 chars: {"rowRenders":848,"rowCommits":600,"appRenders":15,"appCommits":9}
+row renders: 548 | row commits: 300 | thrown away: 248
+Search renders: 14 | Search commits: 8
+input: invoice | first row: ord_0 invoice
+</code></pre>
+  <div class="ar-note">Playwright كتب <code>invoice</code> بكيبورد حقيقي بفاصل 40 ms. الصفوف اترندرت 548 مرة ووصل منهم الشاشة 300 بس، يعني 248 render اترموا (run تاني طلّع 599 و299، لأن الرقم بيعتمد على التوقيت). و<code>Search</code> اترندر 14 مرة واتعمله commit 8. والـ input والصف الأول في الآخر صح.</div>
+<pre data-file="src/p6-impure.tsx"><code class="language-tsx">import { memo, useState, useTransition } from "react";
+import { createRoot } from "react-dom/client";
+
+// ❌ عداد ومصفوفة بره الـ render، بيتعدلوا جواه
+let orderCounter = 0;
+const auditLog: string[] = [];
+
+const OrderRow = memo(function OrderRow({ id, q }: { id: string; q: string }) {
+  orderCounter++;
+  auditLog.push(`viewed ${id}`);
+  const end = performance.now() + 1;
+  while (performance.now() &lt; end);
+  return &lt;li data-seq={orderCounter}&gt;#{orderCounter} {id} {q}&lt;/li&gt;;
+});
+
+const orders = Array.from({ length: 300 }, (_, i) =&gt; `ord_${i}`);
+
+function Search() {
+  const [text, setText] = useState("");
+  const [q, setQ] = useState("");
+  const [, startTransition] = useTransition();
+  return (
+    &lt;&gt;
+      &lt;input
+        aria-label="Search orders"
+        value={text}
+        onChange={(e) =&gt; {
+          setText(e.target.value);
+          startTransition(() =&gt; setQ(e.target.value));
+        }}
+      /&gt;
+      &lt;ul&gt;{orders.map((id) =&gt; &lt;OrderRow key={id} id={id} q={q} /&gt;)}&lt;/ul&gt;
+    &lt;/&gt;
+  );
+}
+
+(window as any).report = () =&gt; ({
+  rowsOnScreen: document.querySelectorAll("li").length,
+  firstRowLabel: document.querySelector("li")!.textContent,
+  lastRowLabel: [...document.querySelectorAll("li")].at(-1)!.textContent,
+  orderCounter,
+  auditLogEntries: auditLog.length,
+});
+createRoot(document.getElementById("root")!).render(&lt;Search /&gt;);
+</code></pre>
+<pre><code class="language-plaintext">impure: {"rowsOnScreen":300,"firstRowLabel":"#557 ord_0 invoice","lastRowLabel":"#856 ord_299 invoice","orderCounter":856,"auditLogEntries":856}
+</code></pre>
+  <div class="ar-note">على الشاشة 300 صف، بس أول صف مكتوب عليه <code>#557</code> بدل <code>#1</code>، والـ audit log فيه 856 سجل بدل 600. الفرق 256 سجل "viewed" لصفوف عمر ما حد شافها. لو الـ log ده بيتبعت لـ analytics أو للـ backend، الأرقام كلها كدب.</div>
+<pre data-file="src/p6-independent2.tsx"><code class="language-tsx">import { memo, startTransition, Suspense, use, useState, version } from "react";
+import { createRoot } from "react-dom/client";
+
+const t0 = { v: 0 };
+const events: string[] = [];
+const mark = (s: string) =&gt; events.push(`${Math.round(performance.now() - t0.v)}ms ${s}`);
+(window as any).events = events;
+(window as any).reactVersion = version;
+
+// (أ) لوحة بطيئة CPU: 400 صف
+const SlowRow = memo(function SlowRow({ id, v }: { id: number; v: number }) {
+  const end = performance.now() + 1;
+  while (performance.now() &lt; end);
+  return &lt;li&gt;row {id} v{v}&lt;/li&gt;;
+});
+const ids = Array.from({ length: 400 }, (_, i) =&gt; i);
+function Reports({ v }: { v: number }) {
+  return &lt;ul data-panel="reports"&gt;{ids.map((id) =&gt; &lt;SlowRow key={id} id={id} v={v} /&gt;)}&lt;/ul&gt;;
+}
+
+// (ب) لوحة مستنية data من الـ API
+let invoicePromise: Promise&lt;string&gt; | null = null;
+function InvoiceTab({ open }: { open: boolean }) {
+  if (!open) return &lt;p data-panel="invoice"&gt;closed&lt;/p&gt;;
+  invoicePromise ??= new Promise((r) =&gt; setTimeout(() =&gt; r("invoice loaded"), 800));
+  return &lt;p data-panel="invoice"&gt;{use(invoicePromise)}&lt;/p&gt;;
+}
+
+function Notifications({ n }: { n: number }) {
+  return &lt;p data-panel="notifications"&gt;{n} unread&lt;/p&gt;;
+}
+
+let setV: (v: number) =&gt; void;
+let setN: (n: number) =&gt; void;
+let setOpen: (o: boolean) =&gt; void;
+function App() {
+  const [v, sv] = useState(0);
+  const [n, sn] = useState(0);
+  const [open, so] = useState(false);
+  setV = sv;
+  setN = sn;
+  setOpen = so;
+  return (
+    &lt;&gt;
+      &lt;Reports v={v} /&gt;
+      &lt;Notifications n={n} /&gt;
+      &lt;Suspense fallback={&lt;p&gt;loading&lt;/p&gt;}&gt;&lt;InvoiceTab open={open} /&gt;&lt;/Suspense&gt;
+    &lt;/&gt;
+  );
+}
+
+createRoot(document.getElementById("root")!).render(&lt;App /&gt;);
+
+const seen = new Set&lt;string&gt;();
+const once = (k: string) =&gt; { if (!seen.has(k)) { seen.add(k); mark(k); } };
+new MutationObserver(() =&gt; {
+  if (document.querySelector("li")?.textContent?.endsWith("v1")) once("slow list committed");
+  if (document.querySelector("[data-panel=notifications]")?.textContent?.startsWith("1 ")) once("notifications committed");
+  if (document.querySelector("[data-panel=invoice]")?.textContent === "invoice loaded") once("invoice committed");
+}).observe(document.getElementById("root")!, { subtree: true, childList: true, characterData: true });
+
+const microtasks = async (n: number) =&gt; { for (let i = 0; i &lt; n; i++) await Promise.resolve(); };
+
+// السيناريو 1: السريع الأول، والبطيء بعده قبل ما الـ render يبدأ، في event مختلف
+(window as any).scenario1 = async () =&gt; {
+  t0.v = performance.now();
+  mark("fast transition");
+  startTransition(() =&gt; setN(1));
+  await microtasks(5);
+  mark("slow transition");
+  startTransition(() =&gt; setV(1));
+};
+// السيناريو 2: transition مستني data، وبعده بـ 100ms transition تاني
+(window as any).scenario2 = () =&gt; {
+  t0.v = performance.now();
+  mark("data transition");
+  startTransition(() =&gt; setOpen(true));
+  setTimeout(() =&gt; {
+    mark("fast transition");
+    startTransition(() =&gt; setN(1));
+  }, 100);
+};
+</code></pre>
+<pre><code class="language-plaintext">19.3.1 scenario1 run 1 0ms fast transition | 0ms slow transition | 2ms notifications committed | 405ms slow list committed
+19.3.1 scenario1 run 2 0ms fast transition | 0ms slow transition | 4ms notifications committed | 411ms slow list committed
+19.3.1 scenario1 run 3 0ms fast transition | 0ms slow transition | 2ms notifications committed | 407ms slow list committed
+19.3.1 scenario2 run 1 0ms data transition | 107ms fast transition | 109ms notifications committed | 804ms invoice committed
+19.3.1 scenario2 run 2 0ms data transition | 107ms fast transition | 109ms notifications committed | 811ms invoice committed
+19.3.1 scenario2 run 3 0ms data transition | 110ms fast transition | 112ms notifications committed | 805ms invoice committed
+19.2.9 scenario1 run 1 0ms fast transition | 0ms slow transition | 403ms slow list committed | 403ms notifications committed
+19.2.9 scenario1 run 2 0ms fast transition | 0ms slow transition | 405ms slow list committed | 405ms notifications committed
+19.2.9 scenario1 run 3 0ms fast transition | 0ms slow transition | 405ms slow list committed | 405ms notifications committed
+19.2.9 scenario2 run 1 0ms data transition | 110ms fast transition | 812ms notifications committed | 812ms invoice committed
+19.2.9 scenario2 run 2 0ms data transition | 110ms fast transition | 818ms notifications committed | 818ms invoice committed
+19.2.9 scenario2 run 3 0ms data transition | 108ms fast transition | 809ms notifications committed | 809ms invoice committed
+</code></pre>
+  <div class="ar-note">نفس الكود على نسختين من React، production build، 3 مرات لكل حالة. على <b>19.3.1</b>: الـ notifications ظهرت بعد حوالي 2 ms من بدايتها في الحالتين. على <b>19.2.9</b>: الـ notifications استنت البطيء (حوالي 405 ms) أو استنت الـ data (حوالي 810 ms)، واتعملهم commit مع بعض.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>مع الـ lanes والـ loop اللي بيقف، الـ render مبقاش خطوة واحدة. ممكن <b>يبدأ، ويقف، ويقاطعه حاجة عاجلة، ويترمي</b>. الـ commit بس هو النهائي. والإثبات بالأرقام: ليست 300 صف في transition، كل صف بياخد 1 ms، وحروف حقيقية مستمرة تيجي. في 7 حروف الصفوف اترندرت 548 مرة في run و599 في run تاني، بس اتعملها commit 300 بالظبط: شغل الحروف اللي في النص اترمى. و<code>Search</code> اترندر 14 مرة واتعمله commit 8. والـ input فضل سريع والشاشة في الآخر صح. والـ <code>useTransition</code> بالتفصيل في <a href="./19-concurrent-hooks-actions.html#p1">الدرس 19</a>.</p>
+    <p><b>عشان كده الـ render لازم يبقى pure.</b> لو الـ render ممكن يتنفذ كذا مرة ويترمي، فأي حاجة بيعملها في العالم بره ممكن تحصل لشاشة محدش شافها. الـ run بيوريك: <code>orderCounter++</code> و<code>auditLog.push(...)</code> جوه الصف. 300 صف على الشاشة، وأول صف مكتوب عليه <b>#557</b>، والـ log فيه <b>856</b> سجل، والمفروض 600 (300 عند الـ mount و300 في الـ commit الأخير). يعني 256 سجل "viewed" لصفوف مفيش مستخدم شافها. ورقم على الشاشة معتمد على كام render اترمى ده مالوش معنى.</p>
+    <p><b>قواعد الـ render الـ pure:</b></p>
+    <ul>
+      <li>نفس الـ props والـ state والـ context بيدّوا نفس الـ JSX.</li>
+      <li>متعدّلش أي حاجة كانت موجودة قبل الـ render: props، state، متغيرات الـ module. تعديل object إنت عملته في الـ render ده مفيش مشكلة فيه.</li>
+      <li>مفيش side effects: لا fetch ولا analytics ولا logging ولا timers ولا subscriptions. مكانهم الـ event handlers، أو الـ effects اللي بتشتغل بعد الـ commit بس.</li>
+      <li>متقراش حاجات بتتغير بين النداءات زي <code>Date.now()</code> و<code>Math.random()</code> و<code>ref.current</code>.</li>
+    </ul>
+    <p><b>متعتمدش على الـ lint لوحده.</b> على eslint-plugin-react-hooks 7.1.1، <code>purity</code> مسك <code>Date.now()</code> و<code>globals</code> مسك <code>orderSeq = orderSeq + 1</code>. لكن <code>orderCounter++</code> و<code>auditLog.push(id)</code> و<code>ids.push("x")</code> على prop ماطلعلهمش error. الـ double render بتاع StrictMode (<a href="./03-events-forms-render-cycle.html#p6">الدرس 03</a>) هو شبكتك التانية، والـ code review التالتة.</p>
+    <p><b>React 19.3 غيّر الـ transitions.</b> الـ changelog بيقول إنه بقى يرندر "Transitions independently instead of entangling them into a single render, so a slow Transition no longer holds up unrelated ones"، يعني كل transition لوحده بدل ما يتجمعوا في render واحد، فالبطيء مبقاش بيعطّل اللي مالوش علاقة بيه. قارنت 19.3.1 بـ 19.2.9 جنب بعض. لما يبقى فيه transition سريع وبطيء مستنيين، السريع بقى يتعمله commit في حوالي 2 ms بدل ما يستنى حوالي 405 ms. ولما transition يبقى مستني data، التاني اللي مالوش علاقة بيتعمله commit بعد حوالي 2 ms من بدايته، بدل ما يستنى الـ data عند حوالي 810 ms. وفيه حد واحد ثابت في النسختين: الـ transition اللي شغال خلاص مش بيقاطعه transition تاني، وفي الـ run ده السريع اتعمله commit بعد البطيء بحوالي 5 ms.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو بتبعت <code>track("order_viewed")</code> من جوه الـ render، رقم الـ views في الـ dashboard هيبقى منفوخ، وبعد ما تضيف <code>useTransition</code> هيتنفخ أكتر من غير أي تغيير في الكود ده، وده incident صعب تتتبعه. انقله لـ effect أو handler. وكمان رقم الصف: <code>index + 1</code> من الـ props مش عداد بره. ولو عندك صفحة فيها navigation مستني data وفلاتر تانية، بعد الترقية لـ 19.3 الفلاتر مبقتش بتستنى، فاختبر الشاشات اللي كانت بتعتمد من غير قصد إن transitions تخلص مع بعض.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Why must render be pure if the output looks fine in dev?" → Concurrent React may call a component many times for one commit, and discard those results. I measured 548 row renders for 300 commits. Side effects in render run for screens nobody saw, and values read from mutable sources can differ between components in the same pass. Move effects to handlers or <code>useEffect</code>, and derive display values from props and state.
+    <div class="ar-note">"ليه الـ render لازم يبقى pure لو الناتج شكله سليم في الـ dev؟" ← React الـ concurrent ممكن ينادي الـ component كذا مرة عشان commit واحد، ويرمي النتايج. أنا قست 548 render للصفوف مقابل 300 commit. الـ side effects في الـ render بتشتغل لشاشات محدش شافها، والقيم اللي بتتقرا من مصدر متغير ممكن تختلف بين components في نفس المرور. انقل الـ effects للـ handlers أو <code>useEffect</code>، واحسب القيم اللي بتتعرض من الـ props والـ state.</div>
+  </div>
+
+  <div class="callout warn">
+    <b>What breaks on upgrade</b>
+    Separate transitions committing separately means a screen can show one finished and the other still old, where 19.2 revealed them together. If two pieces of UI must appear together, put both updates in the same <code>startTransition</code>.
+    <div class="ar-note">لما كل transition يتعمله commit لوحده، الشاشة ممكن تعرض واحد خلص والتاني لسه قديم، وده كان بيظهر مع بعض في 19.2. لو حتتين في الـ UI لازم يظهروا مع بعض، حط الـ updates الاتنين في نفس <code>startTransition</code>.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A component defined inside a component</b>
+<pre><code class="language-tsx">// نوع جديد مع كل حرف: الـ input بيتكسر والـ focus بيروح
+function Checkout() {
+  const [code, setCode] = useState("");
+  function CouponField() {
+    return &lt;input value={code} onChange={(e) =&gt; setCode(e.target.value)} /&gt;;
+  }
+  return &lt;CouponField /&gt;;
+}
+</code></pre>
+    </div>
+    <div class="good"><b>✅ Defined outside, state through props</b>
+<pre><code class="language-tsx">// نوع ثابت: نفس الـ node ونفس الـ focus
+function CouponField({ code, onChange }: Props) {
+  return &lt;input value={code} onChange={(e) =&gt; onChange(e.target.value)} /&gt;;
+}
+function Checkout() {
+  const [code, setCode] = useState("");
+  return &lt;CouponField code={code} onChange={setCode} /&gt;;
+}
+</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ function الداخلية هوية جديدة في كل render، فالقيمة بقت <code>S</code> بس والـ focus وقع على <code>BODY</code> في الـ run. ✅ طلّعها بره وابعت الـ state كـ props: القيمة كاملة ومرة mount واحدة. و<code>react-hooks/static-components</code> بيمسكها.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A random or index key</b>
+<pre><code class="language-tsx">// عشوائي: كل صف بيتركب من الأول مع كل render
+{orders.map((o) =&gt; &lt;OrderRow key={Math.random()} order={o} /&gt;)}
+// بالـ index: 2000 تغيير نص لإضافة صف واحد قدام
+{orders.map((o, i) =&gt; &lt;OrderRow key={i} order={o} /&gt;)}
+</code></pre>
+    </div>
+    <div class="good"><b>✅ A stable id from the data</b>
+<pre><code class="language-tsx">// نفس الـ id بين الـ renders: عملية DOM واحدة
+{orders.map((o) =&gt; &lt;OrderRow key={o.id} order={o} /&gt;)}
+</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>Math.random()</code> بيطلّع 11 mount في 11 render، وبيضيّع state كل صف. والـ index بيخلي إضافة صف واحد قدام 1000 صف تعمل 2000 تغيير نص، وأي input جوه الصف بيروح لصف غلط. ✅ استخدم id ثابت من الـ data: صفر تغيير نص وعملية DOM واحدة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Resetting state with an effect</b>
+<pre><code class="language-tsx">// فيه render زيادة، وللحظة الـ note القديمة باينة للعميل الجديد
+function CustomerNote({ customerId }: Props) {
+  const [note, setNote] = useState("");
+  useEffect(() =&gt; setNote(""), [customerId]);
+  return &lt;textarea value={note} onChange={(e) =&gt; setNote(e.target.value)} /&gt;;
+}
+</code></pre>
+    </div>
+    <div class="good"><b>✅ Resetting with a key</b>
+<pre><code class="language-tsx">// هوية جديدة لكل عميل، فكل الـ state بيبدأ من الأول تلقائي
+&lt;CustomerNote key={customerId} customerId={customerId} /&gt;
+</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ effect بيشتغل بعد الـ commit، فبيعمل render زيادة، والـ note القديمة بتتعرض لحظة مع العميل الجديد، ولو ضفت state تاني لازم تفتكر تصفّره (تفاصيل في <a href="./07-useeffect-in-depth.html#p3">الدرس 07</a>). ✅ <code>key={customerId}</code> بيدّي هوية جديدة، فكل الـ state تحت بيتصفّر مع بعض. بس خد بالك إنه كمان بيركّب الـ DOM من الأول، وده غالبًا المطلوب.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Two returns that shift the form</b>
+<pre><code class="language-tsx">// الـ form بتتنقل من slot 0 لـ slot 1، فالـ state بيضيع
+if (show) return &lt;div&gt;&lt;Banner /&gt;&lt;OrderForm /&gt;&lt;/div&gt;;
+return &lt;div&gt;&lt;OrderForm /&gt;&lt;/div&gt;;
+</code></pre>
+    </div>
+    <div class="good"><b>✅ One tree, a conditional slot</b>
+<pre><code class="language-tsx">// الـ false بيحجز الـ slot، فالـ form فاضلة في مكانها
+return &lt;div&gt;{show &amp;&amp; &lt;Banner /&gt;}&lt;OrderForm /&gt;&lt;/div&gt;;
+</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ في الـ run ظهور الـ banner مسح الـ note لأن الـ form اتنقلت من slot لـ slot. ✅ <code>{show &amp;&amp; &lt;Banner /&gt;}</code> بيخلي الـ slot محجوز حتى وهو <code>false</code>، فالـ form مكانها مابيتغيرش والـ state بيفضل.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Side effects in render</b>
+<pre><code class="language-tsx">// بيتنفذ لكل render حتى اللي اترمى: ⁦#557⁩ و256 سجل زيادة
+function OrderRow({ id }: { id: string }) {
+  orderCounter++;
+  auditLog.push(`viewed ${id}`);
+  return &lt;li&gt;#{orderCounter} {id}&lt;/li&gt;;
+}
+</code></pre>
+    </div>
+    <div class="good"><b>✅ Derive in render, record after commit</b>
+<pre><code class="language-tsx">// الرقم من الـ props، والسجل بعد commit حقيقي بس
+function OrderRow({ id, index }: { id: string; index: number }) {
+  useEffect(() =&gt; {
+    auditLog.push(`viewed ${id}`);
+  }, [id]);
+  return &lt;li&gt;#{index + 1} {id}&lt;/li&gt;;
+}
+</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الكود ده بيتنفذ حتى للـ renders اللي اترمت، فأول صف طلع <code>#557</code> والـ log فيه 856 سجل، و<code>orderCounter++</code> ماطلعلهاش lint error كمان. ✅ احسب الرقم من الـ props في الـ render، وسجّل في <code>useEffect</code> اللي بيشتغل بعد commit حقيقي بس.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Predict, then run <span class="lvl lvl-1">🟢 easy</span></b>
+    Before running anything, predict whether the note survives in each case: (a) <code>flag ? &lt;OrderForm /&gt; : &lt;OrderForm /&gt;</code>; (b) <code>flag ? &lt;OrderForm /&gt; : &lt;InvoiceForm /&gt;</code>; (c) <code>flag ? &lt;div&gt;&lt;OrderForm /&gt;&lt;/div&gt; : &lt;OrderForm /&gt;</code>; (d) <code>flag ? &lt;OrderForm key="a" /&gt; : &lt;OrderForm key="b" /&gt;</code>. Add them to <code>p2-position.tsx</code> and check.
+    <div class="ar-note">قبل ما تشغّل حاجة، توقّع الـ note هتفضل ولا لأ في كل حالة: (أ) <code>flag ? &lt;OrderForm /&gt; : &lt;OrderForm /&gt;</code>، (ب) <code>flag ? &lt;OrderForm /&gt; : &lt;InvoiceForm /&gt;</code>، (ج) <code>flag ? &lt;div&gt;&lt;OrderForm /&gt;&lt;/div&gt; : &lt;OrderForm /&gt;</code>، (د) <code>flag ? &lt;OrderForm key="a" /&gt; : &lt;OrderForm key="b" /&gt;</code>. ضيفهم في <code>p2-position.tsx</code> واتأكد.</div>
+    <details><summary>Solution · الحل</summary>
+      (a) survives: same type, same position. (b) lost: a different type. (c) lost: slot 0 changes from <code>div</code> to <code>OrderForm</code>. (d) lost: a different key.
+      <div class="ar-note">(أ) بتفضل: نفس النوع ونفس المكان. (ب) بتضيع: نوع مختلف. (ج) بتضيع: slot 0 بيتغير من <code>div</code> لـ <code>OrderForm</code>. (د) بتضيع: key مختلف.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. Read the hooks list <span class="lvl lvl-2">🟡 medium</span></b>
+    Extend the fiber printer so it prints each hook's stored value, in order, for a component with <code>useState</code>, <code>useRef</code> and <code>useMemo</code>. Which value does each one store?
+    <div class="ar-note">كبّر الـ fiber printer عشان يطبع القيمة المتخزنة في كل hook بالترتيب، لـ component فيه <code>useState</code> و<code>useRef</code> و<code>useMemo</code>. كل واحد بيخزن إيه؟</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-hooks.tsx"><code class="language-tsx">import { useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import { rootFromDom } from "./fiber-print";
+import { done, say } from "./lib";
+
+function Checkout() {
+  const [coupon] = useState("SAVE10");
+  const attempts = useRef(3);
+  const total = useMemo(() =&gt; 250 * 2, []);
+  return &lt;button&gt;{coupon} {attempts.current} {total}&lt;/button&gt;;
+}
+
+// الحل: امشي على next، واطبع memoizedState بتاع كل hook بالترتيب
+function hookValues(fiber: { memoizedState: unknown }) {
+  const values: string[] = [];
+  let hook = fiber.memoizedState as { memoizedState: unknown; next: unknown } | null;
+  while (hook) {
+    values.push(JSON.stringify(hook.memoizedState));
+    hook = hook.next as typeof hook;
+  }
+  return values;
+}
+
+const host = document.createElement("div");
+document.body.append(host);
+flushSync(() =&gt; createRoot(host).render(&lt;Checkout /&gt;));
+const fiberRoot = rootFromDom(host.querySelector("button")!);
+say(hookValues(fiberRoot.current.child).join("\n"));
+done();
+</code></pre>
+<pre><code class="language-plaintext">"SAVE10"
+{"current":3}
+[500,[]]
+</code></pre>
+      <div class="ar-note">الـ <code>useState</code> بيخزن القيمة، و<code>useRef</code> بيخزن الـ object نفسه <code>{current}</code>، و<code>useMemo</code> بيخزن الزوج <code>[value, deps]</code>. وده ليه الترتيب لازم يفضل ثابت: React بيمشي على الـ list دي بالترتيب.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. Read a trace in DevTools <span class="lvl lvl-3">🔴 hard</span></b>
+    Run <code>trace-lanes.mjs</code> to produce <code>trace.json</code>. In Chrome DevTools open the Performance panel, choose "Load profile", and load it. Find the click, then find its work in both the Blocking and Transition tracks. Which one finished first, and how long did <code>Waiting for Paint</code> take? This part isn't run here, because the DevTools UI can't be driven from this setup.
+    <div class="ar-note">شغّل <code>trace-lanes.mjs</code> عشان يطلّع <code>trace.json</code>. في Chrome DevTools افتح Performance panel، واختار "Load profile"، وحمّل الملف. دوّر على الـ click، وبعدين شغله في الـ tracks بتوع Blocking وTransition. مين خلص الأول، و<code>Waiting for Paint</code> خد قد إيه؟ الجزء ده ماتجربش هنا، لأن واجهة DevTools ماينفعش تتشغّل من الـ setup ده.</div>
+    <details><summary>Hint · تلميح</summary>
+      The aggregation above tells you what must be in the file: one <code>Event: click</code> in Transition and a Render and Commit in each track. Expect Blocking first, because lane 2 outranks lane 256.
+      <div class="ar-note">التجميع فوق بيقولك إيه اللي لازم يبقى في الملف: <code>Event: click</code> واحد في Transition، وRender وCommit في كل track. توقّع إن Blocking يخلص الأول، لأن lane 2 أولويته أعلى من lane 256.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project: hunt remounts and impure renders <span class="lvl lvl-3">🔴 project</span></b>
+    In your side project or at work, enable the <code>react-hooks</code> recommended config and fix every <code>static-components</code> and <code>purity</code> error. Then search by hand for what lint missed: <code>++</code> on module variables and <code>.push(</code> in component bodies. Finally, add a mount counter to your slowest screen's main component and confirm it stays at 1 while you use the page. Write a short note with a diagram of what you found, for README artifact 4.
+    <div class="ar-note">في مشروعك الجانبي أو في الشغل، فعّل الـ recommended config بتاع <code>react-hooks</code> وصلّح كل error من <code>static-components</code> و<code>purity</code>. بعدين دوّر بإيدك على اللي الـ lint فوّته: <code>++</code> على متغيرات الـ module و<code>.push(</code> جوه جسم الـ component. وفي الآخر ضيف عداد mounts للـ component الأساسي في أبطأ شاشة عندك واتأكد إنه فاضل 1 وإنت بتستخدم الصفحة. واكتب ملاحظة قصيرة برسمة باللي لقيته، للـ artifact رقم 4 في الـ README.</div>
+    <details><summary>Hint · تلميح</summary>
+      A mount counter is three lines: a module variable and a <code>useEffect</code> with empty deps that increments and logs it. Remove it after the check.
+      <div class="ar-note">عداد الـ mounts 3 سطور: متغير في الـ module و<code>useEffect</code> بـ deps فاضية بيزوّده ويطبعه. شيله بعد ما تخلص الفحص.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>General tree diff is O(n³); React is O(n) by assuming a different type means a different tree, and keys identify children.</li>
+    <li>Different type: unmount the subtree and mount a new one. Same host type: keep the node, patch attributes. Same component: keep state, render again.</li>
+    <li>State lives at a position (parent + slot + key), not in your function.</li>
+    <li><code>key={customerId}</code> resets state on purpose. <code>{show &amp;&amp; &lt;X /&gt;}</code> keeps the slot; two separate trees shift it.</li>
+    <li><code>&lt;Activity mode="hidden"&gt;</code>: DOM and state stay, effects clean up.</li>
+    <li>Never create types during render: inner components, HOCs, <code>lazy</code>. Inner components and HOCs remount (1 → 11). <code>lazy</code> in render shows the fallback ≈310 ms every time, and also remounts if its factory returns a new wrapper.</li>
+    <li>A fiber is one unit of work: <code>child</code>, <code>sibling</code>, <code>return</code>, walked by a loop that can pause.</li>
+    <li>Double buffering: current on screen, workInProgress being built; <code>root.current</code> flips at commit. <code>__reactFiber$</code> is for learning only.</li>
+    <li>Lanes are bits, and a lower bit is higher priority: click 2, mousemove 8, timeout 32, transition 256. The Scheduler yields every 5 ms.</li>
+    <li>Render can be thrown away: 548 row renders for 300 commits. Commit is the only final step.</li>
+    <li>Pure render: no mutation of outer values, no side effects, no <code>Date.now()</code> or <code>Math.random()</code>. Lint misses <code>counter++</code> and <code>.push</code>.</li>
+    <li>React 19.3: unrelated transitions render independently, but a running transition isn't interrupted by another transition.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ tree diff العام O(n³)، وReact بيعملها O(n) بافتراض إن النوع المختلف شجرة مختلفة، وإن الـ keys بتعرّف الـ children.</li>
+      <li>نوع مختلف: unmount للـ subtree وmount لجديد. نفس نوع الـ host: نفس الـ node وتعديل الـ attributes. نفس الـ component: نفس الـ state وrender تاني.</li>
+      <li>الـ state عايش في مكان (أب + slot + key)، مش في الـ function بتاعتك.</li>
+      <li><code>key={customerId}</code> بيصفّر الـ state بقصد. <code>{show &amp;&amp; &lt;X /&gt;}</code> بيحجز الـ slot، والشجرتين المنفصلتين بينقلوه.</li>
+      <li><code>&lt;Activity mode="hidden"&gt;</code>: الـ DOM والـ state بيفضلوا، والـ effects بتتنضف.</li>
+      <li>متعملش أنواع جوه الـ render: components داخلية، HOCs، <code>lazy</code>. الداخلية والـ HOCs بيعملوا remount (من 1 لـ 11). و<code>lazy</code> في الـ render بيعرض الـ fallback حوالي 310 ms كل مرة، وكمان بيعمل remount لو الـ factory بترجّع wrapper جديد.</li>
+      <li>الـ fiber وحدة شغل واحدة: <code>child</code> و<code>sibling</code> و<code>return</code>، وبيتمشي عليها بـ loop يقدر يقف.</li>
+      <li>الـ double buffering: الـ current على الشاشة والـ workInProgress بيتبني، و<code>root.current</code> بيتقلب عند الـ commit. و<code>__reactFiber$</code> للتعلم بس.</li>
+      <li>الـ lanes هي bits، والـ bit الأقل أولوية أعلى: click 2، mousemove 8، timeout 32، transition 256. والـ Scheduler بيقف كل 5 ms.</li>
+      <li>الـ render ممكن يترمي: 548 render للصفوف مقابل 300 commit. الـ commit هو الخطوة النهائية الوحيدة.</li>
+      <li>الـ render الـ pure: مفيش تعديل لقيم بره، ومفيش side effects، ومفيش <code>Date.now()</code> أو <code>Math.random()</code>. والـ lint بيفوّت <code>counter++</code> و<code>.push</code>.</li>
+      <li>React 19.3: الـ transitions اللي مالهاش علاقة ببعض بتترندر لوحدها، بس الـ transition الشغال مش بيقاطعه transition تاني.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 05 · 3.1 — Reconciliation algorithm: diffing heuristics — element type مختلف = unmount/mount الـ subtree كله، نفس النوع = update props، keys للـ lists</label>
+    <label><input type="checkbox" data-key="r2"> 05 · 3.1 — ليه تغيير الـ component type (أو تعريف component جوه component) بيعمل remount وبيضيّع الـ state</label>
+    <label><input type="checkbox" data-key="r3"> 05 · 3.1 — Fiber كمفهوم: work units، priority lanes، interruptible rendering، double buffering (current/workInProgress)</label>
+    <label><input type="checkbox" data-key="r4"> 05 · 3.1 — Concurrent rendering: React ممكن يبدأ render ويوقفه ويرميه — وليه الـ render لازم يكون pure</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://react.dev/learn/preserving-and-resetting-state">React docs — Preserving and Resetting State</a></li>
+    <li><a href="https://legacy.reactjs.org/docs/reconciliation.html">Legacy React docs — Reconciliation (the O(n³) figure)</a></li>
+    <li><a href="https://react.dev/reference/react/Activity">React docs — Activity</a> · <a href="https://react.dev/reference/react/lazy">lazy</a></li>
+    <li><a href="https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components">React docs — static-components lint</a> · <a href="https://react.dev/learn/keeping-components-pure">Keeping Components Pure</a></li>
+    <li><a href="https://react.dev/reference/dev-tools/react-performance-tracks">React docs — Performance Tracks</a> · <a href="https://react.dev/blog/2026/09/09/react-19-3">React 19.3 release post</a></li>
+    <li><a href="https://github.com/acdlite/react-fiber-architecture">Andrew Clark — React Fiber Architecture</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <!-- ===== Prev / Next (use class="empty" on a span when there is no prev/next) ===== -->
+  <nav class="lesson-nav">
+    <a class="prev" href="./17-testing-react.html"><small>← Previous</small>17 · Testing React</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./19-concurrent-hooks-actions.html"><small>Next →</small>19 · Concurrent Hooks &amp; Actions</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
