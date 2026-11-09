@@ -1,0 +1,1635 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Messaging I: Channels, Routers, Translators &amp; Claim Check — 08 Design Patterns</title>
+<meta name="section" content="08-Design-Patterns">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">08 · Design Patterns</a></span>
+    <span>·</span>
+    <span>Lesson 25 / 35</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+
+  <header>
+    <h1>Messaging I: Channels, Routers, Translators &amp; Claim Check</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 25 of 35 — Design Patterns</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Redis 8.10 · Node 22 · TypeScript 7</span>
+      <span class="chip">Prereq: 24 Rate Limit &amp; Idempotency</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>08 · 3.3 — Message channel أنواعه: point-to-point (queue)، publish-subscribe (topic)، dead-letter channel</li>
+        <li>08 · 3.3 — Message router: content-based router، message filter، splitter/aggregator، recipient list</li>
+        <li>08 · 3.3 — Message translator / Canonical data model (و ACL كـ translator)</li>
+        <li>08 · 3.3 — Claim check: الـ message فيها reference للـ payload الكبير (S3) مش الـ payload نفسه</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Channels: point-to-point, pub-sub, dead letter</a></li>
+      <li><a href="#p2">Part 2 — Content-based router and message filter</a></li>
+      <li><a href="#p3">Part 3 — Splitter, aggregator, recipient list</a></li>
+      <li><a href="#p4">Part 4 — Translator and canonical data model</a></li>
+      <li><a href="#p5">Part 5 — Claim check</a></li>
+      <li><a href="#p6">Part 6 — Where routing belongs</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Once two services talk through a queue, the same handful of problems shows up in every company: who receives this message, where does it go when it can't be processed, how do I split it and put it back together, how do three partners' formats become one, and what do I do with an 8&nbsp;MB payload. The Enterprise Integration Patterns book named these answers in 2003, and those names are still what architects use in design reviews and interviews. Every pattern in this lesson runs on a real private Redis, so you see the counts, including the failures.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>أول ما اتنين services يكلموا بعض عن طريق queue، نفس المشاكل بتظهر في كل شركة: مين اللي هيستلم الـ message دي، تروح فين لو فشلت، أقسمها وأرجّع أجمّعها إزاي، إزاي تلات partners بأشكال مختلفة يبقوا شكل واحد، وأعمل إيه في payload حجمه 8&nbsp;MB. كتاب Enterprise Integration Patterns سمّى الحلول دي سنة 2003، ولسه الأسامي دي هي اللي بتتقال في الـ design reviews والـ interviews. كل pattern في الدرس ده شغال على Redis حقيقي خاص بالمعمل، فهتشوف الأرقام بنفسك، ومعاها حالات الفشل.</p>
+  </section>
+
+  <h2 id="p1">Part 1 — Channels: point-to-point, pub-sub, dead letter <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — الـ channels: point-to-point و pub-sub و dead letter</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A <b>message channel</b> is a named pipe between a sender and receivers that don't know each other. Channel types differ in three things: how many receivers get each message, how long the message lives, and what happens when nobody is listening. Broker internals (exchanges, acks, prefetch, partitions) are covered in <a href="../../04-NodeJS/lessons/23-brokers-rabbitmq-kafka-outbox.html#p1">Node lesson 23, Parts 1</a> to <a href="../../04-NodeJS/lessons/23-brokers-rabbitmq-kafka-outbox.html#p3">3</a> and in <a href="../../07-Databases/lessons/39-queues-logs-streams-rabbitmq.html">Databases lesson 39</a>. Here we fix the vocabulary and run it.</p>
+    <p><b>Point-to-point</b>: each message goes to exactly one consumer in the group, so consumers share the work. In Redis that's one consumer group on a stream. <b>Publish-subscribe</b>: every subscriber gets its own copy. Redis has two very different forms. <code>PUBLISH</code> is fire-and-forget: with no subscriber connected, the message is gone and the command returns 0. Several consumer groups on one stream give durable pub-sub: each group has its own position, and a group created later can still read history.</p>
+    <p>A <b>dead-letter channel</b> is where a message goes when it has failed too many times, so that one poison message can't block or endlessly burn a worker. The count must come from the broker, not a variable in your process, or it resets on every restart. Redis keeps it: <code>XPENDING</code> returns the delivery count per entry, and <code>XAUTOCLAIM</code> increments it on each redelivery. The move is <code>XADD orders.dlq</code> first and <code>XACK</code> second, so a crash in between produces a duplicate in the DLQ instead of losing the message. A DLQ without a replay path is just a slower way of deleting data, so the code below includes one.</p>
+  </section>
+
+<pre data-file="setup.sh"><code class="language-bash"># تجهيز المعمل: Node 22.18 أو أحدث بيشغّل ملفات ⁦.ts⁩ مباشرة
+npm init -y &amp;&amp; npm pkg set type=module
+npm i ioredis@6.0.0 bullmq@6.5.4 zod@4.6.7 @aws-sdk/client-s3@3.1161.0
+
+# تشغيل Redis خاص على port غير الـ default، عشان الأمثلة بتعمل FLUSHDB
+redis-server --port 6390 --save "" --appendonly no
+
+# تشغيل أي مثال من ترمنال تاني
+REDIS_PORT=6390 node src25/p1-channels.ts
+</code></pre>
+  <div class="ar-note">كل الأمثلة بتعمل <code>FLUSHDB</code> عشان تبدأ نضيفة، فلازم تتشغل على Redis خاص بالمعمل. عشان كده <code>connectLab</code> بترفض الـ port لو فاضي أو 6379، فمستحيل مثال يمسح داتا حقيقية عندك. الأمثلة كلها ملفات في فولدر <code>src25/</code> بالأسامي المكتوبة فوق كل كود.</div>
+
+  <pre data-file="src25/lab.ts"><code class="language-typescript">import { Redis } from "ioredis";
+
+// حارس المعمل: port فاضي معناه الـ default بتاع Redis الحقيقي عندك، فبنرفضه قبل أي اتصال
+export function connectLab(): Redis {
+  const raw = process.env.REDIS_PORT ?? "";
+  const port = Number(raw);
+  if (!/^\d+$/.test(raw) || port &lt; 1024 || port &gt; 65535 || [27017, 5432, 6379].includes(port)) {
+    throw new Error(`refusing port '${raw}': start a private Redis and set REDIS_PORT`);
+  }
+  return new Redis({ host: "127.0.0.1", port, maxRetriesPerRequest: null });
+}
+
+// تحويل: Redis بيرجّع fields كـ array مسطحة، وإحنا عايزينها object
+export const toObj = (fields: string[]): Record&lt;string, string&gt; =&gt;
+  Object.fromEntries(Array.from({ length: fields.length / 2 }, (_, i) =&gt; [fields[i * 2], fields[i * 2 + 1]]));
+
+export type Entry = { id: string; msg: Record&lt;string, string&gt; };
+
+// قراءة من group: بترجع entries جاهزة بدل الـ nested arrays
+export async function readGroup(r: Redis, stream: string, group: string, consumer: string, count = 10): Promise&lt;Entry[]&gt; {
+  const res = (await r.xreadgroup("GROUP", group, consumer, "COUNT", count, "STREAMS", stream, "&gt;")) as
+    | [string, [string, string[]][]][]
+    | null;
+  return (res?.[0]?.[1] ?? []).map(([id, f]) =&gt; ({ id, msg: toObj(f) }));
+}
+</code></pre>
+  <pre data-file="src25/p1-channels.ts"><code class="language-typescript">import { connectLab, readGroup } from "./lab.ts";
+
+const r = connectLab();
+// مسح للـ instance الخاص بالمعمل بس، وconnectLab رفض أي port حقيقي قبل كده
+await r.flushdb();
+
+// (1) النوع الأول point-to-point: group واحد، كل message بتروح لـ consumer واحد
+await r.xgroup("CREATE", "orders", "fulfilment", "$", "MKSTREAM");
+await r.xadd("orders", "*", "orderId", "ord_1");
+await r.xadd("orders", "*", "orderId", "ord_2");
+const c1 = await readGroup(r, "orders", "fulfilment", "c1", 1);
+const c2 = await readGroup(r, "orders", "fulfilment", "c2", 1);
+console.log("point-to-point  c1 got", c1[0]?.msg.orderId, "| c2 got", c2[0]?.msg.orderId);
+
+// (2) النوع التاني pub/sub بتاع Redis: مفيش subscriber يبقى الـ message راحت
+const receivers = await r.publish("order.paid", JSON.stringify({ orderId: "ord_1" }));
+console.log("PUBLISH with no subscriber delivered to", receivers, "receivers");
+
+// (3) النوع التالت pub-sub متين: groups مختلفة على نفس الـ stream، وكل group بتشوف كل حاجة
+await r.xgroup("CREATE", "orders.paid", "billing", "0", "MKSTREAM");
+await r.xgroup("CREATE", "orders.paid", "email", "0");
+await r.xadd("orders.paid", "*", "orderId", "ord_7");
+const billing = await readGroup(r, "orders.paid", "billing", "b1");
+const email = await readGroup(r, "orders.paid", "email", "e1");
+console.log("durable pub-sub billing saw", billing.length, "| email saw", email.length);
+
+// الـ group اللي بتيجي متأخر بتلحق القديم لو بدأت من 0
+await r.xgroup("CREATE", "orders.paid", "analytics", "0");
+const late = await readGroup(r, "orders.paid", "analytics", "a1");
+console.log("late group starting at 0 still saw", late.length);
+
+await r.quit();
+</code></pre>
+  <pre><code class="language-plaintext">point-to-point  c1 got ord_1 | c2 got ord_2
+PUBLISH with no subscriber delivered to 0 receivers
+durable pub-sub billing saw 1 | email saw 1
+late group starting at 0 still saw 1
+</code></pre>
+  <div class="ar-note">السطر الأول: الـ group الواحد وزّع الشغل، <code>c1</code> خد الأوردر الأول و<code>c2</code> خد التاني. السطر التاني: <code>PUBLISH</code> رجّعت 0 يعني مفيش حد استلم والـ message راحت. السطر التالت: <code>billing</code> و<code>email</code> كل واحد شاف نسخته. الرابع: الـ group اللي اتعمل بعد الـ message لسه قدر يقراها لأنه بدأ من <code>0</code>.</div>
+
+  <pre data-file="src25/p1-dlq.ts"><code class="language-typescript">import { connectLab, readGroup, toObj } from "./lab.ts";
+
+const r = connectLab();
+await r.flushdb();
+
+const STREAM = "orders";
+const DLQ = "orders.dlq";
+const GROUP = "fulfilment";
+const MAX_DELIVERIES = 3;
+await r.xgroup("CREATE", STREAM, GROUP, "0", "MKSTREAM");
+
+// الـ handler: أي order من غير customerId هي poison message ودايمًا بتفشل
+function handle(msg: Record&lt;string, string&gt;): void {
+  if (!msg.customerId) throw new Error("missing customerId");
+}
+
+type Pending = [id: string, consumer: string, idleMs: number, deliveries: number];
+
+await r.xadd(STREAM, "*", "orderId", "ord_ok", "customerId", "u_1");
+await r.xadd(STREAM, "*", "orderId", "ord_poison");
+
+let processed = 0;
+// خطوة واحدة: نرجّع اللي معلّق الأول، وبعدين نقرا الجديد
+async function tick(consumer: string): Promise&lt;void&gt; {
+  // في production الـ min-idle يبقى 30000 مثلًا، وهنا 0 عشان الـ demo يخلص بسرعة
+  const [, claimed] = (await r.xautoclaim(STREAM, GROUP, consumer, 0, "0", "COUNT", 10)) as [
+    string,
+    [string, string[]][],
+  ];
+  const retry = claimed.map(([id, f]) =&gt; ({ id, msg: toObj(f) }));
+  const fresh = await readGroup(r, STREAM, GROUP, consumer);
+
+  for (const { id, msg } of [...retry, ...fresh]) {
+    try {
+      handle(msg);
+      await r.xack(STREAM, GROUP, id);
+      processed++;
+    } catch (err) {
+      // عدد مرات التسليم بييجي من Redis نفسه، مش من counter في الـ memory
+      const [row] = (await r.xpending(STREAM, GROUP, id, id, 1)) as Pending[];
+      const deliveries = row?.[3] ?? 0;
+      console.log(`  ${msg.orderId} failed, deliveries=${deliveries}`);
+      if (deliveries &gt;= MAX_DELIVERIES) {
+        // الترتيب مهم: XADD الأول وبعدين XACK، عشان crash في النص يكرر بدل ما يضيّع
+        await r.xadd(DLQ, "*", ...Object.entries(msg).flat(), "error", (err as Error).message, "originalId", id, "deliveries", String(deliveries));
+        await r.xack(STREAM, GROUP, id);
+      }
+    }
+  }
+}
+
+for (let i = 0; i &lt; 4; i++) await tick("worker-1");
+const summary = (await r.xpending(STREAM, GROUP)) as [number, ...unknown[]];
+console.log("processed", processed, "| still pending", summary[0], "| dlq length", await r.xlen(DLQ));
+const [[dlqId, dlqFields]] = (await r.xrange(DLQ, "-", "+")) as [string, string[]][];
+console.log("dlq entry", toObj(dlqFields));
+
+// الـ replay: بعد ما صلّحنا الـ data، نرجّعها الـ stream الأصلي ونشيلها من الـ DLQ
+async function replay(id: string, fix: Record&lt;string, string&gt;): Promise&lt;string&gt; {
+  const [[, fields]] = (await r.xrange(DLQ, id, id)) as [string, string[]][];
+  const { error: _e, originalId, deliveries: _d, ...original } = toObj(fields);
+  const newId = await r.xadd(STREAM, "*", ...Object.entries({ ...original, ...fix }).flat(), "replayOf", originalId!);
+  await r.xdel(DLQ, id);
+  return newId!;
+}
+await replay(dlqId, { customerId: "u_2" });
+await tick("worker-1");
+console.log("after replay processed", processed, "| dlq length", await r.xlen(DLQ));
+await r.quit();
+</code></pre>
+  <pre><code class="language-plaintext">  ord_poison failed, deliveries=1
+  ord_poison failed, deliveries=2
+  ord_poison failed, deliveries=3
+processed 1 | still pending 0 | dlq length 1
+dlq entry {
+  orderId: 'ord_poison',
+  error: 'missing customerId',
+  originalId: '1794192464025-0',
+  deliveries: '3'
+}
+after replay processed 2 | dlq length 0
+</code></pre>
+  <div class="ar-note">الأوردر السليم اتعمل مرة. الـ poison فشل 3 مرات، والعدد جاي من Redis: 1 ثم 2 ثم 3. عند التالتة راح <code>orders.dlq</code> ومعاه السبب والـ id الأصلي، والـ pending بقى صفر فمفيش حاجة واقفة. بعد الـ replay بـ <code>customerId</code> صح، الأوردر اتعمل والـ DLQ فضي.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>message channel</b> ماسورة ليها اسم بين sender و receivers مايعرفوش بعض. الفرق بين الأنواع في 3 حاجات: كام receiver بياخد كل message، الـ message بتعيش قد إيه، وإيه اللي بيحصل لو مفيش حد سامع. تفاصيل الـ brokers نفسها (exchanges، acks، prefetch، partitions) موجودة في <a href="../../04-NodeJS/lessons/23-brokers-rabbitmq-kafka-outbox.html#p1">درس Node رقم 23</a> و<a href="../../07-Databases/lessons/39-queues-logs-streams-rabbitmq.html">درس Databases رقم 39</a>، وهنا بنثبّت المصطلحات ونشغّلها.</p>
+    <p><b>Point-to-point</b>: كل message بتروح لـ consumer واحد بس في الـ group، فالـ consumers بيقسموا الشغل. في Redis ده consumer group واحد على stream. <b>Publish-subscribe</b>: كل subscriber بياخد نسخته. وRedis عنده شكلين مختلفين خالص: <code>PUBLISH</code> بيرمي وخلاص، ولو مفيش subscriber متوصل الـ message بتضيع والأمر بيرجّع 0. أما كذا consumer group على نفس الـ stream فده pub-sub متين: كل group ليه مكانه، والـ group اللي بيتعمل بعدين يقدر يقرا القديم.</p>
+    <p>الـ <b>dead-letter channel</b> هو المكان اللي الـ message بتروحه لما تفشل مرات كتير، عشان poison message واحدة ماتوقفش الـ worker أو تفضل تحرق فيه. لازم العدد ييجي من الـ broker مش من متغير في الـ process، وإلا هيتصفّر مع كل restart. Redis بيحتفظ بيه: <code>XPENDING</code> بيرجّع عدد مرات التسليم لكل entry، و<code>XAUTOCLAIM</code> بيزوّده مع كل redelivery. والنقل بيبقى <code>XADD orders.dlq</code> الأول و<code>XACK</code> بعده، عشان لو حصل crash في النص يبقى عندك تكرار في الـ DLQ مش message ضاعت. والـ DLQ من غير طريقة replay هو مجرد طريقة أبطأ لمسح الداتا، وعشان كده الكود فيه replay.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عندك worker بيبعت فواتير بالإيميل، وأوردر واحد فيه إيميل بايظ بيخلّي الـ handler يرمي error. من غير DLQ الـ message دي بترجع كل شوية للأبد وبتاكل وقت الـ worker، ومعاها alert مزعج ماحدش فاهمه. مع DLQ بعد 3 مرات بتتشال بسببها، وتحط alert على <code>XLEN orders.dlq</code> أكبر من صفر، والمهندس يصلّح الداتا ويعمل replay. الغلطة الشائعة: تعدّ المحاولات في <code>Map</code> جوه الـ process، فأول deploy يصفّر كل العدادات.
+    </div>
+  </section>
+
+<pre data-file="definitions.json"><code class="language-json">{
+  "exchanges": [
+    { "name": "order.paid", "type": "fanout", "vhost": "/", "durable": true },
+    { "name": "orders.dlx", "type": "fanout", "vhost": "/", "durable": true }
+  ],
+  "queues": [
+    { "name": "orders", "vhost": "/", "durable": true,
+      "arguments": { "x-dead-letter-exchange": "orders.dlx" } },
+    { "name": "orders.dlq", "vhost": "/", "durable": true, "arguments": {} }
+  ],
+  "bindings": [
+    { "source": "orders.dlx", "destination": "orders.dlq", "destination_type": "queue",
+      "routing_key": "", "vhost": "/", "arguments": {} }
+  ]
+}
+</code></pre>
+  <div class="ar-note"><b>مش متشغل هنا</b> (RabbitMQ مش موجود على الجهاز ده). الـ queue <code>orders</code> هي الـ point-to-point. الـ exchange <code>order.paid</code> من نوع <code>fanout</code> هو الـ pub-sub. والـ <code>x-dead-letter-exchange</code> بيخلّي أي message اترفضت أو خلصت مدتها تروح <code>orders.dlx</code> ومنه لـ <code>orders.dlq</code>.</div>
+
+<pre data-file="kafka-topics.sh"><code class="language-bash"># مش متشغل هنا: الـ topic هو الـ channel، والـ partitions هي وحدة الترتيب
+kafka-topics.sh --bootstrap-server broker:9092 --create --topic orders --partitions 6
+
+# نفس الـ group معناه point-to-point، و group تاني معناه نسخة تانية زي الـ pub-sub
+kafka-console-consumer.sh --bootstrap-server broker:9092 --topic orders --group billing
+kafka-console-consumer.sh --bootstrap-server broker:9092 --topic orders --group analytics
+
+# الـ DLQ في Kafka عرف بين الفرق: topic عادي إنت اللي بتنشر عليه بنفسك
+kafka-topics.sh --bootstrap-server broker:9092 --create --topic orders.dlq --partitions 6
+</code></pre>
+
+  <table>
+    <tr><th>Channel</th><th>Who receives</th><th>Redis form (run here)</th><th>Broker form (not run)</th><th>What is lost</th></tr>
+    <tr><td>Point-to-point</td><td>One consumer per message</td><td>One group on a stream</td><td>RabbitMQ queue, SQS, Kafka same group</td><td>Nothing if acked after work; duplicates are possible</td></tr>
+    <tr><td>Pub-sub, ephemeral</td><td>Everyone connected now</td><td><code>PUBLISH</code></td><td>RabbitMQ fanout to exclusive queues</td><td>Everything sent while a subscriber is away</td></tr>
+    <tr><td>Pub-sub, durable</td><td>Every group, own position</td><td>Many groups on a stream</td><td>Kafka groups, fanout to durable queues</td><td>Only what retention has trimmed</td></tr>
+    <tr><td>Dead letter</td><td>Operators, replay tools</td><td><code>orders.dlq</code> stream</td><td><code>x-dead-letter-exchange</code>, a Kafka topic by convention</td><td>Nothing, unless nobody watches it</td></tr>
+  </table>
+  <div class="ar-note">صف صف: الـ <b>point-to-point</b> كل message لـ consumer واحد، ومفيش ضياع لو عملت ack بعد الشغل، بس التكرار وارد. الـ <b>pub-sub المؤقت</b> بيوصل للي متوصل دلوقتي بس، وأي حاجة اتبعتت وهو مش موجود راحت. الـ <b>pub-sub المتين</b> كل group بياخد نسخته وله مكانه، والضياع بس في اللي الـ retention مسحه. الـ <b>dead letter</b> بتاع الـ operators وأدوات الـ replay، ومفيش ضياع طول ما فيه حد بيتابعه.</div>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: a DLQ is a queue somebody must own</b>
+    N is a business decision: 3 retries with no delay can exhaust a dependency that was only down for 20 seconds. Put the backoff before the DLQ (<a href="./22-retry-timeout-fallback.html">lesson 22</a>), alert on its depth, and treat a growing DLQ as an incident.
+    <div class="ar-note">الـ N قرار business: 3 محاولات من غير انتظار ممكن يخلصوا على dependency كانت واقعة 20 ثانية بس. حط الـ backoff قبل الـ DLQ (<a href="./22-retry-timeout-fallback.html">درس 22</a>)، واعمل alert على حجمه، واعتبر الـ DLQ اللي بيكبر incident.</div>
+  </div>
+
+  <h2 id="p2">Part 2 — Content-based router and message filter <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — الـ content-based router والـ message filter</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A <b>content-based router</b> reads a message and forwards it to one channel, without changing it. Without one, the consumer holds an <code>if</code> per country and amount, and every new market edits and redeploys that consumer. With one, routing is data: a declarative rule table where the first matching rule wins. That's a Strategy selected by rules (<a href="./09-strategy-bridge-template-null-object.html">lesson 09</a>, and <a href="./14-trees-and-rules.html#p4">lesson 14, Part 4</a> for when a table outgrows itself).</p>
+    <p>A <b>message filter</b> removes messages that this flow shouldn't handle, like test orders. A silent filter is indistinguishable from a bug, so count what it drops. Messages the router can't understand or place go to an <b>invalid message channel</b>, which the EIP book treats separately from the dead-letter channel: dead letter means "valid but processing failed", invalid means "I can't interpret this". Neither is ever dropped silently.</p>
+    <p>Because the input stream and the target stream live on the same Redis, the forward can be atomic: <code>MULTI</code> around <code>XADD</code> and <code>XACK</code> means a crash can't duplicate or lose the message in that step. On Redis Cluster that only works if the keys share a hash slot, and across two different brokers you're back to at-least-once and need the dedupe from <a href="./26-message-endpoints-correlation-events.html#p3">the next lesson</a>.</p>
+    <p>Skip the router when one consumer handles everything: a rule table with one row is decoration.</p>
+  </section>
+
+<pre data-file="src/consumer-before.ts"><code class="language-typescript">// ❌ كل market جديد يعني تعديل وdeploy للـ consumer ده
+async function onOrder(order: { country: string; amountCents: number }) {
+  if (order.amountCents &gt;= 5_000_000) return reviewFraud(order);
+  if (order.country === "EG") return fulfilFromCairo(order);
+  if (order.country === "SA") return fulfilFromRiyadh(order);
+  // ❌ أي دولة تانية بتختفي من غير أثر
+}
+</code></pre>
+
+  <pre data-file="src25/p2-router.ts"><code class="language-typescript">import { connectLab, readGroup } from "./lab.ts";
+import type { Redis } from "ioredis";
+
+type Order = { orderId: string; country: string; amountCents: number; test: boolean };
+type Route = { name: string; when: (o: Order) =&gt; boolean; to: string };
+
+// الجدول ده هو الـ router كله: market جديد يبقى سطر جديد، مش if جديد
+const routes: readonly Route[] = [
+  { name: "high-value", when: (o) =&gt; o.amountCents &gt;= 5_000_000, to: "fraud.review" },
+  { name: "egypt", when: (o) =&gt; o.country === "EG", to: "fulfil.eg" },
+  { name: "saudi", when: (o) =&gt; o.country === "SA", to: "fulfil.sa" },
+];
+
+// الترتيب في الجدول مقصود: أول rule تنطبق هي اللي بتكسب
+export const routeOrder = (o: Order): string | undefined =&gt; routes.find((rule) =&gt; rule.when(o))?.to;
+
+const INVALID = "orders.invalid";
+
+function parse(raw: Record&lt;string, string&gt;): Order | undefined {
+  const amountCents = Number(raw.amountCents);
+  if (!raw.orderId || !raw.country || !Number.isInteger(amountCents)) return undefined;
+  return { orderId: raw.orderId, country: raw.country, amountCents, test: raw.test === "1" };
+}
+
+// الـ router نفسه: XADD والـ XACK في MULTI واحد عشان الـ message متتنسخش ولا تضيع
+async function forward(r: Redis, id: string, to: string, raw: Record&lt;string, string&gt;, reason?: string): Promise&lt;void&gt; {
+  const fields = [...Object.entries(raw).flat(), ...(reason ? ["reason", reason] : [])];
+  await r.multi().xadd(to, "*", ...fields).xack("orders.in", "router", id).exec();
+}
+
+async function routeBatch(r: Redis): Promise&lt;number&gt; {
+  const batch = await readGroup(r, "orders.in", "router", "router-1", 200);
+  for (const { id, msg } of batch) {
+    const order = parse(msg);
+    if (!order) {
+      await forward(r, id, INVALID, msg, "malformed");
+    } else if (order.test) {
+      // الـ filter: بنسقط الـ test orders، بس بنعدّهم عشان الـ drop يبقى ظاهر
+      await r.multi().incr("router:dropped:test").xack("orders.in", "router", id).exec();
+    } else {
+      const to = routeOrder(order);
+      if (to) await forward(r, id, to, msg);
+      else await forward(r, id, INVALID, msg, "no-route");
+    }
+  }
+  return batch.length;
+}
+
+const r = connectLab();
+await r.flushdb();
+await r.xgroup("CREATE", "orders.in", "router", "0", "MKSTREAM");
+
+const countries = ["EG", "EG", "EG", "SA", "SA", "AE"];
+for (let i = 0; i &lt; 1000; i++) {
+  const fields: string[] = ["orderId", `ord_${i}`, "country", countries[i % countries.length]!];
+  // كل طلب رقم 50 قيمته عالية، وكل 20 test، وكل 97 malformed
+  fields.push("amountCents", i % 97 === 0 ? "not-a-number" : i % 50 === 0 ? "9000000" : "12000");
+  fields.push("test", i % 20 === 0 ? "1" : "0");
+  await r.xadd("orders.in", "*", ...fields);
+}
+
+while ((await routeBatch(r)) &gt; 0);
+
+for (const ch of ["fulfil.eg", "fulfil.sa", "fraud.review", INVALID]) console.log(ch.padEnd(14), await r.xlen(ch));
+console.log("dropped test  ", await r.get("router:dropped:test"));
+const reasons = (await r.xrange(INVALID, "-", "+")).map(([, f]) =&gt; f[f.indexOf("reason") + 1]);
+console.log("invalid reasons", { malformed: reasons.filter((x) =&gt; x === "malformed").length, "no-route": reasons.filter((x) =&gt; x === "no-route").length });
+console.log("pending on orders.in", ((await r.xpending("orders.in", "router")) as [number])[0]);
+await r.quit();
+</code></pre>
+  <pre><code class="language-plaintext">fulfil.eg      455
+fulfil.sa      310
+fraud.review   10
+orders.invalid 176
+dropped test   49
+invalid reasons { malformed: 11, 'no-route': 165 }
+pending on orders.in 0
+</code></pre>
+  <div class="ar-note">جمع الأرقام: 455 + 310 + 10 + 176 + 49 = 1000، يعني كل message ليها مكان معروف. الـ 165 <code>no-route</code> هم أوردرات الإمارات اللي مفيش ليها rule لسه، وظهروا في <code>orders.invalid</code> بدل ما يختفوا. والـ pending صفر.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>content-based router</b> بيقرا الـ message ويبعتها لـ channel واحدة من غير ما يغيّرها. من غيره الـ consumer بيبقى فيه <code>if</code> لكل دولة ومبلغ، وكل market جديد يعني تعديل وdeploy. معاه الـ routing بقى data: جدول rules، وأول rule تنطبق هي اللي بتكسب. ده Strategy بيتختار بـ rules (<a href="./09-strategy-bridge-template-null-object.html">درس 09</a>، و<a href="./14-trees-and-rules.html#p4">الجزء 4 من درس 14</a> لما الجدول يكبر عن حدّه).</p>
+    <p>الـ <b>message filter</b> بيشيل الـ messages اللي الـ flow ده مش بتاعها، زي الـ test orders. الـ filter الساكت شكله زي الـ bug بالظبط، فلازم تعدّ اللي بيسقطه. واللي الـ router مش فاهمه أو مالقاش له مكان يروح <b>invalid message channel</b>، والكتاب بيفرق بينها وبين الـ dead letter: الـ dead letter معناها "الـ message سليمة بس المعالجة فشلت"، والـ invalid معناها "أنا مش فاهم دي أصلًا". والاتنين عمرهم ما يتشالوا في السكوت.</p>
+    <p>ولأن الـ stream الداخل والخارج على نفس الـ Redis، النقل ممكن يبقى atomic: <code>MULTI</code> حوالين <code>XADD</code> و<code>XACK</code> معناها إن الـ crash مايكررش ولا يضيّع في الخطوة دي. على Redis Cluster ده بيشتغل بس لو الـ keys في نفس الـ hash slot، وبين broker واتنين مختلفين بترجع لـ at-least-once ومحتاج الـ dedupe اللي في <a href="./26-message-endpoints-correlation-events.html#p3">الدرس الجاي</a>.</p>
+    <p>سيب الـ router خالص لو consumer واحد بيعمل كل حاجة: جدول فيه صف واحد مجرد زينة.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الشركة بتفتح في الإمارات: بدل PR على 3 consumers، بتضيف سطر في الجدول ده. وفي الـ code review لو لقيت <code>switch</code> على الدولة جوه consumer وآخره <code>default: break</code>، دي الغلطة الشائعة بالظبط: أوردرات بتختفي من غير log، وبتكتشفها من شكوى العميل. لازم الـ <code>default</code> يروح invalid channel.
+    </div>
+  </section>
+
+<pre data-file="definitions.json"><code class="language-json">{
+  "exchanges": [ { "name": "orders.topic", "type": "topic", "vhost": "/", "durable": true } ],
+  "bindings": [
+    { "source": "orders.topic", "destination": "fulfil.eg", "destination_type": "queue",
+      "routing_key": "order.EG.*", "vhost": "/", "arguments": {} },
+    { "source": "orders.topic", "destination": "fulfil.sa", "destination_type": "queue",
+      "routing_key": "order.SA.*", "vhost": "/", "arguments": {} }
+  ]
+}
+</code></pre>
+  <div class="ar-note"><b>مش متشغل هنا.</b> ده الشكل اللي الـ broker هو اللي بيعمل فيه الـ routing: الـ topic exchange بيقارن الـ routing key مع الـ bindings. الحدود: بيشوف الـ key بس، فشرط زي "المبلغ أكبر من 50,000" لازم يتحسب في الـ producer ويتحط في الـ key.</div>
+
+  <h2 id="p3">Part 3 — Splitter, aggregator, recipient list <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — الـ splitter والـ aggregator والـ recipient list</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A <b>splitter</b> turns one message into many. An order spanning three warehouses becomes three messages, each carrying <code>correlationId</code>, <code>sequence</code> and <code>total</code>, because whoever reassembles them needs exactly those three facts.</p>
+    <p>An <b>aggregator</b> is the reverse and it's the hard one, because it's stateful. Its state must survive a restart (a Redis hash here), and it must answer three questions. <i>Is this a duplicate?</i> Store parts in a hash keyed by <code>sequence</code>, so a redelivered part overwrites itself and <code>HLEN</code> stays correct; an <code>INCR</code> counter would double-count. <i>Is it complete?</i> Compare <code>HLEN</code> to <code>total</code>. <i>What if a part never arrives?</i> A deadline in a sorted set, and a sweeper that closes the aggregate with a real <code>shipment_incomplete</code> outcome rather than waiting forever.</p>
+    <p>The crash window decides the design. If the code marks the aggregate done and then publishes the result in two steps, a kill between them loses the result forever: the retry sees "already done" and does nothing. So the Lua script does the <code>HSET</code>, the completion check, the done flag and the <code>XADD</code> of the outcome as one atomic unit. The <code>XACK</code> comes after, and if the process dies before it, the redelivered part hits <code>already-done</code> and emits nothing. The timeout and the completion race for the same done key, so exactly one wins.</p>
+    <p>A <b>recipient list</b> computes the destinations per message, here from each user's notification preferences. Unlike a router, it can pick several channels or none, and "none" should be counted. Ask before building an aggregator: would a query at the end do? If the warehouses write to a <code>shipments</code> table, <code>SELECT count(*)</code> might replace all of it. And skip split and aggregate entirely when all items ship together.</p>
+  </section>
+
+<pre class="diagram">
+                    correlationId=ord_A, seq=1,total=3
+  order ──▶ Splitter ──▶ cairo ──┐
+              │                  │       Aggregator (one Lua = one atomic step)
+              ├──▶ alex  ────────┼──▶    HSET agg:{ord_A} seq -> dedupes
+              └──▶ giza  ────────┘       HLEN == total ? -> XADD shipment_complete
+                                         ZSET deadlines  -> XADD shipment_incomplete
+</pre>
+  <div class="ar-note">الـ order بيتقسم لـ 3 messages، واحدة لكل مخزن، وكل واحدة معاها رقم الأوردر وترتيبها والعدد الكلي. الـ aggregator بيعمل الـ dedupe بالـ <code>HSET</code> على الـ sequence، ولما <code>HLEN</code> يساوي الـ total بيطلّع <code>shipment_complete</code>. ولو الـ deadline في الـ sorted set فات قبل الاكتمال بيطلّع <code>shipment_incomplete</code>.</div>
+
+  <pre data-file="src25/p3-aggregator.ts"><code class="language-typescript">import type { Redis } from "ioredis";
+
+export type Part = { correlationId: string; sequence: number; total: number; warehouse: string };
+
+// الـ splitter: أوردر واحد بيتقسم message لكل مخزن، ومعاها اللي الـ aggregator محتاجه
+export function splitOrder(orderId: string, lines: { sku: string; warehouse: string }[]): Part[] {
+  const warehouses = [...new Set(lines.map((l) =&gt; l.warehouse))];
+  return warehouses.map((warehouse, i) =&gt; ({
+    correlationId: orderId,
+    sequence: i + 1,
+    total: warehouses.length,
+    warehouse,
+  }));
+}
+
+// كل ده atomic جوه Redis: الـ HSET بالـ sequence بيخلّي التكرار مايزودش العدد
+const APPLY = `
+if redis.call('EXISTS', KEYS[2]) == 1 then return 'already-done' end
+redis.call('HSET', KEYS[1], ARGV[2], ARGV[3])
+redis.call('EXPIRE', KEYS[1], ARGV[5])
+redis.call('ZADD', KEYS[3], 'NX', ARGV[6], ARGV[1])
+if redis.call('HLEN', KEYS[1]) == tonumber(ARGV[4]) then
+  redis.call('SET', KEYS[2], '1', 'EX', ARGV[5])
+  redis.call('ZREM', KEYS[3], ARGV[1])
+  redis.call('XADD', KEYS[4], '*', 'orderId', ARGV[1], 'outcome', 'shipment_complete', 'parts', ARGV[4])
+  return 'completed'
+end
+return 'waiting'`;
+
+// الـ timeout بيتنافس مع الاكتمال على نفس الـ done key، فواحد بس اللي يكسب
+const EXPIRE_ONE = `
+if redis.call('ZREM', KEYS[3], ARGV[1]) == 0 then return 0 end
+if redis.call('SET', KEYS[2], '1', 'NX', 'EX', ARGV[3]) == false then return 0 end
+local got = redis.call('HKEYS', KEYS[1])
+redis.call('XADD', KEYS[4], '*', 'orderId', ARGV[1], 'outcome', 'shipment_incomplete', 'received', table.concat(got, ','), 'total', ARGV[2])
+return 1`;
+
+const TTL_SECONDS = 86_400;
+const DEADLINES = "agg:deadlines";
+const keys = (id: string) =&gt; [`agg:{${id}}`, `agg:{${id}}:done`, DEADLINES, "shipments.out"] as const;
+
+export async function applyPart(r: Redis, p: Part, timeoutMs: number): Promise&lt;string&gt; {
+  const deadline = Date.now() + timeoutMs;
+  return (await r.eval(APPLY, 4, ...keys(p.correlationId), p.correlationId, p.sequence, p.warehouse, p.total, TTL_SECONDS, deadline)) as string;
+}
+
+export async function sweepTimeouts(r: Redis, totals: (id: string) =&gt; number): Promise&lt;number&gt; {
+  const due = await r.zrangebyscore(DEADLINES, "-inf", Date.now());
+  let expired = 0;
+  for (const id of due) expired += (await r.eval(EXPIRE_ONE, 4, ...keys(id), id, totals(id), TTL_SECONDS)) as number;
+  return expired;
+}
+
+export const outcomes = async (r: Redis) =&gt;
+  (await r.xrange("shipments.out", "-", "+")).map(([, f]) =&gt; Object.fromEntries(Array.from({ length: f.length / 2 }, (_, i) =&gt; [f[i * 2], f[i * 2 + 1]])));
+</code></pre>
+  <pre data-file="src25/p3-basic.ts"><code class="language-typescript">import { connectLab } from "./lab.ts";
+import { applyPart, outcomes, splitOrder, sweepTimeouts } from "./p3-aggregator.ts";
+
+const r = connectLab();
+await r.flushdb();
+
+const parts = splitOrder("ord_A", [
+  { sku: "phone", warehouse: "cairo" },
+  { sku: "case", warehouse: "alex" },
+  { sku: "laptop", warehouse: "giza" },
+  { sku: "charger", warehouse: "cairo" },
+]);
+console.log("split into", parts.map((p) =&gt; `${p.sequence}/${p.total}:${p.warehouse}`).join("  "));
+
+// تكرار متعمد للجزء التاني: at-least-once يعني ده هيحصل في الحقيقة
+const delivery = [parts[0]!, parts[1]!, parts[1]!, parts[2]!, parts[2]!];
+for (const p of delivery) console.log(`  seq ${p.sequence}`, await applyPart(r, p, 60_000));
+
+// الأوردر التاني: جزء 3 مش هييجي أبدًا، فالـ timeout هو اللي يقفله
+const missing = splitOrder("ord_B", [
+  { sku: "tv", warehouse: "cairo" },
+  { sku: "remote", warehouse: "alex" },
+  { sku: "mount", warehouse: "giza" },
+]);
+await applyPart(r, missing[0]!, 50);
+await applyPart(r, missing[1]!, 50);
+await new Promise((done) =&gt; setTimeout(done, 80));
+console.log("expired by timeout", await sweepTimeouts(r, () =&gt; 3));
+console.log("sweep again", await sweepTimeouts(r, () =&gt; 3));
+console.log(await outcomes(r));
+await r.quit();
+</code></pre>
+  <pre><code class="language-plaintext">split into 1/3:cairo  2/3:alex  3/3:giza
+  seq 1 waiting
+  seq 2 waiting
+  seq 2 waiting
+  seq 3 completed
+  seq 3 already-done
+expired by timeout 1
+sweep again 0
+[
+  { orderId: 'ord_A', outcome: 'shipment_complete', parts: '3' },
+  {
+    orderId: 'ord_B',
+    outcome: 'shipment_incomplete',
+    received: '1,2',
+    total: '3'
+  }
+]
+</code></pre>
+  <div class="ar-note">الجزء 2 اتكرر والعدد ما زادش (لسه <code>waiting</code>). أول ما الجزء 3 وصل طلع <code>completed</code>، وتكراره رجّع <code>already-done</code> من غير ما يطلّع نتيجة تانية. الأوردر <code>ord_B</code> ناقصه جزء، فالـ sweep قفله بـ <code>shipment_incomplete</code> ومعاه الأجزاء اللي وصلت، والـ sweep التاني رجّع 0 فمفيش إغلاق مرتين.</div>
+
+  <pre data-file="src25/p3-worker.ts"><code class="language-typescript">import { connectLab, readGroup, toObj, type Entry } from "./lab.ts";
+import { applyPart, type Part } from "./p3-aggregator.ts";
+
+const r = connectLab();
+const crashAfter = Number(process.env.CRASH_AFTER ?? 0);
+const name = process.env.CONSUMER ?? "w";
+let applied = 0;
+
+const toPart = (m: Record&lt;string, string&gt;): Part =&gt; ({
+  correlationId: m.correlationId!,
+  sequence: Number(m.sequence),
+  total: Number(m.total),
+  warehouse: m.warehouse!,
+});
+
+async function handle({ id, msg }: Entry): Promise&lt;void&gt; {
+  await applyPart(r, toPart(msg), 60_000);
+  applied++;
+  // نقطة الخطر بالظبط: الـ Lua خلص والـ XACK لسه ماحصلش، وهنا الـ process بيتقتل بجد
+  if (crashAfter &amp;&amp; applied === crashAfter) process.kill(process.pid, "SIGKILL");
+  await r.xack("shipments.in", "agg", id);
+}
+
+for (;;) {
+  const [, claimed] = (await r.xautoclaim("shipments.in", "agg", name, 0, "0", "COUNT", 100)) as [string, [string, string[]][]];
+  const entries: Entry[] = claimed.map(([id, f]) =&gt; ({ id, msg: toObj(f) }));
+  entries.push(...(await readGroup(r, "shipments.in", "agg", name, 50)));
+  if (entries.length === 0) break;
+  for (const e of entries) await handle(e);
+}
+console.log(JSON.stringify({ name, applied }));
+await r.quit();
+</code></pre>
+  <pre data-file="src25/p3-kill.ts"><code class="language-typescript">import { spawn } from "node:child_process";
+import { connectLab } from "./lab.ts";
+import { outcomes, splitOrder } from "./p3-aggregator.ts";
+
+const r = connectLab();
+await r.flushdb();
+await r.xgroup("CREATE", "shipments.in", "agg", "0", "MKSTREAM");
+
+const ORDERS = 200;
+const warehouses = ["cairo", "alex", "giza"];
+for (let i = 0; i &lt; ORDERS; i++) {
+  const lines = warehouses.map((warehouse) =&gt; ({ sku: "sku", warehouse }));
+  for (const p of splitOrder(`ord_${i}`, lines)) {
+    await r.xadd("shipments.in", "*", "correlationId", p.correlationId, "sequence", p.sequence, "total", p.total, "warehouse", p.warehouse);
+  }
+}
+
+// تشغيل worker في process منفصل، وبنستنى لحد ما يخلص أو يتقتل
+function runWorker(consumer: string, crashAfter: number): Promise&lt;number | string | null&gt; {
+  return new Promise((done) =&gt; {
+    const child = spawn(process.execPath, ["--no-warnings", "src25/p3-worker.ts"], {
+      env: { ...process.env, CONSUMER: consumer, CRASH_AFTER: String(crashAfter) },
+      stdio: "inherit",
+    });
+    child.on("exit", (code, signal) =&gt; done(signal ?? code));
+  });
+}
+
+console.log("worker-1 exit:", await runWorker("worker-1", 300));
+const [pending] = (await r.xpending("shipments.in", "agg")) as [number];
+console.log("pending left by the dead worker:", pending);
+console.log("worker-2 exit:", await runWorker("worker-2", 0));
+
+const all = await outcomes(r);
+console.log("outcomes", all.length, "unique orders", new Set(all.map((o) =&gt; o.orderId)).size);
+console.log("left pending", ((await r.xpending("shipments.in", "agg")) as [number])[0]);
+await r.quit();
+</code></pre>
+  <pre><code class="language-plaintext">worker-1 exit: 1
+pending left by the dead worker: 1
+{"name":"worker-2","applied":301}
+worker-2 exit: 0
+outcomes 200 unique orders 200
+left pending 0
+</code></pre>
+  <div class="ar-note">الـ worker اتقتل بجد بـ <code>SIGKILL</code> في اللحظة الخطر: بعد الـ Lua وقبل الـ <code>XACK</code>. على Windows الـ exit بيظهر كـ <code>1</code> مش كـ signal، وعلى Linux هتشوف <code>SIGKILL</code>. <code>worker-2</code> عمل 301 applies (الـ 300 الباقيين + واحد اتسلّم تاني)، يعني 601 على 600 part، والنتيجة 200 outcome لـ 200 أوردر من غير أي تكرار.</div>
+
+  <pre data-file="src25/p3-recipients.ts"><code class="language-typescript">import { connectLab } from "./lab.ts";
+
+const r = connectLab();
+await r.flushdb();
+
+type Notification = { userId: string; kind: "invoice_paid" | "marketing" };
+type Prefs = { email: boolean; sms: boolean; push: boolean; marketing: boolean };
+
+const prefsByUser: Record&lt;string, Prefs&gt; = {
+  u_1: { email: true, sms: false, push: true, marketing: true },
+  u_2: { email: false, sms: true, push: false, marketing: false },
+  u_3: { email: false, sms: false, push: false, marketing: false },
+};
+
+// الـ recipient list: الـ channels بتتحسب لكل message من الـ preferences
+function recipientsFor(n: Notification, p: Prefs): string[] {
+  if (n.kind === "marketing" &amp;&amp; !p.marketing) return [];
+  return [p.email &amp;&amp; "notify.email", p.sms &amp;&amp; "notify.sms", p.push &amp;&amp; "notify.push"].filter((x): x is string =&gt; Boolean(x));
+}
+
+async function dispatch(n: Notification): Promise&lt;number&gt; {
+  const targets = recipientsFor(n, prefsByUser[n.userId]!);
+  if (targets.length === 0) {
+    await r.incr(`notify:no_recipient:${n.kind}`);
+    return 0;
+  }
+  // كل الـ XADD في MULTI: يا كل الـ channels توصلها الـ message يا مفيش
+  const tx = r.multi();
+  for (const t of targets) tx.xadd(t, "*", "userId", n.userId, "kind", n.kind);
+  await tx.exec();
+  return targets.length;
+}
+
+const sent = [
+  await dispatch({ userId: "u_1", kind: "invoice_paid" }),
+  await dispatch({ userId: "u_2", kind: "invoice_paid" }),
+  await dispatch({ userId: "u_2", kind: "marketing" }),
+  await dispatch({ userId: "u_3", kind: "invoice_paid" }),
+];
+console.log("recipients per message", sent);
+for (const ch of ["notify.email", "notify.sms", "notify.push"]) console.log(ch.padEnd(13), await r.xlen(ch));
+console.log("no recipient:", await r.get("notify:no_recipient:invoice_paid"), "invoice,", await r.get("notify:no_recipient:marketing"), "marketing");
+await r.quit();
+</code></pre>
+  <pre><code class="language-plaintext">recipients per message [ 2, 1, 0, 0 ]
+notify.email  1
+notify.sms    1
+notify.push   1
+no recipient: 1 invoice, 1 marketing
+</code></pre>
+  <div class="ar-note">أول user اتبعتله على قناتين، التاني على قناة، والـ marketing لـ <code>u_2</code> اتمنعت لأنه رافضها، و<code>u_3</code> قافل كل حاجة. الاتنين اللي من غير recipient اتعدّوا بدل ما يختفوا.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>splitter</b> بيحوّل message واحدة لكذا واحدة. أوردر على 3 مخازن بيبقى 3 messages، وكل واحدة معاها <code>correlationId</code> و<code>sequence</code> و<code>total</code>، لأن اللي هيجمّع محتاج التلاتة دول بالظبط.</p>
+    <p>الـ <b>aggregator</b> هو العكس وهو الجزء الصعب، لأنه stateful. الـ state لازم تعيش بعد الـ restart (هنا Redis hash)، ولازم يجاوب على 3 أسئلة. <i>ده تكرار؟</i> خزّن الأجزاء في hash بالـ <code>sequence</code>، فالجزء المتكرر بيكتب فوق نفسه و<code>HLEN</code> يفضل صح، أما <code>INCR</code> فهيعدّ مرتين. <i>خلص؟</i> قارن <code>HLEN</code> بالـ <code>total</code>. <i>طب لو جزء ماجاش؟</i> deadline في sorted set، و sweeper بيقفل الـ aggregate بنتيجة حقيقية <code>shipment_incomplete</code> بدل ما يستنى للأبد.</p>
+    <p>نافذة الـ crash هي اللي بتحدد التصميم. لو الكود علّم إنه خلص وبعدين نشر النتيجة في خطوتين، قتل الـ process بينهم بيضيّع النتيجة للأبد: الـ retry هيشوف "خلص" ومش هيعمل حاجة. فالـ Lua بيعمل الـ <code>HSET</code> وفحص الاكتمال والـ done flag و<code>XADD</code> بتاع النتيجة كوحدة atomic واحدة. الـ <code>XACK</code> بعدها، ولو الـ process مات قبله، الجزء لما يترجع بياخد <code>already-done</code> ومايطلّعش حاجة. والـ timeout والاكتمال بيتنافسوا على نفس الـ done key، فواحد بس اللي يكسب.</p>
+    <p>الـ <b>recipient list</b> بيحسب الوجهات لكل message، هنا من preferences كل user. عكس الـ router هو ممكن يختار كذا channel أو ولا واحدة، و"ولا واحدة" دي لازم تتعدّ. وقبل ما تبني aggregator اسأل: هل query في الآخر تكفي؟ لو المخازن بتكتب في جدول <code>shipments</code>، ممكن <code>SELECT count(*)</code> يغنيك عن كل ده. وسيب الـ split والـ aggregate خالص لو كل الأصناف بتتشحن مع بعض.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      أوردر فيه أصناف من 3 مخازن، والعميل لازم ياخد إيميل "اتشحن بالكامل" مرة واحدة بس. الـ aggregator ده هو اللي بيضمن كده حتى لو الـ queue كررت أو الـ pod اتقتل في deploy. والغلطة الشائعة اللي هتشوفها في الـ review: <code>INCR</code> وبعدها <code>if (count === total) sendEmail()</code> في خطوتين: تكرار واحد يبعت الإيميل بدري، و crash واحد يبلع الإيميل نهائيًا.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Your aggregator emits 'order complete' but sometimes the email never goes out, and retries don't help. Why?" → The done flag and the publish are two steps. A crash between them leaves "done" set, so every retry skips the publish. Make them atomic (one Lua script, or one transaction with an outbox), and have the retry be a no-op only because the outcome already exists.
+    <div class="ar-note">"الـ aggregator بيقول 'الأوردر خلص' وأحيانًا الإيميل مابيطلعش، والـ retry مش بيصلّح. ليه؟" ← الـ done flag والنشر في خطوتين. crash بينهم بيسيب "خلص" متسجلة، فكل retry بيعدّي النشر. خليهم atomic (Lua script واحد، أو transaction واحدة مع outbox)، وخلّي الـ retry مايعملش حاجة لأن النتيجة موجودة فعلًا.</div>
+  </div>
+
+  <h2 id="p4">Part 4 — Translator and canonical data model <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ translator والـ canonical data model</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A <b>message translator</b> converts one format into another so sender and receiver don't need to know each other's shape. Three partners sending payment webhooks in three shapes (a Stripe-like event, a Paymob-like callback and a legacy CSV row, all illustrative) get one translator each, and all produce <code>PaymentReceived v1</code>. Validate on both sides with Zod: parse the input so a partner's change fails loudly at the boundary, and parse the output so a translator bug can't publish a malformed canonical event. Translating at a boundary to protect your model is exactly the anti-corruption layer from <a href="./07-adapter-facade-gateway.html#p3">lesson 07, Part 3</a>.</p>
+    <p>The <b>canonical data model</b> pays off by arithmetic. With <i>n</i> systems translating directly you need <i>n(n−1)</i> translators, one per direction per pair. Through a canonical model you need <i>2n</i>: one in, one out each. For 4 systems that's 12 against 8. For 2 systems it's 2 against 4, so a canonical model makes things worse.</p>
+    <p>The trap is a single enterprise-wide canonical schema that every team must agree on. It becomes a committee, each change becomes a cross-team negotiation, and the model bloats with every team's optional fields. Prefer one canonical model per bounded context, translating at the context edges. Schema evolution and registries are <a href="../../10-System-Design/lessons/22-event-schemas-batch-stream.html">section 10 · 2.4</a> (a registry is not run here). The <code>version: 1</code> field is what makes evolving this one possible.</p>
+  </section>
+
+<pre class="diagram">
+  point-to-point: n(n-1)              canonical: 2n
+
+   A ◀──▶ B                           A ─┐           ┌─▶ A
+   ▲ ╲  ╱ ▲                           B ─┼─▶ model ──┼─▶ B
+   │  ╳   │        4 systems = 12     C ─┤           ├─▶ C      4 systems = 8
+   ▼ ╱  ╲ ▼                           D ─┘           └─▶ D
+   C ◀──▶ D
+</pre>
+  <div class="ar-note">شمال: كل نظام بيترجم لكل نظام تاني، يعني 4 أنظمة محتاجين 12 translator. يمين: كل نظام بيترجم من وإلى شكل واحد بس، يعني 8. والمعادلة بتتعكس عند نظامين: 2 ضد 4.</div>
+
+  <pre data-file="src25/p4-translators.ts"><code class="language-typescript">import { z } from "zod";
+
+// الـ canonical model: شكل واحد متفق عليه، والفلوس دايمًا integer بالـ minor units
+export const PaymentReceivedV1 = z.strictObject({
+  type: z.literal("PaymentReceived"),
+  version: z.literal(1),
+  partner: z.enum(["stripeLike", "paymobLike", "legacyCsv"]),
+  externalId: z.string().min(1),
+  orderId: z.string().min(1),
+  amountMinor: z.number().int().positive(),
+  currency: z.string().length(3),
+  paidAt: z.iso.datetime(),
+});
+export type PaymentReceivedV1 = z.infer&lt;typeof PaymentReceivedV1&gt;;
+
+// المدخل الأول: شكل event فيه object متداخل، والمبلغ integer والوقت unix seconds
+const StripeLikeEvent = z.object({
+  id: z.string(),
+  type: z.literal("payment_intent.succeeded"),
+  created: z.number().int(),
+  data: z.object({
+    object: z.object({ amount: z.number().int(), currency: z.string(), metadata: z.object({ orderId: z.string() }) }),
+  }),
+});
+
+// المدخل التاني: callback مسطح، والمبلغ string بالقروش
+const PaymobLikeCallback = z.object({
+  txn_id: z.coerce.string(),
+  success: z.literal("true"),
+  amount_cents: z.string().regex(/^\d+$/),
+  currency: z.string(),
+  merchant_order_id: z.string(),
+  created_at: z.string(),
+});
+
+// المدخل التالت: سطر CSV قديم، والمبلغ جنيهات بعلامة عشرية
+const LegacyCsvRow = z.tuple([z.string(), z.string(), z.string().regex(/^\d+(\.\d{1,2})?$/), z.string(), z.string()]);
+
+// تحويل المبلغ من string عشان Number("19.99") * 100 بيطلع 1998.9999999999998
+export function decimalToMinor(amount: string): number {
+  const [whole, fraction = ""] = amount.split(".");
+  return Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+}
+
+type Translator = (raw: unknown) =&gt; PaymentReceivedV1;
+
+// كل translator بيعمل parse للمدخل، وبعدين parse تانية للـ canonical عند الخروج
+export const translators = {
+  stripeLike: (raw) =&gt; {
+    const e = StripeLikeEvent.parse(raw);
+    const p = e.data.object;
+    return PaymentReceivedV1.parse({
+      type: "PaymentReceived", version: 1, partner: "stripeLike", externalId: e.id, orderId: p.metadata.orderId,
+      amountMinor: p.amount, currency: p.currency.toUpperCase(), paidAt: new Date(e.created * 1000).toISOString(),
+    });
+  },
+  paymobLike: (raw) =&gt; {
+    const c = PaymobLikeCallback.parse(raw);
+    return PaymentReceivedV1.parse({
+      type: "PaymentReceived", version: 1, partner: "paymobLike", externalId: c.txn_id, orderId: c.merchant_order_id,
+      amountMinor: Number(c.amount_cents), currency: c.currency.toUpperCase(), paidAt: new Date(c.created_at).toISOString(),
+    });
+  },
+  legacyCsv: (raw) =&gt; {
+    const [ref, orderId, amount, currency, date] = LegacyCsvRow.parse(String(raw).split(","));
+    return PaymentReceivedV1.parse({
+      type: "PaymentReceived", version: 1, partner: "legacyCsv", externalId: ref, orderId,
+      amountMinor: decimalToMinor(amount), currency, paidAt: new Date(`${date}T00:00:00Z`).toISOString(),
+    });
+  },
+} satisfies Record&lt;PaymentReceivedV1["partner"], Translator&gt;;
+
+const samples = {
+  stripeLike: { id: "evt_1", type: "payment_intent.succeeded", created: 1790000000, data: { object: { amount: 15050, currency: "egp", metadata: { orderId: "ord_1" } } } },
+  paymobLike: { txn_id: 998877, success: "true", amount_cents: "15050", currency: "EGP", merchant_order_id: "ord_2", created_at: "2026-11-01T10:00:00Z" },
+  legacyCsv: "REF-77,ord_3,150.50,EGP,2026-11-01",
+} as const;
+
+for (const [partner, raw] of Object.entries(samples)) {
+  const out = translators[partner as keyof typeof translators](raw);
+  console.log(partner.padEnd(11), out.externalId.padEnd(7), out.orderId, out.amountMinor, out.currency, out.paidAt);
+}
+
+// الـ bug اللي بسببه الـ decimalToMinor موجودة
+console.log("float version  ", Number("19.99") * 100, "| string version", decimalToMinor("19.99"));
+
+// مدخل غلط: الـ translator بيرفضه بدل ما يدخّل حاجة بايظة للنظام
+const bad = PaymobLikeCallback.safeParse({ txn_id: 1, success: "true", amount_cents: "150.5", currency: "EGP", merchant_order_id: "ord_9", created_at: "x" });
+console.log("bad callback rejected:", !bad.success, bad.success ? "" : bad.error.issues.map((i) =&gt; i.path.join(".")).join(","));
+
+// عدد الـ translators: كل نظام لكل نظام، ضد نظام واحد مع الـ canonical
+console.log("systems  point-to-point  canonical");
+for (const n of [2, 3, 4, 6, 10]) console.log(String(n).padEnd(8), String(n * (n - 1)).padEnd(15), 2 * n);
+</code></pre>
+  <pre><code class="language-plaintext">stripeLike  evt_1   ord_1 15050 EGP 2026-09-21T14:13:20.000Z
+paymobLike  998877  ord_2 15050 EGP 2026-11-01T10:00:00.000Z
+legacyCsv   REF-77  ord_3 15050 EGP 2026-11-01T00:00:00.000Z
+float version   1998.9999999999998 | string version 1999
+bad callback rejected: true amount_cents
+systems  point-to-point  canonical
+2        2               4
+3        6               6
+4        12              8
+6        30              12
+10       90              20
+</code></pre>
+  <div class="ar-note">التلات مدخلات اللي شكلهم مختلف طلعوا نفس الـ canonical بالظبط: <code>15050</code> و<code>EGP</code>. السطر بتاع الـ float بيوضّح ليه بنحوّل من string: <code>1998.9999999999998</code> كان هيترفض من <code>z.number().int()</code> أو يتقرّب غلط. والـ callback الغلط اترفض عند الحدود. والجدول: عند 2 أنظمة الـ canonical أغلى، وعند 3 متعادلين، ومن 4 وفوق بيكسب.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>message translator</b> بيحوّل format لـ format تاني عشان الـ sender والـ receiver مايعرفوش شكل بعض. تلات partners بيبعتوا payment webhooks بتلات أشكال (event زي Stripe، و callback زي Paymob، وسطر CSV قديم، وكلها أمثلة توضيحية) ليهم translator لكل واحد، وكلهم بيطلّعوا <code>PaymentReceived v1</code>. اعمل validation بـ Zod على الناحيتين: parse للمدخل عشان أي تغيير من الـ partner يفشل بصوت عالي عند الحدود، و parse للمخرج عشان bug في الـ translator مايطلّعش event بايظ. والترجمة عند الحدود عشان تحمي الـ model بتاعك هي بالظبط الـ anti-corruption layer من <a href="./07-adapter-facade-gateway.html#p3">الجزء 3 من درس 07</a>.</p>
+    <p>الـ <b>canonical data model</b> بيكسب بالحساب. لو <i>n</i> أنظمة بيترجموا لبعض مباشرة محتاج <i>n(n−1)</i> translator، واحد لكل اتجاه لكل زوج. عن طريق canonical محتاج <i>2n</i>: واحد داخل وواحد خارج لكل نظام. لـ 4 أنظمة يبقى 12 ضد 8. لنظامين يبقى 2 ضد 4، يعني الـ canonical بيخلّيها أسوأ.</p>
+    <p>الفخ هو schema واحدة على مستوى الشركة كلها وكل الفرق لازم توافق عليها. بتتحول للجنة، وكل تعديل مفاوضات بين فرق، والـ model بيتنفخ بـ optional fields بتاعة كل فريق. الأفضل canonical model لكل bounded context، والترجمة عند حدود الـ context. تطوّر الـ schemas والـ registries في <a href="../../10-System-Design/lessons/22-event-schemas-batch-stream.html">القسم 10 · 2.4</a> (والـ registry مش متشغل هنا). والـ field <code>version: 1</code> هو اللي بيخلّي تطوير الـ schema دي ممكن.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ checkout عندك بيستقبل webhooks من أكتر من payment provider. لو كل provider شكله داخل في الـ domain، هتلاقي <code>if (provider === "x")</code> في كل حتة. الـ translator عند الـ webhook endpoint بيخلّي الـ domain يشوف <code>PaymentReceived</code> بس، و provider جديد يبقى ملف جديد. والغلطة الشائعة: <code>Number(amount) * 100</code>، اللي بيدّيك <code>1998.9999999999998</code> بدل <code>1999</code>.
+    </div>
+  </section>
+
+  <h2 id="p5">Part 5 — Claim check <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — الـ claim check</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A broker is built for many small messages. An 8&nbsp;MB invoice PDF inside a message costs memory on every replica, blocks a single-threaded server while it copies, and in BullMQ sits inside the job's hash. The measurement below is on this loaded Windows machine, so read the ratios rather than the absolute numbers. A <b>claim check</b> stores the payload elsewhere and sends only <code>{ key, sha256, size }</code>, like leaving a coat and keeping the ticket.</p>
+    <p>Broker limits are the other reason, and they change, so check them. As of today's docs, <a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html">SQS</a> allows 1,048,576 bytes (1&nbsp;MiB; older articles still say 256&nbsp;KB), and its Extended Client Library for Java and Python uses exactly this pattern through S3. <a href="https://kafka.apache.org/44/configuration/broker-configs/">Kafka 4.4</a> defaults <code>message.max.bytes</code> to 1,048,588 and the producer's <code>max.request.size</code> to 1,048,576.</p>
+    <p>The hard part is lifecycle. <b>Order</b>: upload first, publish second, so a consumer never holds a dangling reference. <b>Deletion</b>: nobody owns it by default. The usual answer is a TTL on the store that outlasts stream retention plus every retry and the longest DLQ replay you allow; if a DLQ entry can sit for 7 days, a 3-day TTL turns every replay into a failure. <b>Integrity</b>: the consumer verifies the hash, because the store and the message are written separately. A missing or mismatched payload goes straight to the DLQ, since retrying can't bring back a deleted object.</p>
+    <p>Skip it for small payloads, and when the reference creates a dependency the consumer can't reach, such as a partner outside your network with no access to your bucket.</p>
+    <p>Two labels to keep straight below. The store in <code>src25/p5-claim-check.ts</code> is a local HTTP server standing in for S3, and the failures it shows are real. <code>src25/p5-s3-store.ts</code> is the real <code>@aws-sdk/client-s3</code> code, compile-checked on TypeScript 7 and not run here, because this machine has no S3.</p>
+  </section>
+
+  <pre data-file="src25/p5-measure.ts"><code class="language-typescript">import { Queue } from "bullmq";
+import { connectLab } from "./lab.ts";
+
+const r = connectLab();
+const probe = connectLab();
+await r.flushdb();
+
+const KB = "x".repeat(1024);
+const MB8 = "x".repeat(8 * 1024 * 1024);
+const median = (xs: number[]) =&gt; [...xs].sort((a, b) =&gt; a - b)[Math.floor(xs.length / 2)]!;
+const max = (xs: number[]) =&gt; Math.max(...xs);
+
+// قياس: الـ XADD نفسه، ومعاه PING من connection تاني عشان نشوف Redis اتعطل قد إيه
+async function measure(stream: string, payload: string, times: number) {
+  const xadd: number[] = [];
+  const pings: number[] = [];
+  let running = true;
+  const pinger = (async () =&gt; {
+    while (running) {
+      const t = performance.now();
+      await probe.ping();
+      pings.push(performance.now() - t);
+    }
+  })();
+  for (let i = 0; i &lt; times; i++) {
+    const t = performance.now();
+    await r.xadd(stream, "*", "invoiceId", `inv_${i}`, "pdf", payload);
+    xadd.push(performance.now() - t);
+  }
+  running = false;
+  await pinger;
+  const bytes = (await r.memory("USAGE", stream)) as number;
+  return { xaddMedianMs: median(xadd).toFixed(2), pingMaxMs: max(pings).toFixed(1), memoryMB: (bytes / 1048576).toFixed(2) };
+}
+
+console.log("1 KB x 10 ", await measure("invoices.small", KB, 10));
+console.log("8 MB x 10 ", await measure("invoices.big", MB8, 10));
+
+// نفس المشكلة في BullMQ: الـ job data بتتخزن كـ JSON جوه hash في Redis
+const queue = new Queue("invoices", { connection: { host: "127.0.0.1", port: Number(process.env.REDIS_PORT), maxRetriesPerRequest: null } });
+const t = performance.now();
+const job = await queue.add("render", { invoiceId: "inv_1", pdf: MB8 });
+console.log("BullMQ add 8 MB ms", (performance.now() - t).toFixed(1), "| job key MB", (((await r.memory("USAGE", `bull:invoices:${job.id}`)) as number) / 1048576).toFixed(2));
+const claim = await queue.add("render", { invoiceId: "inv_2", key: "invoices/inv_2.pdf", sha256: "a".repeat(64), size: 8388608 });
+console.log("BullMQ add claim   | job key KB", (((await r.memory("USAGE", `bull:invoices:${claim.id}`)) as number) / 1024).toFixed(2));
+
+await queue.obliterate({ force: true });
+await queue.close();
+// تنضيف: الـ 8 MB ماينفعش تفضل في الـ instance بعد القياس
+await r.flushdb();
+await r.quit();
+await probe.quit();
+</code></pre>
+  <pre><code class="language-plaintext">1 KB x 10  { xaddMedianMs: '0.25', pingMaxMs: '1.0', memoryMB: '0.01' }
+8 MB x 10  { xaddMedianMs: '22.08', pingMaxMs: '14.4', memoryMB: '80.00' }
+BullMQ add 8 MB ms 56.5 | job key MB 8.00
+BullMQ add claim   | job key KB 0.49
+</code></pre>
+  <div class="ar-note">الأرقام تقريبية (≈) من Windows عليه ضغط. الـ <code>XADD</code> ≈ 0.25ms لـ 1 KB و≈ 22ms لـ 8 MB، يعني حوالي 88 مرة أبطأ. والـ <code>PING</code> من connection تانية وصل ≈ 14ms، يعني Redis كله كان مشغول وكل العملاء استنوا. الـ memory 80 MB لـ 10 messages. وفي BullMQ الـ job بقت 8 MB مقابل حوالي 0.49 KB لما بقت reference.</div>
+
+  <pre data-file="src25/p5-claim-check.ts"><code class="language-typescript">import { createHash, randomUUID } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { connectLab, readGroup } from "./lab.ts";
+
+// بديل محلي لـ S3 عشان الـ demo: HTTP server بـ PUT و GET و DELETE، مش S3 الحقيقي
+const blobs = new Map&lt;string, Buffer&gt;();
+const server = createServer(async (req, res) =&gt; {
+  const key = req.url!.slice(1);
+  if (req.method === "PUT") {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    blobs.set(key, Buffer.concat(chunks));
+    res.writeHead(200).end();
+  } else if (req.method === "GET" &amp;&amp; blobs.has(key)) {
+    res.writeHead(200).end(blobs.get(key));
+  } else if (req.method === "DELETE") {
+    blobs.delete(key);
+    res.writeHead(204).end();
+  } else {
+    res.writeHead(404).end();
+  }
+});
+await new Promise&lt;void&gt;((ok) =&gt; server.listen(0, "127.0.0.1", ok));
+const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+type Claim = { invoiceId: string; key: string; sha256: string; size: string };
+const sha256 = (b: Uint8Array) =&gt; createHash("sha256").update(b).digest("hex");
+
+// الناحية بتاعة الـ producer: الـ payload في الـ store الأول، وبعدين الـ reference في الـ stream
+async function publishInvoice(r: ReturnType&lt;typeof connectLab&gt;, invoiceId: string, pdf: Buffer&lt;ArrayBuffer&gt;): Promise&lt;void&gt; {
+  const key = `invoices/${invoiceId}-${randomUUID()}.pdf`;
+  await fetch(`${base}/${key}`, { method: "PUT", body: pdf });
+  await r.xadd("invoices", "*", "invoiceId", invoiceId, "key", key, "sha256", sha256(pdf), "size", pdf.length);
+}
+
+class PayloadError extends Error {}
+
+// الناحية بتاعة الـ consumer: نجيب الـ payload ونتأكد من الـ hash قبل ما نثق فيه
+async function loadPayload(c: Claim): Promise&lt;Buffer&gt; {
+  const res = await fetch(`${base}/${c.key}`);
+  if (res.status === 404) throw new PayloadError("payload_missing");
+  const body = Buffer.from(await res.arrayBuffer());
+  if (sha256(body) !== c.sha256) throw new PayloadError("payload_hash_mismatch");
+  return body;
+}
+
+const r = connectLab();
+await r.flushdb();
+await r.xgroup("CREATE", "invoices", "pdf-worker", "0", "MKSTREAM");
+
+const pdf = Buffer.alloc(8 * 1024 * 1024, 7);
+await publishInvoice(r, "inv_ok", pdf);
+await publishInvoice(r, "inv_expired", pdf);
+await publishInvoice(r, "inv_tampered", pdf);
+
+const size = (await r.memory("USAGE", "invoices")) as number;
+console.log("stream memory with 3 claims KB", (size / 1024).toFixed(1), "| blobs held by store", blobs.size);
+
+// محاكاة للي بيحصل في الحقيقة: lifecycle مسح واحد، وواحد اتغيّر في الـ store
+const entries = await readGroup(r, "invoices", "pdf-worker", "w1");
+blobs.delete(entries[1]!.msg.key!);
+blobs.set(entries[2]!.msg.key!, Buffer.from("not the original pdf"));
+
+for (const { id, msg } of entries) {
+  const claim = msg as Claim;
+  try {
+    const body = await loadPayload(claim);
+    console.log(claim.invoiceId, "processed bytes", body.length);
+    await r.xack("invoices", "pdf-worker", id);
+  } catch (err) {
+    if (!(err instanceof PayloadError)) throw err;
+    // الـ retry مش هيرجّع payload اتمسح، فبنروح الـ DLQ على طول ومعانا السبب
+    await r.multi().xadd("invoices.dlq", "*", "invoiceId", claim.invoiceId, "key", claim.key, "reason", err.message).xack("invoices", "pdf-worker", id).exec();
+    console.log(claim.invoiceId, "-&gt; dlq:", err.message);
+  }
+}
+console.log("dlq length", await r.xlen("invoices.dlq"), "| pending", ((await r.xpending("invoices", "pdf-worker")) as [number])[0]);
+
+await r.flushdb();
+await r.quit();
+server.close();
+</code></pre>
+  <pre><code class="language-plaintext">stream memory with 3 claims KB 1.0 | blobs held by store 3
+inv_ok processed bytes 8388608
+inv_expired -&gt; dlq: payload_missing
+inv_tampered -&gt; dlq: payload_hash_mismatch
+dlq length 2 | pending 0
+</code></pre>
+  <div class="ar-note">3 رسايل reference واخدين حوالي 1 KB بس في الـ stream، والـ 3 ملفات (24 MB) في الـ store. الأول اتعالج. التاني الـ payload بتاعه اتمسح فراح الـ DLQ بسبب <code>payload_missing</code>. التالت اتغيّر فاتمسك بالـ hash وراح بسبب <code>payload_hash_mismatch</code>. والـ <b>store</b> هنا HTTP server محلي بديل لـ S3، مش S3 نفسه.</div>
+
+  <pre data-file="src25/p5-s3-store.ts"><code class="language-typescript">import { createHash } from "node:crypto";
+import {
+  GetObjectCommand,
+  PutBucketLifecycleConfigurationCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
+
+const s3 = new S3Client({ region: "eu-central-1" });
+const BUCKET = "invoice-claims";
+
+// الـ key فيه prefix عشان الـ lifecycle rule يمسح الـ claims بس، مش الـ bucket كله
+export async function putClaim(invoiceId: string, pdf: Buffer) {
+  const sha256 = createHash("sha256").update(pdf).digest("base64");
+  const key = `claims/${invoiceId}.pdf`;
+  // الـ ChecksumSHA256 بيخلّي S3 نفسها ترفض الـ upload لو الـ bytes اتغيرت في السكة
+  await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: pdf, ChecksumSHA256: sha256 }));
+  return { key, sha256, size: pdf.length };
+}
+
+export async function getClaim(key: string): Promise&lt;Uint8Array&gt; {
+  const res = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key, ChecksumMode: "ENABLED" }));
+  return res.Body!.transformToByteArray();
+}
+
+// قاعدة الـ TTL: أطول من retention بتاع الـ stream زائد أقصى replay من الـ DLQ
+export const expireClaims = () =&gt;
+  s3.send(
+    new PutBucketLifecycleConfigurationCommand({
+      Bucket: BUCKET,
+      LifecycleConfiguration: {
+        Rules: [{ ID: "expire-claims", Status: "Enabled", Filter: { Prefix: "claims/" }, Expiration: { Days: 14 } }],
+      },
+    }),
+  );
+</code></pre>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ broker معمول لـ messages صغيرة وكتير. PDF فاتورة 8&nbsp;MB جوه message بياكل memory على كل replica، وبيعطّل server شغال single-threaded وهو بينسخه، وفي BullMQ بيقعد جوه الـ hash بتاع الـ job. القياس تحت على Windows عليه ضغط، فبص على النسب مش الأرقام المطلقة. الـ <b>claim check</b> بيحط الـ payload في مكان تاني ويبعت <code>{ key, sha256, size }</code> بس، زي ما بتسيب الجاكيت وتاخد التذكرة.</p>
+    <p>حدود الـ brokers سبب تاني، وبتتغير، فلازم تراجعها. من الـ docs الحالية: <a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html">SQS</a> بيسمح بـ 1,048,576 byte (يعني 1&nbsp;MiB، ومقالات قديمة لسه بتقول 256&nbsp;KB)، والـ Extended Client Library بتاعته لـ Java و Python بتستخدم نفس الـ pattern ده عن طريق S3. و<a href="https://kafka.apache.org/44/configuration/broker-configs/">Kafka 4.4</a> الـ default بتاع <code>message.max.bytes</code> هو 1,048,588، و<code>max.request.size</code> بتاع الـ producer هو 1,048,576.</p>
+    <p>الصعب هو الـ lifecycle. <b>الترتيب</b>: ارفع الأول وبعدين انشر، عشان الـ consumer مايمسكش reference لحاجة مش موجودة. <b>المسح</b>: محدش مسؤول عنه بشكل افتراضي. الحل المعتاد TTL على الـ store أطول من retention بتاع الـ stream زائد كل الـ retries وأطول replay من الـ DLQ. لو entry ممكن تقعد في الـ DLQ 7 أيام، الـ TTL بتاع 3 أيام هيحوّل كل replay لفشل. <b>السلامة</b>: الـ consumer بيتأكد من الـ hash لأن الـ store والـ message بيتكتبوا منفصلين. الـ payload الناقص أو اللي الـ hash بتاعه غلط بيروح الـ DLQ على طول، لأن الـ retry مش هيرجّع object اتمسح.</p>
+    <p>سيبه لو الـ payload صغير، أو لو الـ reference هيعمل dependency الـ consumer مش واصل لها، زي partner بره الشبكة بتاعتك ومالوش access على الـ bucket.</p>
+    <p>فيه علامتين لازم تفرق بينهم: الـ store في <code>src25/p5-claim-check.ts</code> هو HTTP server محلي بديل لـ S3، والأعطال اللي بيوريها حقيقية. أما <code>src25/p5-s3-store.ts</code> فهو كود <code>@aws-sdk/client-s3</code> الحقيقي، اتعمله compile على TypeScript 7 و<b>مش متشغل هنا</b> لأن مفيش S3 على الجهاز ده.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      job بتولّد فاتورة PDF وتبعتها للـ worker اللي بيبعت الإيميل: حط الـ PDF في S3 وابعت الـ key والـ hash في الـ job. وراجع الـ TTL مع retention الـ queue. الغلطة الشائعة: lifecycle rule بيمسح بعد يوم واحد والـ DLQ فيه messages عمرها 3 أيام، فأول replay بعد incident كله بيفشل بـ 404 في أسوأ وقت.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks: a reference is a promise</b>
+    Publish-then-upload gives consumers a key that doesn't exist yet. Upload-then-publish can leave orphans if the publish fails, which is why the TTL is also your garbage collector.
+    <div class="ar-note">النشر قبل الرفع بيدّي الـ consumers key لسه مش موجود. والرفع قبل النشر ممكن يسيب ملفات يتيمة لو النشر فشل، وعشان كده الـ TTL هو كمان الـ garbage collector بتاعك.</div>
+  </div>
+
+  <h2 id="p6">Part 6 — Where routing belongs <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — الـ routing مكانه فين</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The same intake can route in three places, and the choice is a real architecture decision. <b>In the broker</b>: bindings or topic filters. <b>In a router service</b>: a small process that owns the rule table. <b>In each consumer</b>: everyone reads everything and ignores what isn't theirs. The table counts the places to change for a new market and what happens during an outage. "Smart endpoints and dumb pipes", the microservices slogan, argues against business logic in the broker, because broker config is usually outside code review and hard to test. Broker routing is still worth it when the rule is a stable, coarse property like event type or region, and you'd rather not run another service.</p>
+    <p>The router-service outage is less scary than it sounds, and the run below measures it. With the router killed, producers keep writing and the lag grows; nothing is lost, because the input is durable and the router's only state is its group position. Fulfilment stalls for the affected orders until it's back, so run two routers in one consumer group, which is the competing consumers pattern of <a href="./26-message-endpoints-correlation-events.html#p2">the next lesson</a>. Consumer-side routing has no such component, but every consumer pays to read everything: 3 consumers and 1000 messages were 3000 reads for 1000 useful ones, and each consumer sees other markets' data, which may be a compliance issue on its own. Who owns which data and which service is the boundary is <a href="../../09-Software-Architecture/lessons/30-monolith-to-services.html">section 09 · 3.3</a>.</p>
+  </section>
+
+  <table>
+    <tr><th>Where routing lives</th><th>Places to change for a new market</th><th>If it goes down</th><th>Good when</th></tr>
+    <tr><td>Broker (bindings, not run)</td><td>1 binding + 1 queue, in infra config</td><td>Broker down means everything is down; no extra component</td><td>Coarse, stable rules on a routing key</td></tr>
+    <tr><td>Router service (run)</td><td>1 row in one table, 1 deploy</td><td>Lag grows, nothing lost, catches up on restart</td><td>Rules read the payload and change with the business</td></tr>
+    <tr><td>Each consumer (run)</td><td>Every consumer (3 here), 3 deploys</td><td>No router to lose, but 3000 reads for 1000 useful</td><td>Very few consumers, low volume</td></tr>
+  </table>
+  <div class="ar-note">صف صف: <b>في الـ broker</b> بتغيّر binding وqueue في الـ infra، ولو الـ broker وقع كله واقع، وده مناسب للـ rules البسيطة الثابتة على الـ routing key (ومش متشغل هنا). <b>في router service</b> صف واحد وdeploy واحد، ولو وقع الـ lag بيكبر ومفيش ضياع، ومناسب لما الـ rules بتقرا الـ payload وبتتغير مع الـ business. <b>في كل consumer</b> لازم تغيّر كل الـ consumers، وعندك 3000 قراءة عشان 1000 مفيدة، ومناسب بس لعدد قليل جدًا وحجم صغير.</div>
+
+  <pre data-file="src25/p6-router-service.ts"><code class="language-typescript">import { connectLab, readGroup } from "./lab.ts";
+
+const rules: Record&lt;string, string&gt; = { EG: "fulfil.eg", SA: "fulfil.sa" };
+const r = connectLab();
+
+// الـ router كـ service مستقل: بيقرا orders.in، وبيحوّل، ومفيش عنده state غير الـ group
+for (;;) {
+  const batch = await readGroup(r, "orders.in", "router", "router-1", 20);
+  for (const { id, msg } of batch) {
+    const to = rules[msg.country!] ?? "orders.invalid";
+    await r.multi().xadd(to, "*", "orderId", msg.orderId!, "country", msg.country!).xack("orders.in", "router", id).exec();
+  }
+  if (batch.length === 0) await new Promise((wake) =&gt; setTimeout(wake, 5));
+}
+</code></pre>
+  <pre data-file="src25/p6-outage.ts"><code class="language-typescript">import { spawn, type ChildProcess } from "node:child_process";
+import { connectLab, readGroup } from "./lab.ts";
+
+const r = connectLab();
+await r.flushdb();
+await r.xgroup("CREATE", "orders.in", "router", "0", "MKSTREAM");
+
+const startRouter = (): ChildProcess =&gt; spawn(process.execPath, ["--no-warnings", "src25/p6-router-service.ts"], { env: process.env, stdio: "inherit" });
+const routed = async () =&gt; (await r.xlen("fulfil.eg")) + (await r.xlen("fulfil.sa"));
+const lag = async () =&gt; {
+  const [info] = (await r.xinfo("GROUPS", "orders.in")) as (string | number)[][];
+  return info![info!.indexOf("lag") + 1];
+};
+async function publish(from: number, n: number) {
+  for (let i = from; i &lt; from + n; i++) await r.xadd("orders.in", "*", "orderId", `ord_${i}`, "country", i % 2 ? "SA" : "EG");
+}
+async function waitFor(target: number) {
+  while ((await routed()) &lt; target) await new Promise((wake) =&gt; setTimeout(wake, 10));
+}
+
+let router = startRouter();
+await publish(0, 200);
+await waitFor(200);
+console.log("router up      routed", await routed(), "lag", await lag());
+
+// قتل حقيقي للـ router، والـ producers مكمّلين عادي
+router.kill("SIGKILL");
+await new Promise((gone) =&gt; router.once("exit", gone));
+await publish(200, 300);
+console.log("router killed  routed", await routed(), "lag", await lag(), "(producers kept writing)");
+
+router = startRouter();
+await waitFor(500);
+console.log("router back    routed", await routed(), "lag", await lag());
+router.kill("SIGKILL");
+await new Promise((gone) =&gt; router.once("exit", gone));
+
+const eg = await r.xlen("fulfil.eg");
+const sa = await r.xlen("fulfil.sa");
+console.log("eg", eg, "sa", sa, "total", eg + sa, "of 500");
+
+// المقارنة: لو كل consumer هو اللي بيعمل الـ routing، كل واحد لازم يقرا كل حاجة
+await r.flushdb();
+for (const g of ["eg", "sa", "ae"]) await r.xgroup("CREATE", "orders.all", g, "0", "MKSTREAM");
+const countries = ["EG", "EG", "EG", "SA", "SA", "AE"];
+for (let i = 0; i &lt; 1000; i++) await r.xadd("orders.all", "*", "country", countries[i % 6]!);
+
+let reads = 0;
+let useful = 0;
+for (const g of ["eg", "sa", "ae"]) {
+  for (;;) {
+    const batch = await readGroup(r, "orders.all", g, "c1", 200);
+    if (batch.length === 0) break;
+    reads += batch.length;
+    useful += batch.filter((e) =&gt; e.msg.country === g.toUpperCase()).length;
+  }
+}
+console.log("consumer-side routing: reads", reads, "useful", useful, "wasted", reads - useful);
+await r.flushdb();
+await r.quit();
+</code></pre>
+  <pre><code class="language-plaintext">router up      routed 200 lag 0
+router killed  routed 200 lag 300 (producers kept writing)
+router back    routed 500 lag 0
+eg 250 sa 250 total 500 of 500
+consumer-side routing: reads 3000 useful 1000 wasted 2000
+</code></pre>
+  <div class="ar-note">الـ router اتقتل، والـ producers كتبوا 300 زيادة فالـ lag بقى 300 ومفيش ضياع. لما رجع، الـ lag رجع صفر و500 من 500 اتوجّهوا. الجزء الأخير: الـ routing في الـ consumers كلّف 3000 قراءة عشان 1000 مفيدة، يعني 2000 مهدرة.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>نفس الـ intake ممكن يتعمله routing في 3 أماكن، والاختيار قرار architecture حقيقي. <b>في الـ broker</b>: bindings أو topic filters. <b>في router service</b>: process صغير ماسك جدول الـ rules. <b>في كل consumer</b>: الكل بيقرا كل حاجة وبيتجاهل اللي مش بتاعه. الجدول فوق بيعدّ الأماكن اللي بتتغير لـ market جديد وإيه اللي بيحصل وقت الوقوع. شعار "smart endpoints and dumb pipes" بتاع الـ microservices ضد وضع business logic في الـ broker، لأن config الـ broker غالبًا بره الـ code review وصعب يتعمله test. ومع ذلك routing الـ broker يستاهل لما الـ rule تبقى بسيطة وثابتة زي نوع الـ event أو المنطقة، ومش عايز تشغّل service زيادة.</p>
+    <p>وقوع الـ router service أهون مما يبان، والتجربة بتقيسه. الـ router مات، والـ producers مكمّلين والـ lag بيكبر، ومفيش حاجة ضاعت لأن الداخل durable والـ state الوحيدة بتاعته هي مكانه في الـ group. الـ fulfilment بيقف للأوردرات دي لحد ما يرجع، فشغّل 2 routers في consumer group واحد، وده الـ competing consumers بتاع <a href="./26-message-endpoints-correlation-events.html#p2">الدرس الجاي</a>. الـ routing في الـ consumers مفيهوش المكوّن ده، بس كل consumer بيدفع تمن قراءة كل حاجة: 3 consumers و1000 message بقوا 3000 قراءة عشان 1000 مفيدة، وكل consumer بيشوف داتا markets تانية، وده لوحده ممكن يبقى مشكلة compliance. ومين بيملك أنهي داتا وحدود الـ services في <a href="../../09-Software-Architecture/lessons/30-monolith-to-services.html">القسم 09 · 3.3</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو في design review حد قال "نحط الـ routing في الـ broker عشان أبسط"، اسأله: الـ rule بتقرا الـ payload؟ بتتغير كل قد إيه؟ مين بيراجع تغييرها؟ ولو القرار router service، اتأكد إنه 2 instances على الأقل وفيه alert على الـ lag. الغلطة الشائعة: تخلّي كل consumer يعمل filter بنفسه "عشان سهل"، وبعد سنة تلاقي 8 consumers بيقروا كل حاجة وكلهم عندهم نفس الـ if.
+    </div>
+  </section>
+
+<pre class="diagram">
+ partner webhooks        S3-like store (claim check)
+   │ ▲                        ▲ │ key, sha256
+   ▼ │ Translator             │ ▼
+ orders.in (canonical) ──▶ Filter ──▶ Content Router ──┬─▶ fulfil.eg ─▶ Splitter ─┐
+   │ (group: point-to-point)   │                       ├─▶ fulfil.sa              │
+   │                           ▼                       └─▶ fraud.review           ▼
+   ▼                    orders.invalid                             Aggregator (hash + deadlines)
+ orders.dlq  ◀── after N deliveries                                 │
+                                                                    ▼
+                                         shipment_complete / incomplete ─▶ Recipient List
+                                                                     notify.email / sms / push
+</pre>
+  <div class="ar-note">التصميم الكامل: الـ webhooks بتعدّي على الـ translator وتبقى شكل canonical في <code>orders.in</code>، والملفات الكبيرة بتروح الـ store عن طريق claim check. بعدها filter بيشيل الـ test، و router بيوزّع على المخازن أو الـ fraud، واللي مش مفهوم يروح <code>orders.invalid</code>. الـ fulfilment بيقسم الأوردر (splitter) والـ aggregator بيجمّعه وبيطلّع complete أو incomplete، والـ recipient list بيبعت الإشعارات. وأي message فشلت N مرات تروح <code>orders.dlq</code>.</div>
+
+  <div class="callout interview">
+    <b>Interview question: design order intake for 3 countries, with partner webhooks and PDF attachments</b>
+    A strong answer names each pattern and its failure. Translator per partner into a canonical event with validation on both sides. Filter and content-based router with an invalid channel, so nothing vanishes. Splitter and an aggregator whose state is durable, deduped by sequence and closed by a timeout. Claim check for PDFs, with a TTL outlasting retention. DLQ with replay and a depth alert. Routing in a service if rules read the payload, with two instances and a lag alert.
+    <div class="ar-note">"صمّم intake لأوردرات 3 دول مع webhooks من partners ومرفقات PDF." الإجابة القوية بتسمّي كل pattern وإزاي بيفشل: translator لكل partner لـ canonical event مع validation على الناحيتين. filter و content-based router و invalid channel عشان مفيش حاجة تختفي. splitter و aggregator الـ state بتاعه durable وبيعمل dedupe بالـ sequence وبيتقفل بـ timeout. claim check للـ PDFs و TTL أطول من الـ retention. DLQ بـ replay و alert على حجمه. والـ routing في service لو الـ rules بتقرا الـ payload، بـ 2 instances و alert على الـ lag.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Why not just put routing logic in RabbitMQ bindings?" → Bindings only see the routing key, config lives outside code review, and testing it needs a broker. Use bindings for coarse, stable routing; put payload-dependent business rules in a service you can unit test.
+    <div class="ar-note">"ليه مانحطش الـ routing في bindings بتاعة RabbitMQ وخلاص؟" ← الـ bindings بتشوف الـ routing key بس، والـ config بره الـ code review، والـ test بتاعها محتاج broker. استخدم الـ bindings للـ routing البسيط الثابت، وحط الـ business rules اللي بتعتمد على الـ payload في service تقدر تعمله unit test.</div>
+  </div>
+
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Ack first, then move to the DLQ</b>
+<pre><code class="language-typescript">await r.xack(STREAM, GROUP, id);
+// لو الـ process مات هنا، الـ message ضاعت من الاتنين
+await r.xadd(DLQ, "*", ...fields);</code></pre></div>
+    <div class="good"><b>✅ Move first, or do both atomically</b>
+<pre><code class="language-typescript">await r.multi()
+  .xadd(DLQ, "*", ...fields)
+  .xack(STREAM, GROUP, id)
+  .exec();</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>XACK</code> الأول معناه Redis نسي الـ message، ولو crash حصل قبل الـ <code>XADD</code> تبقى اختفت من الـ stream ومن الـ DLQ. ✅ الـ <code>XADD</code> الأول أو <code>MULTI</code> حواليهم: في أسوأ حالة تكرار في الـ DLQ، مش ضياع.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Counting parts with INCR</b>
+<pre><code class="language-typescript">const n = await r.incr(`agg:${id}:count`);
+// الـ redelivery بيزوّد العدد، فبيكتمل بدري
+if (n === total) await publishDone(id);</code></pre></div>
+    <div class="good"><b>✅ A set of sequences</b>
+<pre><code class="language-typescript">await r.hset(`agg:${id}`, seq, warehouse);
+// التكرار بيكتب فوق نفسه، والعدد يفضل صح
+const complete = (await r.hlen(`agg:${id}`)) === total;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>INCR</code> بيعدّ deliveries مش parts، فـ redelivery واحد بيوصّل العدد للـ total قبل ما كل الأجزاء توصل. ✅ الـ hash بالـ <code>sequence</code> بيعدّ أجزاء مختلفة. وفي الإنتاج خليها مع الاكتمال في Lua واحد زي الجزء 3.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ The default branch drops the message</b>
+<pre><code class="language-typescript">const to = routeOrder(order);
+if (to) await forward(r, id, to, msg);
+// مفيش route: ack والـ message اختفت من غير أثر
+await r.xack("orders.in", "router", id);</code></pre></div>
+    <div class="good"><b>✅ Unroutable goes somewhere visible</b>
+<pre><code class="language-typescript">const to = routeOrder(order);
+// لو مفيش route بتروح invalid ومعاها السبب
+await forward(r, id, to ?? INVALID, msg, to ? undefined : "no-route");</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ market جديد بدأ يبعت، ومفيش rule ليه، فكل أوردراته بتتعمل لها ack وبتختفي. ✅ الـ <code>orders.invalid</code> بيخلّيها ظاهرة وتقدر تعمل replay بعد ما تضيف الـ rule، زي الـ 165 أوردر بتوع الإمارات في الجزء 2.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Trusting a reference blindly</b>
+<pre><code class="language-typescript">const res = await fetch(`${base}/${key}`);
+// لو 404 أو اتغيّر، بتعالج الـ error page كأنها PDF
+await renderInvoice(Buffer.from(await res.arrayBuffer()));</code></pre></div>
+    <div class="good"><b>✅ Verify, and DLQ what can't recover</b>
+<pre><code class="language-typescript">const body = await loadPayload(claim);
+// الـ hash اتراجع جوه، والمشكلة بترمي PayloadError للـ DLQ
+await renderInvoice(body);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ من غير فحص الـ status والـ hash، صفحة 404 أو ملف متغيّر بيتعامل معاه كأنه الفاتورة، والعميل بياخد PDF بايظ. ✅ <code>loadPayload</code> بيتأكد، و<code>PayloadError</code> بيروح الـ DLQ، لأن الـ retry مش هيرجّع ملف اتمسح.</p>
+  </section>
+
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Add a market <span class="lvl lvl-1">🟢 easy</span></b>
+    Add an <code>AE</code> rule to the router's table and rerun it. Before you run, predict the counts for <code>fulfil.ae</code> and <code>orders.invalid</code>.
+    <div class="ar-note">ضيف rule لـ <code>AE</code> في جدول الـ router وشغّله تاني. قبل التشغيل توقّع الأرقام بتاعة <code>fulfil.ae</code> و<code>orders.invalid</code>.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/router.ts"><code class="language-typescript">  { name: "uae", when: (o) =&gt; o.country === "AE", to: "fulfil.ae" },
+</code></pre>
+<pre><code class="language-plaintext">fulfil.eg      455
+fulfil.sa      310
+fulfil.ae      165
+fraud.review   10
+orders.invalid 11
+dropped test   49
+invalid reasons { malformed: 11, 'no-route': 0 }
+pending on orders.in 0
+</code></pre>
+      <div class="ar-note">سطر واحد بس. الـ 165 اللي كانوا <code>no-route</code> راحوا <code>fulfil.ae</code>، و<code>orders.invalid</code> نزل لـ 11 وكلهم malformed.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Selective replay <span class="lvl lvl-2">🟡 medium</span></b>
+    Write <code>replayByReason(r, dlq, stream, reason)</code> that replays only the DLQ entries with a given error and leaves the rest. Make the replay and the delete atomic.
+    <div class="ar-note">اكتب <code>replayByReason(r, dlq, stream, reason)</code> بترجّع بس الـ entries اللي ليها error معين وتسيب الباقي. وخلّي الـ replay والمسح atomic.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src25/ex-solutions.ts"><code class="language-typescript">export async function replayByReason(r: Redis, dlq: string, stream: string, reason: string): Promise&lt;number&gt; {
+  let replayed = 0;
+  for (const [id, fields] of (await r.xrange(dlq, "-", "+")) as [string, string[]][]) {
+    const { error, originalId, deliveries: _d, ...original } = toObj(fields);
+    if (error !== reason) continue;
+    await r.multi().xadd(stream, "*", ...Object.entries(original).flat(), "replayOf", originalId!).xdel(dlq, id).exec();
+    replayed++;
+  }
+  return replayed;
+}
+</code></pre>
+      <div class="ar-note">الـ <code>MULTI</code> بيضمن إن الـ entry ماتتمسحش من غير ما تتكتب في الـ stream. اتجرب: entry واحدة رجعت وواحدة فضلت في الـ DLQ.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. When can I delete the blob? <span class="lvl lvl-3">🔴 hard</span></b>
+    A stream has two consumer groups, and each must finish before the payload can be deleted. Write <code>allGroupsDone(r, stream)</code> using <code>XINFO GROUPS</code>. Then explain why a TTL is still needed.
+    <div class="ar-note">stream عليه 2 consumer groups، ولازم الاتنين يخلصوا قبل مسح الـ payload. اكتب <code>allGroupsDone(r, stream)</code> بـ <code>XINFO GROUPS</code>، وبعدين اشرح ليه لسه محتاج TTL.</div>
+    <details><summary>Hint · تلميح</summary>
+      A group is done only when <code>pending</code> and <code>lag</code> are both zero.
+      <div class="ar-note">الـ group يعتبر خلص لما <code>pending</code> و<code>lag</code> يبقوا صفر مع بعض.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src25/ex-solutions.ts"><code class="language-typescript">// تمرين 3: نمسح الـ payload بس لما كل الـ groups تخلص، الـ pending والـ lag الاتنين صفر
+export async function allGroupsDone(r: Redis, stream: string): Promise&lt;boolean&gt; {
+  const groups = (await r.xinfo("GROUPS", stream)) as (string | number | null)[][];
+  return groups.every((g) =&gt; g[g.indexOf("pending") + 1] === 0 &amp;&amp; g[g.indexOf("lag") + 1] === 0);
+}
+</code></pre>
+<pre><code class="language-plaintext">replayed 1 | left in dlq 1 | orders 1
+before any read       false
+pdf done, mail not    false
+mail read, no ack yet false
+both acked            true
+</code></pre>
+      <div class="ar-note">السطر الأول في الـ output ده بتاع تمرين 2. اتجرب مع group بيخلص قبل التاني، و"قرا بس لسه ماعملش ack" رجّعت <code>false</code> صح. ولسه محتاج TTL لأن الـ group ممكن يتشال أو الـ consumer يتأخر للأبد، والملفات اليتيمة من publish فشل مالهاش group أصلًا.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    In your side project, pick one flow that sends a large payload or has an <code>if</code> per market or provider, and apply one pattern: a translator for webhooks, a router with an invalid channel, or a claim check for files. Add a DLQ with a depth alert and write a short ADR with the trade-off.
+    <div class="ar-note">في مشروعك الجانبي اختار flow بيبعت payload كبير أو فيه <code>if</code> لكل market أو provider، وطبّق pattern واحد: translator للـ webhooks، أو router مع invalid channel، أو claim check للملفات. ضيف DLQ مع alert على حجمه، واكتب ADR قصير فيه الـ trade-off.</div>
+    <details><summary>Hint · تلميح</summary>
+      Start with the failure: write the test that kills the worker between the two steps, then build until it passes.
+      <div class="ar-note">ابدأ بالفشل: اكتب test بيقتل الـ worker بين الخطوتين، وبعدين ابني لحد ما ينجح.</div>
+    </details>
+  </div>
+
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Channel types: point-to-point (one consumer per message), pub-sub (a copy each), dead letter (failed too often).</li>
+    <li><code>PUBLISH</code> with no subscriber returns 0 and the message is gone; several groups on one stream is durable pub-sub.</li>
+    <li>Delivery count comes from <code>XPENDING</code>; move with <code>XADD</code> before <code>XACK</code>, or in <code>MULTI</code>.</li>
+    <li>Router: a rule table, first match wins. Filter: count the drops. Unroutable goes to an invalid channel.</li>
+    <li>Dead letter means valid but failing; invalid means uninterpretable.</li>
+    <li>Splitter adds <code>correlationId</code>, <code>sequence</code>, <code>total</code>. Aggregator dedupes by sequence, closes by count or timeout.</li>
+    <li>Done flag and result publish must be atomic, or a crash loses the result forever.</li>
+    <li>Recipient list computes channels per message; count the "none" case.</li>
+    <li>Canonical model: <i>2n</i> against <i>n(n−1)</i>; it loses at 2 systems. One per bounded context, not one per company.</li>
+    <li>Money crosses boundaries as integer minor units; never <code>Number(x) * 100</code>.</li>
+    <li>Claim check: upload first, publish <code>{ key, sha256, size }</code>, verify the hash, TTL beyond retention and DLQ replay.</li>
+    <li>Route in a service when rules read the payload, in the broker when they're coarse and stable; rarely in each consumer.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>أنواع الـ channels: point-to-point (consumer واحد لكل message)، و pub-sub (نسخة لكل واحد)، و dead letter (فشلت كتير).</li>
+      <li><code>PUBLISH</code> من غير subscriber بترجّع 0 والـ message بتضيع، وكذا group على stream واحد ده pub-sub متين.</li>
+      <li>عدد مرات التسليم من <code>XPENDING</code>، والنقل <code>XADD</code> قبل <code>XACK</code> أو جوه <code>MULTI</code>.</li>
+      <li>الـ router جدول rules وأول rule تنطبق تكسب. الـ filter عدّ اللي بيسقطه. واللي مالوش route يروح invalid channel.</li>
+      <li>الـ dead letter يعني سليمة بس بتفشل، والـ invalid يعني مش مفهومة أصلًا.</li>
+      <li>الـ splitter بيضيف <code>correlationId</code> و<code>sequence</code> و<code>total</code>. الـ aggregator بيعمل dedupe بالـ sequence وبيقفل بالعدد أو الـ timeout.</li>
+      <li>الـ done flag ونشر النتيجة لازم يبقوا atomic، وإلا crash يضيّع النتيجة للأبد.</li>
+      <li>الـ recipient list بيحسب الـ channels لكل message، وحالة "ولا واحد" لازم تتعدّ.</li>
+      <li>الـ canonical model: <i>2n</i> ضد <i>n(n−1)</i>، وبيخسر عند نظامين. واحد لكل bounded context مش واحد للشركة كلها.</li>
+      <li>الفلوس تعدّي الحدود integer بالـ minor units، وعمرك ما تعمل <code>Number(x) * 100</code>.</li>
+      <li>الـ claim check: ارفع الأول، وانشر <code>{ key, sha256, size }</code>، واتأكد من الـ hash، و TTL أطول من الـ retention وأطول replay.</li>
+      <li>الـ routing في service لو الـ rules بتقرا الـ payload، وفي الـ broker لو بسيطة وثابتة، ونادرًا في كل consumer.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 08 · 3.3 — Message channel أنواعه: point-to-point (queue)، publish-subscribe (topic)، dead-letter channel</label>
+    <label><input type="checkbox" data-key="r2"> 08 · 3.3 — Message router: content-based router، message filter، splitter/aggregator، recipient list</label>
+    <label><input type="checkbox" data-key="r3"> 08 · 3.3 — Message translator / Canonical data model (و ACL كـ translator)</label>
+    <label><input type="checkbox" data-key="r4"> 08 · 3.3 — Claim check: الـ message فيها reference للـ payload الكبير (S3) مش الـ payload نفسه</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.enterpriseintegrationpatterns.com/patterns/messaging/">Enterprise Integration Patterns — pattern catalogue</a></li>
+    <li><a href="https://redis.io/docs/latest/develop/data-types/streams/">Redis Streams documentation</a></li>
+    <li><a href="https://redis.io/docs/latest/commands/xautoclaim/">Redis — XAUTOCLAIM</a> and <a href="https://redis.io/docs/latest/commands/xpending/">XPENDING</a></li>
+    <li><a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html">Amazon SQS — message quotas</a></li>
+    <li><a href="https://kafka.apache.org/44/configuration/broker-configs/">Apache Kafka 4.4 — broker configs</a></li>
+    <li><a href="https://docs.bullmq.io/">BullMQ documentation</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <!-- ===== Prev / Next (use class="empty" on a span when there is no prev/next) ===== -->
+  <nav class="lesson-nav">
+    <a class="prev" href="./24-rate-limiter-idempotent-receiver.html"><small>← Previous</small>24 · Rate Limit &amp; Idempotency</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./26-message-endpoints-correlation-events.html"><small>Next →</small>26 · Endpoints &amp; Events</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

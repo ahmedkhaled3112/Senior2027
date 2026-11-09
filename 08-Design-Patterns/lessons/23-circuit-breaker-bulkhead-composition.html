@@ -1,0 +1,2244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Resilience as Code II: Circuit Breaker, Bulkhead &amp; Composition — 08 Design Patterns</title>
+<meta name="section" content="08-Design-Patterns">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">08 · Design Patterns</a></span>
+    <span>·</span>
+    <span>Lesson 23 / 35</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <header>
+    <h1>Resilience as Code II: Circuit Breaker, Bulkhead &amp; Composition</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 23 of 35 — Design Patterns</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Node 22+ · TypeScript 7</span>
+      <span class="chip">cockatiel 4 · opossum 10 · pg 8</span>
+      <span class="chip">Prereq: 22 Retry, Timeout, Fallback</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>08 · 3.2 — Circuit Breaker: تكتبه بإيدك (closed/open/half-open، failure threshold، reset timeout، metrics) ثم تقارن بـ opossum/cockatiel</li>
+        <li>08 · 3.2 — Bulkhead: pool منفصل لكل dependency (concurrency limit per downstream)</li>
+        <li>08 · 3.2 — Composing resilience: policy wrapping order (timeout → retry → circuit breaker → bulkhead) وليه الترتيب مهم (cockatiel <code>wrap</code>)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Circuit breaker by hand</a></li>
+      <li><a href="#p2">Part 2 — What counts as failure</a></li>
+      <li><a href="#p3">Part 3 — Yours vs opossum vs cockatiel</a></li>
+      <li><a href="#p4">Part 4 — Bulkhead</a></li>
+      <li><a href="#p5">Part 5 — Order matters</a></li>
+      <li><a href="#p6">Part 6 — The full policy, end to end</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Retries and timeouts decide what one call does. A breaker and a bulkhead decide what the whole service does when a dependency goes bad: whether it keeps hammering a dying provider, and whether a slow reports service can take checkout down with it. Composing them is where most teams get it wrong, because the same three policies in a different order made 3 downstream calls in one run and 9 in another. "Write a circuit breaker" and "does the order of policies matter?" are both exit questions for this section and common senior interview questions.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ retry والـ timeout بيقرروا الـ call الواحد هيعمل إيه. لكن الـ breaker والـ bulkhead بيقرروا الـ service كلها هتعمل إيه لما dependency تبوظ: هتفضل تضرب في provider بيموت ولا لأ، وهل reports service بطيء يقدر يوقّع الـ checkout معاه. والتركيب هو المكان اللي فرق كتير بيغلطوا فيه، لأن نفس التلات policies بترتيب مختلف عملوا 3 calls للـ downstream في run و 9 في run تاني. و"اكتب circuit breaker" و"ترتيب الـ policies بيفرق؟" الاتنين أسئلة خروج من القسم ده، وأسئلة شائعة في interviews السنيور.</p>
+  </section>
+
+  <h2 id="p1">Part 1 — Circuit breaker by hand <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — الـ circuit breaker بإيدك</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A breaker is a state machine with three states. <b>Closed</b>: calls pass and failures are counted. <b>Open</b>: calls are rejected at once and nothing reaches the dependency. <b>Half-open</b>: after a <i>reset timeout</i>, a trial call goes through. If it succeeds the breaker closes, and if it fails the breaker opens again and the timer restarts. This part is the mechanism. For using a library, see <a href="../../04-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html#p3">Node lesson 25, Part 3</a>.</p>
+    <p>Write the bug first, because nearly every hand-rolled breaker has it. The naive version flips to half-open on the first call after the timeout and then lets every call through. At that moment the service has just come back and is at its weakest. In the run below a stand-in that can hold 10 concurrent requests receives all 100 waiting callers: 90 get overloaded and the breaker reopens. The fix is one probe at a time: every other call during half-open is rejected, so 1 call reaches the service and 99 fail fast.</p>
+    <p>Three design choices in the final class matter. The clock is injected, so the tests assert exact times and take 0 ms. A <code>generation</code> number is bumped on every transition, so a slow call that started before the breaker opened can't close it when it finally succeeds. State changes are published through <code>onStateChange</code>, because a breaker nobody graphs is a breaker nobody knows has been open for an hour.</p>
+  </section>
+
+<pre class="diagram">
+                     failures reach the threshold
+   +----------+ -----------------------------------&gt; +----------+
+   |  CLOSED  |                                      |   OPEN   |
+   | calls go |                                      | rejected |
+   | through  |                                      | at once  |
+   +----------+                                      +----------+
+        ^                                              ^     |
+        |                                 probe failed |     | next call after
+        |                                 timer resets |     | the reset timeout
+        |                                              |     v
+        |          probe succeeded                  +-------------+
+        +-------------------------------------------|  HALF-OPEN  |
+                                                    |  one probe, |
+                                                    |  rest fail  |
+                                                    +-------------+
+</pre>
+  <div class="ar-note">تلات حالات. في Closed الـ calls بتعدي والفشل بيتعد. لما الفشل يوصل للـ threshold يروح Open، وفيه كل call بيترفض فورًا. أول call بعد الـ reset timeout بيحوّله Half-open ويبقى هو الـ probe، وأي call تاني في الوقت ده بيترفض. لو الـ probe نجح نرجع Closed، ولو فشل نرجع Open والعداد يبدأ من الأول.</div>
+
+  <p class="ar-note">الأول الـ bug نفسه: النسخة دي بتعدّي كل الطلبات وهي half-open.</p>
+<pre data-file="src/resilience/naive-breaker.ts"><code class="language-typescript">export class NaiveBreaker {
+  state: "closed" | "open" | "half_open" = "closed";
+  #failures = 0;
+  #openedAt = 0;
+  #threshold: number;
+  #resetMs: number;
+  #now: () =&gt; number;
+
+  constructor(threshold: number, resetMs: number, now: () =&gt; number) {
+    this.#threshold = threshold;
+    this.#resetMs = resetMs;
+    this.#now = now;
+  }
+
+  async execute&lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;): Promise&lt;T&gt; {
+    if (this.state === "open") {
+      if (this.#now() - this.#openedAt &lt; this.#resetMs) throw new Error("circuit open");
+      this.state = "half_open";
+    }
+    // غلطة: مفيش أي حد على عدد الـ calls وإحنا half_open
+    try {
+      const result = await fn();
+      this.#failures = 0;
+      this.state = "closed";
+      return result;
+    } catch (err) {
+      this.#failures++;
+      if (this.state === "half_open" || this.#failures &gt;= this.#threshold) {
+        this.state = "open";
+        this.#openedAt = this.#now();
+      }
+      throw err;
+    }
+  }
+}
+</code></pre>
+<pre data-file="src/resilience/half-open-bug.ts"><code class="language-typescript">import { setTimeout as sleep } from "node:timers/promises";
+import { CircuitBreaker, ConsecutiveFailures } from "./breaker.ts";
+import { NaiveBreaker } from "./naive-breaker.ts";
+
+// بديل محلي لخدمة لسه بتفوق: بتستحمل 10 طلبات في نفس الوقت بس
+function recoveringService(capacity: number) {
+  const stats = { reached: 0, peak: 0, ok: 0, overloaded: 0 };
+  let inFlight = 0;
+  async function charge(): Promise&lt;string&gt; {
+    stats.reached++;
+    inFlight++;
+    stats.peak = Math.max(stats.peak, inFlight);
+    const overloaded = inFlight &gt; capacity;
+    await sleep(10);
+    inFlight--;
+    if (overloaded) {
+      stats.overloaded++;
+      throw new Error("503 overloaded");
+    }
+    stats.ok++;
+    return "charged";
+  }
+  return { charge, stats };
+}
+
+type Breaker = { execute&lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;): Promise&lt;T&gt;; readonly state: string };
+
+async function run(label: string, make: (now: () =&gt; number) =&gt; Breaker) {
+  let t = 0;
+  const breaker = make(() =&gt; t);
+  const failing = async (): Promise&lt;string&gt; =&gt; {
+    throw new Error("503");
+  };
+  for (let i = 0; i &lt; 5; i++) await breaker.execute(failing).catch(() =&gt; undefined);
+  const tripped = breaker.state;
+  t += 1000;
+
+  const service = recoveringService(10);
+  const results = await Promise.allSettled(Array.from({ length: 100 }, () =&gt; breaker.execute(service.charge)));
+  const refused = results.filter((r) =&gt; r.status === "rejected" &amp;&amp; /circuit/.test(String(r.reason))).length;
+  const { reached, peak, ok, overloaded } = service.stats;
+  console.log(`${label}: tripped=${tripped} reached=${reached} peak=${peak} ok=${ok} overloaded=${overloaded} refusedFast=${refused} final=${breaker.state}`);
+}
+
+await run("naive", (now) =&gt; new NaiveBreaker(5, 1000, now));
+await run("fixed", (now) =&gt; new CircuitBreaker({ name: "payments", trip: new ConsecutiveFailures(5), resetTimeoutMs: 1000, now }));
+</code></pre>
+
+<pre><code class="language-plaintext">naive: tripped=open reached=100 peak=100 ok=10 overloaded=90 refusedFast=0 final=open
+fixed: tripped=open reached=1 peak=1 ok=1 overloaded=0 refusedFast=99 final=closed
+</code></pre>
+  <div class="ar-note">في الـ naive كل الـ 100 طلب وصلوا الـ service اللي بيستحمل 10 بس، فـ 90 منهم فشلوا والـ breaker اتفتح تاني، يعني الـ service اللي لسه بيفوق اتداس. في الـ fixed طلب واحد بس وصل ونجح، والـ 99 اترفضوا بسرعة، والحالة النهائية closed.</div>
+
+  <p class="ar-note">الكلاس النهائي، بالـ probe الواحد والـ generation والساعة المحقونة.</p>
+<pre data-file="src/resilience/breaker.ts"><code class="language-typescript">export type BreakerState = "closed" | "open" | "half_open";
+
+export class BrokenCircuitError extends Error {
+  constructor(name: string) {
+    super(`circuit "${name}" is open`);
+    this.name = "BrokenCircuitError";
+  }
+}
+
+// السياسة دي بتقرر إمتى نفتح، وPart 2 هيضيف واحدة تانية بنفس الـ interface
+export interface TripPolicy {
+  record(ok: boolean): void;
+  shouldTrip(): boolean;
+  reset(): void;
+}
+
+export class ConsecutiveFailures implements TripPolicy {
+  #streak = 0;
+  #threshold: number;
+  constructor(threshold: number) {
+    this.#threshold = threshold;
+  }
+  record(ok: boolean): void {
+    this.#streak = ok ? 0 : this.#streak + 1;
+  }
+  shouldTrip(): boolean {
+    return this.#streak &gt;= this.#threshold;
+  }
+  reset(): void {
+    this.#streak = 0;
+  }
+}
+
+export interface StateChange {
+  name: string;
+  from: BreakerState;
+  to: BreakerState;
+  at: number;
+  reason: string;
+}
+
+export interface BreakerOptions {
+  name: string;
+  trip: TripPolicy;
+  resetTimeoutMs: number;
+  // الساعة بتتحقن عشان الـ tests تمشي في 0ms من غير sleep
+  now?: () =&gt; number;
+  // مش كل error معناه إن الـ service واقع، والـ predicate ده بيفرّق
+  isFailure?: (err: unknown) =&gt; boolean;
+  // نجاح أبطأ من الرقم ده بيتحسب فشل
+  slowCallMs?: number;
+  onStateChange?: (change: StateChange) =&gt; void;
+}
+
+export class CircuitBreaker {
+  #state: BreakerState = "closed";
+  #openedAt = 0;
+  // بيزيد مع كل transition، فنتيجة call بدأ في حالة قديمة بتتجاهل
+  #generation = 0;
+  #probeInFlight = false;
+  #o: BreakerOptions;
+  #now: () =&gt; number;
+  readonly stats = { calls: 0, successes: 0, failures: 0, rejected: 0 };
+
+  constructor(options: BreakerOptions) {
+    this.#o = options;
+    this.#now = options.now ?? Date.now;
+  }
+
+  get state(): BreakerState {
+    return this.#state;
+  }
+
+  async execute&lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;): Promise&lt;T&gt; {
+    this.#admit();
+    const generation = this.#generation;
+    const isProbe = this.#state === "half_open";
+    const startedAt = this.#now();
+    this.stats.calls++;
+    try {
+      const result = await fn();
+      const limit = this.#o.slowCallMs;
+      const tooSlow = limit !== undefined &amp;&amp; this.#now() - startedAt &gt;= limit;
+      this.#settle(generation, isProbe, !tooSlow);
+      return result;
+    } catch (err) {
+      const counts = this.#o.isFailure?.(err) ?? true;
+      this.#settle(generation, isProbe, !counts);
+      throw err;
+    }
+  }
+
+  #admit(): void {
+    if (this.#state === "open") {
+      if (this.#now() - this.#openedAt &lt; this.#o.resetTimeoutMs) this.#reject();
+      this.#moveTo("half_open", "reset timeout elapsed");
+    }
+    if (this.#state === "half_open") {
+      // الإصلاح: probe واحد بس في المرة، والباقي بيترفض فورًا
+      if (this.#probeInFlight) this.#reject();
+      this.#probeInFlight = true;
+    }
+  }
+
+  #reject(): never {
+    this.stats.rejected++;
+    throw new BrokenCircuitError(this.#o.name);
+  }
+
+  #settle(generation: number, isProbe: boolean, ok: boolean): void {
+    if (ok) this.stats.successes++;
+    else this.stats.failures++;
+    // النتيجة دي جاية من حالة قديمة، فمتأثرش على الحالة الحالية
+    if (generation !== this.#generation) return;
+    if (isProbe) {
+      this.#probeInFlight = false;
+      if (ok) this.#moveTo("closed", "probe succeeded");
+      else this.#moveTo("open", "probe failed");
+      return;
+    }
+    this.#o.trip.record(ok);
+    if (!ok &amp;&amp; this.#o.trip.shouldTrip()) this.#moveTo("open", "failure threshold reached");
+  }
+
+  #moveTo(to: BreakerState, reason: string): void {
+    const from = this.#state;
+    this.#state = to;
+    this.#generation++;
+    this.#probeInFlight = false;
+    if (to === "open") this.#openedAt = this.#now();
+    if (to === "closed") this.#o.trip.reset();
+    this.#o.onStateChange?.({ name: this.#o.name, from, to, at: this.#now(), reason });
+  }
+}
+</code></pre>
+
+  <p class="ar-note">كل حالة مع كل حدث ليها test، والساعة بتتحرك بإيدنا فالـ tests بتاخد صفر millisecond.</p>
+<pre data-file="src/resilience/breaker.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { BrokenCircuitError, CircuitBreaker, ConsecutiveFailures } from "./breaker.ts";
+
+function setup(threshold = 3, resetTimeoutMs = 1000) {
+  let t = 0;
+  const changes: string[] = [];
+  const breaker = new CircuitBreaker({
+    name: "payments",
+    trip: new ConsecutiveFailures(threshold),
+    resetTimeoutMs,
+    now: () =&gt; t,
+    onStateChange: (c) =&gt; changes.push(`${c.from}&gt;${c.to}`),
+  });
+  return { breaker, changes, tick: (ms: number) =&gt; void (t += ms) };
+}
+
+const ok = async () =&gt; "ok";
+const boom = async (): Promise&lt;string&gt; =&gt; {
+  throw new Error("503");
+};
+const fail = (b: CircuitBreaker) =&gt; b.execute(boom).catch(() =&gt; undefined);
+const open = async (b: CircuitBreaker) =&gt; {
+  for (let i = 0; i &lt; 3; i++) await fail(b);
+};
+
+test("closed + success: stays closed and clears the streak", async () =&gt; {
+  const { breaker } = setup();
+  await fail(breaker);
+  await fail(breaker);
+  await breaker.execute(ok);
+  await fail(breaker);
+  await fail(breaker);
+  assert.equal(breaker.state, "closed");
+});
+
+test("closed + failure below threshold: stays closed", async () =&gt; {
+  const { breaker, changes } = setup();
+  await fail(breaker);
+  assert.equal(breaker.state, "closed");
+  assert.deepEqual(changes, []);
+});
+
+test("closed + failure at threshold: opens", async () =&gt; {
+  const { breaker, changes } = setup();
+  await open(breaker);
+  assert.equal(breaker.state, "open");
+  assert.deepEqual(changes, ["closed&gt;open"]);
+});
+
+test("open + call before reset timeout: rejected, fn never runs", async () =&gt; {
+  const { breaker, tick } = setup();
+  await open(breaker);
+  tick(999);
+  let ran = false;
+  await assert.rejects(
+    breaker.execute(async () =&gt; {
+      ran = true;
+    }),
+    BrokenCircuitError,
+  );
+  assert.equal(ran, false);
+  assert.equal(breaker.state, "open");
+});
+
+test("open + call at exactly reset timeout: becomes the probe", async () =&gt; {
+  const { breaker, tick, changes } = setup();
+  await open(breaker);
+  tick(1000);
+  assert.equal(await breaker.execute(ok), "ok");
+  assert.deepEqual(changes, ["closed&gt;open", "open&gt;half_open", "half_open&gt;closed"]);
+});
+
+test("half_open + probe success: closes", async () =&gt; {
+  const { breaker, tick } = setup();
+  await open(breaker);
+  tick(1000);
+  await breaker.execute(ok);
+  assert.equal(breaker.state, "closed");
+});
+
+test("half_open + probe failure: reopens and restarts the timer", async () =&gt; {
+  const { breaker, tick } = setup();
+  await open(breaker);
+  tick(1000);
+  await fail(breaker);
+  assert.equal(breaker.state, "open");
+  tick(999);
+  await assert.rejects(breaker.execute(ok), BrokenCircuitError);
+});
+
+test("half_open + second concurrent call: rejected while the probe runs", async () =&gt; {
+  const { breaker, tick } = setup();
+  await open(breaker);
+  tick(1000);
+  let finishProbe = (_: string) =&gt; {};
+  const probe = breaker.execute(() =&gt; new Promise&lt;string&gt;((r) =&gt; (finishProbe = r)));
+  await assert.rejects(breaker.execute(ok), BrokenCircuitError);
+  finishProbe("ok");
+  await probe;
+  assert.equal(breaker.state, "closed");
+});
+
+test("a late success from before the break does not close it", async () =&gt; {
+  const { breaker, tick } = setup();
+  let finishLate = (_: string) =&gt; {};
+  const late = breaker.execute(() =&gt; new Promise&lt;string&gt;((r) =&gt; (finishLate = r)));
+  await open(breaker);
+  tick(1);
+  finishLate("ok");
+  await late;
+  assert.equal(breaker.state, "open");
+});
+</code></pre>
+
+<pre><code class="language-bash">node --test --test-reporter=spec src/resilience/breaker.test.ts
+</code></pre>
+<pre><code class="language-plaintext">✔ closed + success: stays closed and clears the streak (1.044ms)
+✔ closed + failure below threshold: stays closed (0.5466ms)
+✔ closed + failure at threshold: opens (0.3336ms)
+✔ open + call before reset timeout: rejected, fn never runs (0.4546ms)
+✔ open + call at exactly reset timeout: becomes the probe (0.1773ms)
+✔ half_open + probe success: closes (0.1385ms)
+✔ half_open + probe failure: reopens and restarts the timer (0.7047ms)
+✔ half_open + second concurrent call: rejected while the probe runs (0.2182ms)
+✔ a late success from before the break does not close it (0.3282ms)
+ℹ tests 9
+ℹ pass 9
+ℹ fail 0
+</code></pre>
+  <div class="ar-note">تسع tests نجحوا: كل خانة في جدول الحالات والأحداث تحت ليها test، والأخير بيتأكد إن call قديم نجح متأخر ميقفلش الـ breaker.</div>
+
+  <table>
+    <thead><tr><th>State</th><th>Event</th><th>Next state</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td>closed</td><td>call succeeds</td><td>closed</td><td>failure streak cleared</td></tr>
+      <tr><td>closed</td><td>failure below threshold</td><td>closed</td><td>counted</td></tr>
+      <tr><td>closed</td><td>failure reaches threshold</td><td>open</td><td>timer starts</td></tr>
+      <tr><td>open</td><td>call before reset timeout</td><td>open</td><td>rejected, function never runs</td></tr>
+      <tr><td>open</td><td>call at or after reset timeout</td><td>half_open</td><td>this call is the probe</td></tr>
+      <tr><td>half_open</td><td>probe succeeds</td><td>closed</td><td>policy reset</td></tr>
+      <tr><td>half_open</td><td>probe fails</td><td>open</td><td>timer restarts</td></tr>
+      <tr><td>half_open</td><td>another call during the probe</td><td>half_open</td><td>rejected</td></tr>
+      <tr><td>any</td><td>result from an older state arrives</td><td>unchanged</td><td>ignored, generation differs</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">الجدول صف بصف: closed مع نجاح تفضل closed والعداد يتصفّر. closed مع فشل تحت الـ threshold تفضل closed والفشل يتعد. closed لما الفشل يوصل للـ threshold تروح open والعداد الزمني يبدأ. open قبل الـ reset timeout تفضل open والـ call يترفض والـ function متشتغلش. open عند أو بعد الـ reset timeout تروح half_open والـ call ده هو الـ probe. half_open والـ probe نجح تروح closed والـ policy تتصفّر. half_open والـ probe فشل ترجع open والعداد يبدأ من جديد. half_open وجه call تاني والـ probe لسه شغال يترفض. وفي أي حالة، لو نتيجة وصلت من حالة قديمة تتجاهل لأن الـ generation مختلف.</div>
+
+<pre data-file="src/resilience/breaker-events.ts"><code class="language-typescript">import { CircuitBreaker, ConsecutiveFailures, type StateChange } from "./breaker.ts";
+
+let t = 0;
+// الأحداث هي اللي بتتحول لـ metric و alert، وهنا بنطبعها بس
+const breaker = new CircuitBreaker({
+  name: "payments",
+  trip: new ConsecutiveFailures(3),
+  resetTimeoutMs: 5000,
+  now: () =&gt; t,
+  onStateChange: (c: StateChange) =&gt;
+    console.log(`t=${String(c.at).padStart(5)}ms ${c.name} ${c.from} -&gt; ${c.to} (${c.reason})`),
+});
+
+const up = async () =&gt; "ok";
+const down = async (): Promise&lt;string&gt; =&gt; {
+  throw new Error("503");
+};
+const fire = (fn: () =&gt; Promise&lt;string&gt;) =&gt; breaker.execute(fn).catch(() =&gt; undefined);
+
+for (let i = 0; i &lt; 3; i++) await fire(down);
+t += 2000;
+await fire(up);
+t += 3000;
+await fire(down);
+t += 5000;
+await fire(up);
+console.log(breaker.stats);
+</code></pre>
+
+<pre><code class="language-plaintext">t=    0ms payments closed -&gt; open (failure threshold reached)
+t= 5000ms payments open -&gt; half_open (reset timeout elapsed)
+t= 5000ms payments half_open -&gt; open (probe failed)
+t=10000ms payments open -&gt; half_open (reset timeout elapsed)
+t=10000ms payments half_open -&gt; closed (probe succeeded)
+{ calls: 5, successes: 1, failures: 4, rejected: 1 }
+</code></pre>
+  <div class="ar-note">كل transition اتطبع بوقته وسببه. عند t=5000 الـ probe فشل فرجعنا open، وعند t=10000 نجح فقفلنا. الـ stats: 5 calls وصلوا (3 فشل + probe فاشل + probe ناجح) وcall واحد اترفض وهو open عند t=2000.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ breaker هو state machine بتلات حالات. <b>Closed</b>: الـ calls بتعدي والفشل بيتعد. <b>Open</b>: أي call بيترفض فورًا ومفيش حاجة بتوصل للـ dependency. <b>Half-open</b>: بعد الـ <i>reset timeout</i>، call تجريبي بيعدي. لو نجح الـ breaker يقفل، ولو فشل يفتح تاني والعداد يبدأ من الأول. الجزء ده عن الميكانيزم نفسها، أما استخدام المكتبة فهتلاقيه في <a href="../../04-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html#p3">درس Node رقم 25، Part 3</a>.</p>
+    <p>اكتب الـ bug الأول، لأن تقريبًا كل breaker مكتوب باليد فيه ده. النسخة الـ naive بتتحول half-open مع أول call بعد الـ timeout، وبعدين بتعدّي كل الـ calls. واللحظة دي الـ service لسه راجع وفي أضعف حالاته. في الـ run فوق، بديل محلي بيستحمل 10 طلبات في نفس الوقت وصله الـ 100 اللي مستنيين: 90 منهم حصل لهم overload والـ breaker اتفتح تاني. الحل probe واحد في المرة: أي call تاني وإحنا half-open بيترفض، فـ call واحد بيوصل و 99 بيفشلوا بسرعة.</p>
+    <p>فيه تلات قرارات في الكلاس النهائي مهمين. الساعة محقونة، فالـ tests بتأكد على أوقات مظبوطة وبتاخد صفر ms. ورقم <code>generation</code> بيزيد مع كل transition، فـ call بطيء بدأ قبل ما الـ breaker يفتح مينفعش يقفله لما ينجح متأخر. وتغييرات الحالة بتطلع عن طريق <code>onStateChange</code>، لأن breaker محدش بيرسمه على graph يبقى محدش هيعرف إنه مفتوح من ساعة.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ payment client في الـ checkout: لما الـ provider يبدأ يرد 503، الـ breaker بيوقف الضرب فيه بدل ما كل request يقعد ثانيتين ويفشل. و <code>onStateChange</code> بيتربط بـ metric اسمها مثلًا <code>circuit_state{dep="payments"}</code> و alert لو فضل open أكتر من 5 دقايق. والغلطة الشائعة هنا: half-open من غير حد، فأول ما الـ provider يرجع يتداس تاني.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question (exit-test Q6)</b>
+    "Draw a circuit breaker's states and transitions, then write it." → Closed counts failures and opens at the threshold. Open rejects without calling until the reset timeout passes. The next call makes it half-open and acts as the single probe: success closes it, failure reopens it and restarts the timer. Mention the two details most people miss: limit half-open to one probe, and ignore results from calls that started in an older state.
+    <div class="ar-note">"ارسم حالات الـ circuit breaker والـ transitions، وبعدين اكتبه." ← Closed بيعد الفشل ويفتح عند الـ threshold. Open بيرفض من غير أي call لحد ما الـ reset timeout يخلص. الـ call اللي بعده يحوّله half-open ويبقى هو الـ probe الوحيد: النجاح بيقفله، والفشل بيفتحه تاني ويبدأ العداد من الأول. واذكر التفصيلتين اللي معظم الناس بتنساهم: half-open بـ probe واحد، وتجاهل نتايج الـ calls اللي بدأت في حالة قديمة.</div>
+  </div>
+
+  <h2 id="p2">Part 2 — What counts as failure <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — إيه اللي بيتحسب فشل</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Consecutive count vs rolling window.</b> A consecutive counter is simple and reacts fast to a hard outage, but one success resets it, so a service failing every other call never trips it. A rolling window keeps the last N outcomes in a ring buffer and opens at a failure ratio, here 50% of the last 20, with a volume threshold so 2 failures out of 3 calls at 3 a.m. isn't "67% errors". The ring buffer is O(1) per call and fixed in memory.</p>
+    <p>The comparison below is seeded and repeated over 1000 runs. Under a steady 30% error rate, which is below the 50% threshold, the 20-call window still opened at a median of call 103, because 10 failures in 20 happens by chance. A 100-call window, in its median run, didn't open within 100,000 calls. The price of the larger window is slower detection: 50 failed calls in a hard outage against 10 and 5. Pick the window from how much false tripping and how much delay you can afford.</p>
+    <p><b>Slow calls are failures too.</b> A dependency that answers correctly in 2 seconds instead of 40 ms is holding your threads and sockets; <code>slowCallMs</code> counts it. <b>Business errors are not failures.</b> If <code>CardDeclined</code> counts, five customers with bad cards open the breaker and the sixth customer, with a good card, gets refused by a provider that was healthy all along. Use a predicate: the breaker only counts errors that say something about the dependency.</p>
+    <p><b>State is per instance.</b> Five instances behind a load balancer each learn on their own: 25 failed calls before all of them stop, against 5 with shared state. Sharing state in Redis costs a round trip on the request path (≈0.10 ms p50 against a local Redis in <a href="./24-rate-limiter-idempotent-receiver.html#p3">lesson 24</a>, more over a real network), adds a dependency that can fail too, and needs a decision for when it does. Most teams accept the extra 20 failed calls and keep breakers local. For the system view, see <a href="../../10-System-Design/lessons/24-circuit-breaker-bulkhead-shedding.html">section 10 · 2.5</a>.</p>
+  </section>
+
+<pre data-file="src/resilience/rolling.ts"><code class="language-typescript">import type { TripPolicy } from "./breaker.ts";
+
+export interface RollingOptions {
+  // النسبة اللي بنفتح عندها، مثلًا 0.5
+  ratio: number;
+  // حجم الـ window بعدد الـ calls
+  size: number;
+  // أقل عدد calls قبل ما نحكم (الـ volume threshold)
+  minCalls: number;
+}
+
+export class RollingFailureRate implements TripPolicy {
+  // مصفوفة ring buffer ثابتة الحجم، كل خانة فيها 1 للفشل و0 للنجاح
+  #outcomes: Uint8Array;
+  #next = 0;
+  #count = 0;
+  #failures = 0;
+  #o: RollingOptions;
+
+  constructor(options: RollingOptions) {
+    this.#o = options;
+    this.#outcomes = new Uint8Array(options.size);
+  }
+
+  record(ok: boolean): void {
+    const failed = ok ? 0 : 1;
+    // لما الـ buffer يتملى، أقدم نتيجة بتطلع من العدّاد قبل ما تتكتب فوقها
+    if (this.#count === this.#o.size) this.#failures -= this.#outcomes[this.#next]!;
+    else this.#count++;
+    this.#outcomes[this.#next] = failed;
+    this.#failures += failed;
+    this.#next = (this.#next + 1) % this.#o.size;
+  }
+
+  shouldTrip(): boolean {
+    return this.#count &gt;= this.#o.minCalls &amp;&amp; this.#failures / this.#count &gt;= this.#o.ratio;
+  }
+
+  reset(): void {
+    this.#outcomes.fill(0);
+    this.#next = this.#count = this.#failures = 0;
+  }
+}
+</code></pre>
+<pre data-file="src/resilience/compare-trip-policies.ts"><code class="language-typescript">import { ConsecutiveFailures, type TripPolicy } from "./breaker.ts";
+import { RollingFailureRate } from "./rolling.ts";
+
+// مولّد أرقام بـ seed عشان النتيجة تتكرر بالظبط كل مرة
+function mulberry32(seed: number) {
+  return () =&gt; {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed &gt;&gt;&gt; 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+const consecutive = (): TripPolicy =&gt; new ConsecutiveFailures(5);
+const rolling20 = (): TripPolicy =&gt; new RollingFailureRate({ ratio: 0.5, size: 20, minCalls: 20 });
+const rolling100 = (): TripPolicy =&gt; new RollingFailureRate({ ratio: 0.5, size: 100, minCalls: 100 });
+
+// بترجع رقم الـ call اللي فتح عنده، أو null لو ماتفتحش
+function callsUntilTrip(make: () =&gt; TripPolicy, outcome: (i: number) =&gt; boolean, limit: number): number | null {
+  const policy = make();
+  for (let i = 1; i &lt;= limit; i++) {
+    const ok = outcome(i);
+    policy.record(ok);
+    if (!ok &amp;&amp; policy.shouldTrip()) return i;
+  }
+  return null;
+}
+
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) =&gt; a - b);
+  return s[Math.floor(s.length / 2)]!;
+}
+
+const LIMIT = 100_000;
+for (const [label, make] of [["consecutive(5)", consecutive], ["rolling 50%/20", rolling20], ["rolling 50%/100", rolling100]] as const) {
+  // (1) سيناريو: 30% أخطاء عشوائية على 1000 seed مختلف
+  const runs: number[] = [];
+  for (let seed = 1; seed &lt;= 1000; seed++) {
+    const random = mulberry32(seed);
+    runs.push(callsUntilTrip(make, () =&gt; random() &gt;= 0.3, LIMIT) ?? LIMIT);
+  }
+  // (2) سيناريو: 50% أخطاء بالتبادل، فشل ونجاح ورا بعض
+  const alternating = callsUntilTrip(make, (i) =&gt; i % 2 === 0, LIMIT);
+  // (3) سيناريو: 100 call سليمة وبعدين الخدمة تقع تمامًا
+  const hardDown = callsUntilTrip(make, (i) =&gt; i &lt;= 100, LIMIT);
+  console.log(
+    `${label.padEnd(16)} 30% random: median trip at call ${median(runs) === LIMIT ? `&gt;${LIMIT}` : median(runs)} | ` +
+      `alternating 50%: ${alternating ?? "never"} | hard outage: ${hardDown! - 100} failed calls`,
+  );
+}
+</code></pre>
+
+<pre><code class="language-plaintext">consecutive(5)   30% random: median trip at call 396 | alternating 50%: never | hard outage: 5 failed calls
+rolling 50%/20   30% random: median trip at call 103 | alternating 50%: 21 | hard outage: 10 failed calls
+rolling 50%/100  30% random: median trip at call &gt;100000 | alternating 50%: 101 | hard outage: 50 failed calls
+</code></pre>
+  <div class="ar-note">تلات سيناريوهات لكل policy. عند 30% أخطاء عشوائية: الـ consecutive فتح عند call رقم 396 (الوسيط)، والـ window بتاع 20 فتح عند 103 بالرغم إن 30% أقل من الـ threshold، وبتاع 100 في الـ run الوسيط مفتحش جوه 100 ألف call. عند 50% بالتبادل: الـ consecutive عمره ما فتح. وفي وقوع كامل: 5 calls فاشلة بس للـ consecutive، و 10 لبتاع 20، و 50 لبتاع 100.</div>
+
+<pre data-file="src/resilience/slow-calls.ts"><code class="language-typescript">import { CircuitBreaker, ConsecutiveFailures } from "./breaker.ts";
+
+let t = 0;
+const breaker = new CircuitBreaker({
+  name: "payments",
+  trip: new ConsecutiveFailures(3),
+  resetTimeoutMs: 1000,
+  slowCallMs: 800,
+  now: () =&gt; t,
+});
+
+// الـ call بينجح فعلًا، بس بياخد 2 ثانية بدل 40ms
+const slowButOk = async () =&gt; {
+  t += 2000;
+  return "charged";
+};
+
+for (let i = 1; i &lt;= 3; i++) {
+  console.log(i, await breaker.execute(slowButOk), breaker.state);
+}
+console.log(breaker.stats);
+</code></pre>
+
+<pre><code class="language-plaintext">1 charged closed
+2 charged closed
+3 charged open
+{ calls: 3, successes: 0, failures: 3, rejected: 0 }
+</code></pre>
+  <div class="ar-note">التلات calls نجحوا فعلًا ورجعوا <code>charged</code>، بس كل واحد خد 2 ثانية فاتحسب فشل، فالـ breaker فتح بعد التالت.</div>
+
+<pre data-file="src/resilience/card-declined.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { CircuitBreaker, ConsecutiveFailures } from "./breaker.ts";
+
+class CardDeclined extends Error {
+  readonly code = "card_declined";
+}
+
+async function charge(card: string): Promise&lt;string&gt; {
+  if (card === "bad-card") throw new CardDeclined("insufficient funds");
+  return "charged";
+}
+
+async function scenario(label: string, isFailure?: (err: unknown) =&gt; boolean) {
+  const breaker = new CircuitBreaker({
+    name: "payments",
+    trip: new ConsecutiveFailures(5),
+    resetTimeoutMs: 30_000,
+    isFailure,
+  });
+  // خمسة عملاء كروتهم مرفوضة، والـ provider نفسه سليم تمامًا
+  for (let i = 0; i &lt; 5; i++) await breaker.execute(() =&gt; charge("bad-card")).catch(() =&gt; undefined);
+  const innocent = await breaker.execute(() =&gt; charge("good-card")).catch((e: Error) =&gt; e.name);
+  console.log(`${label}: state=${breaker.state} next customer gets: ${innocent}`);
+  return { breaker, innocent };
+}
+
+const bad = await scenario("no predicate   ");
+const good = await scenario("with predicate ", (err) =&gt; !(err instanceof CardDeclined));
+
+assert.equal(bad.breaker.state, "open");
+assert.equal(bad.innocent, "BrokenCircuitError");
+assert.equal(good.breaker.state, "closed");
+assert.equal(good.innocent, "charged");
+</code></pre>
+
+<pre><code class="language-plaintext">no predicate   : state=open next customer gets: BrokenCircuitError
+with predicate : state=closed next customer gets: charged
+</code></pre>
+  <div class="ar-note">من غير predicate، خمس كروت مرفوضة فتحوا الـ breaker والعميل السادس اترفض مع إن الـ provider سليم. مع الـ predicate، الـ <code>CardDeclined</code> متحسبش والعميل اتحاسب عادي.</div>
+
+<pre data-file="src/resilience/per-instance.ts"><code class="language-typescript">import { CircuitBreaker, ConsecutiveFailures } from "./breaker.ts";
+
+const INSTANCES = 5;
+const THRESHOLD = 5;
+const down = async (): Promise&lt;string&gt; =&gt; {
+  throw new Error("503");
+};
+
+const make = (i: number) =&gt;
+  new CircuitBreaker({ name: "payments@" + i, trip: new ConsecutiveFailures(THRESHOLD), resetTimeoutMs: 60_000 });
+
+function fleet(shared: boolean) {
+  // في الـ shared كلهم بيشوفوا نفس الـ state، زي ما يكون متخزن في Redis
+  if (shared) return Array&lt;CircuitBreaker&gt;(INSTANCES).fill(make(0));
+  return Array.from({ length: INSTANCES }, (_, i) =&gt; make(i));
+}
+
+async function run(label: string, breakers: CircuitBreaker[], pick: (n: number) =&gt; number) {
+  let failedCalls = 0;
+  let requests = 0;
+  while (!breakers.every((b) =&gt; b.state === "open") &amp;&amp; requests &lt; 1_000_000) {
+    const b = breakers[pick(requests++)]!;
+    await b
+      .execute(down)
+      .catch((e: Error) =&gt; {
+        if (e.name !== "BrokenCircuitError") failedCalls++;
+      });
+  }
+  console.log(`${label.padEnd(30)} real failed calls before the fleet stops: ${failedCalls}, requests: ${requests}`);
+}
+
+await run("per instance, round robin", fleet(false), (n) =&gt; n % INSTANCES);
+// هنا instance واحد بياخد 90% من الترافيك والباقي بيتقسم
+let seed = 7;
+const skewed = () =&gt; {
+  seed = (seed * 1103515245 + 12345) &amp; 0x7fffffff;
+  const r = seed / 0x7fffffff;
+  if (r &lt; 0.9) return 0;
+  return 1 + Math.floor(((r - 0.9) / 0.1) * (INSTANCES - 1));
+};
+await run("per instance, 90% on one", fleet(false), skewed);
+await run("shared state (in Redis, say)", fleet(true), (n) =&gt; n % INSTANCES);
+</code></pre>
+
+<pre><code class="language-plaintext">per instance, round robin      real failed calls before the fleet stops: 25, requests: 25
+per instance, 90% on one       real failed calls before the fleet stops: 25, requests: 388
+shared state (in Redis, say)   real failed calls before the fleet stops: 5, requests: 5
+</code></pre>
+  <div class="ar-note">خمس instances كل واحد بيتعلم لوحده: 25 call فاشل قبل ما الكل يوقف. ولو الترافيك مش متوازن (90% على واحد) نفس الـ 25 فشل بس على مدار 388 request، يعني الـ instances القليلة الترافيك بتاخد وقت أطول. ولو الحالة متشاركة 5 calls بس. الـ shared هنا محاكاة بـ breaker واحد مشترك في نفس الـ process، مش Redis حقيقي.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>consecutive count ضد rolling window.</b> الـ consecutive بسيط وسريع جدًا مع الوقوع الكامل، بس نجاح واحد بيصفّره، فـ service بيفشل call ويرد call عمره ما هيفتحه. الـ rolling window بيحتفظ بآخر N نتيجة في ring buffer ويفتح عند نسبة فشل، هنا 50% من آخر 20، ومعاها volume threshold عشان فشلين من 3 calls الساعة 3 الفجر ميبقوش "67% أخطاء". والـ ring buffer شغله O(1) لكل call والـ memory بتاعته ثابتة.</p>
+    <p>المقارنة فوق بـ seed ومتكررة على 1000 run. تحت 30% أخطاء ثابتة، وده أقل من الـ threshold بتاع 50%، الـ window بتاع 20 فتح برضه عند الوسيط 103، لأن 10 فشل في 20 بتحصل بالصدفة. والـ window بتاع 100، في الـ run الوسيط، مفتحش جوه 100 ألف call. وتمن الـ window الأكبر إن الاكتشاف أبطأ: 50 call فاشل في الوقوع الكامل قصاد 10 و 5. اختار الحجم من قد إيه تقدر تستحمل فتح غلط وقد إيه تقدر تستحمل تأخير.</p>
+    <p><b>البطء كمان فشل.</b> dependency بترد صح في 2 ثانية بدل 40 ms بتحجز منك threads و sockets، و <code>slowCallMs</code> بيعدها. <b>الـ business errors مش فشل.</b> لو <code>CardDeclined</code> اتحسب، خمس عملاء كروتهم وحشة بيفتحوا الـ breaker، والعميل السادس بكارت سليم بيترفض من provider كان شغال طول الوقت. استخدم predicate: الـ breaker يعد بس الأخطاء اللي بتقول حاجة عن الـ dependency.</p>
+    <p><b>الحالة لكل instance.</b> خمس instances ورا load balancer كل واحد بيتعلم لوحده: 25 call فاشل قبل ما الكل يوقف، قصاد 5 لو الحالة متشاركة. مشاركة الحالة في Redis بتكلفك round trip على مسار الـ request (≈0.10 ms p50 قصاد Redis محلي في <a href="./24-rate-limiter-idempotent-receiver.html#p3">درس 24</a>، وأكتر على network حقيقي)، وبتضيف dependency ممكن تقع هي كمان، ولازم تقرر هتعمل إيه لو وقعت. معظم الفرق بتقبل الـ 20 call الزيادة وبتسيب الـ breakers محلية. وللنظرة على مستوى النظام شوف <a href="../../10-System-Design/lessons/24-circuit-breaker-bulkhead-shedding.html">section 10 · 2.5</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في code review لقيت <code>catch (e) { breaker.fail() }</code> حوالين Stripe: أول حملة خصومات فيها كروت منتهية هتفتح الـ breaker على كل العملاء. الـ predicate هنا بيفرّق بين 402 (مشكلة العميل) و 5xx/timeout (مشكلة الـ provider). والغلطة الشائعة التانية: consecutive بس على dependency بتفشل بشكل متقطع، فمش هتفتح وهي بتاكل 50% من الطلبات.
+    </div>
+  </section>
+
+  <h2 id="p3">Part 3 — Yours vs opossum vs cockatiel <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — بتاعك قصاد opossum و cockatiel</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The script below drives all six breakers through the same sequence: 5 successes, 9 failures, a wait past the reset timeout, a failing probe, a call while open, another wait, and then 3 successes. In the timeline, <code>.</code> is a success, <code>x</code> is a failure that reached the dependency, <code>-</code> is a call rejected with no call made, and <code>|</code> is the wait. Mine and <code>ConsecutiveBreaker(5)</code> open on the 5th failure. <code>CountBreaker</code>, <code>SamplingBreaker</code> and opossum open on the 6th: the first ratio above 50% among 5 successes and N failures is 6 of 11 (mine uses <code>&gt;=</code> so it opens at 5 of 10, theirs use <code>&gt;</code>).</p>
+    <p>Half-open differs in a way the docs don't headline. With a 100 ms probe and 5 concurrent callers, mine and opossum reject the other 4, while cockatiel makes them wait for the probe's verdict and then runs them: every caller got an answer at about 111 or 221 ms, and 5 calls reached the service. Reading the source explains it. In cockatiel 4.0.0, <code>dist/CircuitBreakerPolicy.js:193-199</code> awaits <code>state.decision.promise</code> when the half-open sample is full, then calls <code>this.execute</code> again. The default sample is <code>{ calls: 1, threshold: 0 }</code> at <code>:303</code>, the open-state check is at <code>:167</code>, and <code>dist/breaker/ConsecutiveBreaker.js:23-25</code> is literally <code>++this.state &gt;= this.threshold</code>. <code>dist/breaker/CountBreaker.js:83-99</code> is the same ring buffer as Part 2, and its check at <code>:73</code> uses <code>&gt;</code>. In opossum 10.0.0, <code>lib/circuit.js:711</code> rejects when the breaker isn't closed and isn't pending close, and <code>:724</code> clears the pending flag, so the first half-open call goes through and the rest are rejected.</p>
+    <p><b>Verdict:</b> write it once to understand it, then use a library in production. The libraries have years of edge cases, serialization, and a half-open strategy you'd have to invent. Writing yours is what lets you read their source and pick an option on purpose. opossum ships no TypeScript types; the community package <code>@types/opossum</code> is at 8.1.9, behind the library's 10.0.0, and compiling against it worked here for the API this lesson uses.</p>
+  </section>
+
+<pre data-file="src/resilience/three-way.ts"><code class="language-typescript">import { setTimeout as sleep } from "node:timers/promises";
+import { circuitBreaker, ConsecutiveBreaker, CountBreaker, handleAll, SamplingBreaker, type IBreaker } from "cockatiel";
+import Opossum from "opossum";
+import { CircuitBreaker, ConsecutiveFailures, type TripPolicy } from "./breaker.ts";
+import { RollingFailureRate } from "./rolling.ts";
+
+const RESET_MS = 150;
+type Step = "ok" | "fail" | { waitMs: number };
+
+// السكريبت واحد للكل: نجاح، وقوع، probe بيفشل، وبعدين رجوع
+const script: Step[] = [
+  ...Array&lt;Step&gt;(5).fill("ok"),
+  ...Array&lt;Step&gt;(9).fill("fail"),
+  { waitMs: RESET_MS + 60 },
+  "fail",
+  "ok",
+  { waitMs: RESET_MS + 60 },
+  "ok",
+  "ok",
+  "ok",
+];
+
+interface Subject {
+  name: string;
+  run(fn: () =&gt; Promise&lt;string&gt;): Promise&lt;unknown&gt;;
+  transitions: string[];
+}
+
+function mine(name: string, trip: TripPolicy): Subject {
+  const transitions: string[] = [];
+  const b = new CircuitBreaker({
+    name,
+    trip,
+    resetTimeoutMs: RESET_MS,
+    onStateChange: (c) =&gt; transitions.push(c.to),
+  });
+  return { name, transitions, run: (fn) =&gt; b.execute(fn) };
+}
+
+function cockatiel(name: string, breaker: IBreaker): Subject {
+  const transitions: string[] = [];
+  const b = circuitBreaker(handleAll, { halfOpenAfter: RESET_MS, breaker });
+  const names = ["closed", "open", "half_open", "isolated"];
+  b.onStateChange((s) =&gt; transitions.push(names[s]!));
+  return { name, transitions, run: (fn) =&gt; b.execute(fn) };
+}
+
+function opossum(name: string): Subject {
+  const transitions: string[] = [];
+  const b = new Opossum((fn: () =&gt; Promise&lt;string&gt;) =&gt; fn(), {
+    timeout: false,
+    resetTimeout: RESET_MS,
+    errorThresholdPercentage: 50,
+    volumeThreshold: 5,
+    rollingCountTimeout: 60_000,
+  });
+  b.on("open", () =&gt; transitions.push("open"));
+  b.on("halfOpen", () =&gt; transitions.push("half_open"));
+  b.on("close", () =&gt; transitions.push("closed"));
+  return { name, transitions, run: (fn) =&gt; b.fire(fn) };
+}
+
+async function play(subject: Subject) {
+  let timeline = "";
+  let reached = 0;
+  for (const step of script) {
+    if (typeof step === "object") {
+      await sleep(step.waitMs);
+      timeline += "|";
+      continue;
+    }
+    let touched = false;
+    const fn = async () =&gt; {
+      touched = true;
+      reached++;
+      if (step === "fail") throw new Error("503");
+      return "ok";
+    };
+    const outcome = await subject.run(fn).then(
+      () =&gt; ".",
+      () =&gt; (touched ? "x" : "-"),
+    );
+    timeline += outcome;
+  }
+  console.log(`${subject.name.padEnd(26)} ${timeline}  reached=${String(reached).padStart(2)}  ${subject.transitions.join("&gt;")}`);
+}
+
+await play(mine("mine consecutive(5)", new ConsecutiveFailures(5)));
+await play(mine("mine rolling 50%/20 min 5", new RollingFailureRate({ ratio: 0.5, size: 20, minCalls: 5 })));
+await play(cockatiel("cockatiel Consecutive(5)", new ConsecutiveBreaker(5)));
+await play(cockatiel("cockatiel Count 50%/20", new CountBreaker({ threshold: 0.5, size: 20, minimumNumberOfCalls: 5 })));
+await play(cockatiel("cockatiel Sampling 50%/1s", new SamplingBreaker({ threshold: 0.5, duration: 1000, minimumRps: 1 })));
+await play(opossum("opossum 50% vol 5"));
+</code></pre>
+
+<pre><code class="language-plaintext">mine consecutive(5)        .....xxxxx----|x-|...  reached=14  open&gt;half_open&gt;open&gt;half_open&gt;closed
+mine rolling 50%/20 min 5  .....xxxxx----|x-|...  reached=14  open&gt;half_open&gt;open&gt;half_open&gt;closed
+cockatiel Consecutive(5)   .....xxxxx----|x-|...  reached=14  open&gt;half_open&gt;open&gt;half_open&gt;closed
+cockatiel Count 50%/20     .....xxxxxx---|x-|...  reached=15  open&gt;half_open&gt;open&gt;half_open&gt;closed
+cockatiel Sampling 50%/1s  .....xxxxxx---|x-|...  reached=15  open&gt;half_open&gt;open&gt;half_open&gt;closed
+opossum 50% vol 5          .....xxxxxx---|x-|...  reached=15  open&gt;half_open&gt;open&gt;half_open&gt;closed
+</code></pre>
+  <div class="ar-note">كل سطر timeline لـ breaker: <code>.</code> نجاح، <code>x</code> فشل وصل الـ dependency، <code>-</code> اترفض من غير call، و<code>|</code> انتظار. الكل فتح وعمل probe فاشل وبعدين probe ناجح. الفرق الوحيد: اللي بيستخدم <code>&gt;=</code> فتح عند الفشل الخامس، واللي بيستخدم <code>&gt;</code> فتح عند السادس.</div>
+
+<pre data-file="src/resilience/half-open-compare.ts"><code class="language-typescript">import { setTimeout as sleep } from "node:timers/promises";
+import { circuitBreaker, ConsecutiveBreaker, handleAll } from "cockatiel";
+import Opossum from "opossum";
+import { CircuitBreaker, ConsecutiveFailures } from "./breaker.ts";
+
+const RESET_MS = 60;
+const failing = async (): Promise&lt;string&gt; =&gt; {
+  throw new Error("503");
+};
+
+type Run = (fn: () =&gt; Promise&lt;string&gt;) =&gt; Promise&lt;unknown&gt;;
+
+async function probe(label: string, run: Run) {
+  for (let i = 0; i &lt; 3; i++) await run(failing).catch(() =&gt; undefined);
+  await sleep(RESET_MS + 40);
+  let reached = 0;
+  const started = performance.now();
+  // خمس طلبات في نفس اللحظة وإحنا half_open، والـ probe بياخد 100ms
+  const results = await Promise.allSettled(
+    Array.from({ length: 5 }, () =&gt;
+      run(async () =&gt; {
+        reached++;
+        await sleep(100);
+        return "ok";
+      }).then(() =&gt; Math.round(performance.now() - started)),
+    ),
+  );
+  const shown = results.map((r) =&gt; (r.status === "fulfilled" ? `${r.value}ms` : "rejected")).join(" ");
+  console.log(`${label.padEnd(10)} reached=${reached} [${shown}]`);
+}
+
+const mine = new CircuitBreaker({ name: "p", trip: new ConsecutiveFailures(3), resetTimeoutMs: RESET_MS });
+await probe("mine", (fn) =&gt; mine.execute(fn));
+
+const c = circuitBreaker(handleAll, { halfOpenAfter: RESET_MS, breaker: new ConsecutiveBreaker(3) });
+await probe("cockatiel", (fn) =&gt; c.execute(fn));
+
+const o = new Opossum((fn: () =&gt; Promise&lt;string&gt;) =&gt; fn(), {
+  timeout: false,
+  resetTimeout: RESET_MS,
+  errorThresholdPercentage: 50,
+  volumeThreshold: 3,
+});
+await probe("opossum", (fn) =&gt; o.fire(fn));
+</code></pre>
+
+<pre><code class="language-plaintext">mine       reached=1 [109ms rejected rejected rejected rejected]
+cockatiel  reached=5 [111ms 221ms 221ms 222ms 222ms]
+opossum    reached=1 [111ms rejected rejected rejected rejected]
+</code></pre>
+  <div class="ar-note">خمس طلبات مع بعض وإحنا half-open. بتاعي و opossum: طلب واحد وصل والأربعة اترفضوا. cockatiel: الأربعة استنوا قرار الـ probe وبعدين اتنفذوا (≈221 ms)، فالخمسة وصلوا. الأوقات تقريبية على Windows تحت ضغط، لكن الترتيب والأعداد هما المهمين.</div>
+
+  <table>
+    <thead><tr><th></th><th>Yours</th><th>opossum 10.0.0</th><th>cockatiel 4.0.0</th></tr></thead>
+    <tbody>
+      <tr><td>API</td><td><code>breaker.execute(fn)</code></td><td><code>new CircuitBreaker(fn, opts).fire(args)</code>: one breaker per function</td><td><code>circuitBreaker(policy, opts).execute(fn)</code>: composes through <code>wrap</code></td></tr>
+      <tr><td>Metrics</td><td><code>onStateChange</code> and <code>stats</code></td><td>events (<code>open</code>, <code>halfOpen</code>, <code>close</code>, <code>reject</code>, <code>timeout</code>, <code>success</code>, <code>failure</code>, <code>fallback</code>) and rolling <code>stats</code></td><td><code>onBreak</code>, <code>onReset</code>, <code>onHalfOpen</code>, <code>onStateChange</code>, <code>onSuccess</code>, <code>onFailure</code></td></tr>
+      <tr><td>Fallback</td><td>a separate decorator</td><td>built in: <code>breaker.fallback(fn)</code></td><td>a <code>fallback()</code> policy, through <code>wrap</code></td></tr>
+      <tr><td>Percent or count</td><td>both, through <code>TripPolicy</code></td><td>percent over a rolling time window, with <code>volumeThreshold</code></td><td><code>ConsecutiveBreaker</code>, <code>CountBreaker</code> (percent of last N), <code>SamplingBreaker</code> (percent over time)</td></tr>
+      <tr><td>TS types</td><td>yours</td><td>none shipped; <code>@types/opossum</code> 8.1.9</td><td>shipped <code>.d.ts</code></td></tr>
+      <tr><td>Other calls during half-open</td><td>rejected</td><td>rejected</td><td>wait for the probe's verdict, then run or reject</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">الجدول صف بصف. الـ API: بتاعك <code>execute</code>، opossum بيلف function واحدة في breaker ويتنادى بـ <code>fire</code>، و cockatiel policy بتتركب بـ <code>wrap</code>. الـ metrics: بتاعك <code>onStateChange</code> و<code>stats</code>، opossum events كتير و stats متحركة، و cockatiel عنده <code>onBreak</code> و<code>onReset</code> و<code>onHalfOpen</code> و<code>onStateChange</code> و<code>onSuccess</code> و<code>onFailure</code>. الـ fallback: عندك decorator منفصل، في opossum مدمج، وفي cockatiel policy بتتركب. النسبة أو العد: بتاعك الاتنين، opossum نسبة على window زمني مع <code>volumeThreshold</code>، و cockatiel تلات أنواع. الـ TS types: opossum مفيش جوه الـ package (فيه <code>@types/opossum</code> 8.1.9)، و cockatiel جوه الـ package. والـ calls التانية وقت half-open: عندك و opossum بتترفض، وفي cockatiel بتستنى قرار الـ probe.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>السكريبت فوق بيمشّي الستة breakers في نفس الترتيب بالظبط: 5 نجاح، 9 فشل، انتظار أطول من الـ reset timeout، probe فاشل، call وهو مفتوح، انتظار تاني، وبعدين 3 نجاح. في الـ timeline <code>.</code> نجاح، <code>x</code> فشل وصل للـ dependency، <code>-</code> اترفض من غير call، و<code>|</code> الانتظار. بتاعي و <code>ConsecutiveBreaker(5)</code> فتحوا عند الفشل الخامس. و <code>CountBreaker</code> و <code>SamplingBreaker</code> و opossum عند السادس، لأن أول نسبة أكبر من 50% مع 5 نجاح وعدد N فشل هي 6 من 11. (بتاعي بيستخدم <code>&gt;=</code> فبيفتح عند 5 من 10، وهما <code>&gt;</code>).</p>
+    <p>الـ half-open بيختلف بطريقة الـ docs مش بتركز عليها. مع probe بياخد 100 ms و 5 callers مع بعض، بتاعي و opossum رفضوا الأربعة التانيين، أما cockatiel خلاهم يستنوا قرار الـ probe وبعدين شغلهم: كل caller خد رد عند حوالي 111 أو 221 ms، و 5 calls وصلوا الـ service. قراءة الكود بتفسر ده. في cockatiel 4.0.0، <code>dist/CircuitBreakerPolicy.js:193-199</code> بيعمل await على <code>state.decision.promise</code> لما عينة الـ half-open تتملي، وبعدين ينادي <code>this.execute</code> تاني. والعينة الـ default هي <code>{ calls: 1, threshold: 0 }</code> عند <code>:303</code>، وفحص حالة open عند <code>:167</code>. و <code>dist/breaker/ConsecutiveBreaker.js:23-25</code> هو حرفيًا <code>++this.state &gt;= this.threshold</code>. و <code>dist/breaker/CountBreaker.js:83-99</code> هو نفس الـ ring buffer بتاع Part 2، وفحصه عند <code>:73</code> بيستخدم <code>&gt;</code>. وفي opossum 10.0.0، <code>lib/circuit.js:711</code> بيرفض لو الـ breaker مش closed ومش pending close، و <code>:724</code> بيمسح الـ pending flag، فأول call في half-open بيعدي والباقي بيترفض.</p>
+    <p><b>الحكم:</b> اكتبه مرة عشان تفهمه، وبعدين استخدم library في production. المكتبات فيها سنين من الـ edge cases والـ serialization واستراتيجية half-open كنت هتضطر تخترعها. كتابتك ليه هي اللي بتخليك تقرا الكود بتاعهم وتختار option وإنت فاهم. و opossum مفيش معاه TypeScript types، والـ package المجتمعية <code>@types/opossum</code> عند 8.1.9 أقدم من المكتبة نفسها 10.0.0، والـ compile عليها نجح هنا للـ API اللي الدرس بيستخدمه.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو الـ endpoint بتاعك user-facing وعايزه يفشل بسرعة: الـ rejection بتاع opossum مناسب. لو background worker يستحمل ينتظر شوية: الـ waiting بتاع cockatiel ممكن يبقى أحسن، بس لازم timeout عشان probe معلّق هيعلّق كل الناس. والغلطة الشائعة: تفترض إن كل library بتتصرف زي التانية في half-open، وتكتشف الفرق وقت incident.
+    </div>
+  </section>
+
+  <h2 id="p4">Part 4 — Bulkhead <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ bulkhead</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A ship's bulkheads stop one flooded compartment sinking the ship. In software: a separate concurrency limit per dependency, so a slow one can't take every slot. The "before" run uses one shared pool of 20 outbound slots for two local stand-ins, payments at 20 ms and reports at 800 ms, under open-loop traffic of 100 checkouts and 40 reports per second. Reports fills the pool, and checkout's p99 reaches about 1456 ms though its own dependency is healthy. The "after" run gives each dependency its own <code>Bulkhead</code> with its own queue limit: checkout's p99 returns to about 33 ms, and reports sheds what it can't handle with a fast <code>BulkheadFull</code> instead of queueing forever.</p>
+    <p><b>Size it with Little's law:</b> concurrency = arrival rate × latency. Checkout: 100/s × 0.020 s = 2 slots on average, 100/s × 0.033 s (measured p99) ≈ 3.3, so 10 leaves room for bursts. Reports: 40/s × 0.8 s = 32 slots just to keep up. Giving it 10 is a decision that reports is worth at most 12.5/s, and the rest is rejected. Set the queue small and on purpose: a queue is only useful if the wait is shorter than the caller's timeout.</p>
+    <p>cockatiel's <code>bulkhead(limit, queue)</code> is the same shape, and its queue defaults to 0. The same idea applies to the database: a separate <code>pg.Pool</code> per workload, so a report can't hold every connection. With one pool of 4 on a private Postgres, checkout's <code>SELECT 1</code> waits at p50 ≈ 171 ms behind the reports; with 3 connections for OLTP and 1 for reports, p50 is ≈ 0.4 ms. Remember that pools add up: pool size × instances must stay under <code>max_connections</code>. <b>Not when:</b> a service with one dependency has nothing to isolate; a plain limit or a timeout is enough.</p>
+  </section>
+
+<pre class="diagram">
+ BEFORE: one pool, everyone competes        AFTER: one compartment per dependency
+
+  checkout ----+                             checkout --&gt; [ payments: 10 slots, queue 20 ] --&gt; payments
+               +--&gt; [ 20 slots ] --&gt; all
+  reports  ----+      filled by reports      reports  --&gt; [ reports : 10 slots, queue 10 ] --&gt; reports
+                                                               | full
+                                                               v
+                                                          BulkheadFull, fast
+</pre>
+  <div class="ar-note">قبل: الاتنين بيتنافسوا على 20 slot، والـ reports البطيء بيملاهم فالـ checkout بيستنى. بعد: كل dependency ليها slots وطابور، ولما الـ reports يتملي بيترفض فورًا بـ <code>BulkheadFull</code> والـ checkout مبيحسش.</div>
+
+<pre data-file="src/resilience/bulkhead.ts"><code class="language-typescript">export class BulkheadFull extends Error {
+  constructor(name: string) {
+    super(`bulkhead "${name}" is full`);
+    this.name = "BulkheadFull";
+  }
+}
+
+export interface BulkheadOptions {
+  name: string;
+  maxConcurrent: number;
+  maxQueue: number;
+}
+
+interface Waiter {
+  resolve: () =&gt; void;
+  reject: (reason: unknown) =&gt; void;
+  signal: AbortSignal | undefined;
+}
+
+export class Bulkhead {
+  #active = 0;
+  #queue: Waiter[] = [];
+  #o: BulkheadOptions;
+  readonly stats = { admitted: 0, queued: 0, rejected: 0, peakActive: 0 };
+
+  constructor(options: BulkheadOptions) {
+    this.#o = options;
+  }
+
+  async execute&lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;, signal?: AbortSignal): Promise&lt;T&gt; {
+    if (this.#active &lt; this.#o.maxConcurrent) {
+      this.#active++;
+    } else if (this.#queue.length &lt; this.#o.maxQueue) {
+      this.stats.queued++;
+      // الـ slot بيتسلّم مباشرة من اللي خلص، فـ ⁦#active⁩ مبيتغيرش هنا
+      await new Promise&lt;void&gt;((resolve, reject) =&gt; this.#queue.push({ resolve, reject, signal }));
+    } else {
+      this.stats.rejected++;
+      throw new BulkheadFull(this.#o.name);
+    }
+    this.stats.admitted++;
+    this.stats.peakActive = Math.max(this.stats.peakActive, this.#active);
+    try {
+      return await fn();
+    } finally {
+      this.#release();
+    }
+  }
+
+  #release(): void {
+    for (let next = this.#queue.shift(); next; next = this.#queue.shift()) {
+      // اللي صاحبه مشي قبل ما دوره ييجي مياخدش slot على الفاضي
+      if (next.signal?.aborted) {
+        next.reject(next.signal.reason);
+        continue;
+      }
+      next.resolve();
+      return;
+    }
+    this.#active--;
+  }
+}
+</code></pre>
+<pre data-file="src/resilience/noisy-neighbor.ts"><code class="language-typescript">import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+import { Bulkhead, BulkheadFull } from "./bulkhead.ts";
+
+// بديل محلي: كل service بيرد بعد وقت ثابت (port 0 عشان ميتعارضش مع حد)
+async function standIn(delayMs: number): Promise&lt;{ url: string; server: Server }&gt; {
+  const server = createServer((_req, res) =&gt; setTimeout(() =&gt; res.end("ok"), delayMs));
+  await new Promise&lt;void&gt;((r) =&gt; server.listen(0, "127.0.0.1", r));
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/`, server };
+}
+
+function percentile(values: number[], p: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) =&gt; a - b);
+  return Math.round(sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))]!);
+}
+
+interface Result {
+  latencies: number[];
+  rejected: number;
+}
+
+async function callThrough(pool: Bulkhead, url: string, out: Result) {
+  const arrived = performance.now();
+  try {
+    await pool.execute(async () =&gt; {
+      const res = await fetch(url);
+      await res.text();
+    });
+    out.latencies.push(performance.now() - arrived);
+  } catch (err) {
+    if (!(err instanceof BulkheadFull)) throw err;
+    out.rejected++;
+  }
+}
+
+const payments = await standIn(20);
+const reports = await standIn(800);
+
+async function experiment(label: string, checkoutPool: Bulkhead, reportsPool: Bulkhead) {
+  const checkout: Result = { latencies: [], rejected: 0 };
+  const report: Result = { latencies: [], rejected: 0 };
+  const inflight: Promise&lt;void&gt;[] = [];
+  // ترافيك مفتوح 3 ثواني: 100 checkout و 40 report في الثانية، مهما كان الرد بطيء
+  for (let tick = 0; tick &lt; 60; tick++) {
+    for (let i = 0; i &lt; 5; i++) inflight.push(callThrough(checkoutPool, payments.url, checkout));
+    for (let i = 0; i &lt; 2; i++) inflight.push(callThrough(reportsPool, reports.url, report));
+    await sleep(50);
+  }
+  await Promise.all(inflight);
+  const fmt = (r: Result) =&gt;
+    `p50=${percentile(r.latencies, 50)}ms p99=${percentile(r.latencies, 99)}ms done=${r.latencies.length} rejected=${r.rejected}`;
+  console.log(`${label}\n  checkout: ${fmt(checkout)}\n  reports : ${fmt(report)}`);
+}
+
+// قبل: كل الـ outbound calls بتتنافس على نفس الـ 20 slot
+const shared = new Bulkhead({ name: "all-outbound", maxConcurrent: 20, maxQueue: Infinity });
+await experiment("BEFORE one shared pool of 20", shared, shared);
+
+// بعد: كل dependency ليها slots وطابور محدود
+await experiment(
+  "AFTER one bulkhead per dependency",
+  new Bulkhead({ name: "payments", maxConcurrent: 10, maxQueue: 20 }),
+  new Bulkhead({ name: "reports", maxConcurrent: 10, maxQueue: 10 }),
+);
+
+payments.server.close();
+reports.server.close();
+</code></pre>
+
+<pre><code class="language-plaintext">BEFORE one shared pool of 20
+  checkout: p50=708ms p99=1456ms done=300 rejected=0
+  reports : p50=1554ms p99=2269ms done=120 rejected=0
+AFTER one bulkhead per dependency
+  checkout: p50=32ms p99=33ms done=300 rejected=0
+  reports : p50=1554ms p99=1570ms done=60 rejected=60
+</code></pre>
+  <div class="ar-note">قبل: الـ checkout p99 ≈ 1456 ms رغم إن الـ payments سليم. بعد: الـ checkout p99 ≈ 33 ms، والـ reports 60 منهم اتنفذوا و 60 اترفضوا بسرعة. الأرقام تقريبية (Windows ماشين عليها ضغط، و resolution بتاع الـ timers حوالي 15 ms)، والنسبة بينهم هي المهمة.</div>
+
+<pre data-file="src/resilience/cockatiel-bulkhead.ts"><code class="language-typescript">import { setTimeout as sleep } from "node:timers/promises";
+import { bulkhead, BulkheadRejectedError } from "cockatiel";
+
+// حد 2 شغالين و 2 في الطابور: الطلب الخامس والسادس بيترفضوا
+const reports = bulkhead(2, 2);
+reports.onReject(() =&gt; console.log("rejected event"));
+
+const results = await Promise.allSettled(
+  Array.from({ length: 6 }, (_, i) =&gt;
+    reports.execute(async () =&gt; {
+      await sleep(30);
+      return `report-${i}`;
+    }),
+  ),
+);
+
+for (const r of results) {
+  console.log(r.status === "fulfilled" ? r.value : (r.reason as Error).constructor === BulkheadRejectedError ? "BulkheadRejectedError" : r.reason);
+}
+console.log({ executionSlots: reports.executionSlots, queueSlots: reports.queueSlots });
+</code></pre>
+
+<pre><code class="language-plaintext">rejected event
+rejected event
+report-0
+report-1
+report-2
+report-3
+BulkheadRejectedError
+BulkheadRejectedError
+{ executionSlots: 2, queueSlots: 2 }
+</code></pre>
+  <div class="ar-note">حد 2 شغالين و 2 في الطابور: أول أربعة اتنفذوا، والخامس والسادس اترفضوا بـ <code>BulkheadRejectedError</code>، وفي الآخر الـ slots رجعت فاضية.</div>
+
+<pre data-file="src/resilience/pg-pools.ts"><code class="language-typescript">import { setTimeout as sleep } from "node:timers/promises";
+import pg from "pg";
+import { startPg } from "../pg-throwaway.mjs";
+
+const db = await startPg();
+// حماية: الـ port لازم يكون رقم صريح ومش الـ default بتاع أي service حقيقي
+if (!/^\d+$/.test(String(db.port)) || db.port &lt; 1024 || [5432, 27017, 6379].includes(db.port)) {
+  throw new Error("refusing port " + db.port);
+}
+const connect = (max: number) =&gt; new pg.Pool({ host: "127.0.0.1", port: db.port, user: "app", database: "postgres", max });
+
+function pct(values: number[], p: number): string {
+  const sorted = [...values].sort((a, b) =&gt; a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))]!.toFixed(1);
+}
+
+async function experiment(label: string, oltp: pg.Pool, reports: pg.Pool) {
+  const latencies: number[] = [];
+  const work: Promise&lt;unknown&gt;[] = [];
+  // 16 report كل واحد بياخد 300ms، بيوصلوا مع بعض على مدار ثانية
+  for (let i = 0; i &lt; 16; i++) {
+    work.push(sleep(i * 60).then(() =&gt; reports.query("SELECT pg_sleep(0.3)")));
+  }
+  // 40 checkout query سريعة على نفس الثانية
+  for (let i = 0; i &lt; 40; i++) {
+    work.push(
+      sleep(i * 25).then(async () =&gt; {
+        const t0 = performance.now();
+        await oltp.query("SELECT 1");
+        latencies.push(performance.now() - t0);
+      }),
+    );
+  }
+  await Promise.all(work);
+  console.log(`${label}: checkout p50=${pct(latencies, 0.5)}ms p99=${pct(latencies, 0.99)}ms`);
+}
+
+const shared = connect(4);
+await experiment("BEFORE one pool of 4     ", shared, shared);
+await shared.end();
+
+const oltp = connect(3);
+const reports = connect(1);
+await experiment("AFTER oltp 3 + reports 1 ", oltp, reports);
+await Promise.all([oltp.end(), reports.end()]);
+await db.stop();
+</code></pre>
+
+<pre><code class="language-plaintext">BEFORE one pool of 4     : checkout p50=171.3ms p99=359.6ms
+AFTER oltp 3 + reports 1 : checkout p50=0.4ms p99=19.7ms
+</code></pre>
+  <div class="ar-note">قبل: الـ checkout بيستنى ورا الـ reports (p50 ≈ 171 ms). بعد: pool منفصل، فالـ p50 ≈ 0.4 ms. الـ p99 هنا لسه ≈ 20 ms لأن الـ pool بيفتح connections أول مرة. كل ده على Postgres خاص مؤقت على port عشوائي.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ bulkheads في السفينة بتمنع إن غرقان حجرة واحدة يغرّق السفينة كلها. في السوفتوير: حد concurrency منفصل لكل dependency، عشان واحدة بطيئة متاخدش كل الـ slots. الـ run اللي "قبل" بيستخدم pool واحد فيه 20 outbound slot لاتنين stand-ins محليين، payments في 20 ms و reports في 800 ms، تحت ترافيك مفتوح 100 checkout و 40 report في الثانية. الـ reports بيملا الـ pool، والـ p99 بتاع الـ checkout بيوصل حوالي 1456 ms مع إن الـ dependency بتاعته سليمة. والـ run اللي "بعد" بيدي كل dependency <code>Bulkhead</code> بطابور محدود لوحده: الـ p99 بتاع الـ checkout بيرجع حوالي 33 ms، والـ reports بيرمي اللي مش قادر عليه بـ <code>BulkheadFull</code> سريع بدل ما يستنى للأبد.</p>
+    <p><b>حدد الحجم بـ Little's law:</b> الـ concurrency = معدل الوصول × الـ latency. الـ checkout: 100/ث × 0.020 ث = 2 slots في المتوسط، و 100/ث × 0.033 ث (الـ p99 اللي قسناه) ≈ 3.3، فالـ 10 بيسيبوا مساحة للـ bursts. الـ reports: 40/ث × 0.8 ث = 32 slot عشان يلاحق بس. إنك تديله 10 ده قرار إن الـ reports يستاهل بالكتير 12.5/ث، والباقي يترفض. وخلي الطابور صغير ومقصود: الطابور مفيد بس لو وقت الانتظار فيه أقل من الـ timeout بتاع الـ caller.</p>
+    <p><code>bulkhead(limit, queue)</code> بتاع cockatiel نفس الشكل، والـ queue بتاعه default صفر. ونفس الفكرة على الـ database: <code>pg.Pool</code> منفصل لكل workload، عشان report مياخدش كل الـ connections. مع pool واحد 4 على Postgres خاص، الـ <code>SELECT 1</code> بتاع الـ checkout بيستنى p50 ≈ 171 ms ورا الـ reports، ومع 3 connections للـ OLTP و 1 للـ reports الـ p50 ≈ 0.4 ms. وافتكر إن الـ pools بتتجمع: حجم الـ pool × عدد الـ instances لازم يفضل أقل من <code>max_connections</code>. <b>إمتى مش محتاجه:</b> service بـ dependency واحدة مفيهاش حاجة تعزلها، حد بسيط أو timeout كفاية.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      API فيها endpoint <code>/orders</code> وعليها كمان <code>/admin/analytics</code> بيعمل query تقيلة. بنعمل pool صغير للتحليلات (connections أقل) و pool للـ OLTP، فالـ dashboard بتاع الإدارة لما يبطأ الـ checkout مبيحسش. والغلطة الشائعة: pool واحد كبير لكل حاجة، فالـ query التقيلة بتاخد كل الـ connections والـ login بيقف.
+    </div>
+  </section>
+
+  <h2 id="p5">Part 5 — Order matters <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — الترتيب بيفرق</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><code>wrap(a, b, c)</code> means <code>a.execute(() =&gt; b.execute(() =&gt; c.execute(fn)))</code>: the first policy is the outermost. The table is the real answer to "does order matter?", run on cockatiel 4.0.0 with a dependency that always fails, retry with 3 attempts, and a breaker that opens after 3 failures. A long <code>halfOpenAfter</code> keeps half-open out of the count. With retry outside the breaker, the breaker sees every attempt: 3 calls, then it opens and the next two executes get <code>BrokenCircuitError</code> with zero calls. With the breaker outside the retry, the breaker sees only the final result of each execute: 3 attempts per execute, so 3 executes make 9 calls before it opens. Same policies, 3 times the traffic on a dependency that's already down.</p>
+    <p>The README's <code>timeout → retry → circuit breaker → bulkhead</code> reads outer to inner, which matches <code>wrap(timeout, retry, breaker, bulkhead)</code>. Its outer timeout is the <b>total</b> budget, and that alone has a trap: the first attempt that hangs eats the whole budget, as the run below shows (1 attempt, cancelled at about 1009 ms). Add a timeout per attempt <i>inside</i> the retry, and the second attempt gets its chance: charged at about 360 ms. cockatiel's readme shows <code>wrap(retry, breaker, timeout)</code> and states no recommended order, so reason it out rather than copy it.</p>
+    <p>Three traps come with this. A bulkhead inside the breaker makes its rejections look like dependency failures, so a healthy service opens the breaker: filter them with a predicate. A retry with <code>handleAll</code> retries <code>BrokenCircuitError</code> too: about 216 ms of pointless backoff to deliver an error you already knew. And a fallback inside the breaker hides the failure from it: 20 downstream calls and the breaker stays closed, against 3 calls when the fallback is outermost. <b>Fallback goes outermost.</b> The order I'd start from: fallback, total timeout, retry, breaker, bulkhead, attempt timeout, call. The bulkhead sits inside the retry so a slot isn't held during backoff.</p>
+  </section>
+
+<pre class="diagram">
+ caller
+   |
+   v
+ fallback ........... answers when everything below gave up
+   v
+ total timeout ...... the caller's whole budget
+   v
+ retry .............. only what is worth retrying
+   v
+ circuit breaker .... counts each attempt
+   v
+ bulkhead ........... holds a slot only while attempting
+   v
+ attempt timeout .... one hung attempt can't eat the budget
+   v
+ downstream call
+</pre>
+  <div class="ar-note">الترتيب من بره لجوه: fallback بيرد لما كل اللي تحته يستسلم. بعده الميزانية الكلية بتاعة الـ caller. بعدها retry على اللي يستاهل. بعده الـ breaker بيعد كل محاولة. بعده الـ bulkhead بيمسك slot وقت المحاولة بس. وبعده timeout لكل محاولة عشان محاولة واحدة معلقة متاكلش الميزانية. وفي الآخر الـ call نفسه.</div>
+
+<pre data-file="src/resilience/policy-orders.ts"><code class="language-typescript">import {
+  bulkhead,
+  circuitBreaker,
+  ConsecutiveBreaker,
+  ConstantBackoff,
+  handleAll,
+  retry,
+  timeout,
+  TimeoutStrategy,
+  wrap,
+  type IPolicy,
+} from "cockatiel";
+
+// خلّينا halfOpenAfter طويل جدًا عشان محدش يدخل half-open أثناء التجربة ويلخبط العد
+function policies() {
+  return {
+    retry: retry(handleAll, { maxAttempts: 2, backoff: new ConstantBackoff(1) }),
+    breaker: circuitBreaker(handleAll, { halfOpenAfter: 600_000, breaker: new ConsecutiveBreaker(3) }),
+    timeout: timeout(1000, TimeoutStrategy.Aggressive),
+    bulkhead: bulkhead(10, 10),
+  };
+}
+type P = ReturnType&lt;typeof policies&gt;;
+
+async function table(label: string, build: (p: P) =&gt; IPolicy) {
+  const p = policies();
+  const policy = build(p);
+  const perExecute: number[] = [];
+  const errors: string[] = [];
+  let total = 0;
+  for (let i = 0; i &lt; 3; i++) {
+    const before = total;
+    await policy
+      .execute(async () =&gt; {
+        total++;
+        throw new Error("503");
+      })
+      .catch((e: Error) =&gt; errors.push(e.constructor.name.replace("Error", "") || "Error"));
+    perExecute.push(total - before);
+  }
+  const state = ["closed", "open", "half_open", "isolated"][p.breaker.state];
+  console.log(`${label.padEnd(36)} calls ${perExecute.join("+")} = ${String(total).padStart(2)}  errors ${errors.join(",").padEnd(22)} breaker=${state}`);
+}
+
+await table("wrap(retry, breaker, timeout)", (p) =&gt; wrap(p.retry, p.breaker, p.timeout));
+await table("wrap(breaker, retry, timeout)", (p) =&gt; wrap(p.breaker, p.retry, p.timeout));
+await table("wrap(timeout, retry, breaker)", (p) =&gt; wrap(p.timeout, p.retry, p.breaker));
+await table("wrap(retry, timeout, breaker)", (p) =&gt; wrap(p.retry, p.timeout, p.breaker));
+await table("wrap(timeout, retry, breaker, bulkhead)", (p) =&gt; wrap(p.timeout, p.retry, p.breaker, p.bulkhead));
+await table("wrap(bulkhead, breaker, retry)", (p) =&gt; wrap(p.bulkhead, p.breaker, p.retry));
+</code></pre>
+
+<pre><code class="language-plaintext">wrap(retry, breaker, timeout)        calls 3+0+0 =  3  errors Error,BrokenCircuit,BrokenCircuit breaker=open
+wrap(breaker, retry, timeout)        calls 3+3+3 =  9  errors Error,Error,Error      breaker=open
+wrap(timeout, retry, breaker)        calls 3+0+0 =  3  errors Error,BrokenCircuit,BrokenCircuit breaker=open
+wrap(retry, timeout, breaker)        calls 3+0+0 =  3  errors Error,BrokenCircuit,BrokenCircuit breaker=open
+wrap(timeout, retry, breaker, bulkhead) calls 3+0+0 =  3  errors Error,BrokenCircuit,BrokenCircuit breaker=open
+wrap(bulkhead, breaker, retry)       calls 3+3+3 =  9  errors Error,Error,Error      breaker=open
+</code></pre>
+  <div class="ar-note">كل صف 3 executes. لو الـ retry بره الـ breaker: 3 calls والباقي <code>BrokenCircuitError</code> من غير call. لو الـ breaker بره الـ retry: 3 لكل execute، يعني 9 calls. الترتيب بتاع الـ README (timeout ثم retry ثم breaker ثم bulkhead) عمل 3 calls.</div>
+
+<pre data-file="src/resilience/timeout-budget.ts"><code class="language-typescript">import { setTimeout as sleep } from "node:timers/promises";
+import { ConstantBackoff, handleAll, retry, timeout, TimeoutStrategy, wrap, type IDefaultPolicyContext, type IPolicy } from "cockatiel";
+
+const attempts = () =&gt; retry(handleAll, { maxAttempts: 2, backoff: new ConstantBackoff(10) });
+
+// أول محاولة بتعلّق، والتانية بترد في 20ms
+async function run(label: string, policy: IPolicy&lt;IDefaultPolicyContext&gt;) {
+  let n = 0;
+  const started = performance.now();
+  const result = await policy
+    .execute(async ({ signal }) =&gt; {
+      const attempt = ++n;
+      await sleep(attempt === 1 ? 5000 : 20, undefined, { signal });
+      return "charged on attempt " + attempt;
+    })
+    .catch((e: Error) =&gt; e.constructor.name);
+  console.log(`${label}: ${result} | attempts=${n} | ~${Math.round(performance.now() - started)}ms`);
+}
+
+// ❌ غلطة: timeout من بره بس، والمحاولة الأولى بتاكل الميزانية كلها
+await run("outer 1000ms only        ", wrap(timeout(1000, TimeoutStrategy.Aggressive), attempts()));
+
+// ✅ ميزانية كلية من بره ⁦+ timeout⁩ لكل محاولة جوه الـ retry
+await run("outer 1000ms + 300ms each", wrap(timeout(1000, TimeoutStrategy.Aggressive), attempts(), timeout(300, TimeoutStrategy.Aggressive)));
+</code></pre>
+
+<pre><code class="language-plaintext">outer 1000ms only        : TaskCancelledError | attempts=1 | ~1009ms
+outer 1000ms + 300ms each: charged on attempt 2 | attempts=2 | ~360ms
+</code></pre>
+  <div class="ar-note">timeout من بره بس: المحاولة الأولى المعلقة أكلت الثانية كلها وفشلنا من غير أي retry. مع 300 ms لكل محاولة: الأولى اتقطعت عند 300 والتانية نجحت عند ≈360 ms.</div>
+
+<pre data-file="src/resilience/composition-traps.ts"><code class="language-typescript">import { setTimeout as sleep } from "node:timers/promises";
+import {
+  BrokenCircuitError,
+  bulkhead,
+  BulkheadRejectedError,
+  circuitBreaker,
+  ConsecutiveBreaker,
+  ConstantBackoff,
+  fallback,
+  handleAll,
+  handleWhen,
+  retry,
+  wrap,
+} from "cockatiel";
+
+const long = 600_000;
+const notRejection = (e: unknown) =&gt; !(e instanceof BrokenCircuitError) &amp;&amp; !(e instanceof BulkheadRejectedError);
+
+// (1) الفخ الأول: الـ breaker بيعدّ رفض الـ bulkhead كأنه الـ service واقع
+async function bulkheadCountsAsFailure(label: string, policyFor: "all" | "filtered") {
+  const breaker = circuitBreaker(policyFor === "all" ? handleAll : handleWhen(notRejection), {
+    halfOpenAfter: long,
+    breaker: new ConsecutiveBreaker(5),
+  });
+  const policy = wrap(breaker, bulkhead(1, 0));
+  // الـ service هنا سليم، بس 10 طلبات مع بعض على slot واحد
+  await Promise.allSettled(
+    Array.from({ length: 10 }, () =&gt;
+      policy.execute(async () =&gt; {
+        await sleep(5);
+        return "ok";
+      }),
+    ),
+  );
+  console.log(`${label}: breaker state = ${["closed", "open"][breaker.state]}`);
+}
+await bulkheadCountsAsFailure("handleAll    ", "all");
+await bulkheadCountsAsFailure("filtered     ", "filtered");
+
+// (2) الفخ التاني: الـ retry بيعيد على BrokenCircuitError ويضيّع وقت في backoff
+async function retriesOpenCircuit(label: string, retryWhen: typeof handleAll) {
+  const breaker = circuitBreaker(handleAll, { halfOpenAfter: long, breaker: new ConsecutiveBreaker(3) });
+  const policy = wrap(retry(retryWhen, { maxAttempts: 2, backoff: new ConstantBackoff(100) }), breaker);
+  const down = async (): Promise&lt;string&gt; =&gt; {
+    throw new Error("503");
+  };
+  await policy.execute(down).catch(() =&gt; undefined);
+  const t0 = performance.now();
+  const name = await policy.execute(down).catch((e: Error) =&gt; e.constructor.name);
+  console.log(`${label}: second execute -&gt; ${name} after ~${Math.round(performance.now() - t0)}ms`);
+}
+await retriesOpenCircuit("retry handleAll  ", handleAll);
+await retriesOpenCircuit("retry filtered   ", handleWhen(notRejection));
+
+// (3) الفخ التالت: fallback جوه الـ breaker بيخفي الفشل عنه فمبيفتحش أبدًا
+type Answering = { execute(fn: () =&gt; Promise&lt;string&gt;): Promise&lt;string&gt; };
+const freshBreaker = () =&gt; circuitBreaker(handleAll, { halfOpenAfter: long, breaker: new ConsecutiveBreaker(3) });
+const queued = () =&gt; fallback(handleAll, "queued");
+
+async function fallbackPlacement(label: string, breaker: ReturnType&lt;typeof freshBreaker&gt;, policy: Answering) {
+  let calls = 0;
+  const answers: Record&lt;string, number&gt; = {};
+  for (let i = 0; i &lt; 20; i++) {
+    const answer = await policy.execute(async () =&gt; {
+      calls++;
+      throw new Error("503");
+    });
+    answers[answer] = (answers[answer] ?? 0) + 1;
+  }
+  console.log(`${label}: downstream calls = ${calls}, breaker = ${["closed", "open"][breaker.state]}, answers = ${JSON.stringify(answers)}`);
+}
+const inner = freshBreaker();
+await fallbackPlacement("fallback inside breaker ", inner, wrap(inner, queued()));
+const outer = freshBreaker();
+await fallbackPlacement("fallback outermost      ", outer, wrap(queued(), outer));
+</code></pre>
+
+<pre><code class="language-plaintext">handleAll    : breaker state = open
+filtered     : breaker state = closed
+retry handleAll  : second execute -&gt; BrokenCircuitError after ~218ms
+retry filtered   : second execute -&gt; BrokenCircuitError after ~0ms
+fallback inside breaker : downstream calls = 20, breaker = closed, answers = {"queued":20}
+fallback outermost      : downstream calls = 3, breaker = open, answers = {"queued":20}
+</code></pre>
+  <div class="ar-note">الفخ الأول: الـ bulkhead بيرفض والـ breaker بيعد الرفض فشل فبيفتح على service سليم، والـ filter بيحل ده. التاني: الـ retry بيعيد على <code>BrokenCircuitError</code> وبيضيّع ≈218 ms، ومع الـ filter ≈0 ms. التالت: fallback جوه الـ breaker عمل 20 call والـ breaker فضل closed، ومن بره 3 calls بس والـ breaker فتح.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><code>wrap(a, b, c)</code> معناها <code>a.execute(() =&gt; b.execute(() =&gt; c.execute(fn)))</code>: أول policy هي اللي بره خالص. الجدول هو الإجابة الحقيقية على "الترتيب بيفرق؟"، متشغل على cockatiel 4.0.0 مع dependency بتفشل دايمًا، و retry بـ 3 محاولات، و breaker بيفتح بعد 3 فشل. <code>halfOpenAfter</code> طويل عشان half-open ميدخلش في العد. لو الـ retry بره الـ breaker، الـ breaker بيشوف كل محاولة: 3 calls، وبعدين بيفتح والـ executes اللي بعد كده بتاخد <code>BrokenCircuitError</code> بصفر calls. لو الـ breaker بره الـ retry، بيشوف النتيجة النهائية بس لكل execute: 3 محاولات لكل execute، يعني 3 executes بيعملوا 9 calls قبل ما يفتح. نفس الـ policies، و 3 أضعاف الترافيك على dependency أصلًا واقعة.</p>
+    <p>ترتيب الـ README <code>timeout → retry → circuit breaker → bulkhead</code> بيتقرا من بره لجوه، وده معناه <code>wrap(timeout, retry, breaker, bulkhead)</code>. والـ timeout اللي بره ده هو الميزانية <b>الكلية</b>، ولوحده فيه فخ: أول محاولة تعلّق بتاكل الميزانية كلها، زي ما الـ run بيوري (محاولة واحدة، اتلغت عند حوالي 1009 ms). ضيف timeout لكل محاولة <i>جوه</i> الـ retry، والمحاولة التانية تاخد فرصتها: اتحاسب عند حوالي 360 ms. و readme بتاع cockatiel بيوري <code>wrap(retry, breaker, timeout)</code> ومش بيقول ترتيب معين، فافهم السبب ومتنسخش وخلاص.</p>
+    <p>فيه تلات فخاخ معاها. bulkhead جوه الـ breaker بيخلي الرفض بتاعه يبان كأنه فشل من الـ dependency، فـ service سليم بيفتح الـ breaker: فلتره بـ predicate. و retry بـ <code>handleAll</code> بيعيد على <code>BrokenCircuitError</code> كمان: حوالي 216 ms backoff على الفاضي عشان يوصّلك error كنت عارفه. و fallback جوه الـ breaker بيخفي الفشل عنه: 20 call للـ downstream والـ breaker مقفول، قصاد 3 calls لو الـ fallback بره خالص. <b>الـ fallback بره خالص.</b> الترتيب اللي أبدأ بيه: fallback، ثم total timeout، ثم retry، ثم breaker، ثم bulkhead، ثم attempt timeout، ثم الـ call. والـ bulkhead جوه الـ retry عشان الـ slot ميتمسكش وقت الـ backoff.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في incident شوفت provider واقع وعدد الـ requests عليه 3 أضعاف الطبيعي، لأن الـ breaker كان بره الـ retry. بقلب الترتيب من غير ما أغير الأرقام، وبضيف attempt timeout جوه الـ retry. وفي code review بدوّر على retry بـ <code>handleAll</code> لأنه بيعيد على الـ open circuit نفسه.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question (exit-test Q9)</b>
+    "Does the order of timeout, retry and circuit breaker matter? Why?" → Yes. Inner policies see each attempt and outer ones see the final result. Retry outside the breaker made 3 calls and tripped; breaker outside the retry made 9 calls across 3 executes. An outer timeout is a total budget, so add a per-attempt timeout inside the retry, and keep the fallback outermost so it doesn't hide failures from the breaker.
+    <div class="ar-note">"ترتيب الـ timeout والـ retry والـ circuit breaker بيفرق؟ ليه؟" ← أيوه. الـ policies اللي جوه بتشوف كل محاولة، واللي بره بتشوف النتيجة النهائية. الـ retry بره الـ breaker عمل 3 calls وفتح، والـ breaker بره الـ retry عمل 9 calls على 3 executes. والـ timeout اللي بره ميزانية كلية، فضيف timeout لكل محاولة جوه الـ retry، وسيب الـ fallback بره خالص عشان ميخبيش الفشل عن الـ breaker.</div>
+  </div>
+
+  <h2 id="p6">Part 6 — The full policy, end to end <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — الـ policy الكاملة من أولها لآخرها</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Now the decorators from <a href="./22-retry-timeout-fallback.html">lesson 22</a> and the classes from this lesson go around a stand-in payment service that moves through four phases: normal, slow, down, recovered, three seconds each at 25 requests per second. <code>decorators.ts</code> keeps lesson 22's ideas in a compact form where each function returns a <code>Task</code>, so they nest; lesson 22 has the full versions. Read the timeline by row. In the slow phase, 400 ms responses hit the 150 ms attempt timeout, so attempts fail, retries fire, and the breaker opens within that first slow second. From there each second costs one probe, and the provider sees 1 or 2 requests instead of 25 or more.</p>
+    <p>The fallback is honest: it returns <code>queued_for_retry</code>, never <code>charged</code>. A fallback that says "paid" is a lie, as lesson 22 covers. After recovery, the next probe closes the breaker and traffic returns within about a second. The p99 of 32 ms in the open phase is the rejection path measured on a Windows timer of about 15 ms; the p99 in the slow phase reflects two attempts plus backoff under the 400 ms total budget. For the cascade this prevents, see <a href="../../04-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html#p5">Node lesson 25, Part 5</a>. Rejecting work at the front door when the whole service is saturated is load shedding, which is <a href="../../10-System-Design/lessons/24-circuit-breaker-bulkhead-shedding.html">section 10 · 2.5</a>.</p>
+    <p><b>Not when:</b> an in-process call or a nightly job needs none of this. Each policy is a new failure mode and another metric to watch, and a breaker on a low-traffic path never collects enough samples to mean anything. Start with timeouts, because they're the one policy every remote call needs. Add a breaker when you've seen a dependency's failure cost you more than its absence would.</p>
+  </section>
+
+<pre data-file="src/resilience/decorators.ts"><code class="language-typescript">// نسخة مختصرة بنفس أفكار درس 22، وكل واحدة بترجع Task عشان يتركبوا جوه بعض
+import { setTimeout as sleep } from "node:timers/promises";
+
+export type Task&lt;T&gt; = (signal: AbortSignal) =&gt; Promise&lt;T&gt;;
+
+export function withTimeout&lt;T&gt;(task: Task&lt;T&gt;, ms: number): Task&lt;T&gt; {
+  return (outer) =&gt; task(AbortSignal.any([outer, AbortSignal.timeout(ms)]));
+}
+
+export interface RetryOptions {
+  maxAttempts: number;
+  baseMs: number;
+  retryable: (err: unknown) =&gt; boolean;
+  onRetry?: (err: unknown, attempt: number) =&gt; void;
+}
+
+export function withRetry&lt;T&gt;(task: Task&lt;T&gt;, o: RetryOptions): Task&lt;T&gt; {
+  return async (signal) =&gt; {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await task(signal);
+      } catch (err) {
+        if (attempt &gt;= o.maxAttempts || signal.aborted || !o.retryable(err)) throw err;
+        o.onRetry?.(err, attempt);
+        // نص الوقت ثابت ونصه عشوائي، عشان الـ clients متتزامنش
+        await sleep(o.baseMs * 2 ** (attempt - 1) * (0.5 + Math.random() / 2), undefined, { signal });
+      }
+    }
+  };
+}
+
+export function withFallback&lt;T&gt;(
+  task: Task&lt;T&gt;,
+  fallbackFn: (err: unknown) =&gt; T,
+  onFallback?: (err: unknown) =&gt; void,
+): Task&lt;T&gt; {
+  return async (signal) =&gt; {
+    try {
+      return await task(signal);
+    } catch (err) {
+      onFallback?.(err);
+      return fallbackFn(err);
+    }
+  };
+}
+</code></pre>
+<pre data-file="src/resilience/full-policy.ts"><code class="language-typescript">import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+import { BrokenCircuitError, CircuitBreaker } from "./breaker.ts";
+import { Bulkhead, BulkheadFull } from "./bulkhead.ts";
+import { type Task, withFallback, withRetry, withTimeout } from "./decorators.ts";
+import { RollingFailureRate } from "./rolling.ts";
+
+type Phase = "normal" | "slow" | "down" | "recovered";
+let phase: Phase = "normal";
+
+// بديل محلي لـ payment provider، بيغيّر سلوكه حسب المرحلة
+let reached = 0;
+const provider = createServer((_req, res) =&gt; {
+  reached++;
+  if (phase === "down") {
+    res.statusCode = 503;
+    res.end("down");
+    return;
+  }
+  setTimeout(() =&gt; res.end('{"status":"charged"}'), phase === "slow" ? 400 : 15);
+});
+await new Promise&lt;void&gt;((r) =&gt; provider.listen(0, "127.0.0.1", r));
+const url = `http://127.0.0.1:${(provider.address() as AddressInfo).port}/charge`;
+
+const charge: Task&lt;{ status: string }&gt; = async (signal) =&gt; {
+  const res = await fetch(url, { method: "POST", signal });
+  if (!res.ok) throw new Error(`provider answered ${res.status}`);
+  return (await res.json()) as { status: string };
+};
+
+const breaker = new CircuitBreaker({
+  name: "payments",
+  trip: new RollingFailureRate({ ratio: 0.5, size: 20, minCalls: 10 }),
+  resetTimeoutMs: 1000,
+  isFailure: (err) =&gt; !(err instanceof BulkheadFull),
+});
+const bulkhead = new Bulkhead({ name: "payments", maxConcurrent: 10, maxQueue: 5 });
+
+const noRetry = (e: unknown) =&gt; e instanceof BrokenCircuitError || e instanceof BulkheadFull;
+const tick = { offered: 0, ok: 0, fallback: 0, broken: 0, full: 0, retries: 0, latencies: [] as number[] };
+
+// الترتيب من بره لجوه: ⁦fallback ←⁩ ميزانية كلية ⁦← retry ← breaker ← bulkhead ← timeout⁩ المحاولة
+const attempt = withTimeout(charge, 150);
+const guarded: Task&lt;{ status: string }&gt; = (signal) =&gt;
+  breaker.execute(() =&gt; bulkhead.execute(() =&gt; attempt(signal), signal));
+const retried = withRetry(guarded, {
+  maxAttempts: 2,
+  baseMs: 30,
+  retryable: (e) =&gt; !noRetry(e),
+  onRetry: () =&gt; tick.retries++,
+});
+const budgeted = withTimeout(retried, 400);
+const policy = withFallback(
+  budgeted,
+  // مش بنكدب ونقول اتدفع، بنقول اتحط في الطابور وهيتحاسب بعدين
+  () =&gt; ({ status: "queued_for_retry" }),
+  (err) =&gt; {
+    tick.fallback++;
+    if (err instanceof BrokenCircuitError) tick.broken++;
+    if (err instanceof BulkheadFull) tick.full++;
+  },
+);
+
+function p99(values: number[]): number {
+  const s = [...values].sort((a, b) =&gt; a - b);
+  return s.length ? Math.round(s[Math.min(s.length - 1, Math.floor(0.99 * s.length))]!) : 0;
+}
+
+console.log("sec phase      offered ok fallback reached retries broken full state      p99");
+const inflight: Promise&lt;unknown&gt;[] = [];
+const phases: Phase[] = ["normal", "slow", "down", "recovered"];
+for (let second = 0; second &lt; 12; second++) {
+  phase = phases[Math.floor(second / 3)]!;
+  // طلب جديد كل 40ms يعني 25 طلب في الثانية
+  for (let i = 0; i &lt; 25; i++) {
+    tick.offered++;
+    const t0 = performance.now();
+    inflight.push(
+      policy(new AbortController().signal).then((r) =&gt; {
+        if (r.status === "charged") tick.ok++;
+        tick.latencies.push(performance.now() - t0);
+      }),
+    );
+    await sleep(40);
+  }
+  const line = [
+    String(second + 1).padStart(3),
+    phase.padEnd(10),
+    String(tick.offered).padStart(7),
+    String(tick.ok).padStart(2),
+    String(tick.fallback).padStart(8),
+    String(reached).padStart(7),
+    String(tick.retries).padStart(7),
+    String(tick.broken).padStart(6),
+    String(tick.full).padStart(4),
+    breaker.state.padEnd(10),
+    String(p99(tick.latencies)).padStart(4) + "ms",
+  ].join(" ");
+  console.log(line);
+  tick.offered = tick.ok = tick.fallback = tick.broken = tick.full = tick.retries = reached = 0;
+  tick.latencies = [];
+}
+await Promise.all(inflight);
+provider.close();
+provider.closeAllConnections();
+</code></pre>
+
+<pre><code class="language-plaintext">sec phase      offered ok fallback reached retries broken full state      p99
+  1 normal          25 25        0      25       0      0    0 closed       45ms
+  2 normal          25 25        0      25       0      0    0 closed       18ms
+  3 normal          25 25        0      25       0      0    0 closed       32ms
+  4 slow            25  0       25      16      10     19    0 open        346ms
+  5 slow            25  0       25       1       1     25    0 open        191ms
+  6 slow            25  0       25       1       1     25    0 open        188ms
+  7 down            25  0       25       1       1     25    0 open         32ms
+  8 down            25  0       25       1       1     25    0 open         32ms
+  9 down            25  0       25       2       2     25    0 open         32ms
+ 10 recovered       25  6       19       6       0     19    0 closed       32ms
+ 11 recovered       25 25        0      25       0      0    0 closed       32ms
+ 12 recovered       25 25        0      25       0      0    0 closed       32ms
+</code></pre>
+  <div class="ar-note">كل صف ثانية. <code>offered</code> الطلبات، <code>ok</code> اتحاسبت، <code>fallback</code> اتردت بـ queued، <code>reached</code> وصلت الـ provider فعلًا، <code>retries</code> إعادات، <code>broken</code> اترفضت من الـ breaker، <code>full</code> اترفضت من الـ bulkhead. في أول ثانية بطيئة الـ breaker فتح، وبعدها الـ provider بيشوف 1 أو 2 طلب في الثانية بدل 25. وبعد الرجوع، probe ناجح قفل الـ breaker في ثانية. الـ ms تقريبية على Windows، والأعداد والحالات هما المهمين.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>دلوقتي الـ decorators من <a href="./22-retry-timeout-fallback.html">درس 22</a> والكلاسات من الدرس ده بيلفوا حوالين بديل محلي لـ payment service بيمشي في أربع مراحل: طبيعي، بطيء، واقع، راجع، 3 ثواني كل واحدة بـ 25 طلب في الثانية. و <code>decorators.ts</code> فيه نفس أفكار درس 22 بشكل مختصر، وكل function بترجع <code>Task</code> عشان يتركبوا جوه بعض، والنسخ الكاملة في درس 22. اقرا الـ timeline صف بصف. في مرحلة البطء، ردود الـ 400 ms بتخبط في الـ attempt timeout بتاع 150 ms، فالمحاولات بتفشل والـ retries بتشتغل والـ breaker بيفتح جوه أول ثانية بطيئة. ومن بعدها كل ثانية بتكلف probe واحد، والـ provider بيشوف طلب أو اتنين بدل 25 أو أكتر.</p>
+    <p>الـ fallback صادق: بيرجع <code>queued_for_retry</code> ومش بيقول <code>charged</code> أبدًا. fallback بيقول "اتدفع" يبقى كدبة، زي ما درس 22 شرح. وبعد الرجوع، الـ probe الجاي بيقفل الـ breaker والترافيك بيرجع في حوالي ثانية. والـ p99 بتاع 32 ms في مرحلة الفتح هو مسار الرفض مقاس على timer بتاع Windows حوالي 15 ms، و p99 مرحلة البطء بتعكس محاولتين و backoff تحت الميزانية الكلية بتاعة 400 ms. وللـ cascade اللي ده بيمنعه شوف <a href="../../04-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html#p5">درس Node 25، Part 5</a>. ورفض الشغل على الباب لما الـ service كلها متشبعة ده load shedding، وده في <a href="../../10-System-Design/lessons/24-circuit-breaker-bulkhead-shedding.html">section 10 · 2.5</a>.</p>
+    <p><b>إمتى مش محتاجه:</b> call داخل نفس الـ process أو job بالليل مش محتاجين أي حاجة من دول. كل policy هي failure mode جديدة و metric تانية تتراقب، و breaker على مسار ترافيكه قليل عمره ما هيجمع عينات كفاية عشان يبقى ليه معنى. ابدأ بالـ timeouts، لأنها الـ policy الوحيدة اللي كل remote call محتاجها. وضيف breaker لما تشوف إن فشل dependency بيكلفك أكتر من غيابها.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      <code>POST /orders</code> في المشروع: الـ order بيتحفظ <code>payment_pending</code>، والـ charge بيعدي من الـ stack ده. الـ fallback بيحط الـ charge في queue والعميل يشوف "جاري تأكيد الدفع"، بدل صفحة 500. وكل صف في الـ timeline ده بالظبط هو اللي عايز تشوفه في Grafana وقت الـ incident.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Your payment provider's p99 tripled and 30% of calls fail. Walk me through what each policy does, in order." → The attempt timeout cuts the slow attempts. The breaker counts each attempt and opens when the window crosses its ratio. Retry only retries real failures and never <code>BrokenCircuitError</code>. The bulkhead caps concurrent attempts. The total budget caps what the caller waits, and the fallback gives an honest degraded answer, such as queueing the charge. Then one probe a period decides when to resume.
+    <div class="ar-note">"الـ p99 بتاع الـ payment provider بقى 3 أضعاف و 30% من الـ calls بتفشل. احكيلي كل policy بتعمل إيه وبالترتيب." ← الـ attempt timeout بيقطع المحاولات البطيئة. الـ breaker بيعد كل محاولة وبيفتح لما الـ window يعدي النسبة. الـ retry بيعيد على الفشل الحقيقي بس ومش على <code>BrokenCircuitError</code>. الـ bulkhead بيحدد عدد المحاولات المتزامنة. والميزانية الكلية بتحدد الـ caller هيستنى قد إيه، والـ fallback بيدي رد degraded صادق زي إن الـ charge يتحط في queue. وبعدين probe واحد كل فترة بيقرر إمتى نرجع.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "When would you not add a circuit breaker?" → In-process calls, nightly batch jobs where a slow success is fine, and low-traffic paths where a window never fills. Every policy adds a failure mode and a metric to watch, so start with timeouts and add breakers where a dependency's failure has been shown to be expensive.
+    <div class="ar-note">"إمتى متحطش circuit breaker؟" ← الـ calls داخل نفس الـ process، والـ batch jobs بالليل اللي النجاح البطيء فيها عادي، والمسارات القليلة الترافيك اللي الـ window فيها عمره ما بيتملي. كل policy بتضيف failure mode و metric تتراقب، فابدأ بالـ timeouts وضيف breakers في الأماكن اللي ثبت إن فشل الـ dependency فيها غالي.</div>
+  </div>
+
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Every error counts</b>
+<pre><code class="language-typescript">const breaker = new CircuitBreaker({
+  name: "payments",
+  trip: new ConsecutiveFailures(5),
+  resetTimeoutMs: 30_000,
+});
+// خمس كروت مرفوضة بيفتحوا الـ breaker على كل العملاء
+</code></pre>
+    </div>
+    <div class="good"><b>✅ Only dependency failures count</b>
+<pre><code class="language-typescript">const breaker = new CircuitBreaker({
+  name: "payments",
+  trip: new ConsecutiveFailures(5),
+  resetTimeoutMs: 30_000,
+  isFailure: (e) =&gt; !(e instanceof CardDeclined),
+});
+</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الكود الأول بيعد أي error، فعميل كارته مرفوض بيتحسب كأن الـ provider واقع، وبعد 5 مرات كله بيترفض. ✅ الـ predicate بيخلي الـ breaker يعد الأخطاء اللي بتقول حاجة عن الـ dependency بس (5xx، timeout)، وأخطاء الـ business زي <code>CardDeclined</code> بتعدي من غير ما تأثر.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Half-open lets everything through</b>
+<pre><code class="language-typescript">if (this.#now() - this.#openedAt &gt;= this.#resetMs) {
+  this.state = "half_open";
+}
+// كل الطلبات المستنية بتعدي مرة واحدة على service لسه بيفوق
+</code></pre>
+    </div>
+    <div class="good"><b>✅ One probe at a time</b>
+<pre><code class="language-typescript">if (this.#state === "half_open") {
+  if (this.#probeInFlight) this.#reject();
+  this.#probeInFlight = true;
+}
+</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ من غير حد، كل الـ traffic المحبوس بيضرب مرة واحدة أول ما الـ timeout يخلص، فالـ service اللي راجع بيقع تاني (في الـ run: 100 طلب وصلوا بدل 1). ✅ الـ flag بيسمح بـ probe واحد، وأي call تاني في نفس الوقت بيترفض فورًا لحد ما الـ probe يقرر.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Breaker outside the retry</b>
+<pre><code class="language-typescript">const policy = wrap(breaker, retry, attemptTimeout);
+// الـ breaker بيشوف نتيجة واحدة لكل execute: 9 calls على 3 executes
+</code></pre>
+    </div>
+    <div class="good"><b>✅ Retry outside the breaker</b>
+<pre><code class="language-typescript">const policy = wrap(retry, breaker, attemptTimeout);
+// الـ breaker بيشوف كل محاولة: 3 calls وبعدين بيفتح
+</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ لو الـ breaker بره، الـ retry بيخبي عنه كل محاولة وبيشوف الفشل النهائي بس، فالـ dependency الواقعة بتاكل 3 أضعاف الترافيك (9 calls). ✅ لو الـ retry بره، الـ breaker بيشوف كل محاولة وبيفتح بعد 3 calls، والـ executes اللي بعدها بتفشل من غير call. المهم مع الترتيب ده إن الـ retry ميعيدش على <code>BrokenCircuitError</code>.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ One timeout, on the outside</b>
+<pre><code class="language-typescript">const policy = wrap(timeout(1000, TimeoutStrategy.Aggressive), retries);
+// المحاولة الأولى لو علّقت بتاكل الثانية كلها، وصفر retries
+</code></pre>
+    </div>
+    <div class="good"><b>✅ Total budget plus per-attempt timeout</b>
+<pre><code class="language-typescript">const policy = wrap(
+  timeout(1000, TimeoutStrategy.Aggressive),
+  retries,
+  timeout(300, TimeoutStrategy.Aggressive),
+);
+</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ timeout واحد بره معناه إن أول محاولة تعلّق بتستهلك الميزانية كلها والـ retry ملوش فرصة، زي الـ run (محاولة واحدة، TaskCancelledError عند 1009 ms). ✅ ميزانية كلية بره و timeout لكل محاولة جوه الـ retry، فالمحاولة التانية نجحت عند حوالي 360 ms.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ One pool for all workloads</b>
+<pre><code class="language-typescript">const pool = new pg.Pool({ max: 20 });
+await pool.query(heavyReportSql);
+await pool.query(checkoutSql);
+// تقرير تقيل بياخد الـ connections والـ checkout يستنى
+</code></pre>
+    </div>
+    <div class="good"><b>✅ A pool per workload</b>
+<pre><code class="language-typescript">const oltpPool = new pg.Pool({ max: 15 });
+const reportsPool = new pg.Pool({ max: 3 });
+await reportsPool.query(heavyReportSql);
+await oltpPool.query(checkoutSql);
+</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ pool واحد معناه إن الـ reports التقيلة بتاخد كل الـ connections والـ checkout بيستنى في الطابور (p50 ≈ 171 ms في الـ run). ✅ pool منفصل لكل workload بيعزل المشكلة (p50 ≈ 0.4 ms)، وبس لازم مجموع الـ pools × عدد الـ instances يفضل أقل من <code>max_connections</code>.</p>
+  </section>
+
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Write the missing test <span class="lvl lvl-1">🟢 easy</span></b>
+    A half-open breaker gets a <code>CardDeclined</code> from its probe. The provider answered, so what should happen? Add a test with a predicate that ignores <code>CardDeclined</code>, and assert the final state.
+    <div class="ar-note">breaker في حالة half-open والـ probe رجّع <code>CardDeclined</code>. الـ provider رد فعلًا، فالمفروض يحصل إيه؟ اكتب test بـ predicate بيتجاهل <code>CardDeclined</code> وتأكد من الحالة النهائية.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/resilience/probe-card.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { CircuitBreaker, ConsecutiveFailures } from "../l23/breaker.ts";
+
+class CardDeclined extends Error {}
+
+test("half_open + a business error: the provider answered, so it closes", async () =&gt; {
+  let t = 0;
+  const breaker = new CircuitBreaker({
+    name: "payments",
+    trip: new ConsecutiveFailures(1),
+    resetTimeoutMs: 1000,
+    now: () =&gt; t,
+    isFailure: (e) =&gt; !(e instanceof CardDeclined),
+  });
+  await breaker.execute(() =&gt; Promise.reject(new Error("503"))).catch(() =&gt; undefined);
+  assert.equal(breaker.state, "open");
+  t += 1000;
+  await assert.rejects(breaker.execute(() =&gt; Promise.reject(new CardDeclined("declined"))), CardDeclined);
+  assert.equal(breaker.state, "closed");
+});
+</code></pre>
+      <div class="ar-note">الحالة النهائية <code>closed</code>: الـ provider رد، حتى لو الرد رفض كارت، فهو شغال. الـ test نجح فعلًا.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Back off the reset timeout <span class="lvl lvl-2">🟡 medium</span></b>
+    Add <code>maxResetTimeoutMs</code>: each failed probe doubles the wait up to the cap, and a successful probe puts it back to <code>resetTimeoutMs</code>. Test it with the injected clock.
+    <div class="ar-note">ضيف <code>maxResetTimeoutMs</code>: كل probe فاشل بيضاعف وقت الانتظار لحد السقف، والـ probe الناجح بيرجعه <code>resetTimeoutMs</code>. اختبره بالساعة المحقونة.</div>
+    <details><summary>Hint · تلميح</summary>
+      Keep a <code>#currentResetMs</code> field and use it in <code>#admit</code> instead of the option.
+      <div class="ar-note">خلي عندك field اسمه <code>#currentResetMs</code> واستخدمه في <code>#admit</code> بدل الـ option.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/resilience/breaker-backoff.ts"><code class="language-typescript">// التغيير في ⁦#settle⁩، وباقي الكلاس زي ما هو
+if (isProbe) {
+  this.#probeInFlight = false;
+  if (ok) {
+    this.#currentResetMs = this.#o.resetTimeoutMs;
+    this.#moveTo("closed", "probe succeeded");
+  } else {
+    const cap = this.#o.maxResetTimeoutMs ?? this.#o.resetTimeoutMs;
+    this.#currentResetMs = Math.min(this.#currentResetMs * 2, cap);
+    this.#moveTo("open", "probe failed");
+  }
+  return;
+}
+</code></pre>
+<pre data-file="src/resilience/breaker-backoff.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { BrokenCircuitError, CircuitBreaker, ConsecutiveFailures } from "./breaker-backoff.ts";
+
+const down = () =&gt; Promise.reject(new Error("503"));
+
+test("each failed probe doubles the wait up to the cap, a success resets it", async () =&gt; {
+  let t = 0;
+  const breaker = new CircuitBreaker({
+    name: "payments",
+    trip: new ConsecutiveFailures(1),
+    resetTimeoutMs: 1000,
+    maxResetTimeoutMs: 4000,
+    now: () =&gt; t,
+  });
+  const fail = () =&gt; breaker.execute(down).catch(() =&gt; undefined);
+  await fail();
+  for (const wait of [1000, 2000, 4000, 4000]) {
+    t += wait - 1;
+    await assert.rejects(breaker.execute(down), BrokenCircuitError);
+    t += 1;
+    await fail();
+    assert.equal(breaker.state, "open");
+  }
+  t += 4000;
+  await breaker.execute(async () =&gt; "ok");
+  assert.equal(breaker.state, "closed");
+  await fail();
+  t += 999;
+  await assert.rejects(breaker.execute(down), BrokenCircuitError);
+  t += 1;
+  await breaker.execute(async () =&gt; "ok");
+  assert.equal(breaker.state, "closed");
+});
+</code></pre>
+      <div class="ar-note">كل probe فاشل بيضاعف الانتظار: 1000 ثم 2000 ثم 4000 ويقف عند السقف، والـ probe الناجح بيرجعه 1000. الـ test نجح على نسخة من الكلاس بالتعديل ده.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Leave the queue on abort <span class="lvl lvl-3">🔴 hard</span></b>
+    In this lesson's <code>Bulkhead</code>, an aborted caller stays queued until a slot frees. Make it leave the queue the moment its signal aborts, and test that its function never runs.
+    <div class="ar-note">في الـ <code>Bulkhead</code> بتاع الدرس، الـ caller اللي اتلغى بيفضل في الطابور لحد ما slot يفضى. خليه يخرج من الطابور أول ما الـ signal يتعمله abort، وتأكد بـ test إن الـ function بتاعته مشتغلتش.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/resilience/bulkhead-abort.ts"><code class="language-typescript">export class BulkheadFull extends Error {}
+
+interface Waiter {
+  resolve: () =&gt; void;
+}
+
+export class Bulkhead {
+  #active = 0;
+  #queue: Waiter[] = [];
+  #max: number;
+  #maxQueue: number;
+
+  constructor(max: number, maxQueue: number) {
+    this.#max = max;
+    this.#maxQueue = maxQueue;
+  }
+
+  async execute&lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;, signal?: AbortSignal): Promise&lt;T&gt; {
+    if (this.#active &lt; this.#max) {
+      this.#active++;
+    } else if (this.#queue.length &lt; this.#maxQueue) {
+      await this.#wait(signal);
+    } else {
+      throw new BulkheadFull("full");
+    }
+    try {
+      return await fn();
+    } finally {
+      const next = this.#queue.shift();
+      if (next) next.resolve();
+      else this.#active--;
+    }
+  }
+
+  #wait(signal?: AbortSignal): Promise&lt;void&gt; {
+    return new Promise&lt;void&gt;((resolve, reject) =&gt; {
+      const waiter: Waiter = {
+        resolve: () =&gt; {
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        },
+      };
+      // اللي صاحبه مشي يخرج من الطابور فورًا من غير ما يستنى slot
+      const onAbort = () =&gt; {
+        this.#queue = this.#queue.filter((w) =&gt; w !== waiter);
+        reject(signal!.reason);
+      };
+      if (signal?.aborted) return onAbort();
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.#queue.push(waiter);
+    });
+  }
+}
+</code></pre>
+<pre data-file="src/resilience/bulkhead-abort.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { Bulkhead } from "./bulkhead-abort.ts";
+
+test("a queued call leaves as soon as its signal aborts", async () =&gt; {
+  const bulkhead = new Bulkhead(1, 5);
+  let finish = (_: string) =&gt; {};
+  const running = bulkhead.execute(() =&gt; new Promise&lt;string&gt;((r) =&gt; (finish = r)));
+  const controller = new AbortController();
+  let ran = false;
+  const queued = bulkhead.execute(async () =&gt; {
+    ran = true;
+  }, controller.signal);
+  controller.abort(new Error("caller gave up"));
+  await assert.rejects(queued, /caller gave up/);
+  finish("ok");
+  assert.equal(await running, "ok");
+  assert.equal(ran, false);
+});
+</code></pre>
+      <div class="ar-note">الـ listener بتاع <code>abort</code> بيشيل الـ waiter من الطابور ويرفض الـ promise فورًا، وبيتشال الـ listener لما الـ slot يوصل عشان ميبقاش فيه leak. الـ test نجح.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    Put the Part 6 stack around one outbound call in your side project (the payment or email client), per dependency. Pick the numbers from Little's law and from the dependency's real p99. Export <code>circuit_state</code>, rejections and fallbacks, then stop the dependency and watch them.
+    <div class="ar-note">حط الـ stack بتاع Part 6 حوالين outbound call واحد في مشروعك الجانبي (client الدفع أو الإيميل)، لكل dependency لوحدها. اختار الأرقام من Little's law ومن الـ p99 الحقيقي بتاع الـ dependency. طلّع <code>circuit_state</code> والرفض والـ fallbacks كـ metrics، وبعدين وقّف الـ dependency وراقبهم.</div>
+    <details><summary>Hint · تلميح</summary>
+      Start with the attempt timeout from the measured p99, and only then add the breaker and the bulkhead.
+      <div class="ar-note">ابدأ بالـ attempt timeout من الـ p99 المقاس، وبعدها بس ضيف الـ breaker والـ bulkhead.</div>
+    </details>
+  </div>
+
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Breaker states: closed counts, open rejects, half-open sends one probe. Success closes it, failure reopens it and restarts the timer.</li>
+    <li>Inject the clock, and ignore results from a previous state with a generation number.</li>
+    <li>Consecutive reacts fast but misses interleaved failures; a rolling window needs a volume threshold and a size chosen against false trips.</li>
+    <li>Count dependency failures only: a predicate keeps <code>CardDeclined</code> out. Count slow calls as failures.</li>
+    <li>Breaker state is per instance: N instances × threshold failed calls before all stop. Shared state costs a round trip and a new dependency.</li>
+    <li>Write a breaker once, then use cockatiel or opossum. Know that their half-open behaviour differs.</li>
+    <li>Bulkhead: one concurrency limit and a small queue per dependency. Size with Little's law: rate × latency.</li>
+    <li><code>wrap(a, b, c)</code>: a is outermost. Retry outside the breaker: 3 calls. Breaker outside the retry: 9.</li>
+    <li>Order to start from: fallback, total timeout, retry, breaker, bulkhead, attempt timeout, call.</li>
+    <li>Filter <code>BrokenCircuitError</code> from retries and bulkhead rejections from the breaker.</li>
+    <li>Start with timeouts. Every policy is a new failure mode and a metric to watch.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>حالات الـ breaker: closed بيعد، open بيرفض، half-open بيبعت probe واحد. النجاح بيقفله، والفشل بيفتحه تاني ويبدأ العداد من الأول.</li>
+      <li>احقن الساعة، وتجاهل نتايج الحالة القديمة برقم generation.</li>
+      <li>الـ consecutive سريع بس بيفوّت الفشل المتقطع، والـ rolling window محتاج volume threshold وحجم متحسوب ضد الفتح الغلط.</li>
+      <li>عد فشل الـ dependency بس: الـ predicate بيخرج <code>CardDeclined</code>. والـ calls البطيئة تتحسب فشل.</li>
+      <li>حالة الـ breaker لكل instance: عدد الـ instances × الـ threshold فشل قبل ما الكل يوقف. والحالة المتشاركة بتكلف round trip و dependency جديدة.</li>
+      <li>اكتب breaker مرة، وبعدين استخدم cockatiel أو opossum. واعرف إن half-open بيختلف بينهم.</li>
+      <li>الـ bulkhead: حد concurrency وطابور صغير لكل dependency. والحجم بـ Little's law: المعدل × الـ latency.</li>
+      <li><code>wrap(a, b, c)</code>: الـ a هي اللي بره خالص. الـ retry بره الـ breaker: 3 calls. الـ breaker بره الـ retry: 9.</li>
+      <li>الترتيب اللي تبدأ بيه: fallback، ثم total timeout، ثم retry، ثم breaker، ثم bulkhead، ثم attempt timeout، ثم الـ call.</li>
+      <li>فلتر <code>BrokenCircuitError</code> من الـ retries، ورفض الـ bulkhead من الـ breaker.</li>
+      <li>ابدأ بالـ timeouts. كل policy هي failure mode جديدة و metric تتراقب.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 08 · 3.2 — Circuit Breaker: تكتبه بإيدك (closed/open/half-open، failure threshold، reset timeout، metrics) ثم تقارن بـ opossum/cockatiel</label>
+    <label><input type="checkbox" data-key="r2"> 08 · 3.2 — Bulkhead: pool منفصل لكل dependency (concurrency limit per downstream)</label>
+    <label><input type="checkbox" data-key="r3"> 08 · 3.2 — Composing resilience: policy wrapping order (timeout → retry → circuit breaker → bulkhead) وليه الترتيب مهم (cockatiel <code>wrap</code>)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://martinfowler.com/bliki/CircuitBreaker.html">Martin Fowler — CircuitBreaker</a></li>
+    <li><a href="https://learn.microsoft.com/en-us/azure/architecture/patterns/circuit-breaker">Microsoft Azure Architecture — Circuit Breaker pattern</a></li>
+    <li><a href="https://learn.microsoft.com/en-us/azure/architecture/patterns/bulkhead">Microsoft Azure Architecture — Bulkhead pattern</a></li>
+    <li><a href="https://github.com/connor4312/cockatiel">cockatiel (source and readme)</a></li>
+    <li><a href="https://github.com/nodeshift/opossum">opossum (source and docs)</a></li>
+    <li><a href="https://node-postgres.com/apis/pool">node-postgres — Pool</a></li>
+  </ul>
+
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+    <nav class="lesson-nav">
+    <a class="prev" href="./22-retry-timeout-fallback.html"><small>← Previous</small>22 · Retry, Timeout, Fallback</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./24-rate-limiter-idempotent-receiver.html"><small>Next →</small>24 · Rate Limit &amp; Idempotency</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
