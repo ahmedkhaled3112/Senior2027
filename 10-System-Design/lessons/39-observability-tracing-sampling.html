@@ -1,0 +1,1544 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Observability at Scale: Tracing, Sampling, Cardinality, RED &amp; USE — 10 System Design</title>
+<meta name="section" content="10-System-Design">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">10 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 39 / 63</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+  <header>
+    <h1>Observability at Scale: Tracing, Sampling, Cardinality, RED &amp; USE</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 39 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">Node 22 · OpenTelemetry SDK 0.301 · Postgres 18 · Redis 8</span>
+      <span class="chip">Prereq: 04 · 30 and 31 (logging, metrics, tracing)</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>10 · 2.8 — الثلاث أعمدة على scale: logs (sampling، retention، cardinality)، metrics (RED …، USE …)، traces (sampling strategies — head vs tail)</li>
+        <li>10 · 2.6 — Distributed tracing والـ correlation IDs عبر الـ services (context propagation)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Correlation IDs across boundaries</a></li>
+      <li><a href="#p2">Part 2 — Traces and the critical path</a></li>
+      <li><a href="#p3">Part 3 — Head vs tail sampling</a></li>
+      <li><a href="#p4">Part 4 — Logs at scale</a></li>
+      <li><a href="#p5">Part 5 — Metrics and cardinality</a></li>
+      <li><a href="#p6">Part 6 — RED and USE on a real run</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>One service with one log file is easy to debug. Twenty services, each with thirty instances, are not: a single checkout touches many processes, and each of them writes its own log. At that size the three pillars stop being a setup task and become a design problem with a budget. What can you still join together? What do you keep? What does it cost per month?</p>
+    <p>This lesson stays on the system-level questions. <a href="../../04-NodeJS/lessons/30-logging-request-context.html">Lesson 04 · 30</a> and <a href="../../04-NodeJS/lessons/31-metrics-tracing-errors.html">04 · 31</a> taught the instrumentation inside one service; here we cross service boundaries, read real traces, count what sampling loses, price logs, predict metric series and watch a real pool saturate. Interviewers ask exactly this: "how would you find which service made checkout slow?"</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>service واحدة وملف log واحد سهلين. لكن 20 service، كل واحدة عليها 30 instance، حاجة تانية خالص: checkout واحد بيعدّي على processes كتير، وكل واحدة بتكتب log لوحدها. على الحجم ده الأعمدة التلاتة بتبطّل تبقى setup وبتبقى مشكلة design ليها ميزانية: إيه اللي لسه تقدر تربطه ببعضه؟ إيه اللي هتحتفظ بيه؟ وبيكلّف كام في الشهر؟</p>
+    <p>الدرس ده مركز على الأسئلة دي على مستوى النظام. <a href="../../04-NodeJS/lessons/30-logging-request-context.html">درس 04 · 30</a> و<a href="../../04-NodeJS/lessons/31-metrics-tracing-errors.html">04 · 31</a> علّموك الـ instrumentation جوه service واحدة؛ هنا هنعدّي حدود الـ services، نقرا traces حقيقية، نعدّ الـ sampling بيضيّع إيه، نحسب سعر الـ logs، نتوقع عدد الـ metric series، ونتفرج على pool حقيقي وهو بيتملي. والسؤال ده بييجي في الـ interviews بالنص: "إزاي هتعرف أنهي service اللي بطّأت الـ checkout؟"</p>
+  </section>
+
+  <h2 id="p1">Part 1 — Correlation IDs across boundaries <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الـ correlation IDs عبر حدود الـ services</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A correlation ID is one value that travels with one business request through every hop. <code>AsyncLocalStorage</code> carries it <em>inside</em> a process, as <a href="../../04-NodeJS/lessons/30-logging-request-context.html">04 · 30</a> showed. It does nothing across a process boundary, so each boundary needs an explicit step: read the ID on the way in, write it on the way out.</p>
+    <p>There are three kinds of boundary. An <b>incoming HTTP call</b> reads the header, or creates an ID if this is the first hop. An <b>outgoing HTTP call</b> copies the ID into a header. A <b>queue message</b> has no headers of its own in a Redis list, so the ID goes in an envelope around the payload; the consumer takes it out and opens a new context around the handler. Forget any one of them and the chain silently breaks at that hop.</p>
+    <p>The run below uses real separate processes: <code>api</code>, <code>orders</code>, <code>payments</code>, plus a <code>notifier</code> worker reading a real Redis list. Five checkouts run at the same time and one card is declined. Without IDs, the payments log has no field that also appears in the API log, so you can't say which user was declined. With IDs, one <code>grep</code> gives the whole path.</p>
+  </section>
+
+<pre class="diagram">
+ client
+   |
+   v  (no header: create id)
++------+  x-correlation-id   +--------+  x-correlation-id   +----------+
+| api  | ------------------> | orders | ------------------> | payments |
++------+                     +--------+                     +----------+
+                                 |
+                                 |  LPUSH { correlationId, payload }
+                                 v
+                           [ Redis list ]
+                                 |
+                                 |  BRPOP, then als.run(id, handler)
+                                 v
+                           +----------+
+                           | notifier |
+                           +----------+
+</pre>
+  <div class="ar-note">الـ client بيبعت من غير header، فالـ <code>api</code> بيولّد id. بعدها كل HTTP call بياخد الـ id في header اسمه <code>x-correlation-id</code> من <code>api</code> لـ <code>orders</code> لـ <code>payments</code>. لما <code>orders</code> يحط رسالة في الـ Redis list، الـ id بيبقى جوه الـ envelope مع الـ payload. والـ <code>notifier</code> بيسحب الرسالة بـ <code>BRPOP</code> ويفتح context جديد بالـ id ده.</div>
+
+<pre data-file="p1/observe.ts"><code class="language-typescript">import { AsyncLocalStorage } from "node:async_hooks";
+import { randomUUID } from "node:crypto";
+import { appendFileSync } from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
+
+type Ctx = { correlationId: string };
+// الـ store ده بيمشي مع الـ async context جوه الـ process بس، مش بيعدّي الشبكة لوحده
+export const als = new AsyncLocalStorage&lt;Ctx&gt;();
+const SERVICE = process.env.SERVICE!;
+const WITH_IDS = process.env.MODE === "ids";
+
+export function log(msg: string, fields: Record&lt;string, unknown&gt; = {}) {
+  const correlationId = WITH_IDS ? als.getStore()?.correlationId : undefined;
+  const line = { ts: Date.now(), svc: SERVICE, correlationId, msg, ...fields };
+  appendFileSync(`logs/${SERVICE}.jsonl`, JSON.stringify(line) + "\n");
+}
+
+// (1) دخول الـ request: خد الـ id من الـ header أو ولّد واحد لو إحنا أول hop
+export function withCorrelation(req: IncomingMessage, res: ServerResponse, next: () =&gt; void) {
+  const incoming = req.headers["x-correlation-id"];
+  const correlationId = typeof incoming === "string" &amp;&amp; incoming ? incoming : randomUUID();
+  res.setHeader("x-correlation-id", correlationId);
+  als.run({ correlationId }, next);
+}
+
+// (2) خروج الـ HTTP call: حط الـ id في الـ header
+export function callService(url: string, body: unknown) {
+  const headers: Record&lt;string, string&gt; = { "content-type": "application/json" };
+  const id = als.getStore()?.correlationId;
+  if (WITH_IDS &amp;&amp; id) headers["x-correlation-id"] = id;
+  return fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+}
+
+// (3) خروج رسالة الـ queue: الـ id جوه الـ envelope مش في الـ payload
+export function envelope&lt;T&gt;(payload: T) {
+  return JSON.stringify({ correlationId: WITH_IDS ? als.getStore()?.correlationId : undefined, payload });
+}</code></pre>
+
+<pre data-file="p1/services.ts"><code class="language-typescript">import http from "node:http";
+import { setTimeout as sleep } from "node:timers/promises";
+import { Redis } from "ioredis";
+import { als, callService, envelope, log, withCorrelation } from "./observe.ts";
+
+const role = process.env.SERVICE!;
+const PARALLEL = process.env.PARALLEL === "1";
+
+// حارس الـ port: قيمة فاضية معناها الـ Redis الحقيقي على 6379، فبنرفض قبل أي connection
+const rawPort = String(process.env.REDIS_PORT ?? "");
+const n = Number(rawPort);
+if (!/^\d+$/.test(rawPort) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) {
+  throw new Error("refusing port " + rawPort);
+}
+const redis = new Redis({ port: n, host: "127.0.0.1", maxRetriesPerRequest: 2 });
+
+type Handler = (body: any) =&gt; Promise&lt;{ status: number; json: unknown }&gt;;
+
+function serve(routes: Record&lt;string, Handler&gt;) {
+  const server = http.createServer((req, res) =&gt; {
+    withCorrelation(req, res, async () =&gt; {
+      const chunks: Buffer[] = [];
+      for await (const c of req) chunks.push(c as Buffer);
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
+      const route = routes[`${req.method} ${req.url}`];
+      if (!route) return void res.writeHead(404).end();
+      const out = await route(body);
+      res.writeHead(out.status, { "content-type": "application/json" }).end(JSON.stringify(out.json));
+    });
+  });
+  server.listen(0, "127.0.0.1", () =&gt; {
+    const { port } = server.address() as { port: number };
+    process.send?.({ port });
+  });
+}
+
+if (role === "payments") {
+  serve({
+    "POST /risk": async () =&gt; (await sleep(60), { status: 200, json: { score: 12 } }),
+    "POST /limits": async () =&gt; (await sleep(45), { status: 200, json: { ok: true } }),
+    "POST /charge": async ({ amount }) =&gt; {
+      await sleep(90);
+      // المبلغ 13 بنعتبره بطاقة مرفوضة عشان نجرّب مسار الفشل
+      if (amount === 13) return log("card declined"), { status: 402, json: { error: "declined" } };
+      return log("charge ok", { amount }), { status: 200, json: { chargeId: "ch_" + amount } };
+    },
+  });
+}
+
+if (role === "orders") {
+  const PAY = process.env.PAYMENTS_URL!;
+  serve({
+    "POST /orders": async ({ userId, amount }) =&gt; {
+      log("creating order", { userId });
+      if (PARALLEL) {
+        // الـ risk والـ limits مستقلين عن بعض، فيجروا مع بعض
+        await Promise.all([callService(`${PAY}/risk`, { userId }), callService(`${PAY}/limits`, { userId })]);
+      } else {
+        await callService(`${PAY}/risk`, { userId });
+        await callService(`${PAY}/limits`, { userId });
+      }
+      const r = await callService(`${PAY}/charge`, { amount });
+      if (!r.ok) return log("payment failed", { userId }), { status: 402, json: { error: "payment_failed" } };
+      await redis.lpush("q:notify", envelope({ userId, kind: "order_paid" }));
+      log("order paid", { userId });
+      return { status: 201, json: { ok: true } };
+    },
+  });
+}
+
+if (role === "api") {
+  const ORDERS = process.env.ORDERS_URL!;
+  serve({
+    "POST /checkout": async ({ userId, amount }) =&gt; {
+      log("checkout received", { userId });
+      const r = await callService(`${ORDERS}/orders`, { userId, amount });
+      log("checkout finished", { userId, status: r.status });
+      return { status: r.status, json: await r.json() };
+    },
+  });
+}
+
+if (role === "notifier") {
+  process.send?.({ port: 0 });
+  for (;;) {
+    const item = await redis.brpop("q:notify", 1);
+    if (!item) continue;
+    const { correlationId, payload } = JSON.parse(item[1]);
+    // الـ consumer بيرجّع الـ id من الـ envelope ويفتح context جديد ليه
+    als.run({ correlationId: correlationId ?? "none" }, () =&gt; log("email sent", payload));
+  }
+}</code></pre>
+
+<pre data-file="p1/run.ts"><code class="language-typescript">import { fork, type ChildProcess } from "node:child_process";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
+
+const MODE = process.argv[2] ?? "none";
+const redisPort = readFileSync("redis.port", "utf8").trim();
+// المسار مطلق جوه فولدر الـ lab عشان المسح ميروحش مكان تاني لو الـ cwd اتغير
+const logsDir = new URL("../logs/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+rmSync(logsDir, { recursive: true, force: true });
+mkdirSync(logsDir);
+
+const kids: ChildProcess[] = [];
+function start(SERVICE: string, extra: Record&lt;string, string&gt; = {}) {
+  const env = { ...process.env, SERVICE, MODE, REDIS_PORT: redisPort, ...extra };
+  const child = fork("p1/services.ts", { env });
+  kids.push(child);
+  return new Promise&lt;string&gt;((res) =&gt; child.once("message", (m: any) =&gt; res(`http://127.0.0.1:${m.port}`)));
+}
+
+const PAYMENTS_URL = await start("payments");
+const ORDERS_URL = await start("orders", { PAYMENTS_URL });
+const API_URL = await start("api", { ORDERS_URL });
+await start("notifier");
+
+// خمس checkouts في نفس الوقت، واحدة منهم البطاقة بتاعتها هتترفض
+const amounts = [10, 11, 12, 13, 14];
+await Promise.all(amounts.map((amount, i) =&gt;
+  fetch(`${API_URL}/checkout`, { method: "POST", body: JSON.stringify({ userId: "u" + i, amount }) }).then((r) =&gt; r.text()),
+));</code></pre>
+
+<pre><code class="language-plaintext">$ node p1/run.ts none
+mode=none lines: api=10 orders=10 payments=5 notifier=4
+payments log:
+   {"svc":"payments","msg":"charge ok","amount":11}
+   {"svc":"payments","msg":"charge ok","amount":10}
+   {"svc":"payments","msg":"charge ok","amount":12}
+   {"svc":"payments","msg":"card declined"}
+   {"svc":"payments","msg":"charge ok","amount":14}
+api log:
+   {"svc":"api","msg":"checkout received","userId":"u0"}
+   {"svc":"api","msg":"checkout received","userId":"u1"}
+   {"svc":"api","msg":"checkout received","userId":"u2"}
+   {"svc":"api","msg":"checkout received","userId":"u3"}
+   {"svc":"api","msg":"checkout received","userId":"u4"}
+   {"svc":"api","msg":"checkout finished","userId":"u1","status":201}
+   {"svc":"api","msg":"checkout finished","userId":"u0","status":201}
+   {"svc":"api","msg":"checkout finished","userId":"u3","status":402}
+   {"svc":"api","msg":"checkout finished","userId":"u2","status":201}
+   {"svc":"api","msg":"checkout finished","userId":"u4","status":201}
+payments lines with a field that also exists in the api log: 0 of 5</code></pre>
+  <div class="ar-note">الـ run من غير IDs: خمس سطور في الـ payments log، و<code>card declined</code> ملوش أي حقل تربطه بيه بسطور الـ api. السطر الأخير بيأكد إن صفر سطر من الـ 5 فيه حقل مشترك. يعني تعرف إن فيه بطاقة اترفضت، بس متعرفش بتاعة مين.</div>
+
+<pre><code class="language-plaintext">$ node p1/run.ts ids
+mode=ids lines: api=10 orders=10 payments=5 notifier=4
+correlationId of the declined card: e656186a-d2c6-4bd9-b243-91f39d00a2c4
+  +   0 ms  api       checkout received
+  +  33 ms  orders    creating order
+  + 286 ms  payments  card declined
+  + 293 ms  orders    payment failed
+  + 305 ms  api       checkout finished
+queue crossing: notifier line id=28606611…, api lines with the same id=2</code></pre>
+  <div class="ar-note">نفس الـ run بالـ IDs: سطر <code>card declined</code> جاب الـ id، والـ id ده جاب المسار كله مرتب بالوقت من الـ <code>api</code> لـ <code>orders</code> لـ <code>payments</code> ورجوع. السطر الأخير بيثبت إن الـ id عدّى الـ queue: أول سطر في الـ <code>notifier</code> ليه سطور بنفس الـ id في الـ api log. وأي حد عايز نفس النتيجة يعملها بأمر واحد، زي البلوك الجاي.</div>
+
+<pre><code class="language-plaintext">$ grep -h e656186a-d2c6-4bd9-b243-91f39d00a2c4 logs/*.jsonl
+{"ts":1794195835442,"svc":"api","correlationId":"e656186a-d2c6-4bd9-b243-91f39d00a2c4","msg":"checkout received","userId
+{"ts":1794195835747,"svc":"api","correlationId":"e656186a-d2c6-4bd9-b243-91f39d00a2c4","msg":"checkout finished","userId
+{"ts":1794195835475,"svc":"orders","correlationId":"e656186a-d2c6-4bd9-b243-91f39d00a2c4","msg":"creating order","userId
+{"ts":1794195835735,"svc":"orders","correlationId":"e656186a-d2c6-4bd9-b243-91f39d00a2c4","msg":"payment failed","userId
+{"ts":1794195835728,"svc":"payments","correlationId":"e656186a-d2c6-4bd9-b243-91f39d00a2c4","msg":"card declined"}</code></pre>
+  <div class="ar-note">ده الـ grep الفعلي على ملفات الـ log التلاتة: كل سطر بنفس الـ id، من services مختلفة، بأمر واحد. السطور مقصوصة عند 120 حرف عشان تتقري.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ correlation ID قيمة واحدة بتمشي مع الـ business request الواحد في كل hop. الـ <code>AsyncLocalStorage</code> بيشيلها <b>جوه</b> الـ process بس، زي ما شفنا في <a href="../../04-NodeJS/lessons/30-logging-request-context.html">04 · 30</a>. لكن بره الـ process ملوش أي تأثير، فكل حد لازم تعدّيه بإيدك: تقرا الـ id وإنت داخل وتكتبه وإنت خارج.</p>
+    <p>عندنا 3 أنواع حدود. <b>HTTP داخل</b>: اقرا الـ header، ولو إنت أول hop ولّد id. <b>HTTP خارج</b>: انسخ الـ id في الـ header. <b>رسالة queue</b>: الـ Redis list ملهاش headers، فالـ id بيتحط في envelope حوالين الـ payload، والـ consumer بيطلّعه ويفتح context جديد حوالين الـ handler. لو نسيت حد واحد من التلاتة، السلسلة بتتقطع عند الـ hop ده من غير أي error.</p>
+    <p>الـ run فوق processes حقيقية منفصلة: <code>api</code> و<code>orders</code> و<code>payments</code>، ومعاهم worker اسمه <code>notifier</code> بيقرا من Redis list حقيقية. خمس checkouts في نفس الوقت، وبطاقة واحدة بتترفض. من غير IDs، مفيش حقل مشترك بين الـ payments log والـ api log، فمش هتعرف مين اترفض. بالـ IDs، <code>grep</code> واحد بيجيب المسار كله.</p>
+    <p>الغلطة الشائعة: تحط الـ id في الـ HTTP بس وتنسى الـ queue. الـ worker ساعتها بيطبع logs ملهاش صاحب، وده بالظبط الجزء اللي الناس بتدوّر فيه لما email متبعتش.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عميل بيقول "دفعت وملقتش الـ order". بدل ما تدوّر بالوقت في 3 dashboards، بتاخد الـ <code>x-correlation-id</code> من الـ response بتاع الـ client (أو من الـ error page) وتعمل بيه بحث واحد في الـ logs. وفي الـ BullMQ أو أي queue عندك، حط الـ id في بيانات الـ job وافتح <code>als.run</code> في أول الـ processor.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "A background job failed, and the logs show nothing about which API request created it. What's missing?" → The correlation context didn't cross the queue. HTTP headers don't exist there, so the producer must put the ID in the message and the consumer must restore it before running the handler.
+    <div class="ar-note">"job في الخلفية فشل، والـ logs مفيهاش أي حاجة تقول أنهي API request عملته. إيه الناقص؟" ← الـ context معدّاش الـ queue. مفيش HTTP headers هناك، فالـ producer لازم يحط الـ id في الرسالة، والـ consumer لازم يرجّعه قبل ما يشغّل الـ handler.</div>
+  </div>
+
+  <h2 id="p2">Part 2 — Traces and the critical path <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ traces والـ critical path</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A correlation ID tells you <em>what happened</em>; a trace also tells you <em>when and for how long</em>. OpenTelemetry propagates context with the W3C <code>traceparent</code> header: <code>00-&lt;32 hex trace id&gt;-&lt;16 hex parent span id&gt;-&lt;2 hex flags&gt;</code>. Every hop creates child spans under the same trace ID. Setup is in <a href="../../04-NodeJS/lessons/31-metrics-tracing-errors.html">04 · 31</a>, so we only added the bootstrap to the same three services from Part 1 and a tiny exporter that writes each span as a JSON line.</p>
+    <p>Two real things happened on the way. First, our services are ESM, and with a plain <code>--require</code> bootstrap only the client spans appeared and every <code>fetch</code> became its own trace, with no error at all: the server side was never patched. Adding the import hook fixed it, which is the ESM trap from 04 · 31. Second, this install resolved to SDK 0.301, where the package is <code>@opentelemetry/sdk-trace</code> and <code>SimpleSpanProcessor</code> takes an options object, <code>new SimpleSpanProcessor({ exporter })</code>. Passing the exporter directly gave <code>Cannot read properties of undefined (reading 'export')</code>.</p>
+    <p>The new tool here is a script that reads the exported spans and answers the question a waterfall only hints at: which spans actually determine the total time? The <b>critical path</b> walks backwards from the end of the root span, always picking the child that finished last. A child that overlaps the chosen one ran in parallel, so it isn't on the path. Speeding up something off the critical path doesn't change the total at all.</p>
+    <p>The script also lists sibling spans that ran back to back. Those are candidates for parallel calls, but it can't know about dependencies. Here <code>/risk</code> and <code>/limits</code> are independent, while <code>/charge</code> needs both results. A human makes that call.</p>
+  </section>
+
+<pre data-file="p2/otel-sdk.mjs"><code class="language-javascript">import fs from "node:fs";
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { SimpleSpanProcessor } from "@opentelemetry/sdk-trace";
+import { HttpInstrumentation } from "@opentelemetry/instrumentation-http";
+import { UndiciInstrumentation } from "@opentelemetry/instrumentation-undici";
+
+const service = process.env.SERVICE;
+const toMs = ([s, ns]) =&gt; s * 1e3 + ns / 1e6;
+
+// الـ exporter ده بيكتب كل span كسطر JSON في ملف الـ service، بدل collector حقيقي
+class FileSpanExporter {
+  export(spans, done) {
+    for (const s of spans) {
+      const ctx = s.spanContext();
+      const line = {
+        traceId: ctx.traceId, spanId: ctx.spanId, parentId: s.parentSpanContext?.spanId,
+        service, name: s.name, kind: s.kind, startMs: toMs(s.startTime), endMs: toMs(s.endTime),
+        status: s.status.code, path: s.attributes["url.path"] ?? s.attributes["http.target"],
+        rawBytes: Buffer.byteLength(JSON.stringify({ ctx, parent: s.parentSpanContext, name: s.name, attrs: s.attributes, resource: s.resource.attributes })),
+      };
+      fs.appendFileSync(`spans/${service}.jsonl`, JSON.stringify(line) + "\n");
+    }
+    done({ code: 0 });
+  }
+  shutdown() { return Promise.resolve(); }
+}
+
+// على الـ SDK 0.301 الـ SimpleSpanProcessor بياخد object فيه exporter مش الـ exporter نفسه
+new NodeSDK({
+  serviceName: service,
+  spanProcessors: [new SimpleSpanProcessor({ exporter: new FileSpanExporter() })],
+  instrumentations: [new HttpInstrumentation(), new UndiciInstrumentation()],
+}).start();</code></pre>
+
+<pre data-file="p2/otel-esm.mjs"><code class="language-javascript">// الـ bootstrap لتطبيق ESM: لازم الـ hook يتسجل قبل تحميل الـ SDK، والشغل كله في درس 31
+import { register } from "node:module";
+register("@opentelemetry/instrumentation/hook.mjs", import.meta.url);
+await import("./otel-sdk.mjs");</code></pre>
+
+<pre data-file="p2/critical-path.ts"><code class="language-typescript">import { readdirSync, readFileSync } from "node:fs";
+
+type Span = { traceId: string; spanId: string; parentId?: string; service: string; kind: number; startMs: number; endMs: number; path?: string; rawBytes: number };
+type Seg = { label: string; ms: number };
+
+const spans: Span[] = readdirSync("spans").flatMap((f) =&gt;
+  readFileSync(`spans/${f}`, "utf8").trim().split("\n").map((l) =&gt; JSON.parse(l)));
+
+// جمّع الـ spans بالـ trace، وخد الـ trace الوسطاني عشان منتخدعش بواحد شاذ
+const byTrace = Map.groupBy(spans, (s) =&gt; s.traceId);
+const rootOf = (t: Span[]) =&gt; t.find((s) =&gt; !s.parentId || !t.some((p) =&gt; p.spanId === s.parentId))!;
+const traces = [...byTrace.values()].sort((a, b) =&gt; dur(rootOf(a)) - dur(rootOf(b)));
+function dur(s: Span) { return s.endMs - s.startMs; }
+const trace = traces[Math.floor(traces.length / 2)]!;
+const root = rootOf(trace);
+const total = dur(root);
+const kids = (p: Span) =&gt; trace.filter((s) =&gt; s.parentId === p.spanId).sort((a, b) =&gt; a.startMs - b.startMs);
+const label = (s: Span) =&gt; `${s.service} ${s.kind === 1 ? "SERVER" : "CLIENT"} ${s.path}`;
+
+console.log(`trace ${root.traceId.slice(0, 8)}…  spans=${trace.length}  total=${total.toFixed(0)} ms  (median of ${traces.length} traces)`);
+const WIDTH = 40;
+function waterfall(s: Span, depth: number) {
+  const left = Math.round(((s.startMs - root.startMs) / total) * WIDTH);
+  const len = Math.max(1, Math.round((dur(s) / total) * WIDTH));
+  const bar = " ".repeat(left) + "█".repeat(len);
+  console.log(`${bar.padEnd(WIDTH + 1)} ${String(dur(s).toFixed(0)).padStart(4)} ms  ${"  ".repeat(depth)}${label(s)}`);
+  kids(s).forEach((k) =&gt; waterfall(k, depth + 1));
+}
+waterfall(root, 0);
+
+// الـ critical path: امشي بالعكس من نهاية الأب، وخد الابن اللي خلص آخر واحد قبل المؤشر
+function criticalPath(s: Span): Seg[] {
+  const out: Seg[] = [];
+  let cursor = s.endMs;
+  for (const k of kids(s).sort((a, b) =&gt; b.endMs - a.endMs)) {
+    // ابن بيخلص بعد المؤشر يبقى شغال بالتوازي مع اللي اخترناه، فمش على الـ critical path
+    if (k.endMs &gt; cursor + 0.5) continue;
+    if (cursor &gt; k.endMs) out.push({ label: label(s) + " (self)", ms: cursor - k.endMs });
+    out.push(...criticalPath(k));
+    cursor = k.startMs;
+  }
+  if (cursor &gt; s.startMs) out.push({ label: label(s) + " (self)", ms: cursor - s.startMs });
+  return out;
+}
+const merged = new Map&lt;string, number&gt;();
+for (const seg of criticalPath(root)) merged.set(seg.label, (merged.get(seg.label) ?? 0) + seg.ms);
+const top = [...merged].sort((a, b) =&gt; b[1] - a[1]).filter(([, ms]) =&gt; ms &gt;= 2);
+console.log("\ncritical path, biggest first:");
+for (const [l, ms] of top) console.log(`  ${ms.toFixed(0).padStart(4)} ms  ${((ms / total) * 100).toFixed(0).padStart(3)}%  ${l}`);
+
+// الـ siblings المتتابعين: الـ script بيلاقي المرشحين، والإنسان بيقرر مين يعتمد على مين
+console.log("\nsequential siblings (candidates for parallel):");
+for (const p of trace) {
+  const c = kids(p);
+  let run: Span[] = c.length ? [c[0]!] : [];
+  const flush = () =&gt; {
+    if (run.length &gt;= 2) {
+      const sum = run.reduce((a, s) =&gt; a + dur(s), 0);
+      const max = Math.max(...run.map(dur));
+      console.log(`  under ${label(p)}: ${run.map((s) =&gt; s.path).join(" → ")}  sum=${sum.toFixed(0)} ms, longest=${max.toFixed(0)} ms, saving if independent≈${(sum - max).toFixed(0)} ms`);
+    }
+  };
+  for (let i = 1; i &lt; c.length; i++) {
+    if (c[i]!.startMs &gt;= c[i - 1]!.endMs - 0.5) run.push(c[i]!);
+    else { flush(); run = [c[i]!]; }
+  }
+  flush();
+}
+const avg = spans.reduce((a, s) =&gt; a + s.rawBytes, 0) / spans.length;
+console.log(`\nspans per trace=${trace.length}, average span size as JSON≈${avg.toFixed(0)} bytes`);</code></pre>
+
+<pre><code class="language-plaintext">$ node p2/critical-path.ts
+trace b36d5887…  spans=9  total=234 ms  (median of 25 traces)
+████████████████████████████████████████   234 ms  api SERVER /checkout
+████████████████████████████████████████   231 ms    api CLIENT /orders
+███████████████████████████████████████    230 ms      orders SERVER /orders
+ ████████████                               70 ms        orders CLIENT /risk
+ ████████████                               69 ms          payments SERVER /risk
+             ██████████                     61 ms        orders CLIENT /limits
+             ██████████                     60 ms          payments SERVER /limits
+                       ████████████████     94 ms        orders CLIENT /charge
+                       ████████████████     93 ms          payments SERVER /charge
+
+critical path, biggest first:
+    93 ms   40%  payments SERVER /charge (self)
+    69 ms   29%  payments SERVER /risk (self)
+    60 ms   25%  payments SERVER /limits (self)
+     5 ms    2%  orders SERVER /orders (self)
+     3 ms    1%  api SERVER /checkout (self)
+
+sequential siblings (candidates for parallel):
+  under orders SERVER /orders: /risk → /limits → /charge  sum=225 ms, longest=94 ms, saving if independent≈131 ms
+
+spans per trace=9, average span size as JSON≈1628 bytes</code></pre>
+  <div class="ar-note">الـ waterfall من spans حقيقية: كل سطر span، والـ █ مكانه ومدته على الزمن. <code>/risk</code> و<code>/limits</code> و<code>/charge</code> ورا بعض. تحت، الـ critical path مرتب من الأكبر: <code>/charge</code> 40% و<code>/risk</code> 29% و<code>/limits</code> 25%، وكل الشغل بتاع الـ api والـ orders نفسهم حوالي 3%. يعني الـ overhead مش المشكلة، الترتيب هو المشكلة. وآخر سطر: الـ script لقى الـ 3 ورا بعض وبيقول التوفير الأقصى لو كانوا مستقلين، بس القرار عليك.</div>
+
+  <p>The fix runs the two independent checks together. Same 25 requests, same machine:</p>
+  <div class="ar-note">الإصلاح: نشغّل الفحصين المستقلين مع بعض بـ <code>Promise.all</code>. نفس الـ 25 request ونفس الجهاز.</div>
+
+<pre data-file="p1/services.ts"><code class="language-typescript">// ❌ قبل: الـ risk والـ limits ورا بعض
+await callService(`${PAY}/risk`, { userId });
+await callService(`${PAY}/limits`, { userId });
+
+// ✅ بعد: مستقلين، فيجروا مع بعض، والـ charge لسه بعدهم لأنه محتاج نتيجتهم
+await Promise.all([callService(`${PAY}/risk`, { userId }), callService(`${PAY}/limits`, { userId })]);</code></pre>
+
+<pre><code class="language-plaintext">$ node p2/critical-path.ts
+trace ec3c94e8…  spans=9  total=181 ms  (median of 25 traces)
+████████████████████████████████████████   181 ms  api SERVER /checkout
+███████████████████████████████████████    177 ms    api CLIENT /orders
+ ███████████████████████████████████████   176 ms      orders SERVER /orders
+ ██████████████                             62 ms        orders CLIENT /risk
+ ██████████████                             61 ms          payments SERVER /risk
+ ██████████████                             61 ms        orders CLIENT /limits
+ █████████████                              60 ms          payments SERVER /limits
+               ████████████████████████    109 ms        orders CLIENT /charge
+                   ████████████████████     92 ms          payments SERVER /charge
+
+critical path, biggest first:
+    92 ms   51%  payments SERVER /charge (self)
+    61 ms   34%  payments SERVER /risk (self)
+    16 ms    9%  orders CLIENT /charge (self)
+     5 ms    3%  orders SERVER /orders (self)
+     4 ms    2%  api SERVER /checkout (self)
+
+sequential siblings (candidates for parallel):
+  under orders SERVER /orders: /limits → /charge  sum=170 ms, longest=109 ms, saving if independent≈61 ms
+
+spans per trace=9, average span size as JSON≈1628 bytes</code></pre>
+  <div class="ar-note">بعد الإصلاح: <code>/limits</code> اختفى من الـ critical path خالص لأنه بقى شغال بالتوازي مع <code>/risk</code> الأطول. دلوقتي <code>/charge</code> 51% و<code>/risk</code> 34%. والمرشحين الباقيين <code>/risk → /charge</code>، وده ترتيب مقصود لأن الـ charge محتاج نتيجة الـ risk، فمش كل مرشح يتصلح.</div>
+
+<pre><code class="language-plaintext">$ node p2/load.ts sequential 25
+PARALLEL=0 requests=25 end-to-end p50≈235 ms p95≈270 ms</code></pre>
+<pre><code class="language-plaintext">$ node p2/load.ts parallel 25
+PARALLEL=1 requests=25 end-to-end p50≈183 ms p95≈201 ms</code></pre>
+  <div class="ar-note">الـ p50 من أول لآخر نزل من حوالي 235ms لحوالي 183ms. الأرقام تقريبية (Windows وجهاز عليه حمل، والـ timers بتتقرّب لفوق حوالي 15ms)، فالمهم النسبة مش الرقم نفسه.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ correlation ID بيقولك <b>إيه اللي حصل</b>، والـ trace بيقولك كمان <b>إمتى وقد إيه</b>. OpenTelemetry بينقل الـ context بالـ header بتاع W3C اسمه <code>traceparent</code>: <code>00-&lt;trace id 32 hex&gt;-&lt;parent span id 16 hex&gt;-&lt;flags 2 hex&gt;</code>. كل hop بيعمل child spans تحت نفس الـ trace ID. التجهيز موجود في <a href="../../04-NodeJS/lessons/31-metrics-tracing-errors.html">04 · 31</a>، فهنا ضفنا الـ bootstrap لنفس الـ 3 services بتاعة الجزء 1، و exporter صغير بيكتب كل span كسطر JSON.</p>
+    <p>حصلت حاجتين حقيقيتين. الأولى: الـ services بتاعتنا ESM، ومع <code>--require</code> عادي ظهرت الـ client spans بس، وكل <code>fetch</code> بقى trace لوحده، من غير أي error، لأن ناحية الـ server متعملهاش patch. الـ import hook صلّحها، وده فخ الـ ESM اللي في 04 · 31. التانية: الـ install جاب SDK 0.301، والـ package بقى اسمه <code>@opentelemetry/sdk-trace</code>، و<code>SimpleSpanProcessor</code> بياخد object: <code>new SimpleSpanProcessor({ exporter })</code>. لما بعتّ الـ exporter مباشرة طلع <code>Cannot read properties of undefined (reading 'export')</code>.</p>
+    <p>الجديد هنا script بيقرا الـ spans ويجاوب على السؤال اللي الـ waterfall بيلمّح له بس: أنهي spans هي اللي فعلًا بتحدد الوقت الكلي؟ الـ <b>critical path</b> بيمشي بالعكس من نهاية الـ root span، وكل مرة ياخد الابن اللي خلص آخر واحد. أي ابن متداخل مع اللي اخترناه كان شغال بالتوازي، فمش على الـ path. وتسريع حاجة بره الـ critical path مش هيغيّر الوقت الكلي خالص.</p>
+    <p>والـ script كمان بيطلّع الـ siblings اللي اشتغلوا ورا بعض، ودول مرشحين يبقوا parallel، بس هو ميعرفش الـ dependencies. هنا <code>/risk</code> و<code>/limits</code> مستقلين، لكن <code>/charge</code> محتاج نتيجتهم. القرار ده بتاع إنسان.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ p95 بتاع <code>POST /checkout</code> طلع من 300ms لـ 700ms. بدل ما تحسّن أي query تشوفها، تفتح trace بطيء وتسأل: إيه اللي على الـ critical path؟ لو الـ pricing والـ inventory ورا بعض ومستقلين، <code>Promise.all</code> بيوفر أكبر من أي index. ولو الـ span البطيء مش على الـ path، سيبه دلوقتي.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off</b>
+    Parallel calls cut latency but raise peak load on the dependency and make partial failure a new case: one call fails while the other succeeds. Parallelize only independent, side-effect-free reads, and put timeouts on each (<a href="../../08-Design-Patterns/lessons/22-retry-timeout-fallback.html">08 · 22</a>).
+    <div class="ar-note">الـ parallel بينزّل الـ latency، بس بيعلّي الحمل اللحظي على الـ dependency وبيضيف حالة جديدة: call يفشل والتاني ينجح. اعمل parallel للـ reads المستقلة اللي ملهاش side effects بس، وحط timeout على كل واحد (<a href="../../08-Design-Patterns/lessons/22-retry-timeout-fallback.html">08 · 22</a>).</div>
+  </div>
+
+  <h2 id="p3">Part 3 — Head vs tail sampling <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ head مقابل الـ tail sampling</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Keeping every trace at scale is usually too expensive, so you sample. <b>Head sampling</b> decides when the trace starts, usually from a hash of the trace ID so every service reaches the same answer. It's cheap and stateless, but it decides before anyone knows the outcome. <b>Tail sampling</b> decides after the trace finishes, so it can keep every error and every slow request. The price is that something has to hold all the spans in memory until the decision.</p>
+    <p>The run below generates 100,000 traces with 0.5% errors. Head sampling at 1% uses the real <code>TraceIdRatioBasedSampler</code>. It kept 3 of 518 error traces. The tail policy (all errors, all slow requests, 1% of the rest) kept all 518 at about 2% of the storage. That's the whole argument for tail sampling: you pay for roughly twice as many spans as head sampling and keep 170 times as many of the traces you'd actually open.</p>
+    <p>The cost moves into the collector. Memory held is <code>traces/s × spans per trace × bytes per span × decision window</code>. We use 1,628 bytes per span, measured from the real spans in Part 2 as JSON; a collector stores them differently, so treat it as an order of magnitude. There's also a hard topology rule: all spans of a trace must reach the same collector instance, so tail sampling at scale needs two layers, one with the load-balancing exporter routing by trace ID and one doing the sampling.</p>
+  </section>
+
+<pre data-file="p3/sampling.ts"><code class="language-typescript">import { ROOT_CONTEXT, SpanKind } from "@opentelemetry/api";
+import { SamplingDecision, TraceIdRatioBasedSampler } from "@opentelemetry/sdk-trace";
+import { mulberry32 } from "./lib.ts";
+
+console.log("SIMULATION: seeded PRNG, virtual time. Only the head decision uses the real OTel sampler.");
+console.log("Does NOT capture: collector crashes, late spans, traffic spikes, sampler CPU.\n");
+
+const TRACES = 100_000;
+const ERROR_RATE = 0.005;
+const SLOW_MS = 1000;
+const SPANS = 9;
+const rand = mulberry32(39);
+const hex32 = () =&gt; Array.from({ length: 4 }, () =&gt; Math.floor(rand() * 2 ** 32).toString(16).padStart(8, "0")).join("");
+
+type T = { traceId: string; error: boolean; ms: number };
+const traces: T[] = [];
+for (let i = 0; i &lt; TRACES; i++) {
+  const error = rand() &lt; ERROR_RATE;
+  // الـ latency شكلها log-normal: أغلبها حوالين 120ms وذيل طويل بطيء
+  const z = Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
+  traces.push({ traceId: hex32(), error, ms: 120 * Math.exp(0.8 * z) });
+}
+
+const headSampler = new TraceIdRatioBasedSampler(0.01);
+const headKeeps = (t: T) =&gt;
+  headSampler.shouldSample(ROOT_CONTEXT, t.traceId, "POST /checkout", SpanKind.SERVER, {}, []).decision === SamplingDecision.RECORD_AND_SAMPLED;
+
+// الـ tail بياخد قراره بعد ما الـ trace يخلص، فيقدر يبص على الـ error والمدة
+const baseline = mulberry32(7);
+const tailKeeps = (t: T) =&gt; t.error || t.ms &gt;= SLOW_MS || baseline() &lt; 0.01;
+
+function report(name: string, keep: (t: T) =&gt; boolean) {
+  const kept = traces.filter(keep);
+  const errors = kept.filter((t) =&gt; t.error).length;
+  const slow = kept.filter((t) =&gt; t.ms &gt;= SLOW_MS).length;
+  console.log(`${name.padEnd(14)} kept=${String(kept.length).padStart(6)}  errors kept=${String(errors).padStart(3)}  slow kept=${String(slow).padStart(4)}  spans stored=${String(kept.length * SPANS).padStart(7)}`);
+  return kept.length;
+}
+const totalErrors = traces.filter((t) =&gt; t.error).length;
+const totalSlow = traces.filter((t) =&gt; t.ms &gt;= SLOW_MS).length;
+console.log(`generated=${TRACES}  errors=${totalErrors}  slow(&gt;=${SLOW_MS}ms)=${totalSlow}\n`);
+const keepAll = report("keep all", () =&gt; true);
+const head = report("head 1%", headKeeps);
+const tail = report("tail policy", tailKeeps);
+console.log(`\nspans stored vs keep-all: head=${((head / keepAll) * 100).toFixed(1)}%  tail=${((tail / keepAll) * 100).toFixed(1)}%`);</code></pre>
+
+<pre><code class="language-plaintext">$ node p3/sampling.ts
+SIMULATION: seeded PRNG, virtual time. Only the head decision uses the real OTel sampler.
+Does NOT capture: collector crashes, late spans, traffic spikes, sampler CPU.
+
+generated=100000  errors=518  slow(&gt;=1000ms)=419
+
+keep all       kept=100000  errors kept=518  slow kept= 419  spans stored= 900000
+head 1%        kept=   998  errors kept=  3  slow kept=   6  spans stored=   8982
+tail policy    kept=  1965  errors kept=518  slow kept= 419  spans stored=  17685
+
+spans stored vs keep-all: head=1.0%  tail=2.0%</code></pre>
+  <div class="ar-note">دي محاكاة، والسطور الأولى بتقول كده وبتقول إيه اللي مش بتمثله. من 100,000 trace فيهم 518 error و419 بطيء: الـ keep all بيخزن 900,000 span. الـ head 1% خزن 998 trace بس، وفيهم <b>3</b> errors و6 بطيئين. الـ tail خزن 1,965 trace، وفيهم الـ 518 error كلهم والـ 419 بطيء كلهم. التخزين: head حوالي 1% وtail حوالي 2% من الكل.</div>
+
+<pre data-file="p3/memory.ts"><code class="language-typescript">// الحساب ده: الـ collector لازم يمسك كل spans الـ trace في الـ memory طول الـ decision window
+const scenarios = [
+  { name: "small", tracesPerSec: 200, spans: 9, bytes: 1628, windowSec: 10 },
+  { name: "medium", tracesPerSec: 2_000, spans: 9, bytes: 1628, windowSec: 30 },
+  { name: "large", tracesPerSec: 20_000, spans: 20, bytes: 1628, windowSec: 30 },
+];
+const fmt = (b: number) =&gt; `${(b / 1024 ** 3).toFixed(2)} GiB`;
+for (const s of scenarios) {
+  const inWindow = s.tracesPerSec * s.windowSec;
+  const raw = inWindow * s.spans * s.bytes;
+  // عامل 2 افتراض لـ objects الـ memory، مش رقم مقاس
+  console.log(`${s.name.padEnd(7)} ${s.tracesPerSec}/s × ${s.spans} spans × ${s.bytes} B × ${s.windowSec}s  traces held=${inWindow}  raw=${fmt(raw)}  with 2× overhead=${fmt(raw * 2)}`);
+}</code></pre>
+
+<pre><code class="language-plaintext">$ node p3/memory.ts
+small   200/s × 9 spans × 1628 B × 10s  traces held=2000  raw=0.03 GiB  with 2× overhead=0.05 GiB
+medium  2000/s × 9 spans × 1628 B × 30s  traces held=60000  raw=0.82 GiB  with 2× overhead=1.64 GiB
+large   20000/s × 20 spans × 1628 B × 30s  traces held=600000  raw=18.19 GiB  with 2× overhead=36.39 GiB</code></pre>
+  <div class="ar-note">حساب memory الـ collector في 3 أحجام. الصغير: 200 trace/s و10 ثواني = حوالي 0.03 GiB. المتوسط: 2,000 trace/s و30 ثانية = 60,000 trace في الـ memory، حوالي 0.82 GiB خام، و1.64 GiB لو ضربنا في 2 كافتراض لـ overhead الـ objects (الـ 2 ده افتراض مش قياس). الكبير: 20,000 trace/s و20 span = 18 GiB خام و36 GiB بالـ overhead، يعني محتاج أكتر من collector.</div>
+
+<pre class="diagram">
+ HEAD: decide at the start           TAIL: decide after the trace ends
+
+ request --> hash(traceId) &lt; 1% ?    services --> LB exporter (route by traceId)
+              |          |                              |
+             yes         no                             v
+              |          |                     collector: hold spans for
+              v          v                       decision_wait (30 s default)
+           export      drop                             |
+                                                        v
+                                        error or slow? --> keep
+                                        otherwise      --> keep 1%
+</pre>
+  <div class="ar-note">شمال: الـ head بياخد القرار من hash الـ traceId أول ما الـ request يبدأ: يا يتصدّر يا يترمي، ومحدش يعرف لسه هيفشل ولا لأ. يمين: الـ tail، الـ services بتبعت لطبقة بتوزّع بالـ traceId عشان كل spans الـ trace توصل لنفس الـ collector، والـ collector بيمسكهم في الـ memory طول الـ <code>decision_wait</code> (الافتراضي 30 ثانية)، وبعدها يقرر: فيه error أو بطيء يتحفظ، وغير كده 1% بس.</div>
+
+  <p>The collector side looks like this. The option names and the same-instance rule come from the processor's README.</p>
+  <div class="ar-note">شكل الإعداد ناحية الـ collector. أسماء الـ options وقاعدة نفس الـ instance من الـ README بتاع الـ processor، والملف ده <b>متشغلش هنا</b> لأن الـ Collector برنامج تاني.</div>
+
+<pre data-file="collector.yaml"><code class="language-yaml"># متشغلش هنا: Not run here، الـ OTel Collector executable منفصل ومسموحش نشغله في الـ lab
+processors:
+  tail_sampling:
+    decision_wait: 30s
+    num_traces: 100000
+    expected_new_traces_per_sec: 2000
+    policies:
+      - name: keep-errors
+        type: status_code
+        status_code: { status_codes: [ERROR] }
+      - name: keep-slow
+        type: latency
+        latency: { threshold_ms: 1000 }
+      - name: baseline
+        type: probabilistic
+        probabilistic: { sampling_percentage: 1 }</code></pre>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>تخزين كل trace على scale غالبًا غالي جدًا، فبتعمل sampling. الـ <b>head sampling</b> بياخد القرار أول ما الـ trace يبدأ، وعادةً من hash الـ trace ID عشان كل service توصل لنفس القرار. رخيص ومفيهوش state، بس بيقرر قبل ما حد يعرف النتيجة. الـ <b>tail sampling</b> بيقرر بعد ما الـ trace يخلص، فيقدر يحتفظ بكل error وكل request بطيء. التمن إن حاجة لازم تمسك كل الـ spans في الـ memory لحد القرار.</p>
+    <p>الـ run فوق بيولّد 100,000 trace فيهم 0.5% errors. الـ head بنسبة 1% استخدم <code>TraceIdRatioBasedSampler</code> الحقيقي، وحفظ 3 بس من 518 error. الـ tail (كل الـ errors، كل البطيء، و1% من الباقي) حفظ الـ 518 كلهم بحوالي 2% من التخزين. ده الموضوع كله: بتدفع تقريبًا ضعف الـ spans بتاعة الـ head، وبتحتفظ بـ 170 ضعف من الـ traces اللي هتفتحها فعلًا.</p>
+    <p>التكلفة بتنتقل للـ collector: الـ memory = <code>traces/s × spans لكل trace × bytes لكل span × decision window</code>. استخدمنا 1,628 byte لكل span، مقاسة من spans الجزء 2 كـ JSON، والـ collector بيخزنها بشكل تاني، فاعتبره رقم تقريبي. وفيه قاعدة topology لازمة: كل spans الـ trace لازم توصل لنفس الـ collector instance، فالـ tail sampling على scale محتاج طبقتين: واحدة بالـ load-balancing exporter بتوزّع بالـ trace ID، وواحدة بتعمل الـ sampling.</p>
+    <p>الغلطة الشائعة: head sampling بـ 1% وبعدها تزعل إن مفيش trace للـ error اللي بتدوّر عليه. الـ error rate 0.5% و1% sampling يعني كل error ليه فرصة 1% بس إنه يتحفظ.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      مشروع صغير (أقل من 100 request/s): خلّي الـ <code>ParentBasedSampler</code> بنسبة عالية أو 100% ومتعقدش الدنيا. لما الفاتورة تبدأ تبقى مشكلة، حط collector بـ tail sampling قبل الـ vendor: احتفظ بكل الـ errors والبطيء وخد 1% من الباقي. واتأكد إن الـ collector عنده memory كفاية بالمعادلة، لأن لو الـ <code>num_traces</code> صغير هيرمي traces قبل ما ياخد قرارها.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Head or tail sampling for a payments system?" → Tail, or head plus keeping errors, because the traces you need are the rare failures, and head sampling drops 99% of them before knowing they failed. Say what it costs: collector memory for the decision window, and a routing layer so all spans of a trace reach one instance.
+    <div class="ar-note">"head ولا tail sampling لـ payment system؟" ← tail، أو head مع الاحتفاظ بالـ errors، لأن الـ traces اللي محتاجها هي الأعطال النادرة، والـ head بيرمي 99% منها قبل ما يعرف إنها فشلت. وقول التكلفة: memory للـ collector طول الـ decision window، وطبقة routing عشان كل spans الـ trace توصل لـ instance واحد.</div>
+  </div>
+
+  <h2 id="p4">Part 4 — Logs at scale <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ logs على scale</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The log bill is arithmetic: <code>QPS × lines per request × bytes per line × seconds</code>, then a price for ingesting and a price for storing. Line size is something you can measure instead of guessing. With real pino output, a plain info line was about 106 bytes, the trace context pushed it to 234, and an error with a stack was about 1,075.</p>
+    <p>Run the calculator at 2,000 QPS and 12 lines per request and you get about 601 GB a day. Ingest was 94% of the "keep everything" bill, and that's why moving old data to a cheaper tier didn't help here: the tiered plan cost <em>more</em>, because it added 90 days of cold storage while ingest stayed the same. The prices are assumptions to replace with your vendor's. The lever that actually works is writing less. Sample info logs and keep every warning and error. That took the bill from about $9,561 to about $831 a month.</p>
+    <p>Sampling has two rules. Decide by a hash of the trace ID, so all the lines of one request stay or go together; a request with half its lines missing is worse than none. And make it changeable at runtime: when a customer reports a problem, raise that tenant to 100% with a config flag, with no deploy. Retention tiers then answer a separate question: hot and searchable for a week, cold in object storage for audits.</p>
+    <p>Finally, cardinality is the difference between logs and metrics. Adding <code>userId</code> and <code>tenantId</code> to a log line cost 44 bytes. That's all. The same fields as metric labels are a different story, which Part 5 measures.</p>
+  </section>
+
+<pre data-file="p4/sizes.ts"><code class="language-typescript">import { Writable } from "node:stream";
+import { pino } from "pino";
+
+// بنعدّ الـ bytes اللي pino بيكتبها فعلًا، مش تقدير
+let bytes = 0, lines = 0;
+const sink = new Writable({ write(chunk, _e, cb) { bytes += chunk.length; lines++; cb(); } });
+const logger = pino({ base: { svc: "orders", env: "prod" } }, sink);
+const size = (fn: () =&gt; void) =&gt; { bytes = 0; lines = 0; fn(); return bytes / lines; };
+
+const ctx = {
+  traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+  spanId: "00f067aa0ba902b7",
+  correlationId: "660ea12a-481e-4408-904f-738c25d9c003",
+};
+const plain = size(() =&gt; logger.info({ orderId: "ord_81231" }, "order created"));
+const withCtx = size(() =&gt; logger.info({ ...ctx, orderId: "ord_81231" }, "order created"));
+const withUser = size(() =&gt; logger.info({ ...ctx, orderId: "ord_81231", userId: "usr_90a1c2d3", tenantId: "t_acme" }, "order created"));
+const err = size(() =&gt; logger.error({ ...ctx, err: new Error("connect ETIMEDOUT 10.0.3.14:5432") }, "charge failed"));
+console.log(`info, plain                 ≈ ${plain.toFixed(0)} bytes/line`);
+console.log(`info, with trace context    ≈ ${withCtx.toFixed(0)} bytes/line`);
+console.log(`info, plus userId, tenantId ≈ ${withUser.toFixed(0)} bytes/line  (+${(withUser - withCtx).toFixed(0)} bytes)`);
+console.log(`error with stack            ≈ ${err.toFixed(0)} bytes/line`);</code></pre>
+
+<pre><code class="language-plaintext">$ node p4/sizes.ts
+info, plain                 ≈ 106 bytes/line
+info, with trace context    ≈ 234 bytes/line
+info, plus userId, tenantId ≈ 278 bytes/line  (+44 bytes)
+error with stack            ≈ 1075 bytes/line</code></pre>
+  <div class="ar-note">أحجام حقيقية من pino: سطر info عادي حوالي 106 byte، ومع الـ trace context حوالي 234، ولما زودنا <code>userId</code> و<code>tenantId</code> زاد 44 byte بس، وسطر error بالـ stack حوالي 1,075 byte.</div>
+
+<pre data-file="p4/cost.ts"><code class="language-typescript">// الأسعار دي افتراضات للتوضيح: حط رقم الـ vendor بتاعك
+const PRICE = { ingestPerGB: 0.5, hotPerGBMonth: 0.03, coldPerGBMonth: 0.023 };
+const GB = 1e9;
+
+type Plan = { name: string; qps: number; linesPerReq: number; bytes: number; keep: number; hotDays: number; coldDays: number };
+
+function monthly(p: Plan) {
+  const perDay = (p.qps * 86_400 * p.linesPerReq * p.bytes * p.keep) / GB;
+  const ingest = perDay * 30 * PRICE.ingestPerGB;
+  // التخزين: كل يوم retention بيمسك حجم يوم كامل، والسعر شهري
+  const hot = perDay * p.hotDays * PRICE.hotPerGBMonth;
+  const cold = perDay * p.coldDays * PRICE.coldPerGBMonth;
+  const total = ingest + hot + cold;
+  console.log(`${p.name.padEnd(26)} ${perDay.toFixed(0).padStart(5)} GB/day  ingest $${ingest.toFixed(0).padStart(6)}  hot $${hot.toFixed(0).padStart(4)}  cold $${cold.toFixed(0).padStart(4)}  total $${total.toFixed(0)}/month`);
+}
+
+console.log("assumed prices per GB: ingest $0.50, hot $0.03/month, cold $0.023/month");
+const base = { qps: 2000, linesPerReq: 12, bytes: 290 };
+monthly({ ...base, name: "keep everything, 30d hot", keep: 1, hotDays: 30, coldDays: 0 });
+monthly({ ...base, name: "keep everything, tiered", keep: 1, hotDays: 7, coldDays: 90 });
+// النسبة 0.08 معناها 5% من الـ info زائد حوالي 3% سطور warn و error بنسيبها كلها
+monthly({ ...base, name: "sample info 5%, tiered", keep: 0.08, hotDays: 7, coldDays: 90 });</code></pre>
+
+<pre><code class="language-plaintext">$ node p4/cost.ts
+assumed prices per GB: ingest $0.50, hot $0.03/month, cold $0.023/month
+keep everything, 30d hot     601 GB/day  ingest $  9020  hot $ 541  cold $   0  total $9561/month
+keep everything, tiered      601 GB/day  ingest $  9020  hot $ 126  cold $1245  total $10391/month
+sample info 5%, tiered        48 GB/day  ingest $   722  hot $  10  cold $ 100  total $831/month</code></pre>
+  <div class="ar-note">السطر الأول هو افتراضات الأسعار، وغيّرها بأسعارك. "كله 30 يوم hot": حوالي 601 GB في اليوم و9,561 دولار شهريًا، منهم 9,020 ingest. "كله tiered": أغلى (10,391) لأننا زوّدنا 90 يوم cold والـ ingest زي ما هو. "الـ info 5%": 48 GB في اليوم و831 دولار. يعني الـ ingest هو اللي بيحدد الفاتورة، مش الـ retention.</div>
+
+<pre data-file="p4/sampled-logger.ts"><code class="language-typescript">import { createHash } from "node:crypto";
+import { Writable } from "node:stream";
+import { pino } from "pino";
+
+// القرار مبني على hash الـ traceId: كل سطور الـ request بتفضل أو بتتشال مع بعض
+function keepTrace(traceId: string, rate: number) {
+  const h = createHash("sha1").update(traceId).digest().readUInt32BE(0);
+  return h / 2 ** 32 &lt; rate;
+}
+
+type Cfg = { infoRate: number; debugTenants: Set&lt;string&gt; };
+const cfg: Cfg = { infoRate: 0.05, debugTenants: new Set() };
+
+let kept = 0, keptBytes = 0;
+const sink = new Writable({ write(c, _e, cb) { kept++; keptBytes += c.length; cb(); } });
+const base = pino({ base: { svc: "orders" } }, sink);
+
+function logEvent(level: "info" | "warn" | "error", traceId: string, tenantId: string, msg: string) {
+  // الـ errors والـ warn بيتكتبوا دايمًا، والـ info بس هو اللي بيتعمله sampling
+  const always = level !== "info" || cfg.debugTenants.has(tenantId);
+  if (!always &amp;&amp; !keepTrace(traceId, cfg.infoRate)) return;
+  base[level]({ traceId, tenantId }, msg);
+}
+
+function run(label: string, lines: number) {
+  kept = 0; keptBytes = 0;
+  let info = 0, errors = 0;
+  for (let i = 0; i &lt; lines; i++) {
+    const traceId = "t" + (i % 5000);
+    if (i % 500 === 0) { errors++; logEvent("error", traceId, "t_acme", "charge failed"); }
+    else { info++; logEvent("info", traceId, i % 100 === 1 ? "t_vip" : "t_acme", "order created"); }
+  }
+  console.log(`${label.padEnd(30)} info=${info} errors=${errors}  written=${kept}  ≈${(keptBytes / 1024).toFixed(0)} KB`);
+}
+
+run("infoRate=5%", 100_000);
+// لما عميل يشتكي: بنرفع الـ sampling ليه هو بس، من غير deploy
+cfg.debugTenants.add("t_vip");
+run("infoRate=5%, t_vip at 100%", 100_000);</code></pre>
+
+<pre><code class="language-plaintext">$ node p4/sampled-logger.ts
+infoRate=5%                    info=99800 errors=200  written=5020  ≈533 KB
+infoRate=5%, t_vip at 100%     info=99800 errors=200  written=5960  ≈632 KB</code></pre>
+  <div class="ar-note">من 100,000 سطر (99,800 info و200 error): بنسبة 5% اتكتب 5,020 سطر، والـ 200 error كلهم موجودين. لما رفعنا الـ <code>t_vip</code> لـ 100% زادوا لـ 5,960 من غير deploy، والباقي فضل على 5%.</div>
+
+  <table>
+    <thead><tr><th>Tier</th><th>Keep</th><th>Where</th><th>Used for</th></tr></thead>
+    <tbody>
+      <tr><td>Hot</td><td>7 days</td><td>Search engine or log service</td><td>Debugging now</td></tr>
+      <tr><td>Warm</td><td>30 days</td><td>Cheaper index</td><td>Comparing to last month</td></tr>
+      <tr><td>Cold</td><td>90 days to years</td><td>Object storage</td><td>Audit, compliance</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">الـ Hot: 7 أيام في search engine أو log service، للـ debugging دلوقتي. الـ Warm: 30 يوم في index أرخص، للمقارنة بالشهر اللي فات. الـ Cold: من 90 يوم لسنين في object storage، للـ audit والـ compliance. واتأكد من القانون قبل ما تحدد المدة، وراجع الـ PII في <a href="./38-secrets-encryption-privacy.html">درس 38</a>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>فاتورة الـ logs حساب بسيط: <code>QPS × سطور لكل request × bytes لكل سطر × ثواني</code>، وبعدين سعر للـ ingest وسعر للتخزين. وحجم السطر تقدر تقيسه مش تخمّنه: في pino الحقيقي، سطر info عادي حوالي 106 byte، والـ trace context وصّله 234، و error بالـ stack حوالي 1,075.</p>
+    <p>لو 2,000 QPS و12 سطر لكل request هتطلع حوالي 601 GB في اليوم. الـ ingest كان 94% من فاتورة "احتفظ بكله"، وده السبب إن نقل الداتا القديمة لـ tier أرخص مفادش هنا: الخطة الـ tiered طلعت <b>أغلى</b> لأنها زوّدت 90 يوم cold والـ ingest زي ما هو. الأسعار افتراضات، حط أسعار الـ vendor بتاعك. اللي بينفع فعلًا إنك تكتب أقل: اعمل sampling للـ info وسيب كل الـ warnings والـ errors. ده نزّل الفاتورة من حوالي 9,561 لحوالي 831 دولار في الشهر.</p>
+    <p>الـ sampling ليه قاعدتين. الأولى: قرر بـ hash الـ trace ID، عشان كل سطور الـ request تفضل أو تتشال مع بعض؛ request نص سطوره ناقصة أسوأ من مفيش. التانية: خليه يتغير وقت التشغيل: لما عميل يشتكي، ارفع الـ tenant بتاعه لـ 100% بـ config flag من غير deploy. والـ retention tiers بتجاوب على سؤال تاني: hot وقابل للبحث لمدة أسبوع، وcold في object storage للـ audit.</p>
+    <p>وأخيرًا، الـ cardinality هو الفرق بين الـ logs والـ metrics. لما زودنا <code>userId</code> و<code>tenantId</code> لسطر الـ log، التكلفة كانت 44 byte وخلاص. نفس الحقول دي كـ metric labels حكاية تانية، وهنقيسها في الجزء 5.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      قبل ما تزوّد <code>logger.info</code> في حلقة بتجري 12 مرة لكل request، اضرب: 12 سطر × 290 byte × الـ QPS بتاعك × 86,400. ولو الفاتورة عالية، ابدأ بأعلى 5 رسائل تكرارًا في الـ logs (عادةً health checks أو access logs) قبل ما تخفّض الـ retention. وخلّي عندك flag بيرفع الـ sampling لـ tenant واحد وقت الـ incident.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks at scale</b>
+    Random per-line sampling looks fine on a chart, then a real investigation finds one line of a request and nothing else. And always keep errors out of the sample: an outage is exactly when an unsampled error stream is worth its cost.
+    <div class="ar-note">الـ sampling العشوائي لكل سطر شكله تمام على الـ chart، وبعدين تحقيق حقيقي يلاقي سطر واحد من الـ request وبس. وسيب الـ errors دايمًا بره الـ sample: الـ outage هو بالظبط الوقت اللي الـ errors الكاملة تستاهل تكلفتها.</div>
+  </div>
+
+  <h2 id="p5">Part 5 — Metrics and cardinality <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ metrics والـ cardinality</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Each unique combination of label values is its own time series, and the bill is counted in series. For one histogram, <code>series = routes × statuses × instances × (buckets + 3)</code>: one line per bucket, plus <code>+Inf</code>, <code>_sum</code> and <code>_count</code>. You can check this before shipping. Our estimate of 416 per instance matched a real <code>@prometheus-io/client</code> registry exactly (<code>prom-client</code> is deprecated). The raw-URL-as-label bug is in <a href="../../04-NodeJS/lessons/31-metrics-tracing-errors.html">04 · 31 part 4</a>; here we size the general case.</p>
+    <p>Then add <code>user_id</code>. Even at the kindest possible assumption, one route and one status per user, 10,000 users made 130,000 series on one instance, a 12.6 MB scrape body and about 17.5 MB of extra heap in the app. <code>registry.metrics()</code> took about 117 ms, and that runs on the event loop. Multiply by 20 instances and Prometheus gets 2.6 million series from one metric. We measured the client side; the server's cost per series wasn't run here.</p>
+    <p>The second trap is aggregation. You can't average percentiles. Two instances, one fast with 9,000 requests and one slow with 1,000: the average of their p99s said 1,267 ms, while the true p99 across all requests was 2,140 ms. Histograms can be merged because you add bucket counts, and the merged estimate was 2,349 ms, limited only by bucket width. That's why you store histograms and compute the quantile last, across the fleet.</p>
+  </section>
+
+<pre data-file="p5/cardinality.ts"><code class="language-typescript">import { Histogram, Registry } from "@prometheus-io/client";
+
+const BUCKETS = [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
+const routes = ["/orders", "/orders/:id", "/cart", "/checkout", "/payments", "/refunds", "/users/:id", "/health"];
+const statuses = ["200", "400", "404", "500"];
+const INSTANCES = 20;
+
+function build(labelNames: string[]) {
+  const registry = new Registry();
+  const h = new Histogram({ name: "http_request_duration_seconds", help: "latency", labelNames, buckets: BUCKETS, registers: [registry] });
+  return { registry, h };
+}
+const countSeries = (text: string) =&gt; text.split("\n").filter((l) =&gt; l &amp;&amp; !l.startsWith("#")).length;
+
+// الحساب: كل تركيبة labels ليها bucket لكل حد ⁦+ bucket⁩ الـ ⁦+Inf +⁩ الـ ⁦sum +⁩ الـ count
+const perCombo = BUCKETS.length + 3;
+const expected = routes.length * statuses.length * perCombo;
+
+const a = build(["route", "status"]);
+for (const route of routes) for (const status of statuses) a.h.observe({ route, status }, 0.03);
+const real = countSeries(await a.registry.metrics());
+console.log(`estimate per instance: ${routes.length} routes × ${statuses.length} statuses × ${perCombo} = ${expected}`);
+console.log(`real registry:         ${real} series`);
+console.log(`fleet of ${INSTANCES} instances:   ${real * INSTANCES} series\n`);
+
+// نفس الـ metric لما نضيف user_id: الـ series بتتضرب في عدد المستخدمين
+for (const users of [100, 1_000, 10_000]) {
+  globalThis.gc?.();
+  const before = process.memoryUsage().heapUsed;
+  const b = build(["route", "status", "user_id"]);
+  // كل مستخدم بيلمس route واحد و status واحد بس، وده أقل تقدير ممكن
+  for (let u = 0; u &lt; users; u++) b.h.observe({ route: routes[u % routes.length]!, status: "200", user_id: "usr_" + u }, 0.03);
+  const t0 = performance.now();
+  const text = await b.registry.metrics();
+  const scrapeMs = performance.now() - t0;
+  globalThis.gc?.();
+  const heapMB = (process.memoryUsage().heapUsed - before) / 1e6;
+  console.log(`user_id, ${String(users).padStart(6)} users: series=${String(countSeries(text)).padStart(7)}  scrape body≈${(text.length / 1e6).toFixed(1)} MB  heap≈+${heapMB.toFixed(1)} MB  metrics()≈${scrapeMs.toFixed(0)} ms`);
+}</code></pre>
+
+<pre><code class="language-plaintext">$ node --expose-gc p5/cardinality.ts
+estimate per instance: 8 routes × 4 statuses × 13 = 416
+real registry:         416 series
+fleet of 20 instances:   8320 series
+
+user_id,    100 users: series=   1300  scrape body≈0.1 MB  heap≈+0.2 MB  metrics()≈2 ms
+user_id,   1000 users: series=  13000  scrape body≈1.2 MB  heap≈+1.7 MB  metrics()≈13 ms
+user_id,  10000 users: series= 130000  scrape body≈12.6 MB  heap≈+17.5 MB  metrics()≈117 ms</code></pre>
+  <div class="ar-note">التقدير 8 routes × 4 statuses × 13 = 416، والـ registry الحقيقي طلّع 416 بالظبط، و20 instance يبقوا 8,320. بعد إضافة <code>user_id</code> (كل مستخدم route واحد و status واحد، أقل تقدير): 100 مستخدم 1,300 series، و1,000 مستخدم 13,000، و10,000 مستخدم 130,000 series بـ scrape حجمه 12.6 MB وحوالي 17.5 MB heap زيادة، و<code>metrics()</code> حوالي 117ms على الـ event loop.</div>
+
+<pre data-file="p5/avg-p99.ts"><code class="language-typescript">import { Histogram, Registry } from "@prometheus-io/client";
+import { mulberry32 } from "../p3/lib.ts";
+
+console.log("Real @prometheus-io/client histograms fed from a seeded generator (no real traffic).\n");
+
+const BUCKETS = [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 2.5, 5];
+const rand = mulberry32(5);
+const make = () =&gt; {
+  const registry = new Registry();
+  const h = new Histogram({ name: "req_seconds", help: "x", buckets: BUCKETS, registers: [registry] });
+  return { registry, h };
+};
+
+// الـ instance الأول سريع وعليه 9000 request، والتاني بطيء وعليه 1000 بس
+const fast = make(), slow = make();
+const raw: number[] = [];
+const fastRaw: number[] = [], slowRaw: number[] = [];
+for (let i = 0; i &lt; 9000; i++) { const v = 0.015 + rand() * 0.02; fast.h.observe(v); raw.push(v); fastRaw.push(v); }
+for (let i = 0; i &lt; 1000; i++) { const v = 1.6 + rand() * 0.6; slow.h.observe(v); raw.push(v); slowRaw.push(v); }
+
+const exact = (xs: number[], q: number) =&gt; [...xs].sort((a, b) =&gt; a - b)[Math.ceil(q * xs.length) - 1]!;
+
+type B = { le: number; count: number };
+async function bucketsOf(r: Registry): Promise&lt;B[]&gt; {
+  const m = (await r.getMetricsAsJSON())[0]!;
+  return (m.values as any[])
+    .filter((v) =&gt; v.metricName?.endsWith("_bucket"))
+    .map((v) =&gt; ({ le: v.labels.le === "+Inf" ? Infinity : Number(v.labels.le), count: v.value }));
+}
+
+// نفس فكرة histogram_quantile بتاع Prometheus: interpolation خطية جوه الـ bucket
+function quantile(q: number, b: B[]) {
+  const total = b[b.length - 1]!.count;
+  const rank = q * total;
+  let prevCount = 0, prevLe = 0;
+  for (const x of b) {
+    if (x.count &gt;= rank) {
+      if (x.le === Infinity) return prevLe;
+      return prevLe + ((x.le - prevLe) * (rank - prevCount)) / (x.count - prevCount);
+    }
+    prevCount = x.count; prevLe = x.le;
+  }
+  return NaN;
+}
+
+const bf = await bucketsOf(fast.registry);
+const bs = await bucketsOf(slow.registry);
+const merged = bf.map((x, i) =&gt; ({ le: x.le, count: x.count + bs[i]!.count }));
+
+const pf = quantile(0.99, bf), ps = quantile(0.99, bs);
+console.log(`p99 instance A (fast, 9000 reqs): ${(pf * 1000).toFixed(0)} ms`);
+console.log(`p99 instance B (slow, 1000 reqs): ${(ps * 1000).toFixed(0)} ms`);
+console.log(`average of the two p99s:          ${(((pf + ps) / 2) * 1000).toFixed(0)} ms   &lt;- wrong`);
+console.log(`p99 from merged buckets:          ${(quantile(0.99, merged) * 1000).toFixed(0)} ms`);
+console.log(`true p99 of all 10000 raw values: ${(exact(raw, 0.99) * 1000).toFixed(0)} ms`);</code></pre>
+
+<pre><code class="language-plaintext">$ node p5/avg-p99.ts
+Real @prometheus-io/client histograms fed from a seeded generator (no real traffic).
+
+p99 instance A (fast, 9000 reqs): 50 ms
+p99 instance B (slow, 1000 reqs): 2485 ms
+average of the two p99s:          1267 ms   &lt;- wrong
+p99 from merged buckets:          2349 ms
+true p99 of all 10000 raw values: 2140 ms</code></pre>
+  <div class="ar-note">الـ instance A سريع (9,000 request) والـ p99 بتاعه طلع 50ms، والـ B بطيء (1,000 request) والـ p99 بتاعه 2,485ms. متوسط الرقمين 1,267ms، وده غلط. الـ p99 الحقيقي لكل الـ 10,000 request هو 2,140ms. ولما جمعنا الـ buckets الأول طلع 2,349ms، قريب من الحقيقي والفرق بس من عرض الـ bucket. الأرقام دي histograms حقيقية بداتا متولّدة بـ seed، مش traffic حقيقي.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>كل تركيبة مختلفة من قيم الـ labels بتبقى time series لوحدها، والفاتورة بتتحسب بالـ series. لـ histogram واحد: <code>series = routes × statuses × instances × (buckets + 3)</code>: سطر لكل bucket، زائد <code>+Inf</code> و<code>_sum</code> و<code>_count</code>. وده تقدر تتأكد منه قبل الـ deploy: تقديرنا 416 لكل instance طابق registry حقيقي من <code>@prometheus-io/client</code> بالظبط (<code>prom-client</code> بقى deprecated). مشكلة الـ URL كـ label موجودة في <a href="../../04-NodeJS/lessons/31-metrics-tracing-errors.html">04 · 31 الجزء 4</a>، وهنا بنحسب الحالة العامة.</p>
+    <p>ضيف <code>user_id</code> بقى. حتى بأقل افتراض (route واحد و status واحد لكل مستخدم)، 10,000 مستخدم عملوا 130,000 series على instance واحد، و scrape حجمه 12.6 MB، وحوالي 17.5 MB heap زيادة في الـ app. و<code>registry.metrics()</code> خد حوالي 117ms على الـ event loop. اضرب في 20 instance، يبقى Prometheus بياخد 2.6 مليون series من metric واحد. قسنا ناحية الـ client؛ تكلفة الـ series على الـ server متشغلتش هنا.</p>
+    <p>الفخ التاني التجميع: مينفعش تعمل متوسط لـ percentiles. اتنين instances، واحد سريع عليه 9,000 request وواحد بطيء عليه 1,000: متوسط الـ p99 بتاعهم قال 1,267ms، والـ p99 الحقيقي لكل الطلبات 2,140ms. الـ histograms ينفع تتجمع لأنك بتجمع عدّادات الـ buckets، والتقدير بعد الجمع طلع 2,349ms، والفرق بس من عرض الـ bucket. عشان كده بتخزن histograms وتحسب الـ quantile في الآخر على الـ fleet كله.</p>
+    <p>الغلطة الشائعة: <code>avg(p99)</code> في dashboard. الرقم شكله معقول وبيطمّنك وهو غلط.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في code review لأي metric جديد: اضرب عدد قيم كل label، واسأل "القيمة دي ليها حد أقصى ثابت؟". <code>route</code> و<code>status</code> و<code>tenant_tier</code> تمام. <code>user_id</code> و<code>order_id</code> و<code>path</code> الخام يروحوا الـ logs أو الـ traces. وفي Grafana استخدم <code>histogram_quantile(0.99, sum by (le) (rate(...)))</code>، مش متوسط لـ p99 جاهز من كل instance.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Your Prometheus is running out of memory after a release. What do you look at first?" → New high-cardinality labels: find the metrics with the most series and check which label values exploded, usually something like a user ID or a raw URL. Fix the label, then let the old series age out.
+    <div class="ar-note">"الـ Prometheus بتاعك الـ memory بتخلص بعد release. أول حاجة تبص عليها إيه؟" ← labels جديدة عالية الـ cardinality: دوّر على الـ metrics اللي عندها أكتر series وشوف أنهي قيم label انفجرت، وغالبًا user ID أو URL خام. صلّح الـ label وسيب الـ series القديمة تخرج مع الوقت.</div>
+  </div>
+
+  <h2 id="p6">Part 6 — RED and USE on a real run <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ RED و الـ USE على run حقيقي</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Two checklists stop you staring at random graphs. <b>RED</b> is for services, seen from the caller: Rate, Errors, Duration. <b>USE</b> is for resources: Utilization, Saturation, Errors. For a Node service the resources are the connection pool (busy connections over max, and <code>waitingCount</code> as saturation), queue depth, and event loop delay. RED tells you that users are hurting; USE tells you what's running out.</p>
+    <p>We ran two real HTTP services, <code>api</code> calling <code>orders</code>, with a real Postgres behind a pool of 5 and a Redis queue drained at about 150 jobs a second. The load is <em>open loop</em>: requests leave at a fixed rate whether or not the server keeps up, as real users do. Each query holds a connection for about 31 ms on this machine (<code>pg_sleep(0.02)</code>, plus Windows timer rounding), so the pool tops out near 162 requests a second.</p>
+    <p>Read the table from the top. From 40 to 150 rps, p50 stays at 32 ms, so RED looks perfectly healthy, while pool utilization climbs from 27% to 89% and the queue starts to grow at 150. Then at 170 rps utilization is 98%, 12 requests are waiting on average, and p50 jumps to 110 ms. At 190 it's 293 ms. <b>Saturation signals moved one full step before latency did.</b> Event loop delay stayed flat at about 16 ms, which is the Windows timer floor here: the event loop wasn't the bottleneck, the pool was. Which of these deserve an alert is the subject of <a href="./40-slo-alerting-incidents.html">Lesson 40</a>.</p>
+  </section>
+
+<pre data-file="p6/use-server.ts"><code class="language-typescript">import http from "node:http";
+import { monitorEventLoopDelay } from "node:perf_hooks";
+import { Redis } from "ioredis";
+import pg from "pg";
+
+// حارس الـ ports: أي قيمة فاضية أو default بنرفضها قبل أي connection
+function safePort(raw: string | undefined) {
+  const n = Number(raw);
+  if (!/^\d+$/.test(String(raw)) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) {
+    throw new Error("refusing port " + raw);
+  }
+  return n;
+}
+const POOL_MAX = 5;
+const pool = new pg.Pool({ host: "127.0.0.1", port: safePort(process.env.PG_PORT), user: "app", database: "postgres", max: POOL_MAX });
+const redis = new Redis({ host: "127.0.0.1", port: safePort(process.env.REDIS_PORT) });
+
+type Obs = { status: number; ms: number };
+const red: Record&lt;"api" | "orders", Obs[]&gt; = { api: [], orders: [] };
+const use = { busy: [] as number[], waiting: [] as number[], depth: [] as number[] };
+const loop = monitorEventLoopDelay({ resolution: 5 });
+loop.enable();
+
+function server(name: "api" | "orders", handler: (url: string) =&gt; Promise&lt;number&gt;) {
+  const s = http.createServer(async (req, res) =&gt; {
+    const t0 = performance.now();
+    let status = 500;
+    try { status = await handler(req.url!); } catch { status = 503; }
+    res.writeHead(status).end("ok");
+    red[name].push({ status, ms: performance.now() - t0 });
+  });
+  return new Promise&lt;number&gt;((r) =&gt; s.listen(0, "127.0.0.1", () =&gt; r((s.address() as { port: number }).port)));
+}
+
+const ordersPort = await server("orders", async (url) =&gt; {
+  await pool.query("select pg_sleep(0.02), $1::text", [url]);
+  await redis.lpush("q:notify", url);
+  return 200;
+});
+const apiPort = await server("api", async (url) =&gt; {
+  const r = await fetch(`http://127.0.0.1:${ordersPort}${url}`);
+  await r.text();
+  return r.status;
+});
+
+// الـ worker بيسحب بمعدل ثابت حوالي 150 job في الثانية، فالـ queue depth مقياس saturation
+setInterval(async () =&gt; { await redis.ltrim("q:notify", 0, -16); }, 100);
+
+// الـ USE: بناخد عينة كل 100ms من الـ pool والـ queue طول فترة الحمل بس
+let sampling = true;
+setInterval(async () =&gt; {
+  if (!sampling) return;
+  use.busy.push(pool.totalCount - pool.idleCount);
+  use.waiting.push(pool.waitingCount);
+  use.depth.push(await redis.llen("q:notify"));
+}, 100);
+
+const pct = (xs: number[], p: number) =&gt; {
+  if (!xs.length) return 0;
+  const s = [...xs].sort((a, b) =&gt; a - b);
+  return s[Math.min(s.length - 1, Math.floor(s.length * p))]!;
+};
+const avg = (xs: number[]) =&gt; (xs.length ? xs.reduce((a, b) =&gt; a + b, 0) / xs.length : 0);
+
+process.on("message", async (m: { cmd: string }) =&gt; {
+  if (m.cmd === "freeze") { sampling = false; process.send!({ ok: true }); }
+  if (m.cmd === "reset") {
+    sampling = true;
+    red.api.length = 0; red.orders.length = 0;
+    use.busy.length = 0; use.waiting.length = 0; use.depth.length = 0;
+    loop.reset();
+    process.send!({ ok: true });
+  }
+  if (m.cmd === "report") {
+    const secs = 3;
+    const svc = (o: Obs[]) =&gt; ({
+      rate: o.length / secs,
+      errPct: (o.filter((x) =&gt; x.status &gt;= 500).length / Math.max(1, o.length)) * 100,
+      p50: pct(o.map((x) =&gt; x.ms), 0.5),
+      p99: pct(o.map((x) =&gt; x.ms), 0.99),
+    });
+    process.send!({
+      api: svc(red.api), orders: svc(red.orders),
+      util: (avg(use.busy) / POOL_MAX) * 100, waitAvg: avg(use.waiting), waitMax: Math.max(0, ...use.waiting),
+      depth: use.depth.at(-1) ?? 0, loopP99: loop.percentile(99) / 1e6,
+    });
+  }
+});
+
+process.send!({ apiPort });</code></pre>
+
+<pre data-file="p6/use-run.ts"><code class="language-typescript">import { fork } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { createPrimary, stopAll } from "./pg-cluster.mjs";
+
+const redisPort = readFileSync("redis.port", "utf8").trim();
+const cluster = await createPrimary({});
+const child = fork("p6/use-server.ts", { env: { ...process.env, PG_PORT: String(cluster.port), REDIS_PORT: redisPort } });
+const once = () =&gt; new Promise&lt;any&gt;((r) =&gt; child.once("message", r));
+const { apiPort } = await once();
+
+// حمل open-loop: الطلبات بتطلع بمعدل ثابت حتى لو الـ server بطّأ، زي المستخدمين الحقيقيين
+async function pacedLoad(url: string, rate: number, seconds: number) {
+  const inflight: Promise&lt;unknown&gt;[] = [];
+  const t0 = performance.now();
+  let sent = 0;
+  await new Promise&lt;void&gt;((done) =&gt; {
+    const tick = setInterval(() =&gt; {
+      const elapsed = (performance.now() - t0) / 1000;
+      if (elapsed &gt;= seconds) { clearInterval(tick); return done(); }
+      const due = Math.floor(elapsed * rate);
+      while (sent &lt; due) { sent++; inflight.push(fetch(url).then((r) =&gt; r.text()).catch(() =&gt; {})); }
+    }, 5);
+  });
+  return inflight;
+}
+
+console.log("rate | api: rps err% p50 p99 | orders: p50 p99 | pool util waitAvg waitMax | queue | loop p99");
+const f = (n: number, w = 5) =&gt; n.toFixed(0).padStart(w);
+try {
+  for (const rate of (process.env.STEPS ?? "40,80,110,130,150,170,190").split(",").map(Number)) {
+    child.send({ cmd: "reset" }); await once();
+    const inflight = await pacedLoad(`http://127.0.0.1:${apiPort}/orders/42`, rate, 3);
+    // وقفنا عينات الـ USE عند نهاية الحمل، بس لسه مستنيين كل الطلبات تخلص عشان الـ latency تبقى كاملة
+    child.send({ cmd: "freeze" }); await once();
+    await Promise.all(inflight);
+    child.send({ cmd: "report" });
+    const r = await once();
+    console.log(`${f(rate, 4)} | ${f(r.api.rate)} ${f(r.api.errPct, 3)} ${f(r.api.p50)} ${f(r.api.p99)} | ${f(r.orders.p50)} ${f(r.orders.p99)} | ${f(r.util, 3)}% ${r.waitAvg.toFixed(1).padStart(5)} ${f(r.waitMax, 4)} | ${f(r.depth, 5)} | ${r.loopP99.toFixed(0).padStart(4)}`);
+  }
+} finally {
+  child.kill();
+  await stopAll(cluster);
+}
+process.exit(0);</code></pre>
+
+<pre><code class="language-plaintext">$ node p6/use-run.ts
+rate | api: rps err% p50 p99 | orders: p50 p99 | pool util waitAvg waitMax | queue | loop p99
+  40 |    40   0    32    91 |    31    75 |  27%   0.0    0 |     0 |   17
+  80 |    80   0    32    35 |    31    34 |  49%   0.0    0 |     0 |   17
+ 110 |   110   0    32    36 |    31    34 |  70%   0.0    0 |     0 |   17
+ 130 |   129   0    32    36 |    31    35 |  81%   0.0    0 |     0 |   17
+ 150 |   149   0    32    34 |    31    32 |  89%   0.0    0 |    33 |   16
+ 170 |   169   0   110   186 |   109   185 |  98%  12.4   25 |    96 |   16
+ 190 |   189   0   293   560 |   292   559 | 100%  42.1   82 |   164 |   16</code></pre>
+  <div class="ar-note">كل صف step حمل مدته 3 ثواني، والأرقام بالـ ms وتقريبية (Windows وجهاز عليه حمل). من 40 لـ 150 rps: الـ p50 ثابت 32ms، لكن الـ pool util طالع من 27% لـ 89%، والـ queue بدأت تكبر عند 150 (33). عند 170: الـ util 98% و12 طلب مستنيين في المتوسط والـ p50 نط لـ 110ms. عند 190: 100% و42 مستني والـ p50 بقى 293ms. أول صف الـ p99 بتاعه 91ms لأن الـ connections بتتفتح لأول مرة. والـ loop p99 ثابت حوالي 16ms، وده حد الـ timers على Windows مش اختناق.</div>
+
+<pre class="diagram">
+ latency ^
+         |                                    *
+         |                                 *
+         |                              *
+  32 ms  |* * * * * * * * * * * * * *
+         +-----------------------------------> rate
+         40      110     150    170    190
+
+ pool %  ^                          ___ 100
+         |                    __---
+         |              __---
+         |        __---     &lt;- rising the whole time
+         +-----------------------------------> rate
+</pre>
+  <div class="ar-note">فوق: الـ latency خط مستقيم عند 32ms وبعدين بتطلع فجأة بعد 150 rps. تحت: الـ pool utilization طالعة طول الوقت من الأول. يعني الـ saturation بيبدأ يتحرك قبل ما الـ latency تتحرك بكتير، وده اللي بيخليك تلحق قبل ما المستخدم يحس.</div>
+
+<pre data-file="red.promql"><code class="language-plaintext">rate:      sum by (service) (rate(http_requests_total[1m]))
+errors:    sum by (service) (rate(http_requests_total{status=~"5.."}[1m]))
+             / sum by (service) (rate(http_requests_total[1m]))
+duration:  histogram_quantile(0.99,
+             sum by (service, le) (rate(http_request_duration_seconds_bucket[1m])))</code></pre>
+  <div class="ar-note">نفس الـ RED بصيغة PromQL لما تبقى عندك Prometheus حقيقي، ومتشغلش هنا. الـ rate هو عدد الطلبات في الثانية لكل service. الـ errors هي نسبة الـ 5xx. والـ duration هو الـ p99 من الـ histogram بعد جمع الـ buckets على كل الـ instances.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>عندك checklist اتنين بيمنعوك تبص على graphs عشوائية. الـ <b>RED</b> للـ services من ناحية اللي بينادي: Rate و Errors و Duration. الـ <b>USE</b> للـ resources: Utilization و Saturation و Errors. في Node الـ resources هي الـ connection pool (الـ connections المشغولة على الـ max، و<code>waitingCount</code> هو الـ saturation)، وطول الـ queue، و event loop delay. الـ RED بيقولك إن المستخدمين بيتعبوا، والـ USE بيقولك إيه اللي بيخلص.</p>
+    <p>شغّلنا 2 HTTP services حقيقيين، <code>api</code> بينادي <code>orders</code>، وورا الـ orders Postgres حقيقي بـ pool حجمه 5، و Redis queue بتتفضى بحوالي 150 job في الثانية. الحمل <b>open loop</b>: الطلبات بتطلع بمعدل ثابت سواء الـ server ملاحق أو لأ، زي المستخدمين الحقيقيين. كل query بياخد connection حوالي 31ms على الجهاز ده (<code>pg_sleep(0.02)</code> مع تقريب timers Windows)، فالـ pool آخره حوالي 162 طلب في الثانية.</p>
+    <p>اقرا الجدول من فوق. من 40 لـ 150 rps، الـ p50 ثابت 32ms، فالـ RED شكله سليم تمامًا، والـ pool util طالع من 27% لـ 89%، والـ queue بدأت تكبر عند 150. وبعدين عند 170 الـ util 98% و12 طلب مستنيين في المتوسط، والـ p50 نط لـ 110ms. وعند 190 بقى 293ms. <b>إشارات الـ saturation اتحركت خطوة كاملة قبل الـ latency.</b> والـ event loop delay فضل ثابت حوالي 16ms، وده حد الـ timers على Windows هنا: الـ event loop ماكانش الاختناق، الـ pool هو اللي كان. وإيه من دول يستاهل alert ده موضوع <a href="./40-slo-alerting-incidents.html">درس 40</a>.</p>
+    <p>الغلطة الشائعة: تبص على الـ CPU بس. هنا الاختناق كان في الـ pool، ومفيش CPU graph كان هيقولك.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      ضيف على الـ dashboard بتاع كل service صف RED، وتحته صف USE: <code>pool.totalCount - pool.idleCount</code>، و<code>pool.waitingCount</code>، وطول الـ queue، و <code>monitorEventLoopDelay</code>. لما <code>waitingCount</code> يبدأ يطلع عن صفر والـ latency لسه تمام، معاك وقت تكبّر الـ pool أو تقلل الحمل قبل ما الـ users يحسوا.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>Load generators lie too</b>
+    Our first attempt used autocannon 9 with <code>overallRate: 40</code> and 80 connections. At only 29% pool utilization it showed <code>waitingCount</code> averaging 5 and peaking at 35, because the rate was split per connection and requests left in bursts at the start of each second. The numbers in the table come from a small paced generator instead. Before trusting a load test, check how the requests actually arrive.
+    <div class="ar-note">أول محاولة كانت بـ autocannon 9 مع <code>overallRate: 40</code> و80 connection. عند 29% pool utilization بس طلع <code>waitingCount</code> بمتوسط 5 وذروة 35، لأن المعدل بيتقسم على الـ connections والطلبات بتطلع دفعة واحدة أول كل ثانية. الأرقام في الجدول من generator بسيط منتظم. قبل ما تثق في load test، شوف الطلبات بتوصل إزاي فعلًا.</div>
+  </div>
+
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ The ID stops at the queue</b>
+<pre><code class="language-typescript">// الـ id راح مع الـ HTTP بس
+await redis.lpush("q:notify", JSON.stringify({ userId }));</code></pre></div>
+    <div class="good"><b>✅ The message carries the context</b>
+<pre><code class="language-typescript">// الـ id في الـ envelope والـ consumer بيرجّعه
+await redis.lpush("q:notify", envelope({ userId }));
+als.run({ correlationId }, () =&gt; handle(payload));</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ HTTP hops متربطة كويس، بس أول ما الشغل يدخل queue الـ id بيضيع، فأي مشكلة في الـ worker ملهاش صاحب. ✅ الرسالة نفسها بتشيل الـ id في envelope، والـ consumer بيرجّعه بـ <code>als.run</code> قبل الـ handler، فالسلسلة بتكمل لحد آخر الشغل.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Head sampling for rare failures</b>
+<pre><code class="language-typescript">// بيقرر قبل ما يعرف النتيجة: 3 errors من 518
+new TraceIdRatioBasedSampler(0.01);</code></pre></div>
+    <div class="good"><b>✅ Decide after the outcome is known</b>
+<pre><code class="language-typescript">// كل الـ errors والبطيء، و1% من الباقي
+const keep = t.error || t.ms &gt;= 1000 || rand() &lt; 0.01;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ head بنسبة 1% خلّى 3 traces بس من 518 error في المحاكاة، فلما تيجي تدوّر على عطل هتلاقي مفيش. ✅ القرار بعد ما الـ trace يخلص بيحتفظ بكل الـ errors والبطيء بحوالي 2% تخزين، والتمن memory في الـ collector.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Unbounded label</b>
+<pre><code class="language-typescript">// كل مستخدم بقى series: 130,000 مع 10,000 مستخدم
+h.observe({ route, status, user_id: user.id }, s);</code></pre></div>
+    <div class="good"><b>✅ Bounded labels, details in logs</b>
+<pre><code class="language-typescript">// الـ labels ليها حد أقصى، والـ user في الـ log
+h.observe({ route, status }, s);
+logger.info({ userId: user.id, route }, "served");</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>user_id</code> كـ label خلّى عدد الـ series يتضرب في عدد المستخدمين، 130,000 series على instance واحد مع 10,000 مستخدم. ✅ الـ labels تفضل بقيم محدودة، والتفاصيل عالية الـ cardinality تروح الـ logs، وتكلفتها هناك 44 byte في السطر.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Averaging per-instance percentiles</b>
+<pre><code class="language-plaintext">avg(p99_by_instance)   =&gt;  1267 ms
+true p99               =&gt;  2140 ms</code></pre></div>
+    <div class="good"><b>✅ Merge histograms, then take the quantile</b>
+<pre><code class="language-plaintext">histogram_quantile(0.99,
+  sum by (le) (rate(x_bucket[5m])))  =&gt;  2349 ms</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ متوسط الـ p99 لكل instance طلع 1,267ms والحقيقي 2,140ms، يعني الـ dashboard بيقولك إن الدنيا أحسن من الواقع بكتير. ✅ اجمع عدّادات الـ buckets من كل الـ instances وبعدين احسب الـ quantile، والنتيجة قريبة من الحقيقي، والفرق بس من عرض الـ bucket.</p>
+  </section>
+
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Break the chain on purpose <span class="lvl lvl-1">🟢 easy</span></b>
+    In <code>observe.ts</code>, remove the header in <code>callService</code> and run the IDs mode. How many services does one <code>grep</code> find now?
+    <div class="ar-note">في <code>observe.ts</code> شيل الـ header من <code>callService</code> وشغّل الـ IDs mode. الـ <code>grep</code> الواحد بيلاقي كام service دلوقتي؟</div>
+    <details><summary>Hint · تلميح</summary>
+      Each service generates its own ID when no header arrives, so every service still has IDs, just different ones.
+      <div class="ar-note">كل service بتولّد id لوحدها لو الـ header موصلش، فكل واحدة هيبقى عندها ids، بس مختلفة عن بعض، والـ grep هيلاقي service واحدة بس.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Size your own metric <span class="lvl lvl-2">🟡 medium</span></b>
+    Add a <code>tenant_tier</code> label with 3 values to <code>cardinality.ts</code> and predict the new series count before running it. Then replace it with <code>tenant_id</code> at 5,000 tenants.
+    <div class="ar-note">ضيف label اسمه <code>tenant_tier</code> بـ 3 قيم في <code>cardinality.ts</code> واحسب الـ series قبل ما تشغّل. وبعدين بدّله بـ <code>tenant_id</code> بـ 5,000 tenant، وقارن.</div>
+    <details><summary>Solution · الحل</summary>
+<pre><code class="language-typescript">// الـ tenant_tier: كل تركيبة بتتضرب في 3 قيم
+// 8 routes × 4 statuses × 3 tiers × 13 = 1248 series لكل instance
+// لو كل tenant لمس route و status واحد: ⁦5000 × 13 = 65,000 series⁩
+const expected = routes.length * statuses.length * 3 * (BUCKETS.length + 3);</code></pre>
+      <div class="ar-note">الـ <code>tenant_tier</code> محدود فمقبول: 1,248 series لكل instance. الـ <code>tenant_id</code> بـ 5,000 قيمة بيوصل لـ 65,000 series حتى لو كل tenant لمس تركيبة واحدة بس، وده اللي بيخلّيه ينقل للـ logs.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Move the saturation point <span class="lvl lvl-3">🔴 hard</span></b>
+    Change <code>POOL_MAX</code> in <code>use-server.ts</code> to 10 and rerun the steps with higher rates. Where does latency start to bend now? Does the saturation signal still come first?
+    <div class="ar-note">غيّر <code>POOL_MAX</code> في <code>use-server.ts</code> لـ 10 وشغّل الـ steps بمعدلات أعلى. الـ latency بتبدأ تنحني فين دلوقتي؟ وإشارة الـ saturation لسه بتيجي الأول؟</div>
+    <details><summary>Hint · تلميح</summary>
+      Capacity is about <code>POOL_MAX ÷ 0.031 s</code>, so around 320 rps. Set <code>STEPS=100,200,260,300,340,380</code>. Remember <code>max_connections</code> on Postgres: this helper sets 60.
+      <div class="ar-note">الـ capacity حوالي <code>POOL_MAX ÷ 0.031 s</code>، يعني حوالي 320 rps. استخدم <code>STEPS=100,200,260,300,340,380</code>. وخلي بالك من <code>max_connections</code> في Postgres: الـ helper هنا حاطه 60.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    In your side project, make one request visible end to end: a correlation ID through HTTP and the queue, a trace with the critical path, and one RED row plus one USE row (pool waiting count) on a dashboard. Write down the top entry on your critical path.
+    <div class="ar-note">في مشروعك الجانبي، خلّي request واحد ظاهر من أوله لآخره: correlation ID عبر الـ HTTP والـ queue، و trace بالـ critical path، وصف RED وصف USE (الـ pool waiting count) على dashboard. واكتب أول حاجة على الـ critical path بتاعك.</div>
+  </div>
+
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Correlation ID: read on entry, write on HTTP exit, put in the envelope for queues. ALS only works inside one process.</li>
+    <li>W3C <code>traceparent</code>: <code>00-traceId-spanId-flags</code>. ESM apps need the import hook or server spans vanish silently.</li>
+    <li>Critical path: walk back from the root's end, take the last-finishing child. Off-path work doesn't change the total.</li>
+    <li>Sequential siblings are candidates for parallel; only independent reads qualify.</li>
+    <li>Head 1% kept 3 of 518 errors; tail kept all 518 at about 2% storage.</li>
+    <li>Collector memory = traces/s × spans × bytes × decision window. All spans of a trace must reach one collector.</li>
+    <li>Log bill = QPS × lines × bytes × price. Ingest dominated; sampling info cut it from about $9,561 to $831.</li>
+    <li>Sample by trace ID hash, keep all errors, raise per tenant at runtime.</li>
+    <li>High cardinality: 44 bytes in a log line, 130,000 series as a metric label.</li>
+    <li>Series = routes × statuses × instances × (buckets + 3). Never average percentiles; merge histograms.</li>
+    <li>RED for services, USE for resources. Pool utilization and queue depth moved before p50 did.</li>
+    <li>Check how your load generator actually sends requests before trusting it.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ correlation ID: اقراه وإنت داخل، اكتبه في الـ HTTP الخارج، وحطه في envelope للـ queues. الـ ALS شغال جوه process واحد بس.</li>
+      <li>الـ <code>traceparent</code> بتاع W3C شكله <code>00-traceId-spanId-flags</code>. تطبيقات ESM محتاجة الـ import hook وإلا الـ server spans بتختفي من غير error.</li>
+      <li>الـ critical path: ارجع من نهاية الـ root وخد الابن اللي خلص آخر واحد. أي شغل بره الـ path مش بيغيّر الوقت الكلي.</li>
+      <li>الـ siblings المتتابعين مرشحين للـ parallel، بس الـ reads المستقلة هي اللي تنفع.</li>
+      <li>الـ head بنسبة 1% خلّى 3 من 518 error، والـ tail خلّى الـ 518 كلهم بحوالي 2% تخزين.</li>
+      <li>الـ collector memory = traces/s × spans × bytes × decision window، وكل spans الـ trace لازم توصل لـ collector واحد.</li>
+      <li>فاتورة الـ logs = QPS × سطور × bytes × سعر. الـ ingest هو الأكبر، والـ sampling للـ info نزّلها من حوالي 9,561 لـ 831 دولار.</li>
+      <li>اعمل sampling بـ hash الـ trace ID، سيب كل الـ errors، وارفع النسبة لـ tenant معين وقت التشغيل.</li>
+      <li>الـ high cardinality: 44 byte في سطر log، و130,000 series كـ metric label.</li>
+      <li>الـ series = routes × statuses × instances × (buckets + 3). متعملش متوسط لـ percentiles، اجمع الـ histograms.</li>
+      <li>الـ RED للـ services والـ USE للـ resources. الـ pool utilization وطول الـ queue اتحركوا قبل الـ p50.</li>
+      <li>اتأكد الـ load generator بيبعت الطلبات إزاي قبل ما تثق في نتيجته.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 10 · 2.8 — الثلاث أعمدة على scale: logs (sampling، retention، cardinality)، metrics (RED …، USE …)، traces (sampling strategies — head vs tail)</label>
+    <label><input type="checkbox" data-key="r2"> 10 · 2.6 — Distributed tracing والـ correlation IDs عبر الـ services (context propagation)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.w3.org/TR/trace-context/">W3C Trace Context</a></li>
+    <li><a href="https://opentelemetry.io/docs/concepts/sampling/">OpenTelemetry — Sampling</a></li>
+    <li><a href="https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/tailsamplingprocessor">OpenTelemetry Collector — Tail Sampling Processor</a></li>
+    <li><a href="https://prometheus.io/docs/practices/histograms/">Prometheus — Histograms and summaries</a></li>
+    <li><a href="https://www.brendangregg.com/usemethod.html">Brendan Gregg — The USE Method</a></li>
+    <li><a href="https://sre.google/sre-book/monitoring-distributed-systems/">Google SRE Book — Monitoring Distributed Systems</a></li>
+  </ul>
+
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./38-secrets-encryption-privacy.html"><small>← Previous</small>38 · Secrets &amp; Privacy</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./40-slo-alerting-incidents.html"><small>Next →</small>40 · SLOs &amp; Incidents</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

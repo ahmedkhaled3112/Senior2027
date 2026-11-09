@@ -1,0 +1,1894 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case Study: A Dynamo-Style Key-Value Store — 10 System Design</title>
+<meta name="section" content="10-System-Design">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">10 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 48 / 63</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <header>
+    <h1>Case Study: A Dynamo-Style Key-Value Store</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 48 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Node 22 · TypeScript</span>
+      <span class="chip">Prereq: 12, 13, 29</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>10 · 3.2 — 4. Key-value store — replication، partitioning (consistent hashing)، consistency (quorums)، Dynamo paper (vector clocks، hinted handoff، Merkle trees)</li>
+      </ul>
+    </div>
+  </header>
+
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — The exercise</a></li>
+      <li><a href="#p2">Part 2 — Partitioning &amp; replication</a></li>
+      <li><a href="#p3">Part 3 — Quorums</a></li>
+      <li><a href="#p4">Part 4 — Versions &amp; siblings</a></li>
+      <li><a href="#p5">Part 5 — Hinted handoff &amp; read repair</a></li>
+      <li><a href="#p6">Part 6 — Merkle trees</a></li>
+      <li><a href="#p7">Part 7 — Trade-offs &amp; review</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>This case packs half of distributed systems into one question: partitioning, replication, quorums, conflicts, repair. You'll rarely build one, but you will use systems built this way, like Cassandra, Riak and ScyllaDB, and you'll be asked why a write that succeeded can't be read. Here you'll run a small store made of real Node processes. It's a teaching toy, labelled that way throughout: every behaviour below is real, but nothing here should hold production data.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ case ده بيجمع نص الـ distributed systems في سؤال واحد: partitioning، و replication، و quorums، و conflicts، و repair. نادرًا هتبني واحد، بس هتستخدم أنظمة مبنية بالشكل ده زي Cassandra و Riak و ScyllaDB، وهتتسأل ليه write نجحت ومش قادر تقراها. هنا هتشغّل store صغير من Node processes حقيقية. ده teaching toy ومكتوب كده في كل مكان: كل سلوك هتشوفه حقيقي، بس مفيش حاجة هنا تنفع تشيل data في production.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — The exercise <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — التمرين</span></h2>
+
+  <div class="callout warn">
+    <b>⏱ Stop here. Set a 45-minute timer, talk out loud, design on paper, and only then read on.</b>
+    <p><b>The prompt:</b> Design a key-value store with <code>put</code> and <code>get</code>. 10 TB of data, 100k QPS, tunable consistency per request, and it must stay writable during node failures.</p>
+    <div class="ar-note">
+      <p><b>وقف هنا. اظبط تايمر 45 دقيقة، اتكلم بصوت عالي، صمّم على ورق، وبعدين بس كمّل قراءة.</b></p>
+      <p><b>السؤال:</b> صمّم key-value store فيه <code>put</code> و<code>get</code>. عندنا 10 TB data و100 ألف QPS، و consistency تقدر تظبطها لكل request، ولازم يفضل بيقبل writes وقت ما الـ nodes تقع.</p>
+    </div>
+  </div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>Requirements.</strong> Functional: <code>put(key, value, context)</code> and <code>get(key)</code> returning values and a context. Non-functional: 10 TB, 100k QPS, a single-key value of at most about 1 MB, availability over consistency for writes, and consistency chosen per request. Non-goals: multi-key transactions, range scans, secondary indexes. Saying those out loud is part of the answer.</p>
+    <p><strong>Estimates.</strong> From the calculator: 10 TB × N=3 = 30 TB raw. With 2 TB disks at 70% full, that's 22 nodes for storage. 80k reads and 20k writes per second become 300k replica operations per second, because the coordinator sends every request to all N replicas. At a planning figure of 25k ops per node that's 12 nodes, so storage decides, and with one-third headroom for losing a zone we get 30 nodes.</p>
+    <p><strong>API with context.</strong> <code>get</code> returns <code>{ values, context }</code>. <code>put</code> takes that <code>context</code> back. The context is an opaque version vector, and that's the whole trick: the server can tell whether your write has seen the versions it's replacing. <strong>Data model per node:</strong> a map from key to a list of versions, a hint store for writes held for other nodes, and a Merkle tree per key range.</p>
+  </section>
+
+<pre data-file="calc.ts"><code class="language-typescript">// الـ calculator من درس 02، بالأرقام بتاعة الـ key-value store
+const dataTb = 10;
+const n = 3;
+const usablePerNodeTb = 2 * 0.7;
+const qps = 100_000;
+const readShare = 0.8;
+const valueKb = 1;
+const r = 2;
+const w = 2;
+
+const rawTb = dataTb * n;
+const byStorage = Math.ceil(rawTb / usablePerNodeTb);
+console.log(`storage: ${dataTb} TB x N=${n} = ${rawTb} TB raw -&gt; ${byStorage} nodes at ${usablePerNodeTb} TB usable each`);
+
+const reads = qps * readShare;
+const writes = qps - reads;
+// الـ coordinator بيبعت لكل الـ N، حتى لو بيستنى R أو W بس
+const replicaReads = reads * n;
+const replicaWrites = writes * n;
+const perNodeCapacity = 25_000;
+const byOps = Math.ceil((replicaReads + replicaWrites) / perNodeCapacity);
+console.log(`ops: reads ${reads}/s writes ${writes}/s -&gt; ${replicaReads + replicaWrites} replica ops/s -&gt; ${byOps} nodes at ${perNodeCapacity}/s each`);
+
+// بنزود ثلث عشان لو zone كامل وقع
+const nodes = Math.ceil(Math.max(byStorage, byOps) * 1.34);
+console.log(`nodes with 1/3 headroom: ${nodes}`);
+console.log(`R + W = ${r + w} &gt; N = ${n}: overlap guaranteed on the same replica set, read tolerates ${n - r}, write tolerates ${n - w} down`);
+// ده السقف: لو كل replica رجّعت القيمة كاملة في كل read
+const netGbps = ((replicaWrites + replicaReads) * valueKb * 1000 * 8) / 1e9;
+console.log(`inter-node traffic ceiling ≈ ${netGbps.toFixed(1)} Gbit/s for ${valueKb} KB values`);
+const vnodes = 64;
+console.log(`tokens on the ring: ${nodes} x ${vnodes} vnodes = ${nodes * vnodes}`);</code></pre>
+<pre><code class="language-plaintext">storage: 10 TB x N=3 = 30 TB raw -&gt; 22 nodes at 1.4 TB usable each
+ops: reads 80000/s writes 20000/s -&gt; 300000 replica ops/s -&gt; 12 nodes at 25000/s each
+nodes with 1/3 headroom: 30
+R + W = 4 &gt; N = 3: overlap guaranteed on the same replica set, read tolerates 1, write tolerates 1 down
+inter-node traffic ceiling ≈ 2.4 Gbit/s for 1 KB values
+tokens on the ring: 30 x 64 vnodes = 1920</code></pre>
+  <div class="ar-note">ده حساب مش قياس. الـ storage: 10 TB في N=3 يعني 30 TB، يعني 22 node لو كل واحد بيشيل 1.4 TB مفيدة. الـ ops: 80 ألف read و20 ألف write بقوا 300 ألف replica op في الثانية، يعني 12 node لو الواحد بيعمل 25 ألف. الـ storage هو اللي بيحكم، ومع ثلث زيادة عشان لو zone كامل وقع بقوا 30. و R+W = 4 أكبر من N=3، فالقراءة بتستحمل node واحد واقع، والكتابة كمان. وسقف ترافيك الشبكة بين الـ nodes حوالي 2.4 Gbit/s، وعدد الـ tokens على الـ ring عند 30 node في 64 vnode هو 1920.</div>
+
+<pre class="diagram">
+                 client
+                   |  put / get  (any node)
+                   v
+        +----------------------+
+        |  coordinator (any)   |   hash(key) on the ring,
+        |  N=3, wait for W / R |   preference list [n2, n1, n3]
+        +----------------------+
+          |         |        |
+          v         v        v
+        +----+    +----+   +----+         +----+
+        | n2 |    | n1 |   | n3 |  ...    | n5 |
+        +----+    +----+   +----+         +----+
+         store:   versions per key
+         hints:   writes held for a dead node
+         merkle:  per key range, for anti-entropy
+         gossip:  membership (not in this toy)
+</pre>
+  <div class="ar-note">الـ client بيكلّم أي node، وده بيبقى الـ coordinator. بيحسب hash الـ key على الـ ring ويطلع الـ preference list، N=3، ويبعت لهم كلهم ويستنى W أو R رد. كل node عنده store فيه versions لكل key، و hints للـ writes اللي شايلها لـ node واقع، و Merkle trees لكل key range للمزامنة، و gossip للـ membership (الـ toy ده مفيهوش gossip).</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><strong>المتطلبات.</strong> الـ functional: <code>put(key, value, context)</code> و<code>get(key)</code> بيرجع القيم والـ context. الـ non-functional: 10 TB، و100 ألف QPS، وقيمة الـ key الواحد حوالي 1 MB كحد أقصى، والـ availability أهم من الـ consistency في الـ writes، والـ consistency بتتحدد لكل request. والـ non-goals: multi-key transactions، و range scans، و secondary indexes. لازم تقول دول بصوت عالي، وده جزء من الإجابة.</p>
+    <p><strong>التقديرات.</strong> من الـ calculator: 10 TB في N=3 يعني 30 TB raw. بـ disks 2 TB مليانة 70% يعني 22 node للـ storage. و80 ألف read و20 ألف write في الثانية بقوا 300 ألف replica op في الثانية، لأن الـ coordinator بيبعت لكل الـ N. ولو الـ node بيعمل 25 ألف op كرقم تخطيط، يبقى 12 node، فالـ storage هو اللي بيحكم، ومع ثلث زيادة عشان لو zone كامل وقع نوصل لـ 30 node.</p>
+    <p><strong>الـ API مع context.</strong> <code>get</code> بيرجع <code>{ values, context }</code>، و<code>put</code> بياخد الـ <code>context</code> ده تاني. الـ context ده version vector معتم، وده السر كله: السيرفر بيعرف هل الكتابة بتاعتك شافت الـ versions اللي بتستبدلها ولا لأ. <strong>الـ data model لكل node:</strong> map من key لقايمة versions، و hint store للـ writes الشايلها لـ nodes تانية، و Merkle tree لكل key range.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما تتناقش في Cassandra أو ScyllaDB لخدمة زي الـ notifications أو الـ session store، دي نفس الورقة: احسب الـ replica ops بـ N مش بالـ QPS بس، وكل read على replicas كتير ده الرقم اللي بيحدد عدد الـ nodes. وفي إيدك دلوقتي ليه الـ <code>consistency level</code> في Cassandra (ONE، QUORUM، ALL) هو نفس R و W.
+    </div>
+  </section>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Partitioning &amp; replication <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — الـ partitioning والـ replication</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Each key is hashed onto a ring built from virtual nodes, and the first N distinct physical nodes clockwise form the <strong>preference list</strong>. N = 3 here. <a href="./13-partitioning-consistent-hashing.html">Lesson 13</a> taught the ring and measured key movement, so what's new is how the ring is used: the preference list is computed from the key alone, so any node can act as coordinator without a lookup. A node that isn't one of the replicas still coordinates: it computes the list, writes to all three, and answers.</p>
+    <p>The real run below uses five real Node processes on real HTTP. With one vnode per node the busiest node holds 3.8 times the keys of the quietest. With 64 vnodes that falls to a spread of 17,067 to 22,371 around an ideal 20,000 per node. The put went through <code>n4</code>, which holds no copy, and the data landed exactly on <code>n2, n1, n3</code>.</p>
+  </section>
+
+<pre data-file="ring.ts"><code class="language-typescript">// الـ ring ده تطبيق بسيط للـ consistent hashing اللي اتشرح في درس 13
+import { createHash } from "node:crypto";
+
+export const hash32 = (s: string) =&gt; createHash("md5").update(s).digest().readUInt32BE(0);
+
+export class Ring {
+  private tokens: { t: number; node: string }[] = [];
+  private nodeCount: number;
+
+  constructor(nodes: string[], vnodes = 64) {
+    this.nodeCount = nodes.length;
+    for (const node of nodes) {
+      for (let v = 0; v &lt; vnodes; v++) this.tokens.push({ t: hash32(`${node}#${v}`), node });
+    }
+    this.tokens.sort((a, b) =&gt; a.t - b.t);
+  }
+
+  // بنمشي مع عقارب الساعة من مكان الـ key، وناخد كل node مرة واحدة بس
+  walk(key: string): string[] {
+    const h = hash32(key);
+    let lo = 0;
+    let hi = this.tokens.length;
+    while (lo &lt; hi) {
+      const mid = (lo + hi) &gt;&gt; 1;
+      if (this.tokens[mid].t &lt; h) lo = mid + 1;
+      else hi = mid;
+    }
+    const out: string[] = [];
+    for (let i = 0; i &lt; this.tokens.length &amp;&amp; out.length &lt; this.nodeCount; i++) {
+      const n = this.tokens[(lo + i) % this.tokens.length].node;
+      if (!out.includes(n)) out.push(n);
+    }
+    return out;
+  }
+
+  preference(key: string, n: number): string[] {
+    return this.walk(key).slice(0, n);
+  }
+}</code></pre>
+<pre data-file="node.ts"><code class="language-typescript">// الـ coordinator: أي node ينفع، وبيبعت لكل الـ N وبيستنى W بس
+async function coordPut(key: string, value: unknown, ctx: Clock, w: number, sloppy: boolean) {
+  const pref = ring.preference(key, N);
+  const extras = ring.walk(key).slice(N);
+  seq++;
+  const version: Version = { value, dot: [id, seq], ctx, ts: Date.now() };
+  return await new Promise&lt;{ ok: boolean; acks: number; ackedBy: string[]; hinted: string[] }&gt;((resolve) =&gt; {
+    let acks = 0;
+    let settled = 0;
+    const ackedBy: string[] = [];
+    const hinted: string[] = [];
+    const finish = () =&gt; {
+      if (acks &gt;= w || settled === pref.length) resolve({ ok: acks &gt;= w, acks, ackedBy, hinted });
+    };
+    for (const target of pref) {
+      void (async () =&gt; {
+        if (await replicaPut(target, key, [version])) {
+          acks++;
+          ackedBy.push(target);
+        } else if (sloppy) {
+          // الـ node ده واقع: بنمشي للي بعده على الـ ring ونسيب hint
+          while (extras.length) {
+            const alt = extras.shift()!;
+            if (await replicaPut(alt, key, [version], target)) {
+              acks++;
+              ackedBy.push(alt);
+              hinted.push(`${alt}(for ${target})`);
+              break;
+            }
+          }
+        }
+        settled++;
+        finish();
+      })();
+    }
+  });
+}</code></pre>
+
+<details>
+  <summary>Full source of the toy · الكود الكامل للـ toy</summary>
+  <div class="ar-note">دي كل الملفات اللي بتشغّل الـ toy، عشان تقدر تنسخها وتجربها: <code>node.ts</code> هو الـ process الواحد، و<code>cluster.ts</code> بيشغّل processes و kill و restart. شغّلهم بـ <code>node p2-basic.ts</code> من نفس الفولدر.</div>
+<pre data-file="node.ts"><code class="language-typescript">// ده teaching toy: process حقيقي بيكلم processes حقيقية، بس مش قاعدة بيانات تنفع لـ production
+import { createServer } from "node:http";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { Ring, hash32 } from "./ring.ts";
+import { contextOf, lww, reconcile, type Clock, type Version } from "./versions.ts";
+
+const id = process.env.NODE_ID!;
+const dataFile = process.env.DATA_FILE!;
+const N = 3;
+const DEPTH = 12;
+
+let peers: Record&lt;string, number&gt; = {};
+let ring = new Ring([]);
+const store = new Map&lt;string, Version[]&gt;();
+let hints: { target: string; key: string; versions: Version[] }[] = [];
+let seq = 0;
+let tree: string[][] | null = null;
+let leafIndex = new Map&lt;number, [string, string][]&gt;();
+
+const config = { delayMin: 0, delayMax: 0, rejectWrites: false, handoff: true, mode: "vclock", timeoutMs: 300 };
+const metrics = { hintsStored: 0, hintsReplayed: 0, readRepairs: 0, replicaPuts: 0 };
+const downUntil = new Map&lt;string, number&gt;();
+
+// الـ PRNG بـ seed ثابت لكل node عشان الـ delay يتكرر
+let prngState = hash32(id);
+function rand() {
+  prngState = (prngState + 0x6d2b79f5) &gt;&gt;&gt; 0;
+  let t = prngState;
+  t = Math.imul(t ^ (t &gt;&gt;&gt; 15), t | 1);
+  t ^= t + Math.imul(t ^ (t &gt;&gt;&gt; 7), t | 61);
+  return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+}
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+const delay = async () =&gt; {
+  if (config.delayMax &gt; 0) await sleep(config.delayMin + rand() * (config.delayMax - config.delayMin));
+};
+
+function persist(rec: object) {
+  appendFileSync(dataFile, JSON.stringify(rec) + "\n");
+}
+
+function replay() {
+  if (!existsSync(dataFile)) return;
+  for (const line of readFileSync(dataFile, "utf8").split("\n")) {
+    if (!line) continue;
+    const r = JSON.parse(line);
+    if (r.t === "put") store.set(r.key, r.versions);
+    if (r.t === "hint") hints.push({ target: r.target, key: r.key, versions: r.versions });
+    if (r.t === "clear") hints = hints.filter((h) =&gt; !(h.target === r.target &amp;&amp; h.key === r.key));
+    if (r.versions) for (const v of r.versions as Version[]) if (v.dot[0] === id) seq = Math.max(seq, v.dot[1]);
+  }
+}
+
+function merge(list: Version[]) {
+  return config.mode === "lww" ? lww(list) : reconcile(list);
+}
+
+function apply(key: string, incoming: Version[], durable = true) {
+  const merged = merge([...(store.get(key) ?? []), ...incoming]);
+  store.set(key, merged);
+  tree = null;
+  if (durable) persist({ t: "put", key, versions: merged });
+}
+
+async function replicaPut(target: string, key: string, versions: Version[], hint?: string): Promise&lt;boolean&gt; {
+  if (target === id) {
+    await delay();
+    if (config.rejectWrites) return false;
+    if (hint) {
+      hints.push({ target: hint, key, versions });
+      metrics.hintsStored++;
+      persist({ t: "hint", target: hint, key, versions });
+    } else apply(key, versions);
+    return true;
+  }
+  if (Date.now() &lt; (downUntil.get(target) ?? 0)) return false;
+  try {
+    const r = await fetch(`http://127.0.0.1:${peers[target]}/r/put`, {
+      method: "POST",
+      body: JSON.stringify({ key, versions, hint }),
+      signal: AbortSignal.timeout(config.timeoutMs),
+    });
+    await r.arrayBuffer();
+    if (r.status === 200) return true;
+    return false;
+  } catch {
+    downUntil.set(target, Date.now() + 500);
+    return false;
+  }
+}
+
+async function replicaGet(target: string, key: string): Promise&lt;Version[] | null&gt; {
+  if (target === id) {
+    await delay();
+    return store.get(key) ?? [];
+  }
+  if (Date.now() &lt; (downUntil.get(target) ?? 0)) return null;
+  try {
+    const r = await fetch(`http://127.0.0.1:${peers[target]}/r/get?key=${encodeURIComponent(key)}`, { signal: AbortSignal.timeout(config.timeoutMs) });
+    return ((await r.json()) as { versions: Version[] }).versions;
+  } catch {
+    downUntil.set(target, Date.now() + 500);
+    return null;
+  }
+}
+
+// الـ coordinator: أي node ينفع، وبيبعت لكل الـ N وبيستنى W بس
+async function coordPut(key: string, value: unknown, ctx: Clock, w: number, sloppy: boolean) {
+  const pref = ring.preference(key, N);
+  const extras = ring.walk(key).slice(N);
+  seq++;
+  const version: Version = { value, dot: [id, seq], ctx, ts: Date.now() };
+  return await new Promise&lt;{ ok: boolean; acks: number; ackedBy: string[]; hinted: string[] }&gt;((resolve) =&gt; {
+    let acks = 0;
+    let settled = 0;
+    const ackedBy: string[] = [];
+    const hinted: string[] = [];
+    const finish = () =&gt; {
+      if (acks &gt;= w || settled === pref.length) resolve({ ok: acks &gt;= w, acks, ackedBy, hinted });
+    };
+    for (const target of pref) {
+      void (async () =&gt; {
+        if (await replicaPut(target, key, [version])) {
+          acks++;
+          ackedBy.push(target);
+        } else if (sloppy) {
+          // الـ node ده واقع: بنمشي للي بعده على الـ ring ونسيب hint
+          while (extras.length) {
+            const alt = extras.shift()!;
+            if (await replicaPut(alt, key, [version], target)) {
+              acks++;
+              ackedBy.push(alt);
+              hinted.push(`${alt}(for ${target})`);
+              break;
+            }
+          }
+        }
+        settled++;
+        finish();
+      })();
+    }
+  });
+}
+
+function digest(versions: Version[]) {
+  return createHash("sha1").update(JSON.stringify(versions.map((v) =&gt; v.dot.join(":")).sort())).digest("hex").slice(0, 16);
+}
+
+async function coordGet(key: string, r: number) {
+  const pref = ring.preference(key, N);
+  const replies: { target: string; versions: Version[] }[] = [];
+  return await new Promise&lt;{ ok: boolean; versions: Version[]; answered: number }&gt;((resolve) =&gt; {
+    let settled = 0;
+    let answered = false;
+    for (const target of pref) {
+      void (async () =&gt; {
+        const v = await replicaGet(target, key);
+        if (v) replies.push({ target, versions: v });
+        settled++;
+        if (!answered &amp;&amp; replies.length &gt;= r) {
+          answered = true;
+          resolve({ ok: true, versions: merge(replies.flatMap((x) =&gt; x.versions)), answered: replies.length });
+        }
+        if (settled === pref.length) {
+          if (!answered) {
+            answered = true;
+            resolve({ ok: false, versions: [], answered: replies.length });
+          }
+          // الـ read repair: اللي عنده نسخة قديمة ياخد الدمج
+          const all = merge(replies.flatMap((x) =&gt; x.versions));
+          const want = digest(all);
+          for (const x of replies) {
+            if (digest(x.versions) !== want) {
+              metrics.readRepairs++;
+              void replicaPut(x.target, key, all);
+            }
+          }
+        }
+      })();
+    }
+  });
+}
+
+// الـ handoff: كل شوية نحاول نرجّع الـ hints لصحابها
+setInterval(async () =&gt; {
+  if (!config.handoff) return;
+  for (const h of [...hints]) {
+    downUntil.delete(h.target);
+    if (await replicaPut(h.target, h.key, h.versions)) {
+      hints = hints.filter((x) =&gt; x !== h);
+      metrics.hintsReplayed++;
+      persist({ t: "clear", target: h.target, key: h.key });
+    }
+  }
+}, 150);
+
+function leafOf(key: string) {
+  return hash32(key) &gt;&gt;&gt; (32 - DEPTH);
+}
+
+function buildTree(): string[][] {
+  if (tree) return tree;
+  const buckets: string[][] = Array.from({ length: 1 &lt;&lt; DEPTH }, () =&gt; []);
+  leafIndex = new Map();
+  for (const [key, versions] of store) {
+    const leaf = leafOf(key);
+    const d = digest(versions);
+    buckets[leaf].push(`${key}=${d}`);
+    leafIndex.set(leaf, [...(leafIndex.get(leaf) ?? []), [key, d]]);
+  }
+  const sha = (s: string) =&gt; createHash("sha1").update(s).digest("hex").slice(0, 16);
+  const levels: string[][] = [buckets.map((b) =&gt; sha(b.sort().join("|")))];
+  while (levels[0].length &gt; 1) {
+    const prev = levels[0];
+    const up: string[] = [];
+    for (let i = 0; i &lt; prev.length; i += 2) up.push(sha(prev[i] + prev[i + 1]));
+    levels.unshift(up);
+  }
+  tree = levels;
+  return levels;
+}
+
+function leafEntries(leaf: number) {
+  buildTree();
+  return leafIndex.get(leaf) ?? [];
+}
+
+// الـ anti-entropy: بنبدّل الـ hashes من فوق لتحت وننزل بس في الفروع المختلفة
+async function merkleSync(peer: string, push: boolean) {
+  let bytes = 0;
+  const call = async (path: string, init?: RequestInit) =&gt; {
+    const r = await fetch(`http://127.0.0.1:${peers[peer]}${path}`, init);
+    const text = await r.text();
+    bytes += path.length + (init?.body ? String(init.body).length : 0) + text.length;
+    return JSON.parse(text);
+  };
+  const mine = buildTree();
+  let frontier = [0];
+  let nodesExamined = 0;
+  for (let level = 0; level &lt;= DEPTH; level++) {
+    if (!frontier.length) break;
+    nodesExamined += frontier.length;
+    const remote = (await call(`/m/nodes`, { method: "POST", body: JSON.stringify({ level, idx: frontier }) })).hashes as string[];
+    const differing = frontier.filter((idx, i) =&gt; mine[level][idx] !== remote[i]);
+    if (level === DEPTH) {
+      frontier = differing;
+      break;
+    }
+    frontier = differing.flatMap((i) =&gt; [2 * i, 2 * i + 1]);
+  }
+  const leaves = frontier;
+  const keysToFix = new Set&lt;string&gt;();
+  for (const leaf of leaves) {
+    const theirs = new Map((await call(`/m/leaf?idx=${leaf}`)).entries as [string, string][]);
+    const ours = new Map(leafEntries(leaf));
+    for (const k of new Set([...theirs.keys(), ...ours.keys()])) {
+      if (theirs.get(k) !== ours.get(k)) keysToFix.add(k);
+    }
+  }
+  let keysSynced = 0;
+  if (keysToFix.size &amp;&amp; push) {
+    const items = [...keysToFix].map((k) =&gt; ({ key: k, versions: store.get(k) ?? [] }));
+    const body = JSON.stringify({ items });
+    const pulled = await call(`/m/merge`, { method: "POST", body });
+    for (const it of pulled.items as { key: string; versions: Version[] }[]) apply(it.key, it.versions, false);
+    keysSynced = keysToFix.size;
+  }
+  return { bytes, nodesExamined, leavesDiffering: leaves.length, keysDiffering: keysToFix.size, keysSynced };
+}
+
+const server = createServer(async (req, res) =&gt; {
+  const url = new URL(req.url!, "http://x");
+  const chunks: Buffer[] = [];
+  for await (const c of req) chunks.push(c as Buffer);
+  const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
+  const send = (code: number, obj: unknown) =&gt; {
+    res.writeHead(code, { "content-type": "application/json" }).end(JSON.stringify(obj));
+  };
+
+  if (url.pathname === "/r/put") {
+    if (config.rejectWrites) return send(503, { error: "rejecting writes" });
+    await delay();
+    if (body.hint) {
+      hints.push({ target: body.hint, key: body.key, versions: body.versions });
+      metrics.hintsStored++;
+      persist({ t: "hint", target: body.hint, key: body.key, versions: body.versions });
+    } else {
+      apply(body.key, body.versions);
+      metrics.replicaPuts++;
+    }
+    return send(200, { ok: true });
+  }
+  if (url.pathname === "/r/get") {
+    await delay();
+    return send(200, { versions: store.get(url.searchParams.get("key")!) ?? [] });
+  }
+  if (url.pathname === "/r/bulk") {
+    for (const it of body.items) apply(it.key, it.versions, false);
+    return send(200, { ok: true, keys: store.size });
+  }
+  if (url.pathname.startsWith("/kv/")) {
+    const key = decodeURIComponent(url.pathname.slice(4));
+    if (req.method === "PUT") {
+      const w = Number(url.searchParams.get("w") ?? 2);
+      const sloppy = url.searchParams.get("sloppy") === "1";
+      const out = await coordPut(key, body.value, body.context ?? {}, w, sloppy);
+      if (!out.ok) return send(503, { error: "quorum not met", acks: out.acks, needed: w });
+      return send(200, { ok: true, coordinator: id, ackedBy: out.ackedBy, hinted: out.hinted });
+    }
+    const out = await coordGet(key, Number(url.searchParams.get("r") ?? 2));
+    if (!out.ok) return send(503, { error: "quorum not met", answered: out.answered });
+    return send(200, { values: out.versions.map((v) =&gt; v.value), siblings: out.versions.length, context: contextOf(out.versions), versions: out.versions });
+  }
+  if (url.pathname === "/m/nodes") {
+    const level = buildTree()[body.level as number];
+    return send(200, { hashes: (body.idx as number[]).map((i) =&gt; level[i]) });
+  }
+  if (url.pathname === "/m/leaf") return send(200, { entries: leafEntries(Number(url.searchParams.get("idx"))) });
+  if (url.pathname === "/m/merge") {
+    const items: { key: string; versions: Version[] }[] = body.items;
+    const reply = items.map((it) =&gt; ({ key: it.key, versions: store.get(it.key) ?? [] }));
+    for (const it of items) apply(it.key, it.versions, false);
+    return send(200, { items: reply });
+  }
+  if (url.pathname === "/m/all") return send(200, { entries: [...store].map(([k, v]) =&gt; [k, digest(v)]) });
+  if (url.pathname === "/m/root") return send(200, { root: buildTree()[0][0], keys: store.size });
+  if (url.pathname === "/m/sync") return send(200, await merkleSync(body.peer, true));
+  if (url.pathname === "/admin/config") {
+    Object.assign(config, body);
+    return send(200, config);
+  }
+  if (url.pathname === "/admin/metrics") return send(200, { ...metrics, hintsHeld: hints.length });
+  if (url.pathname === "/admin/dump") {
+    return send(200, { versions: store.get(url.searchParams.get("key")!) ?? [] });
+  }
+  send(404, { error: "no route" });
+});
+
+replay();
+server.listen(0, "127.0.0.1", () =&gt; {
+  const { port } = server.address() as { port: number };
+  process.send!({ port });
+});
+process.on("message", (m: { peers?: Record&lt;string, number&gt; }) =&gt; {
+  if (m.peers) {
+    peers = m.peers;
+    ring = new Ring(Object.keys(peers).sort());
+  }
+});</code></pre>
+<pre data-file="cluster.ts"><code class="language-typescript">// الملف ده بيشغّل كل node كـ process حقيقي، وبيوفّر kill و restart وطلبات HTTP عليهم
+import { fork, type ChildProcess } from "node:child_process";
+import { mkdirSync, rmSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+let runs = 0;
+
+export class Cluster {
+  nodes = new Map&lt;string, { child: ChildProcess; port: number }&gt;();
+  dir: string;
+
+  constructor() {
+    this.dir = join(here, "data", `run-${process.pid}-${runs++}`);
+    mkdirSync(this.dir, { recursive: true });
+  }
+
+  private async spawn(id: string) {
+    const child = fork(join(here, "node.ts"), [], {
+      env: { ...process.env, NODE_ID: id, DATA_FILE: join(this.dir, `${id}.jsonl`) },
+    });
+    const port = await new Promise&lt;number&gt;((res) =&gt; child.once("message", (m: { port: number }) =&gt; res(m.port)));
+    this.nodes.set(id, { child, port });
+  }
+
+  async start(ids: string[]) {
+    await Promise.all(ids.map((i) =&gt; this.spawn(i)));
+    this.broadcast();
+  }
+
+  broadcast() {
+    const peers = Object.fromEntries([...this.nodes].filter(([, n]) =&gt; n.child.connected).map(([id, n]) =&gt; [id, n.port]));
+    const all = { ...peers, ...this.downPorts };
+    for (const n of this.nodes.values()) if (n.child.connected) n.child.send({ peers: all });
+  }
+
+  // الـ dead nodes بيفضلوا في الـ ring بالـ port القديم، زي ما الـ failure detection بياخد وقت
+  private downPorts: Record&lt;string, number&gt; = {};
+
+  kill(id: string) {
+    const n = this.nodes.get(id)!;
+    this.downPorts[id] = n.port;
+    n.child.kill("SIGKILL");
+  }
+
+  async restart(id: string) {
+    delete this.downPorts[id];
+    await this.spawn(id);
+    this.broadcast();
+    await new Promise((r) =&gt; setTimeout(r, 100));
+  }
+
+  url(id: string, path: string) {
+    return `http://127.0.0.1:${this.nodes.get(id)!.port}${path}`;
+  }
+
+  async stop() {
+    for (const n of this.nodes.values()) if (n.child.connected) n.child.kill("SIGKILL");
+    await new Promise((r) =&gt; setTimeout(r, 100));
+    rmSync(this.dir, { recursive: true, force: true });
+  }
+
+  async put(via: string, key: string, value: unknown, opts: { w?: number; context?: object; sloppy?: boolean } = {}) {
+    const q = `?w=${opts.w ?? 2}${opts.sloppy ? "&amp;sloppy=1" : ""}`;
+    const r = await fetch(this.url(via, `/kv/${encodeURIComponent(key)}${q}`), {
+      method: "PUT",
+      body: JSON.stringify({ value, context: opts.context ?? {} }),
+    });
+    return { status: r.status, body: await r.json() };
+  }
+
+  async get(via: string, key: string, r = 2) {
+    const res = await fetch(this.url(via, `/kv/${encodeURIComponent(key)}?r=${r}`));
+    return { status: res.status, body: await res.json() };
+  }
+
+  async replica(id: string, key: string) {
+    const r = await fetch(this.url(id, `/admin/dump?key=${encodeURIComponent(key)}`));
+    return ((await r.json()) as { versions: { value: unknown }[] }).versions;
+  }
+
+  async admin(id: string, body: object) {
+    await fetch(this.url(id, "/admin/config"), { method: "POST", body: JSON.stringify(body) });
+  }
+
+  async metrics(id: string) {
+    return (await fetch(this.url(id, "/admin/metrics"))).json();
+  }
+}</code></pre>
+</details>
+
+<pre data-file="p2-basic.ts"><code class="language-typescript">// الجزء ده بيشغّل 5 processes حقيقية، وبيوريك مكان الـ keys والـ coordinator
+import { Cluster } from "./cluster.ts";
+import { Ring } from "./ring.ts";
+
+console.log("TEACHING TOY: not a database. 5 real Node processes, one ring, in-memory store + a small JSON log.");
+const ids = ["n1", "n2", "n3", "n4", "n5"];
+const c = new Cluster();
+await c.start(ids);
+
+const ring = new Ring(ids);
+for (const key of ["cart:101", "order:9001", "user:42:prefs"]) console.log(`${key.padEnd(15)} preference list: ${ring.preference(key, 3).join(" -&gt; ")}`);
+
+// الـ vnodes بتوزّع الـ load تقريبًا بالتساوي
+for (const v of [1, 64, 256]) {
+  const counts = new Map&lt;string, number&gt;();
+  const r = new Ring(ids, v);
+  for (let i = 0; i &lt; 100_000; i++) counts.set(r.preference(`k${i}`, 1)[0], (counts.get(r.preference(`k${i}`, 1)[0]) ?? 0) + 1);
+  const values = [...counts.values()];
+  console.log(`vnodes=${String(v).padStart(3)} primary keys per node min=${Math.min(...values)} max=${Math.max(...values)} (ideal 20000)`);
+}
+
+// أي node ينفع يبقى coordinator، حتى لو مش جوه الـ preference list
+const key = "cart:101";
+const pref = ring.preference(key, 3);
+const outsider = ids.find((i) =&gt; !pref.includes(i))!;
+console.log(`put via ${outsider} (not in the list):`, JSON.stringify((await c.put(outsider, key, { items: ["phone"] })).body));
+const got = await c.get(ids.find((i) =&gt; i !== outsider &amp;&amp; pref.includes(i))!, key);
+console.log(`get via ${pref[0]}: values=${JSON.stringify(got.body.values)} context=${JSON.stringify(got.body.context)}`);
+for (const id of ids) console.log(`  on ${id}: ${(await c.replica(id, key)).length} version(s)`);
+await c.stop();
+process.exit(0);</code></pre>
+<pre><code class="language-plaintext">TEACHING TOY: not a database. 5 real Node processes, one ring, in-memory store + a small JSON log.
+cart:101        preference list: n2 -&gt; n1 -&gt; n3
+order:9001      preference list: n5 -&gt; n4 -&gt; n2
+user:42:prefs   preference list: n1 -&gt; n3 -&gt; n2
+vnodes=  1 primary keys per node min=8527 max=32611 (ideal 20000)
+vnodes= 64 primary keys per node min=17067 max=22371 (ideal 20000)
+vnodes=256 primary keys per node min=18295 max=21802 (ideal 20000)
+put via n4 (not in the list): {"ok":true,"coordinator":"n4","ackedBy":["n2","n3"],"hinted":[]}
+get via n2: values=[{"items":["phone"]}] context={"n4":1}
+  on n1: 1 version(s)
+  on n2: 1 version(s)
+  on n3: 1 version(s)
+  on n4: 0 version(s)
+  on n5: 0 version(s)</code></pre>
+  <div class="ar-note">دي 5 processes حقيقية. كل key ليه preference list مختلفة. مع vnode واحد الـ node الزحمة شايل 32,611 key والهادي 8,527، ومع 64 vnode الفرق بقى من 17,067 لـ 22,371، ومع 256 من 18,295 لـ 21,802، والمثالي 20,000. والـ <code>put</code> اتعمل عن طريق <code>n4</code> اللي مش من الـ replicas، بس الـ data وصلت لـ <code>n2</code> و<code>n1</code> و<code>n3</code> بالظبط، و<code>n4</code> و<code>n5</code> معندهمش حاجة، والـ context رجع <code>{"n4":1}</code> لأن <code>n4</code> هو اللي عمل الـ dot.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>كل key بيتعمله hash على ring مبني من virtual nodes، وأول N من الـ physical nodes المختلفة مع عقارب الساعة هم الـ <strong>preference list</strong>، وهنا N = 3. <a href="./13-partitioning-consistent-hashing.html">درس 13</a> شرح الـ ring وقاس حركة الـ keys، فالجديد هنا طريقة استخدامها: الـ preference list بتتحسب من الـ key لوحده، فأي node ينفع coordinator من غير lookup. حتى node مش من الـ replicas بينفع يعمل coordinate: بيحسب القايمة، ويكتب على التلاتة، ويرد.</p>
+    <p>التجربة الحقيقية 5 Node processes حقيقية على HTTP حقيقي. بـ vnode واحد لكل node، أزحم node شايل 3.8 مرات أهدى node. بـ 64 vnode المدى بقى من 17,067 لـ 22,371 حوالين مثالي 20,000 لكل node. والـ <code>put</code> عدّى على <code>n4</code> اللي مش بيشيل نسخة، والـ data نزلت على <code>n2, n1, n3</code> بالظبط.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      أي cache cluster أو sharded store بتشتغل عليه بيعمل نفس الحسابات. الـ client بتاع Redis Cluster بيحسب الـ slot محلي بالظبط زي ما الـ coordinator هنا بيحسب الـ preference list. ولما تحس إن node واحد سخن والباقي فاضي، أول سؤال: كام vnode، ولا فيه hot key؟
+    </div>
+    <p>والغلطة الشائعة هنا إنك تفكر إن فيه node "رئيسي" لازم تكلمه؛ هنا مفيش، وأي node يقدر يبدأ العملية.</p>
+  </section>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Quorums <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — الـ quorums</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The coordinator sends to all N replicas and answers after W acks for a write or R replies for a read. If <code>R + W &gt; N</code>, the read set and the write set must overlap on at least one node, as long as they're drawn from the same set of N. <a href="./12-replication-failover-split-brain.html">Lesson 12</a> covers replication theory; here you measure the dial. W and R are chosen per request.</p>
+    <p>The run below injects 1–40 ms of delay per replica, seeded and labelled, kills one process halfway through, and writes then reads through a different coordinator. <strong>(1,1)</strong> is fastest and returned 38 stale reads out of 200. <strong>(2,2)</strong> had no stale reads and survived the kill. <strong>(3,1)</strong> also had no stale reads while healthy, but every write touching the dead node failed: 90 failed puts. In the (1,1) and (2,2) runs the 1–2 failed puts are requests in flight through the coordinator that was killed.</p>
+    <p>A failed write isn't rolled back. The W=3 write below returns <code>503</code> with 2 acks, yet the two live replicas keep the version and a read returns it. "Failed" means the system couldn't confirm the write, not that it didn't happen. Clients should retry with the same value or read the value back, and never treat 503 as "nothing changed".</p>
+  </section>
+
+<pre data-file="node.ts"><code class="language-typescript">async function coordGet(key: string, r: number) {
+  const pref = ring.preference(key, N);
+  const replies: { target: string; versions: Version[] }[] = [];
+  return await new Promise&lt;{ ok: boolean; versions: Version[]; answered: number }&gt;((resolve) =&gt; {
+    let settled = 0;
+    let answered = false;
+    for (const target of pref) {
+      void (async () =&gt; {
+        const v = await replicaGet(target, key);
+        if (v) replies.push({ target, versions: v });
+        settled++;
+        if (!answered &amp;&amp; replies.length &gt;= r) {
+          answered = true;
+          resolve({ ok: true, versions: merge(replies.flatMap((x) =&gt; x.versions)), answered: replies.length });
+        }
+        if (settled === pref.length) {
+          if (!answered) {
+            answered = true;
+            resolve({ ok: false, versions: [], answered: replies.length });
+          }
+          // الـ read repair: اللي عنده نسخة قديمة ياخد الدمج
+          const all = merge(replies.flatMap((x) =&gt; x.versions));
+          const want = digest(all);
+          for (const x of replies) {
+            if (digest(x.versions) !== want) {
+              metrics.readRepairs++;
+              void replicaPut(x.target, key, all);
+            }
+          }
+        }
+      })();
+    }
+  });
+}</code></pre>
+<pre data-file="p3-quorums.ts"><code class="language-typescript">// الجزء ده بيقيس W و R مع node بيموت في النص، والتأخير بين الـ replicas مصطنع بـ seed ثابت
+import { Cluster } from "./cluster.ts";
+import { Ring } from "./ring.ts";
+
+console.log("TEACHING TOY: real processes and real HTTP; replica delay of 1-40 ms is injected on purpose.");
+const ids = ["n1", "n2", "n3", "n4", "n5"];
+const OPS = 400;
+const WORKERS = 16;
+const VICTIM = "n3";
+
+function pct(sorted: number[], p: number) {
+  return sorted.length ? sorted[Math.floor((sorted.length - 1) * p)] : 0;
+}
+
+async function run(w: number, r: number) {
+  const c = new Cluster();
+  await c.start(ids);
+  for (const id of ids) await c.admin(id, { delayMin: 1, delayMax: 40 });
+  const stat = { putMs: [] as number[], getMs: [] as number[], failedPut: 0, failedGet: 0, stale: 0, reads: 0 };
+  let done = 0;
+  let killed = false;
+
+  // كل worker ليه key بتاعه وعدّاد بيزيد، فأي read أقل من آخر ack يبقى stale
+  async function worker(k: number) {
+    const key = `order:${k}`;
+    let seq = 0;
+    let context: object = {};
+    while (done &lt; OPS) {
+      if (done &gt;= OPS / 2 &amp;&amp; !killed) {
+        killed = true;
+        c.kill(VICTIM);
+      }
+      seq++;
+      done++;
+      const via = ids[k % 5];
+      if (via === VICTIM &amp;&amp; killed) continue;
+      const t0 = performance.now();
+      const p = await c.put(via, key, seq, { w, context }).catch(() =&gt; ({ status: 599, body: {} }));
+      stat.putMs.push(performance.now() - t0);
+      if (p.status !== 200) {
+        stat.failedPut++;
+        continue;
+      }
+      const reader = ids[(k + 1) % 5] === VICTIM ? ids[(k + 2) % 5] : ids[(k + 1) % 5];
+      const t1 = performance.now();
+      const g = await c.get(reader, key, r).catch(() =&gt; ({ status: 599, body: { values: [] as number[], context: {} } }));
+      stat.getMs.push(performance.now() - t1);
+      if (g.status !== 200) {
+        stat.failedGet++;
+        continue;
+      }
+      stat.reads++;
+      const seen = Math.max(0, ...(g.body.values as number[]));
+      if (seen &lt; seq) stat.stale++;
+      context = g.body.context;
+    }
+  }
+  await Promise.all(Array.from({ length: WORKERS }, (_, k) =&gt; worker(k)));
+  await c.stop();
+  stat.putMs.sort((a, b) =&gt; a - b);
+  stat.getMs.sort((a, b) =&gt; a - b);
+  console.log(`W=${w} R=${r}  put p50≈${pct(stat.putMs, 0.5).toFixed(0).padStart(3)} ms p99≈${pct(stat.putMs, 0.99).toFixed(0).padStart(3)} ms | get p50≈${pct(stat.getMs, 0.5).toFixed(0).padStart(3)} ms p99≈${pct(stat.getMs, 0.99).toFixed(0).padStart(3)} ms | failed puts=${String(stat.failedPut).padStart(3)} failed gets=${stat.failedGet} | stale reads=${String(stat.stale).padStart(3)}/${stat.reads}`);
+}
+
+await run(1, 1);
+await run(2, 2);
+await run(3, 1);
+
+// عدد الـ keys اللي الـ replicas بتاعتها فيها الـ node اللي مات
+const ring = new Ring(ids);
+const touched = Array.from({ length: WORKERS }, (_, k) =&gt; `order:${k}`).filter((k) =&gt; ring.preference(k, 3).includes(VICTIM));
+console.log(`keys whose replica set contains ${VICTIM}: ${touched.length}/${WORKERS}`);
+
+// كتابة W=3 مع node ميت: بتفشل، بس النسختين اللي نجحوا مش بيترجعوا
+const c = new Cluster();
+await c.start(ids);
+const key = touched[0];
+const [p1, p2, p3] = ring.preference(key, 3);
+c.kill(p3);
+const res = await c.put(p1, key, "paid", { w: 3 });
+console.log(`W=3 with ${p3} dead: HTTP ${res.status}`, JSON.stringify(res.body));
+console.log(`but ${p1} now holds ${(await c.replica(p1, key)).length} version(s) and ${p2} holds ${(await c.replica(p2, key)).length}: a failed write is not rolled back`);
+const again = await c.get(p1, key, 1);
+console.log(`read R=1 right after the "failed" write returns: ${JSON.stringify(again.body.values)}`);
+await c.stop();
+process.exit(0);</code></pre>
+<pre><code class="language-plaintext">TEACHING TOY: real processes and real HTTP; replica delay of 1-40 ms is injected on purpose.
+W=1 R=1  put p50≈ 19 ms p99≈102 ms | get p50≈ 17 ms p99≈ 97 ms | failed puts=  1 failed gets=0 | stale reads= 38/200
+W=2 R=2  put p50≈ 29 ms p99≈ 67 ms | get p50≈ 30 ms p99≈ 49 ms | failed puts=  2 failed gets=0 | stale reads=  0/207
+W=3 R=1  put p50≈ 35 ms p99≈675 ms | get p50≈ 18 ms p99≈648 ms | failed puts= 90 failed gets=1 | stale reads=  0/110
+keys whose replica set contains n3: 5/16
+W=3 with n5 dead: HTTP 503 {"error":"quorum not met","acks":2,"needed":3}
+but n3 now holds 1 version(s) and n1 holds 1: a failed write is not rolled back
+read R=1 right after the "failed" write returns: ["paid"]</code></pre>
+  <div class="ar-note">ده القياس، والتأخير بين الـ replicas مصطنع عن قصد ومكتوب في السطر الأول. <b>W=1 R=1</b>: الأسرع وفي 38 قراية stale من 200. <b>W=2 R=2</b>: مفيش stale، وفضل شغال بعد موت node. <b>W=3 R=1</b>: مفيش stale، بس 90 كتابة فشلت لأن n3 ميت، والـ p99 بتاع الكتابة حوالي 675 ms بسبب timeouts الـ node الميت. وآخر السطور: <code>W=3</code> رجعت 503 و 2 acks، بس نسختين فضلوا موجودين، وقراءة R=1 جابت القيمة "المفشولة" نفسها.</div>
+
+  <table>
+    <thead><tr><th>W, R</th><th>put p50 / p99 (ms)</th><th>get p50 / p99 (ms)</th><th>Failed puts</th><th>Stale reads</th></tr></thead>
+    <tbody>
+      <tr><td>1, 1</td><td>≈19 / ≈102</td><td>≈17 / ≈97</td><td>1</td><td>38 / 200</td></tr>
+      <tr><td>2, 2</td><td>≈29 / ≈67</td><td>≈30 / ≈49</td><td>2</td><td>0 / 207</td></tr>
+      <tr><td>3, 1</td><td>≈35 / ≈675</td><td>≈18 / ≈648</td><td>90</td><td>0 / 110</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">كل صف إعداد W و R، والأرقام من Windows على جهاز عليه شغل تاني فهي تقريبية، والتأخير بين الـ replicas مصطنع. <b>(1,1)</b> الأسرع: الـ put حوالي 19 / 102 ms والـ get حوالي 17 / 97 ms، بس فيه 38 stale من 200. <b>(2,2)</b> أبطأ شوية: put حوالي 29 / 67 ms، و get حوالي 30 / 49 ms، و stale صفر. <b>(3,1)</b> الـ put حوالي 35 / 675 ms، و get حوالي 18 / 648 ms، و stale صفر، بس 90 put فشلوا لما node مات. الـ 1 و 2 failed puts في أول صفين كانوا requests جوه الـ coordinator اللي اتقتل.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ coordinator بيبعت لكل الـ N، وبيرد بعد W acks في الكتابة أو R رد في القراءة. لو <code>R + W &gt; N</code>، مجموعة الكتابة ومجموعة القراءة لازم يتقاطعوا في node واحد على الأقل، طالما الاتنين من نفس الـ N. <a href="./12-replication-failover-split-brain.html">درس 12</a> شرح نظرية الـ replication، وهنا هتقيس الدايرة نفسها. W و R بيتحددوا لكل request.</p>
+    <p>التجربة بتحط 1–40 ms تأخير لكل replica، بـ seed ثابت ومكتوب إنه مصطنع، وبتقتل process في النص، وبتكتب وبعدين تقرا من coordinator تاني. <strong>(1,1)</strong> الأسرع ورجّعت 38 stale من 200. <strong>(2,2)</strong> مفيهاش stale وعدّت موت الـ node. <strong>(3,1)</strong> برضه مفيهاش stale وهي سليمة، بس كل write لمس الـ node الميت فشل: 90 put فشلوا. وفي (1,1) و(2,2) الـ 1 أو 2 failed puts كانوا requests في الطريق وقت قتل الـ coordinator.</p>
+    <p>الـ write اللي فشل مش بيترجّع. كتابة W=3 رجعت <code>503</code> بـ 2 acks، بس الـ replicas الحية فضلت شايلة النسخة، والقراءة جابتها. يعني "فشل" معناها إن النظام مقدرش يأكّد الكتابة، مش إنها محصلتش. فالـ client يعيد بنفس القيمة أو يقرا القيمة، ومتتعاملش مع 503 على إن "مفيش حاجة حصلت".</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو بتشتغل مع Cassandra، <code>LOCAL_QUORUM</code> هو (2,2) على RF=3. ولو الـ endpoint بتاع "user settings" مكتوب ONE، توقّع إن اليوزر يكتب ويعمل refresh ويلاقي القيمة القديمة. والأهم: في أي write بيرجع 503، اعمل الكود بتاعك على أساس إن الكتابة ممكن تكون حصلت، استخدم idempotency key، ومتفترضش rollback.
+    </div>
+    <p>والغلطة الشائعة هنا إن <code>R + W &gt; N</code> يعني strong consistency. دي overlap بس، ومع failed partial writes أو sloppy quorum ممكن تقرا حاجة غير اللي متوقعها.</p>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: you set N=3, W=2, R=2. Can a read still be stale?</b>
+    Yes. The overlap holds only when both quorums come from the same three nodes. A sloppy quorum writes to a fallback node, a failed write leaves a partial version behind, and concurrent writes need conflict handling. R+W&gt;N is a read-your-write guarantee on a fixed set, not linearizability.
+    <div class="ar-note">السؤال: ظبطت N=3 و W=2 و R=2. هل القراءة لسه ممكن تبقى stale؟ أيوه. الـ overlap بيتحقق بس لو الـ quorumين من نفس التلات nodes. الـ sloppy quorum بيكتب على node بديل، والـ write الفاشل بيسيب partial version، والـ writes المتوازية محتاجة conflict handling. يعني R+W&gt;N ده read-your-write على مجموعة ثابتة، مش linearizability.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Versions &amp; siblings <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ versions والـ siblings</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Each write carries a <strong>vector clock</strong> built from the client's context plus a new event at the coordinator. <a href="./29-time-clocks-ordering.html">Lesson 29</a> teaches vector clocks; here they sit on values. If neither clock dominates the other, the versions are concurrent and the store keeps both as <strong>siblings</strong>, returning both on the next read. Nothing is lost, and nothing is decided yet. The client merges and writes back with the combined context.</p>
+    <p>In the run, two clients read the same context and each added one item to the cart. The store returned 2 siblings with concurrent clocks. The client took the union and wrote back, and the next read returned one version with all three items. The same run with last-write-wins returned one version with one item gone, and no error appeared anywhere. That's the trade-off: <strong>application complexity against silent data loss</strong>. A union merge has its own failure: a removed item can come back, as the run shows with <code>case</code>. The Dynamo paper mentions this anomaly, and proper fixes are CRDTs or an operation log.</p>
+    <p><strong>A real trap.</strong> Two writes through the same coordinator with the same empty context would produce <code>{n1:1}</code> and <code>{n1:2}</code>, and a plain vector clock says the first is before the second, so one write silently vanishes. This toy uses a <em>dot</em>, the coordinator's own event per write, kept apart from the context, and a version is dropped only if another version's context has seen its dot. That's the idea behind Dotted Version Vectors (paper in the sources).</p>
+  </section>
+
+<pre data-file="versions.ts"><code class="language-typescript">// كل version معاه ⁦context (⁩اللي شافه الـ client قبل الكتابة) و ⁦dot (⁩الكتابة نفسها)
+export type Clock = Record&lt;string, number&gt;;
+export type Dot = [string, number];
+
+export interface Version {
+  value: unknown;
+  dot: Dot;
+  ctx: Clock;
+  ts: number;
+}
+
+export const covers = (ctx: Clock, dot: Dot) =&gt; (ctx[dot[0]] ?? 0) &gt;= dot[1];
+
+// بنحذف أي version الـ context بتاع version تانية شافها، والباقي siblings
+export function reconcile(list: Version[]): Version[] {
+  const byDot = new Map&lt;string, Version&gt;();
+  for (const v of list) byDot.set(v.dot.join(":"), v);
+  const all = [...byDot.values()];
+  return all.filter((v) =&gt; !all.some((u) =&gt; u !== v &amp;&amp; covers(u.ctx, v.dot)));
+}
+
+// ده الـ last-write-wins: الأحدث بالـ ts يكسب والتاني بيضيع
+export function lww(list: Version[]): Version[] {
+  return [...list].sort((a, b) =&gt; b.ts - a.ts || b.dot[0].localeCompare(a.dot[0])).slice(0, 1);
+}
+
+// الـ context اللي بيرجع للـ client: كل اللي الـ versions دي شايفاه
+export function contextOf(list: Version[]): Clock {
+  const c: Clock = {};
+  for (const v of list) {
+    for (const [n, s] of Object.entries(v.ctx)) c[n] = Math.max(c[n] ?? 0, s);
+    c[v.dot[0]] = Math.max(c[v.dot[0]] ?? 0, v.dot[1]);
+  }
+  return c;
+}
+
+// ده الـ vector clock العادي، وبنستخدمه عشان نوري العلاقة بين نسختين
+export function compare(a: Clock, b: Clock): "before" | "after" | "equal" | "concurrent" {
+  let less = false;
+  let more = false;
+  for (const n of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if ((a[n] ?? 0) &lt; (b[n] ?? 0)) less = true;
+    if ((a[n] ?? 0) &gt; (b[n] ?? 0)) more = true;
+  }
+  return less &amp;&amp; more ? "concurrent" : less ? "before" : more ? "after" : "equal";
+}</code></pre>
+<pre data-file="p4-siblings.ts"><code class="language-typescript">// تحديثين متوازيين على نفس الـ cart: مرة بـ vector clocks ومرة بـ last-write-wins
+import { Cluster } from "./cluster.ts";
+import { compare, contextOf, type Clock, type Version } from "./versions.ts";
+
+console.log("TEACHING TOY: real processes; the two updates are concurrent because both clients read the same context.");
+const ids = ["n1", "n2", "n3", "n4", "n5"];
+const key = "cart:7";
+type Items = { items: string[] };
+const union = (lists: Items[]) =&gt; ({ items: [...new Set(lists.flatMap((l) =&gt; l.items))].sort() });
+
+// الـ client بيدمج، لأنه هو اللي فاهم معنى "cart"
+const c = new Cluster();
+await c.start(ids);
+await c.put("n1", key, { items: ["phone"] }, { w: 3 });
+const base = (await c.get("n1", key, 3)).body;
+console.log(`read: values=${JSON.stringify(base.values)} context=${JSON.stringify(base.context)}`);
+
+await Promise.all([
+  c.put("n2", key, { items: ["phone", "case"] }, { context: base.context, w: 3 }),
+  c.put("n4", key, { items: ["phone", "charger"] }, { context: base.context, w: 3 }),
+]);
+const after = (await c.get("n1", key, 3)).body;
+console.log(`after 2 concurrent writes: siblings=${after.siblings} values=${JSON.stringify(after.values)}`);
+const [a, b] = after.versions as Version[];
+const clockOf = (v: Version): Clock =&gt; contextOf([v]);
+console.log(`  clock A=${JSON.stringify(clockOf(a))} clock B=${JSON.stringify(clockOf(b))} compare=${compare(clockOf(a), clockOf(b))}`);
+
+const merged = union(after.values as Items[]);
+await c.put("n3", key, merged, { context: after.context, w: 3 });
+const final = (await c.get("n5", key, 3)).body;
+console.log(`client merged and wrote back: siblings=${final.siblings} values=${JSON.stringify(final.values)}`);
+
+// حذف ووجود إضافة في نفس الوقت: الـ union بيرجّع المحذوف
+const ctx2 = final.context;
+await Promise.all([
+  c.put("n2", key, { items: ["charger", "phone"] }, { context: ctx2, w: 3 }),
+  c.put("n4", key, { items: ["case", "charger", "phone", "headset"] }, { context: ctx2, w: 3 }),
+]);
+const del = (await c.get("n1", key, 3)).body;
+console.log(`remove "case" racing add "headset": union -&gt; ${JSON.stringify(union(del.values as Items[]))}  ("case" is back)`);
+await c.stop();
+
+// نفس السيناريو، بس بـ last-write-wins
+const l = new Cluster();
+await l.start(ids);
+for (const id of ids) await l.admin(id, { mode: "lww" });
+await l.put("n1", key, { items: ["phone"] }, { w: 3 });
+const lb = (await l.get("n1", key, 3)).body;
+await Promise.all([
+  l.put("n2", key, { items: ["phone", "case"] }, { context: lb.context, w: 3 }),
+  l.put("n4", key, { items: ["phone", "charger"] }, { context: lb.context, w: 3 }),
+]);
+const la = (await l.get("n1", key, 3)).body;
+console.log(`last-write-wins: siblings=${la.siblings} values=${JSON.stringify(la.values)}  (one item is gone, no error anywhere)`);
+await l.stop();
+
+// الفخ: اتنين بيكتبوا على نفس الـ coordinator بنفس الـ context
+const t = new Cluster();
+await t.start(ids);
+await Promise.all([
+  t.put("n1", "cart:9", { items: ["phone"] }, { w: 3 }),
+  t.put("n1", "cart:9", { items: ["case"] }, { w: 3 }),
+]);
+const same = (await t.get("n2", "cart:9", 3)).body;
+console.log(`same coordinator, same empty context: siblings=${same.siblings} values=${JSON.stringify(same.values)}`);
+const naive = compare({ n1: 1 }, { n1: 2 });
+console.log(`a plain per-coordinator clock would say {n1:1} is "${naive}" {n1:2}, and silently drop the first write`);
+// كتابة من غير context: كل مرة sibling جديد، لأن الكتابة مش شافت اللي قبلها
+for (const item of ["phone", "case", "charger"]) await t.put("n1", "cart:10", { items: [item] }, { w: 3 });
+const blind = (await t.get("n2", "cart:10", 3)).body;
+console.log(`3 writes with no context, one after another: siblings=${blind.siblings}`);
+await t.stop();
+process.exit(0);</code></pre>
+<pre><code class="language-plaintext">TEACHING TOY: real processes; the two updates are concurrent because both clients read the same context.
+read: values=[{"items":["phone"]}] context={"n1":1}
+after 2 concurrent writes: siblings=2 values=[{"items":["phone","charger"]},{"items":["phone","case"]}]
+  clock A={"n1":1,"n4":1} clock B={"n1":1,"n2":1} compare=concurrent
+client merged and wrote back: siblings=1 values=[{"items":["case","charger","phone"]}]
+remove "case" racing add "headset": union -&gt; {"items":["case","charger","headset","phone"]}  ("case" is back)
+last-write-wins: siblings=1 values=[{"items":["phone","charger"]}]  (one item is gone, no error anywhere)
+same coordinator, same empty context: siblings=2 values=[{"items":["phone"]},{"items":["case"]}]
+a plain per-coordinator clock would say {n1:1} is "before" {n1:2}, and silently drop the first write
+3 writes with no context, one after another: siblings=3</code></pre>
+  <div class="ar-note">أول قراية للـ cart رجعت قيمة واحدة و context. بعد كتابتين متوازيين رجعت <code>siblings=2</code> والـ clocks <code>concurrent</code>. الـ client عمل union وكتب تاني فبقى version واحد فيه التلات حاجات. بعدها حذف <code>case</code> وإضافة <code>headset</code> في نفس الوقت رجّعوا <code>case</code> تاني. الـ last-write-wins رجّع قيمة واحدة بس، وفي item ضاع من غير ولا error. وبعد كده نفس الـ coordinator بنفس الـ context طلعوا 2 siblings، والـ clock العادي كان هيقول إن واحد <code>before</code> التاني ويحذفه. وآخر سطر: 3 كتابات من غير context طلعوا 3 siblings.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>كل write معاه <strong>vector clock</strong> مبني من context الـ client وevent جديد عند الـ coordinator. <a href="./29-time-clocks-ordering.html">درس 29</a> شرح الـ vector clocks، وهنا بنحطهم على القيم. لو مفيش clock منهم غلب التاني، الـ versions دي concurrent والـ store بيحتفظ بيهم الاتنين كـ <strong>siblings</strong> ويرجّعهم في القراءة الجاية. مفيش حاجة ضاعت، ومفيش قرار لسه. الـ client بيدمج ويكتب تاني بالـ context المجمّع.</p>
+    <p>في التجربة، 2 clients قروا نفس الـ context وكل واحد زوّد item للـ cart. الـ store رجّع 2 siblings وclocks concurrent. الـ client عمل union وكتب تاني، والقراءة اللي بعدها رجعت version واحد فيه التلات حاجات. نفس التجربة بـ last-write-wins رجعت version واحد و item ضاع، ومفيش ولا error. ده الـ trade-off: <strong>تعقيد الـ application مقابل data ضايعة من غير صوت</strong>. والـ union نفسه له مشكلته: الحاجة اللي اتشالت ممكن ترجع، زي <code>case</code> في التجربة. ورقة Dynamo نفسها بتذكر الـ anomaly دي، والحل الأنضف CRDTs أو operation log.</p>
+    <p><strong>الفخ الحقيقي.</strong> كتابتين على نفس الـ coordinator بنفس الـ context الفاضي هيطلعوا <code>{n1:1}</code> و<code>{n1:2}</code>، والـ vector clock العادي هيقول إن الأولى قبل التانية، فكتابة تختفي من غير صوت. الـ toy هنا بيستخدم <em>dot</em>، يعني event الـ coordinator لكل write لوحده بعيد عن الـ context، والـ version ماتتشالش إلا لو version تانية الـ context بتاعها شاف الـ dot ده. دي فكرة Dotted Version Vectors، والورقة بتاعتها في المصادر.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      أي شاشة بيتعدّل فيها نفس الـ row من تابين أو من اتنين موظفين، زي order في الـ dashboard. الـ <code>updated_at</code> بتاعك ده last-write-wins مقنّع. لو الكلام فيه فلوس أو cart، استخدم version column مع compare-and-set أو dot. وفي الـ cart بالذات خلي الـ merge بالـ items زي Amazon، ومتخليش آخر تاب يمسح شغل التاني.
+    </div>
+    <p>والغلطة الشائعة هنا إن الـ client يكتب من غير الـ context اللي رجع من القراءة: كل كتابة بتبقى sibling جديد، زي آخر سطر في الـ output، والـ siblings بتتراكم.</p>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: siblings or last-write-wins</b>
+    Siblings cost you merge code, tests and larger values. Last-write-wins costs you writes, silently, and can be fine for values where the latest really is the right one, like a user's last-seen timestamp.
+    <div class="ar-note">الموازنة بين الـ siblings والـ last-write-wins: الـ siblings بتكلفك كود merge و tests وقيم أكبر. الـ last-write-wins بيكلفك writes من غير ما تعرف، وممكن تكون مناسبة لقيم الأحدث فيها فعلًا هو الصح، زي last-seen timestamp بتاع اليوزر.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Hinted handoff &amp; read repair <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — الـ hinted handoff والـ read repair</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>When a replica is down, a strict quorum fails and the store stops being writable. A <strong>sloppy quorum</strong> instead writes to the next healthy node on the ring with a <strong>hint</strong> naming the intended owner. In the run, node <code>n4</code> is dead and a <code>W=3</code> write still returns 200: the ack came from <code>n1</code> holding a hint for <code>n4</code>. The holder keeps the hint in a separate table, retries periodically, and deletes it once delivered. The counts printed go from one hint stored and held to one replayed and zero held.</p>
+    <p>The cost is the guarantee from Part 3. With two of the three owners dead, the write went to a fallback, and once those owners came back <em>before</em> the hints were replayed, with the third owner now dead, a read with <code>R=2</code> from the owners returned nothing even though <code>R + W = 4 &gt; N = 3</code>. After the hints replayed the value appeared. Availability was bought with the possibility of a miss, which is why read-your-write needs care on a sloppy system.</p>
+    <p><strong>Read repair</strong> is the other half. A replica that missed a write (one rejected it here) is found out on the next read: the coordinator notices a replica's digest differs from the merged result and writes the merged version back. It fixes data that gets read, but data nobody reads needs the Merkle trees of Part 6.</p>
+  </section>
+
+<pre data-file="node.ts"><code class="language-typescript">// الـ handoff: كل شوية نحاول نرجّع الـ hints لصحابها
+setInterval(async () =&gt; {
+  if (!config.handoff) return;
+  for (const h of [...hints]) {
+    downUntil.delete(h.target);
+    if (await replicaPut(h.target, h.key, h.versions)) {
+      hints = hints.filter((x) =&gt; x !== h);
+      metrics.hintsReplayed++;
+      persist({ t: "clear", target: h.target, key: h.key });
+    }
+  }
+}, 150);</code></pre>
+<pre data-file="p5-handoff.ts"><code class="language-typescript">// الـ hinted handoff والـ sloppy quorum والـ read repair، كلهم بـ kill و restart حقيقيين
+import { Cluster } from "./cluster.ts";
+import { Ring } from "./ring.ts";
+
+console.log("TEACHING TOY: real processes, real SIGKILL and restart (state comes back from a small JSON log).");
+const ids = ["n1", "n2", "n3", "n4", "n5"];
+const ring = new Ring(ids);
+const wait = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+
+// (1) لو node واقع، الكتابة بتروح لجار شايل hint
+{
+  const c = new Cluster();
+  await c.start(ids);
+  const key = "order:500";
+  const [p1, p2, p3, d1] = ring.walk(key);
+  c.kill(p3);
+  await wait(50);
+  const r = await c.put(p1, key, { status: "paid" }, { w: 3, sloppy: true });
+  console.log(`write W=3 with ${p3} dead, sloppy: HTTP ${r.status}`, JSON.stringify(r.body));
+  console.log(`  ${d1} metrics:`, JSON.stringify(await c.metrics(d1)));
+  console.log(`  ${p3} is down, so the hint waits. restarting ${p3}...`);
+  await c.restart(p3);
+  await wait(600);
+  console.log(`  ${d1} after restart:`, JSON.stringify(await c.metrics(d1)));
+  console.log(`  ${p3} now holds ${(await c.replica(p3, key)).length} version(s) of ${key}`);
+  await c.stop();
+}
+
+// (2) الـ sloppy quorum: R+W أكبر من N، والقراءة برضه تفوّت الكتابة
+{
+  const c = new Cluster();
+  await c.start(ids);
+  for (const id of ids) await c.admin(id, { handoff: false });
+  const key = "order:501";
+  const [p1, p2, p3] = ring.walk(key);
+  c.kill(p1);
+  c.kill(p2);
+  await wait(50);
+  const w = await c.put(p3, key, { status: "shipped" }, { w: 2, sloppy: true });
+  console.log(`W=2 sloppy while ${p1},${p2} dead: HTTP ${w.status}`, JSON.stringify(w.body));
+  await c.restart(p1);
+  await c.restart(p2);
+  await wait(700);
+  c.kill(p3);
+  await wait(50);
+  const miss = await c.get(p1, key, 2);
+  console.log(`read R=2 from ${p1},${p2} (back up, hints not replayed yet, ${p3} now dead): HTTP ${miss.status} values=${JSON.stringify(miss.body.values)}  (R+W=4 &gt; N=3 and the read missed it)`);
+  for (const id of ids.filter((x) =&gt; x !== p3)) await c.admin(id, { handoff: true });
+  await wait(600);
+  const hit = await c.get(p1, key, 2);
+  console.log(`after hints are replayed: values=${JSON.stringify(hit.body.values)}`);
+  await c.stop();
+}
+
+// (3) الـ read repair: replica قديمة بتتصلح وقت القراءة
+{
+  const c = new Cluster();
+  await c.start(ids);
+  const key = "order:600";
+  const [p1, p2, p3] = ring.walk(key);
+  await c.admin(p3, { rejectWrites: true });
+  const w = await c.put(p1, key, { status: "refunded" }, { w: 2 });
+  console.log(`W=2 while ${p3} rejects writes: HTTP ${w.status} ackedBy=${JSON.stringify(w.body.ackedBy)}`);
+  console.log(`  versions: ${p1}=${(await c.replica(p1, key)).length} ${p2}=${(await c.replica(p2, key)).length} ${p3}=${(await c.replica(p3, key)).length} (stale)`);
+  await c.admin(p3, { rejectWrites: false });
+  const g = await c.get(p1, key, 3);
+  console.log(`read R=3 returns ${JSON.stringify(g.body.values)}`);
+  await wait(200);
+  console.log(`  after read repair ${p3}=${(await c.replica(p3, key)).length} repairs by ${p1}: ${(await c.metrics(p1)).readRepairs}`);
+  await c.stop();
+}
+process.exit(0);</code></pre>
+<pre><code class="language-plaintext">TEACHING TOY: real processes, real SIGKILL and restart (state comes back from a small JSON log).
+write W=3 with n4 dead, sloppy: HTTP 200 {"ok":true,"coordinator":"n5","ackedBy":["n5","n2","n1"],"hinted":["n1(for n4)"]}
+  n1 metrics: {"hintsStored":1,"hintsReplayed":0,"readRepairs":0,"replicaPuts":0,"hintsHeld":1}
+  n4 is down, so the hint waits. restarting n4...
+  n1 after restart: {"hintsStored":1,"hintsReplayed":1,"readRepairs":0,"replicaPuts":0,"hintsHeld":0}
+  n4 now holds 1 version(s) of order:500
+W=2 sloppy while n4,n5 dead: HTTP 200 {"ok":true,"coordinator":"n1","ackedBy":["n1","n3"],"hinted":["n3(for n4)"]}
+read R=2 from n4,n5 (back up, hints not replayed yet, n1 now dead): HTTP 200 values=[]  (R+W=4 &gt; N=3 and the read missed it)
+after hints are replayed: values=[{"status":"shipped"}]
+W=2 while n4 rejects writes: HTTP 200 ackedBy=["n1","n5"]
+  versions: n1=1 n5=1 n4=0 (stale)
+read R=3 returns [{"status":"refunded"}]
+  after read repair n4=1 repairs by n1: 1</code></pre>
+  <div class="ar-note">أول تجربة: <code>W=3</code> مع <code>n4</code> ميت رجعت 200 لأن <code>n1</code> شال الـ hint عن <code>n4</code>، والـ metrics بتاع <code>n1</code> <code>hintsStored:1</code> و <code>hintsHeld:1</code>. بعد restart <code>n4</code> بقى <code>hintsReplayed:1</code> و <code>hintsHeld:0</code>، و <code>n4</code> فيه النسخة. التجربة التانية: <code>W=2</code> sloppy و n4 و n5 ميتين، رجعوا قبل replay الـ hints و n1 مات، فالقراءة <code>R=2</code> رجعت <code>values=[]</code> مع إن <code>R+W</code> أكبر من N. بعد الـ replay القيمة ظهرت. التالتة: <code>n4</code> رفض الكتابة فبقى stale، والقراءة <code>R=3</code> صلحته بالـ read repair، وبقى عنده نسخة، وعدد الـ repairs عند <code>n1</code> واحد.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>لو replica واقع، الـ quorum الصارم بيفشل والـ store بيبطل يقبل writes. الـ <strong>sloppy quorum</strong> بدل كده بيكتب على الـ node السليم اللي بعده على الـ ring ومعاه <strong>hint</strong> باسم صاحب النسخة الأصلي. في التجربة <code>n4</code> ميت وكتابة <code>W=3</code> برضه رجعت 200: الـ ack جه من <code>n1</code> شايل hint لـ <code>n4</code>. اللي شايل الـ hint بيحطها في جدول لوحده، ويعيد المحاولة كل شوية، ويمسحها بعد التسليم. الأرقام المطبوعة راحت من hint واحد متخزن ومتشال، لـ واحد اتبعت وصفر متشال.</p>
+    <p>التمن هو الضمان اللي في Part 3. مع موت 2 من التلات owners، الكتابة راحت لـ fallback، ولما الـ owners رجعوا <em>قبل</em> ما الـ hints تتبعت والـ owner التالت مات، قراءة <code>R=2</code> منهم رجعت فاضية رغم إن <code>R + W = 4 &gt; N = 3</code>. وبعد الـ replay القيمة ظهرت. يعني اشترينا الـ availability بإمكانية الـ miss، وعشان كده read-your-write محتاج حرص على sloppy systems.</p>
+    <p><strong>الـ read repair</strong> هو النص التاني. الـ replica اللي فاتها write (هنا replica رفضت) بتتكشف في القراءة الجاية: الـ coordinator بيلاحظ إن digest بتاع replica مختلف عن النتيجة المدموجة وبيكتب النسخة المدموجة ليها. ده بيصلّح الـ data اللي بتتقري، إنما الـ data اللي محدش بيقراها محتاجة Merkle trees بتاعة Part 6.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      Cassandra فيها hinted handoff و read repair بالظبط، بس الـ hints ليها وقت محدد، وأي node غايب أكتر من كده بيحتاج <code>nodetool repair</code>. لما تلاقي "البيانات رجعت قديمة بعد ما node رجع"، ده اللي بيحصل. وفي أي نظام sloppy، لو عايز read-your-write للجلسة نفسها، خليها sticky على نفس الـ replica set أو ارفع R.
+    </div>
+    <p>والغلطة الشائعة هنا إنك تعتبر الـ hint سلمت الداتا أصلًا؛ لا، ده معناه إن النسخة موجودة في مكان تاني مؤقتًا، والـ read من المالك الأصلي لسه ممكن ميلاقيهاش.</p>
+  </section>
+
+<pre class="diagram">
+ Strict quorum, n4 dead, W=3 -> 503, write refused
+
+ Sloppy quorum, n4 dead, W=3:
+   client -> coordinator
+              |-- n5 (owner)   ack
+              |-- n2 (owner)   ack
+              |-- n1 (next on ring, hint for n4)  ack  -> 200
+   later, when n4 returns:
+              n1 --- replay hint ---> n4
+              n1 deletes the hint
+</pre>
+  <div class="ar-note">الجزء الأول: <code>W=3</code> مع node ميت في quorum صارم ترفض الكتابة بـ 503. الجزء التاني الـ sloppy: الـ coordinator بيبعت لـ n5 و n2 اللي هم owners، وبدل n4 بيبعت لـ n1 اللي بعده على الـ ring وشايل hint، والـ client بياخد 200. ولما n4 يرجع، n1 بيعمل replay للـ hint ويمسحها.</div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Merkle trees <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — الـ Merkle trees</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Read repair only touches keys someone reads, and hints have a limited life. <strong>Anti-entropy</strong> compares replicas in the background, and a Merkle tree makes that cheap: leaves hash key ranges, each parent hashes its children, and two replicas compare from the root down, descending only where hashes differ. In this toy the leaves are 4,096 buckets over the hash space. The real thing keeps one tree per key range, which is why ring changes are expensive: the Dynamo paper moved to fixed-size partitions partly for this reason.</p>
+    <p>Run on two real processes with 20,000 keys: with 10 keys different, Merkle exchanged about 8 KB against 673 KB for comparing every key's digest, and found exactly those 10 keys. The Merkle number also includes shipping the changed values while the compare-all number is only the digests, so the comparison favours compare-all. With 100 keys different it cost about 65 KB (about 10%). With half the keys different it cost about 2.7 MB, about four times more than comparing everything, because it walks nearly the whole tree and then still ships the data.</p>
+    <p>So Merkle trees are for the normal case of a small divergence. <strong>Membership</strong> in a real store comes from a gossip protocol (<a href="./28-fallacies-failure-detection-partitions.html">lesson 28</a>), and the toy just uses a static list. <strong>Storage underneath</strong> is usually an LSM tree (<a href="./35-storage-engines-btree-lsm.html">lesson 35</a>); the toy uses an in-memory map plus a JSON log.</p>
+  </section>
+
+<pre data-file="node.ts"><code class="language-typescript">function leafOf(key: string) {
+  return hash32(key) &gt;&gt;&gt; (32 - DEPTH);
+}
+
+function buildTree(): string[][] {
+  if (tree) return tree;
+  const buckets: string[][] = Array.from({ length: 1 &lt;&lt; DEPTH }, () =&gt; []);
+  leafIndex = new Map();
+  for (const [key, versions] of store) {
+    const leaf = leafOf(key);
+    const d = digest(versions);
+    buckets[leaf].push(`${key}=${d}`);
+    leafIndex.set(leaf, [...(leafIndex.get(leaf) ?? []), [key, d]]);
+  }
+  const sha = (s: string) =&gt; createHash("sha1").update(s).digest("hex").slice(0, 16);
+  const levels: string[][] = [buckets.map((b) =&gt; sha(b.sort().join("|")))];
+  while (levels[0].length &gt; 1) {
+    const prev = levels[0];
+    const up: string[] = [];
+    for (let i = 0; i &lt; prev.length; i += 2) up.push(sha(prev[i] + prev[i + 1]));
+    levels.unshift(up);
+  }
+  tree = levels;
+  return levels;
+}
+
+function leafEntries(leaf: number) {
+  buildTree();
+  return leafIndex.get(leaf) ?? [];
+}
+
+// الـ anti-entropy: بنبدّل الـ hashes من فوق لتحت وننزل بس في الفروع المختلفة
+async function merkleSync(peer: string, push: boolean) {
+  let bytes = 0;
+  const call = async (path: string, init?: RequestInit) =&gt; {
+    const r = await fetch(`http://127.0.0.1:${peers[peer]}${path}`, init);
+    const text = await r.text();
+    bytes += path.length + (init?.body ? String(init.body).length : 0) + text.length;
+    return JSON.parse(text);
+  };
+  const mine = buildTree();
+  let frontier = [0];
+  let nodesExamined = 0;
+  for (let level = 0; level &lt;= DEPTH; level++) {
+    if (!frontier.length) break;
+    nodesExamined += frontier.length;
+    const remote = (await call(`/m/nodes`, { method: "POST", body: JSON.stringify({ level, idx: frontier }) })).hashes as string[];
+    const differing = frontier.filter((idx, i) =&gt; mine[level][idx] !== remote[i]);
+    if (level === DEPTH) {
+      frontier = differing;
+      break;
+    }
+    frontier = differing.flatMap((i) =&gt; [2 * i, 2 * i + 1]);
+  }
+  const leaves = frontier;
+  const keysToFix = new Set&lt;string&gt;();
+  for (const leaf of leaves) {
+    const theirs = new Map((await call(`/m/leaf?idx=${leaf}`)).entries as [string, string][]);
+    const ours = new Map(leafEntries(leaf));
+    for (const k of new Set([...theirs.keys(), ...ours.keys()])) {
+      if (theirs.get(k) !== ours.get(k)) keysToFix.add(k);
+    }
+  }
+  let keysSynced = 0;
+  if (keysToFix.size &amp;&amp; push) {
+    const items = [...keysToFix].map((k) =&gt; ({ key: k, versions: store.get(k) ?? [] }));
+    const body = JSON.stringify({ items });
+    const pulled = await call(`/m/merge`, { method: "POST", body });
+    for (const it of pulled.items as { key: string; versions: Version[] }[]) apply(it.key, it.versions, false);
+    keysSynced = keysToFix.size;
+  }
+  return { bytes, nodesExamined, leavesDiffering: leaves.length, keysDiffering: keysToFix.size, keysSynced };
+}</code></pre>
+<pre data-file="p6-merkle.ts"><code class="language-typescript">// بنحمّل replica اتنين بنفس الـ data، ونخليهم يختلفوا في شوية keys، ونقارن تكلفة المزامنة
+import { Cluster } from "./cluster.ts";
+
+console.log("TEACHING TOY: two real processes; a 12-level tree over 4096 key-hash ranges; payload bytes counted.");
+const ids = ["n1", "n2"];
+
+const post = (c: Cluster, id: string, path: string, body: object) =&gt;
+  fetch(c.url(id, path), { method: "POST", body: JSON.stringify(body) }).then((r) =&gt; r.json());
+const TOTAL = 20_000;
+
+async function run(diverged: number) {
+  const c = new Cluster();
+  await c.start(ids);
+  const version = (i: number, seq: number) =&gt; ({ value: { n: i }, dot: ["seed", seq], ctx: {}, ts: 1 });
+
+  for (let i = 0; i &lt; TOTAL; i += 2000) {
+    const items = Array.from({ length: 2000 }, (_, j) =&gt; ({ key: `order:${i + j}`, versions: [version(i + j, 1)] }));
+    await post(c, "n1", "/r/bulk", { items });
+    await post(c, "n2", "/r/bulk", { items });
+  }
+  const changed = Array.from({ length: diverged }, (_, i) =&gt; ({ key: `order:${Math.floor((i * TOTAL) / diverged)}`, versions: [{ ...version(i, 2), ctx: { seed: 1 } }] }));
+  for (let i = 0; i &lt; changed.length; i += 2000) await post(c, "n1", "/r/bulk", { items: changed.slice(i, i + 2000) });
+
+  const full = JSON.stringify(await (await fetch(c.url("n2", "/m/all"))).json()).length;
+  const root1 = ((await (await fetch(c.url("n1", "/m/root"))).json()) as { root: string }).root;
+  const root2 = ((await (await fetch(c.url("n2", "/m/root"))).json()) as { root: string }).root;
+  const r = (await post(c, "n1", "/m/sync", { peer: "n2" })) as { bytes: number; nodesExamined: number; leavesDiffering: number; keysDiffering: number; keysSynced: number };
+  const after = ((await (await fetch(c.url("n2", "/m/root"))).json()) as { root: string }).root;
+  const after1 = ((await (await fetch(c.url("n1", "/m/root"))).json()) as { root: string }).root;
+  console.log(`diverged=${String(diverged).padStart(6)}: compare-all ${(full / 1024).toFixed(0).padStart(5)} KB | merkle ${(r.bytes / 1024).toFixed(1).padStart(7)} KB (${((r.bytes / full) * 100).toFixed(1).padStart(5)}%) | tree nodes examined ${String(r.nodesExamined).padStart(5)} leaves differing ${String(r.leavesDiffering).padStart(4)} keys found ${String(r.keysDiffering).padStart(5)} | roots equal before ${root1 === root2} after ${after === after1}`);
+  await c.stop();
+}
+
+await run(0);
+await run(10);
+await run(100);
+await run(10_000);
+process.exit(0);</code></pre>
+<pre><code class="language-plaintext">TEACHING TOY: two real processes; a 12-level tree over 4096 key-hash ranges; payload bytes counted.
+diverged=     0: compare-all   673 KB | merkle     0.1 KB (  0.0%) | tree nodes examined     1 leaves differing    0 keys found     0 | roots equal before true after true
+diverged=    10: compare-all   673 KB | merkle     8.4 KB (  1.2%) | tree nodes examined   171 leaves differing   10 keys found    10 | roots equal before false after true
+diverged=   100: compare-all   673 KB | merkle    65.3 KB (  9.7%) | tree nodes examined  1127 leaves differing   99 keys found   100 | roots equal before false after true
+diverged= 10000: compare-all   673 KB | merkle  2742.6 KB (407.7%) | tree nodes examined  8153 leaves differing 3733 keys found 10000 | roots equal before false after true</code></pre>
+  <div class="ar-note">ده على processes حقيقيين، و Merkle 12 مستوى على 4,096 range. لما الفرق 0 keys، الـ root نفسه متساوي فكفاية 0.1 KB. لما 10 keys مختلفين: Merkle حوالي 8.4 KB مقابل 673 KB لمقارنة كل digests، ولقى الـ 10. لما 100 keys: حوالي 65 KB، يعني حوالي 10%. لما 10,000 key مختلفين، يعني نص الـ data: Merkle بياخد 2,742 KB، يعني 408% من مقارنة الكل، لأنه بيمشي الشجرة كلها تقريبًا وبعدين بيبعت الـ data. وفي الكل الـ roots بقت متساوية بعد الـ sync.</div>
+
+  <table>
+    <thead><tr><th>Keys different (of 20,000)</th><th>Compare-all payload</th><th>Merkle payload</th><th>Merkle / compare-all</th></tr></thead>
+    <tbody>
+      <tr><td>0</td><td>673 KB</td><td>0.1 KB</td><td>0.0%</td></tr>
+      <tr><td>10 (0.05%)</td><td>673 KB</td><td>≈8.4 KB</td><td>≈1.2%</td></tr>
+      <tr><td>100 (0.5%)</td><td>673 KB</td><td>≈65 KB</td><td>≈9.7%</td></tr>
+      <tr><td>10,000 (50%)</td><td>673 KB</td><td>≈2.7 MB</td><td>≈408%</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">كل صف عدد keys مختلفة. <b>0</b>: Merkle 0.1 KB. <b>10</b>: حوالي 8.4 KB مقابل 673، يعني 1.2%. <b>100</b>: حوالي 65 KB، يعني حوالي 9.7%. <b>10,000 يعني 50%</b>: حوالي 2.7 MB، يعني 408%، وساعتها الشجرة خسرانة. ولاحظ إن رقم Merkle فيه كمان القيم اللي اتبعتت، ورقم compare-all فيه الـ digests بس.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ read repair بيلمس الـ keys اللي حد بيقراها بس، والـ hints ليها عمر محدود. فالـ <strong>anti-entropy</strong> بيقارن الـ replicas في الخلفية، وشجرة Merkle بتخليه رخيص: الأوراق بتعمل hash لـ key ranges، وكل parent بيعمل hash لأولاده، والـ replicaتين بيقارنوا من الـ root لتحت، وبينزلوا بس في المكان اللي الـ hash مختلف فيه. في الـ toy الأوراق 4,096 bucket على hash space. الحقيقي بيحتفظ بشجرة لكل key range، وعشان كده تغييرات الـ ring غالية: ورقة Dynamo نقلت لـ fixed-size partitions لسبب زي ده.</p>
+    <p>على 2 processes حقيقيين بـ 20,000 key: لما 10 keys مختلفين، Merkle بدّل حوالي 8 KB مقابل 673 KB لمقارنة digest كل الـ keys، ولقى الـ 10 بالظبط. ورقم Merkle كمان فيه شحن القيم المتغيرة، ورقم compare-all الـ digests بس، فالمقارنة ظالمة لـ Merkle. مع 100 key مختلفين كلّف حوالي 65 KB، يعني حوالي 10%. مع نص الـ keys مختلفين كلّف حوالي 2.7 MB، يعني أربع مرات مقارنة الكل، لأنه بيمشي الشجرة كلها تقريبًا وبعدين يشحن الـ data.</p>
+    <p>فالـ Merkle trees للحالة العادية بتاعة divergence صغير. الـ <strong>membership</strong> في store حقيقي من gossip protocol (<a href="./28-fallacies-failure-detection-partitions.html">درس 28</a>)، والـ toy بيستخدم قايمة ثابتة بس. والـ <strong>storage تحت</strong> عادة LSM tree (<a href="./35-storage-engines-btree-lsm.html">درس 35</a>)، والـ toy عنده map في الـ memory و JSON log.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما تعمل sync بين 2 systems، زي catalog بين Postgres و Elasticsearch، أو بين region وregion: متفترضش إن compare-all رخيص. فكرة الشجرة ممكن تتطبق بسهولة: اعمل hash لكل range من الـ IDs وقارن الـ ranges، ولو فيه اختلاف انزل جوه الـ range ده. وبعدين <code>nodetool repair</code> في Cassandra بيبني نفس الشجرة دي.
+    </div>
+    <p>والغلطة الشائعة هنا إنك تكمّل بالشجرة حتى لما node غايب من مدة طويلة؛ ساعتها الفرق كبير والأرخص تعمل نسخ كامل أو streaming للـ range كله.</p>
+  </section>
+
+  <!-- ===================== PART 7 ===================== -->
+  <h2 id="p7">Part 7 — Trade-offs &amp; review <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 7 — الموازنات والمراجعة</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Everything you just ran maps to a section of the 2007 Dynamo paper. One correction is essential. <strong>Amazon DynamoDB the service is not the 2007 Dynamo design.</strong> The USENIX ATC 2022 paper says that DynamoDB's replication group "uses Multi-Paxos for leader election and consensus", that "only the leader replica can serve write and strongly consistent read requests", and that a write is acknowledged once a quorum of peers persists the log record. That's leader-based replication, without siblings or client-side reconciliation, which is much closer to Spanner and Raft-based stores than to this toy. Saying "DynamoDB uses vector clocks" in an interview is a red flag.</p>
+    <p><strong>What breaks at 10×.</strong> Vector clocks grow with one entry per coordinator, as the output below shows: the paper truncates at a threshold it gives as "say 10", accepting that truncation can cause false conflicts. Anti-entropy gets heavy once trees are rebuilt for ring changes, membership state grows with node count, and hot keys hit a single partition regardless of the total. The 10× numbers below are arithmetic.</p>
+    <p><strong>Interviewer looks for:</strong> consistent hashing with vnodes, quorum math including what it doesn't guarantee, conflict handling, failure handling. <strong>Red flag:</strong> saying "use DynamoDB" as a design, or claiming <code>R+W&gt;N</code> is linearizable. <strong>Routine:</strong> a one-page design doc using <code>project/design-docs/0000-template.md</code>, compare it with the key-value store chapter of Alex Xu's <em>System Design Interview</em> volume 1, and write down what you missed.</p>
+  </section>
+
+<pre data-file="p7-review.ts"><code class="language-typescript">// الجزء الأخير: حجم الـ clock مع كل coordinator جديد، وتقدير 10x
+import { Cluster } from "./cluster.ts";
+
+console.log("TEACHING TOY: real processes for the clock; the 10x numbers below are arithmetic.");
+const ids = ["n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8"];
+const c = new Cluster();
+await c.start(ids);
+
+// بنكتب نفس الـ key من coordinator مختلف كل مرة، بنشوف الـ clock بيكبر إزاي
+let context: object = {};
+const sizes: number[] = [];
+for (const id of ids) {
+  await c.put(id, "user:42:prefs", { theme: id }, { w: 2, context });
+  const r = (await c.get(id, "user:42:prefs", 2)).body;
+  context = r.context;
+  sizes.push(Object.keys(r.context).length);
+}
+console.log(`clock size after each new coordinator: ${sizes.join(" -&gt; ")} (Dynamo truncates at a threshold it gives as "say 10")`);
+await c.stop();
+
+for (const factor of [1, 10]) {
+  const nodes = 30 * factor;
+  const tokens = nodes * 64;
+  // كل token حوالي 40 بايت في حالة الـ gossip
+  const ringMb = (tokens * 40) / 1e6;
+  const gossipBytes = (ringMb * 1e6) / 1e9;
+  const replicaOps = 300_000 * factor;
+  const repairTbPerDay = (10 * factor * 0.01) / 1;
+  console.log(`${String(factor).padStart(2)}x: ${String(nodes).padStart(3)} nodes, ${String(tokens).padStart(6)} tokens, membership ${ringMb.toFixed(2)} MB per node, one full gossip copy ${gossipBytes.toFixed(3)} GB, ${String(replicaOps).padStart(8)} replica ops/s, ${repairTbPerDay.toFixed(1)} TB/day if 1% of data needs repair`);
+}
+process.exit(0);</code></pre>
+<pre><code class="language-plaintext">TEACHING TOY: real processes for the clock; the 10x numbers below are arithmetic.
+clock size after each new coordinator: 1 -&gt; 2 -&gt; 3 -&gt; 4 -&gt; 5 -&gt; 6 -&gt; 7 -&gt; 8 (Dynamo truncates at a threshold it gives as "say 10")
+ 1x:  30 nodes,   1920 tokens, membership 0.08 MB per node, one full gossip copy 0.000 GB,   300000 replica ops/s, 0.1 TB/day if 1% of data needs repair
+10x: 300 nodes,  19200 tokens, membership 0.77 MB per node, one full gossip copy 0.001 GB,  3000000 replica ops/s, 1.0 TB/day if 1% of data needs repair</code></pre>
+  <div class="ar-note">السطر الأول حقيقي: حجم الـ clock بقى 1 ثم 2 لحد 8 مع كل coordinator جديد، والورقة بتقول إن Dynamo بيقصّه عند حد زي 10. السطرين اللي بعدهم حساب مش قياس: عند 1× عندنا 30 node و 1,920 token و 0.08 MB من الـ membership و 300 ألف replica op في الثانية و 0.1 TB/يوم لو 1% محتاج repair. عند 10×: 300 node و 19,200 token و 0.77 MB و3 مليون op و1.0 TB/يوم.</div>
+
+  <table>
+    <thead><tr><th>Dynamo paper</th><th>Technique</th><th>In this toy</th></tr></thead>
+    <tbody>
+      <tr><td>§4.2 Partitioning</td><td>Consistent hashing, virtual nodes</td><td><code>ring.ts</code>, 64 vnodes</td></tr>
+      <tr><td>§4.3 Replication</td><td>Preference list of N nodes</td><td><code>preference(key, 3)</code></td></tr>
+      <tr><td>§4.4 Data versioning</td><td>Vector clocks, reconciliation on read</td><td><code>versions.ts</code> with dots</td></tr>
+      <tr><td>§4.5 get / put</td><td>Coordinator with R and W</td><td><code>coordPut</code>, <code>coordGet</code></td></tr>
+      <tr><td>§4.6 Temporary failures</td><td>Sloppy quorum, hinted handoff</td><td>Hints with a replay loop</td></tr>
+      <tr><td>§4.7 Permanent failures</td><td>Anti-entropy with Merkle trees</td><td><code>merkleSync</code></td></tr>
+      <tr><td>§4.8 Membership</td><td>Gossip</td><td>Not built: a static list</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">كل صف ربط بين جزء في ورقة Dynamo وحاجة في الـ toy. §4.2 الـ partitioning هي الـ consistent hashing والـ vnodes في <code>ring.ts</code>. §4.3 الـ replication هي الـ preference list بـ N. §4.4 الـ versioning هي الـ vector clocks والمصالحة وقت القراءة في <code>versions.ts</code> ومعاها dots. §4.5 الـ get و put عن طريق coordinator و R و W. §4.6 الـ failures المؤقتة هي الـ sloppy quorum والـ hinted handoff. §4.7 الـ failures الدايمة هي anti-entropy بـ Merkle trees. §4.8 الـ membership هي gossip، ودي مش مبنية هنا.</div>
+
+  <table>
+    <thead><tr><th>What breaks at 10×</th><th>Symptom</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td>Vector clock size</td><td>Values grow and false conflicts appear after truncation</td><td>Bound the coordinators per key, use one writer for each key</td></tr>
+      <tr><td>Merkle rebuild on ring change</td><td>Repair saturates disks and network</td><td>Fixed-size partitions</td></tr>
+      <tr><td>A hot key</td><td>One partition saturates, total QPS looks fine</td><td>Cache in front, or split the value</td></tr>
+      <tr><td>Membership state</td><td>Gossip traffic and convergence time climb</td><td>Separate seeds, gossip digests only</td></tr>
+      <tr><td>Cross-region write latency</td><td>Quorum across regions costs a WAN round trip</td><td>Local quorum per region, async cross-region</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">كل صف حاجة بتقع عند 10×. حجم الـ vector clock: القيم بتكبر، والقص بيطلّع false conflicts، والحل تحديد عدد الـ coordinators لكل key أو writer واحد لكل key. إعادة بناء Merkle عند تغيير الـ ring: الـ repair بياكل الـ disks والشبكة، والحل fixed-size partitions. الـ hot key: partition واحد بيتملى والمجموع شكله تمام، والحل cache قدامه أو تقسيم القيمة. حالة الـ membership: ترافيك gossip ووقت التقارب بيزيدوا، والحل seeds منفصلين و gossip للـ digests بس. الـ latency بين الـ regions: الـ quorum عبر region فيه WAN round trip، والحل local quorum لكل region و async بين المناطق.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>كل اللي شغّلته ليه مكان في ورقة Dynamo بتاعة 2007. وفيه تصحيح مهم جدًا: <strong>Amazon DynamoDB الخدمة مش هي تصميم Dynamo بتاع 2007.</strong> ورقة USENIX ATC 2022 بتقول إن replication group بتاع DynamoDB "uses Multi-Paxos for leader election and consensus"، و"only the leader replica can serve write and strongly consistent read requests"، وإن الـ write بيتأكد لما quorum من الـ peers يخزّنوا log record. ده replication بـ leader، من غير siblings ولا reconciliation عند الـ client، وأقرب بكتير لـ Spanner والأنظمة اللي شغالة بـ Raft من الـ toy ده. لو قلت في interview "DynamoDB بيستخدم vector clocks" فده red flag.</p>
+    <p><strong>اللي بيقع عند 10×.</strong> الـ vector clocks بتكبر entry لكل coordinator، زي الـ output: الورقة بتقصّها عند حد بتديه مثال "say 10"، وبتقبل إن القص ممكن يطلّع false conflicts. والـ anti-entropy بيبقى تقيل لما الأشجار تتبني تاني مع تغيير الـ ring، وحالة الـ membership بتكبر مع عدد الـ nodes، و hot keys بتضرب partition واحد مهما كان المجموع. وأرقام الـ 10× فوق حساب مش قياس.</p>
+    <p><strong>الـ interviewer بيدور على:</strong> consistent hashing و vnodes، وحساب الـ quorum ومعاه اللي مش بيضمنه، و conflict handling، و failure handling. <strong>الـ red flag:</strong> إنك تقول "use DynamoDB" كتصميم، أو تقول إن <code>R+W&gt;N</code> يعني linearizable. <strong>الـ routine:</strong> design doc صفحة واحدة بـ <code>project/design-docs/0000-template.md</code>، قارنها بفصل الـ key-value store في <em>System Design Interview</em> لـ Alex Xu الجزء الأول، واكتب اللي فاتك.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما حد يقترح DynamoDB أو Cassandra في تصميم، اسأله: محتاج leader-based زي DynamoDB ولا leaderless زي Cassandra؟ الفرق بيظهر وقت الـ partition: في leader-based الكتابة ممكن تقف، وفي leaderless بتستمر وتجيلك conflicts. وفي أي مراجعة تقول فيها "eventually consistent"، اسأل إيه اللي بيحصل لو نفس الـ row اتعدّل مرتين.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: is DynamoDB built on the Dynamo paper?</b>
+    The name is shared, the design isn't. The ATC 2022 paper describes Multi-Paxos replication groups with a leader for each partition, write-ahead logs replicated to a quorum of peers, and strongly consistent reads from the leader. The paper describes no sloppy quorums and no vector clocks with client reconciliation.
+    <div class="ar-note">السؤال: هل DynamoDB مبني على ورقة Dynamo؟ الاسم مشترك، التصميم لأ. ورقة ATC 2022 بتوصف replication groups بـ Multi-Paxos وليها leader لكل partition، و write-ahead logs بتتنسخ لـ quorum من الـ peers، و strongly consistent reads من الـ leader. والورقة مش بتوصف sloppy quorums ولا vector clocks مع reconciliation عند الـ client.</div>
+  </div>
+
+  <div class="callout ok">
+    <b>Scorecard: what the interviewer is checking</b>
+    <ul>
+      <li><b>Looks for:</b> consistent hashing with vnodes, the quorum math and its limits, conflict handling with vector clocks or a CRDT, and answers to node failure and permanent replica divergence.</li>
+      <li><b>Red flags:</b> "use DynamoDB" as the design, R+W&gt;N called linearizable, last-write-wins with no mention of lost writes, no story for a node that's gone for an hour.</li>
+    </ul>
+    <div class="ar-note">
+      <p>الجدول ده اللي الـ interviewer بيقيّمه.</p>
+      <ul>
+        <li><b>بيدور على:</b> consistent hashing و vnodes، وحساب الـ quorum وحدوده، و conflict handling بـ vector clocks أو CRDT، وإجابات عن موت node والـ divergence الدايم بين الـ replicas.</li>
+        <li><b>الـ red flags:</b> "use DynamoDB" كتصميم، و R+W&gt;N اللي بيتقال عليها linearizable، و last-write-wins من غير ذكر الـ writes الضايعة، ومفيش خطة لـ node غايب ساعة.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Quorum means strong consistency</b>
+<pre><code class="language-typescript">// الكلام ده مش صح: R+W أكبر من N مش linearizable
+const opts = { w: 2, sloppy: true };
+await put(key, value, opts);
+// لو الـ fallback هو اللي استلم، القراءة ممكن تفوّتها
+const v = await get(key, { r: 2 });</code></pre></div>
+    <div class="good"><b>✅ Say exactly what you get</b>
+<pre><code class="language-typescript">// لو عايز overlap مضمون على نفس الـ N استخدم strict quorum
+const opts = { w: 2, sloppy: false };
+const res = await put(key, value, opts);
+// لو الـ 503 رجع، الكتابة ممكن تكون حصلت، فكرر بـ idempotency key
+if (res.status === 503) await retryWithSameKey(key, value);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ R+W&gt;N مع sloppy quorum زي ما شفت في Part 5 ممكن القراءة تفوّت الكتابة، فمش strong consistency. ✅ قول بالظبط إيه اللي عندك: strict quorum عشان overlap مضمون، أو sloppy عشان availability، وفي الحالتين الـ 503 معناه إن الكتابة ممكن تكون حصلت.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Last-write-wins for a cart</b>
+<pre><code class="language-typescript">// اللي بيوصل تاني بياكل التاني من غير صوت
+await store.set(`cart:${id}`, nextCart);</code></pre></div>
+    <div class="good"><b>✅ Merge concurrent versions</b>
+<pre><code class="language-typescript">// الـ client بيدمج الـ siblings ويكتب بالـ context
+const { values, context } = await get(key);
+await put(key, union(values), { context });</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ last-write-wins ضيّع item من الـ cart في التجربة من غير ولا error. ✅ الـ siblings معناها إن الـ client بيشوف الاتنين ويدمج، والـ context بيقول للـ store إن الكتابة دي شافت اللي قبلها، فيشيل الـ siblings.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Writing without the context</b>
+<pre><code class="language-typescript">// الكتابة دي مش شافت أي حاجة، فبتبقى sibling جديد
+await put(key, { items: ["phone"] }, {});</code></pre></div>
+    <div class="good"><b>✅ Read, then write with the context</b>
+<pre><code class="language-typescript">// الـ context اللي رجع من الـ read هو دليل إن الكتابة شافت اللي قبلها
+const { values, context } = await get(key);
+await put(key, addItem(values, "phone"), { context });</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ كتابة من غير context بتتعامل على إنها concurrent مع كل اللي قبلها: 3 كتابات طلعوا 3 siblings في التجربة. ✅ اقرا الأول وابعت الـ context، فالـ store يعرف إن كتابتك فعلًا جديدة ويسيب الـ siblings القديمة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Comparing every key to sync a big table</b>
+<pre><code class="language-typescript">// كل مرة بننقل الـ digests بتاعة كل الـ keys على الشبكة
+const all = await fetchAllDigests(peer);
+const diff = compare(all, localDigests);</code></pre></div>
+    <div class="good"><b>✅ Descend from the root on a mismatch</b>
+<pre><code class="language-typescript">// بننزل في الشجرة بس في الأماكن اللي الـ hash فيها مختلف
+const root = await peerRoot();
+if (root !== myRoot) await descendDifferingRanges(peer);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ مقارنة كل digests بتاخد 673 KB كل مرة مهما كان الفرق صغير. ✅ النزول في الشجرة بياخد حوالي 8 KB لو 10 keys مختلفين، وبس لو الفرق كبير (زي 50%) خليك في النسخ الكامل، لأن الشجرة ساعتها أغلى.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Redo the case, recorded <span class="lvl lvl-1">🟢 easy</span></b>
+    Close this page. Start a 45-minute timer and a recording, and design the store from the prompt. Listen back: did you say what R+W&gt;N doesn't give you, and what a failed write leaves behind?
+    <div class="ar-note">اقفل الصفحة. شغّل تايمر 45 دقيقة وتسجيل، وصمّم الـ store من السؤال بس. اسمع التسجيل بعدها: قلت إيه اللي <code>R+W&gt;N</code> مش بيضمنه؟ وإيه اللي الـ write الفاشل بيسيبه؟</div>
+    <details><summary>Hint · تلميح</summary>
+      Use the review routine: one-page doc with the template, compare with Xu, write what you missed.
+      <div class="ar-note">استخدم الـ routine: design doc صفحة بالـ template، قارنها بـ Xu، واكتب اللي فاتك.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. Measure the key movement <span class="lvl lvl-2">🟡 medium</span></b>
+    Using <code>ring.ts</code>, add a sixth node and count how many primary keys moved out of 100,000. Compare with the ideal fraction.
+    <div class="ar-note">باستخدام <code>ring.ts</code>، ضيف node سادس وعدّ الـ keys اللي الـ primary بتاعها اتغيّر من 100,000. قارن بالنسبة المثالية.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="sol-rebalance.ts"><code class="language-typescript">// الحل: بنضيف node سادس، ونعدّ الـ keys اللي الـ primary بتاعها اتغيّر
+import { Ring } from "./ring.ts";
+
+const before = new Ring(["n1", "n2", "n3", "n4", "n5"]);
+const after = new Ring(["n1", "n2", "n3", "n4", "n5", "n6"]);
+let moved = 0;
+const total = 100_000;
+for (let i = 0; i &lt; total; i++) {
+  const k = `order:${i}`;
+  if (before.preference(k, 1)[0] !== after.preference(k, 1)[0]) moved++;
+}
+console.log(`primary moved for ${moved}/${total} keys = ${((moved / total) * 100).toFixed(1)}% (ideal 1/6 = 16.7%)`);</code></pre>
+<pre><code class="language-plaintext">primary moved for 18996/100000 keys = 19.0% (ideal 1/6 = 16.7%)</code></pre>
+      <div class="ar-note">الناتج 19% مقابل المثالي 1/6 يعني 16.7%: 64 vnode مش كفاية عشان الفرق يتلاشى، بس أبعد بكتير عن إعادة توزيع كل الـ keys.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. A counter that merges itself <span class="lvl lvl-3">🔴 hard</span></b>
+    Siblings of a counter are annoying to merge by hand. Write a G-counter: one slot per node, increment your own slot, merge with max per slot. Show that merging is commutative and idempotent.
+    <div class="ar-note">الـ siblings بتاعة counter صعب دمجها بإيدك. اكتب G-counter: خانة لكل node، زوّد خانتك إنت بس، والدمج max لكل خانة. وبيّن إن الدمج commutative و idempotent.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="sol-gcounter.ts"><code class="language-typescript">// الحل: counter بينضم لوحده، كل node ليه خانة بتاعته، والدمج max لكل خانة
+type GCounter = Record&lt;string, number&gt;;
+
+const increment = (c: GCounter, node: string, by = 1): GCounter =&gt; ({ ...c, [node]: (c[node] ?? 0) + by });
+
+function merge(a: GCounter, b: GCounter): GCounter {
+  const out: GCounter = { ...a };
+  for (const [n, v] of Object.entries(b)) out[n] = Math.max(out[n] ?? 0, v);
+  return out;
+}
+
+const total = (c: GCounter) =&gt; Object.values(c).reduce((s, v) =&gt; s + v, 0);
+
+// تحديثين متوازيين على replica مختلفة، من نفس النقطة
+const base: GCounter = { n1: 2 };
+const a = increment(base, "n2", 3);
+const b = increment(base, "n4", 5);
+const merged = merge(a, b);
+console.log(`a=${JSON.stringify(a)} b=${JSON.stringify(b)} merged=${JSON.stringify(merged)} total=${total(merged)}`);
+console.log(`merge is commutative: ${total(merge(a, b)) === total(merge(b, a))}, idempotent: ${total(merge(merged, merged)) === total(merged)}`);</code></pre>
+<pre><code class="language-plaintext">a={"n1":2,"n2":3} b={"n1":2,"n4":5} merged={"n1":2,"n2":3,"n4":5} total=10
+merge is commutative: true, idempotent: true</code></pre>
+      <div class="ar-note">الدمج طلع 10، والترتيب مش بيفرق، وعمل الدمج مرتين مش بيغيّر النتيجة: ده معنى CRDT، وعشان كده مفيش محتاج conflict handling.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project: optimistic versions on a real entity <span class="lvl lvl-3">🔴 project</span></b>
+    Pick one entity in your side project that two tabs can edit, such as a cart or a draft. Add a version column with compare-and-set, and return 409 with both versions on a conflict. Write a small ADR comparing last-write-wins, compare-and-set and siblings for that entity.
+    <div class="ar-note">اختار entity في مشروعك الجانبي اتنين tabs يقدروا يعدّلوه، زي cart أو draft. زوّد version column مع compare-and-set، ورجّع 409 ومعاه الـ versions الاتنين لو في conflict. واكتب ADR صغير بيقارن last-write-wins و compare-and-set و siblings للـ entity ده.</div>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Size by the larger of storage and replica ops: 10 TB × 3 ÷ 1.4 TB ≈ 22 nodes, 300k replica ops/s, 30 with headroom.</li>
+    <li>Preference list = first N distinct nodes clockwise. Any node can coordinate. Vnodes flatten the load.</li>
+    <li>W acks, R replies, R+W&gt;N for overlap on a fixed set. It's not linearizability.</li>
+    <li>Measured: (1,1) fast with 38/200 stale, (2,2) 0 stale and survives a kill, (3,1) 0 stale and 90 failed writes.</li>
+    <li>A failed write isn't rolled back: a 503 can leave the value on replicas, so retry idempotently.</li>
+    <li>Vector clock = context + a new event. Concurrent versions become siblings; the client merges and writes back the context.</li>
+    <li>Last-write-wins silently drops a write. Union merges can resurrect deletes. CRDTs avoid both for the right data types.</li>
+    <li>Use a dot per write, or two writes through one coordinator with the same context look ordered and one is lost.</li>
+    <li>Sloppy quorum + hints keeps writes alive but breaks the R+W&gt;N overlap until hints replay.</li>
+    <li>Read repair fixes what's read. Merkle trees fix what's not, cheaply when divergence is small: about 1% of compare-all for 10 keys, about 400% at 50%.</li>
+    <li>DynamoDB (2022) is leader-based Multi-Paxos per partition, not the 2007 Dynamo design.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>احسب الأكبر بين الـ storage والـ replica ops: 10 TB في 3 على 1.4 TB حوالي 22 node، و300 ألف replica op في الثانية، و30 مع headroom.</li>
+      <li>الـ preference list أول N nodes مختلفين مع عقارب الساعة، وأي node ينفع coordinator، والـ vnodes بتساوي الـ load.</li>
+      <li>W acks و R رد، و R+W&gt;N يدوك overlap على مجموعة ثابتة، وده مش linearizability.</li>
+      <li>المقاس: (1,1) سريع وفيه 38/200 stale، و(2,2) صفر stale وعدّى موت node، و(3,1) صفر stale و90 write فشل.</li>
+      <li>الـ write الفاشل مش بيترجّع: 503 ممكن يسيب القيمة على replicas، فكرر بـ idempotency.</li>
+      <li>الـ vector clock هو الـ context زائد event جديد، والـ versions المتوازية بتبقى siblings والـ client يدمج ويكتب بالـ context.</li>
+      <li>الـ last-write-wins بيضيّع write من غير صوت، والـ union ممكن يرجّع المحذوف، والـ CRDTs بتحل الاتنين للأنواع المناسبة.</li>
+      <li>استخدم dot لكل write، وإلا كتابتين على نفس الـ coordinator بنفس الـ context هيبانوا مرتبين وواحدة تضيع.</li>
+      <li>الـ sloppy quorum والـ hints بيخلوا الـ writes شغالة، بس بيكسروا overlap الـ R+W&gt;N لحد الـ replay.</li>
+      <li>الـ read repair بيصلّح اللي بيتقري، والـ Merkle trees بتصلح الباقي، وبرخص لما الفرق صغير: حوالي 1% لـ 10 keys، وحوالي 400% عند 50%.</li>
+      <li>DynamoDB (2022) leader-based بـ Multi-Paxos لكل partition، مش تصميم Dynamo بتاع 2007.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 10 · 3.2 — 4. Key-value store — replication، partitioning (consistent hashing)، consistency (quorums)، Dynamo paper (vector clocks، hinted handoff، Merkle trees)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf">DeCandia et al. Dynamo: Amazon's Highly Available Key-value Store (SOSP 2007)</a></li>
+    <li><a href="https://www.usenix.org/conference/atc22/presentation/elhemali">Elhemali et al. Amazon DynamoDB: A Scalable, Predictably Performant, and Fully Managed NoSQL Database Service (USENIX ATC 2022)</a></li>
+    <li><a href="https://arxiv.org/abs/1011.5808">Preguiça et al. Dotted Version Vectors: Logical Clocks for Optimistic Replication</a></li>
+    <li><a href="https://bytebytego.com/courses/system-design-interview/design-a-key-value-store">Alex Xu, System Design Interview: Design a Key-Value Store (ByteByteGo)</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./47-case-rate-limiter.html"><small>← Previous</small>47 · Rate Limiter Case</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./49-case-notification-system.html"><small>Next →</small>49 · Notifications</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

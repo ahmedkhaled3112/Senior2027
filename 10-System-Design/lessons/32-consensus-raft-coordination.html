@@ -1,0 +1,1605 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Consensus: Raft, Paxos &amp; Coordination Services — 10 System Design</title>
+<meta name="section" content="10-System-Design">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">10 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 32 / 63</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+  <header>
+    <h1>Consensus: Raft, Paxos &amp; Coordination Services</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 32 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Node 22 · TypeScript 7 · Postgres 18.4 · Redis 8</span>
+      <span class="chip">Prereq: <a href="./12-replication-failover-split-brain.html">replication</a>, <a href="./28-fallacies-failure-detection-partitions.html">partitions</a></span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>10 · 3.1 — Consensus: المشكلة (الاتفاق على قيمة رغم الأعطال)، Raft (leader election، log replication، terms — تقرأ الـ paper أو الـ visualization)، Paxos كمفهوم، quorums (majority)</li>
+        <li>10 · 3.1 — ZooKeeper/etcd: إمتى تحتاج coordination service (leader election، config، service discovery، distributed locks)</li>
+        <li>10 · 3.1 — Byzantine faults كمفهوم فقط (blockchain territory)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — The problem, and why majorities work</a></li>
+      <li><a href="#p2">Part 2 — Raft: leader election</a></li>
+      <li><a href="#p3">Part 3 — Raft: log replication and safety</a></li>
+      <li><a href="#p4">Part 4 — Paxos as a concept</a></li>
+      <li><a href="#p5">Part 5 — Coordination services</a></li>
+      <li><a href="#p6">Part 6 — What consensus costs</a></li>
+      <li><a href="#p7">Part 7 — Byzantine faults</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Almost nothing in your stack implements consensus, and almost everything leans on something that does: Kubernetes keeps its state in etcd, Kafka's metadata runs on KRaft, and managed databases elect a new primary with it. Once you see what a majority actually buys, you can answer the questions that matter: how many nodes, what happens when an AZ dies, why a write across regions takes 60 ms, and why a "leader" stored in one Redis key isn't a leader. Senior interviews ask exactly this.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>تقريبًا مفيش حاجة في الـ stack بتاعك بتنفّذ consensus بنفسها، بس كله تقريبًا معتمد على حاجة بتعمله: Kubernetes حالته في etcd، والـ metadata بتاعة Kafka ماشية على KRaft، والـ managed databases بتنتخب primary جديد بيه. لما تفهم الـ majority بتشتري إيه بالظبط، هتقدر تجاوب الأسئلة المهمة: كام node، إيه اللي يحصل لو AZ وقعت، ليه الـ write بين regions بياخد 60 ms، وليه "leader" متخزن في key واحد في Redis مش leader أصلًا. والـ senior interviews بتسأل الكلام ده بالظبط.</p>
+  </section>
+
+  <!-- PART 1 -->
+  <h2 id="p1">Part 1 — The problem, and why majorities work <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — المشكلة، وليه الـ majority بتنفع</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Consensus means several machines agree on a value despite failures: every node that decides picks the same value (agreement), the value was actually proposed (validity), and working nodes eventually decide (termination). The FLP result (1985) says that in a fully asynchronous system, no deterministic protocol can guarantee termination if even one process may crash. Real protocols accept that: they are always safe, and they make progress when the network is calm enough, which is what randomized timeouts are for.</p>
+    <p>The tool is a majority quorum. Any two majorities of the same group share at least one node, so a new decision always meets someone who knows about the old one. That one fact carries the whole design, and the script below proves it by brute force for small clusters.</p>
+    <p>Notice what an even number buys you: nothing. Four nodes need three for a majority, so they tolerate one failure, the same as three nodes, with one more machine that can break. A quorum of exactly half is worse: two groups of two can both "win" without ever meeting.</p>
+    <p>A single Redis key used for leader election is not consensus. It is one machine's opinion: when that machine is down, nobody can become leader, and when it comes back empty, the key is gone while the old leader still believes in its lease. The real run below shows both.</p>
+  </section>
+
+<pre class="diagram">
+  5 nodes, majority = 3
+
+  write quorum:   [n0] [n1] [n2]  n3   n4
+  later quorum:    n0   n1  [n2] [n3] [n4]
+                            ^^^^
+                   n2 is in both, so the later group
+                   cannot miss what the earlier group decided
+</pre>
+  <div class="ar-note">في 5 nodes الأغلبية 3. المجموعة اللي عملت الـ write هي n0 وn1 وn2، والمجموعة اللي جت بعدها n2 وn3 وn4. مهما اخترت، لازم فيه node مشترك (هنا n2)، فالمجموعة الجديدة مستحيل تفوّت اللي القديمة قررته.</div>
+
+<pre data-file="src/quorum.ts"><code class="language-typescript">// (1) حجم الـ quorum وعدد الأعطال اللي الـ cluster يستحملها
+const quorum = (n: number) =&gt; Math.floor(n / 2) + 1;
+console.log("nodes  quorum  failures tolerated");
+for (const n of [3, 4, 5, 6, 7]) console.log(String(n).padEnd(6), String(quorum(n)).padEnd(7), n - quorum(n));
+
+// (2) إثبات بالقوة الغاشمة: أي أغلبيتين لازم يتقاطعوا في node واحد على الأقل
+const subsets = (n: number) =&gt; Array.from({ length: 2 ** n }, (_, mask) =&gt; mask);
+const bits = (x: number) =&gt; x.toString(2).replaceAll("0", "").length;
+
+for (const n of [3, 4, 5, 7]) {
+  const majorities = subsets(n).filter((m) =&gt; bits(m) &gt;= quorum(n));
+  let pairs = 0, disjoint = 0;
+  for (const a of majorities) {
+    for (const b of majorities) {
+      pairs++;
+      if ((a &amp; b) === 0) disjoint++;
+    }
+  }
+  console.log(`n=${n}: ${majorities.length} majorities, ${pairs} pairs, disjoint pairs: ${disjoint}`);
+}
+
+// (3) لو نزلت الـ quorum لنص الـ nodes بس: فيه مجموعتين مش متقاطعين، يعني اتنين يقرروا عكس بعض
+const half = subsets(4).filter((m) =&gt; bits(m) === 2);
+const split = half.filter((a) =&gt; half.some((b) =&gt; (a &amp; b) === 0)).length;
+console.log(`n=4 with quorum 2: ${split} of ${half.length} pairs-of-nodes have a disjoint partner`);</code></pre>
+<pre><code class="language-plaintext">nodes  quorum  failures tolerated
+3      2       1
+4      3       1
+5      3       2
+6      4       2
+7      4       3
+n=3: 4 majorities, 16 pairs, disjoint pairs: 0
+n=4: 5 majorities, 25 pairs, disjoint pairs: 0
+n=5: 16 majorities, 256 pairs, disjoint pairs: 0
+n=7: 64 majorities, 4096 pairs, disjoint pairs: 0
+n=4 with quorum 2: 6 of 6 pairs-of-nodes have a disjoint partner</code></pre>
+  <div class="ar-note">الجدول: 3 nodes تستحمل عطل واحد، و4 برضه عطل واحد، و5 يستحملوا 2، و6 برضه 2، و7 يستحملوا 3. يعني الرقم الزوجي مش بيزوّد حاجة. بعدها إثبات بالقوة الغاشمة: صفر أزواج أغلبيات من غير تقاطع في كل الأحجام. وآخر سطر: لو الـ quorum نص الـ nodes بس (2 من 4)، كل مجموعة من الستة ليها مجموعة تانية مش متقاطعة معاها.</div>
+
+<pre data-file="single-redis-leader.sh"><code class="language-bash"># الخطوة دي بتطلب الـ leadership بمفتاح فيه TTL
+redis-cli -p "$P" SET leader api-1 NX PX 30000
+redis-cli -p "$P" SET leader api-2 NX PX 30000
+
+# الـ Redis الوحيد بيقع من غير ما يحفظ حاجة
+redis-cli -p "$P" SHUTDOWN NOSAVE
+redis-cli -p "$P" SET leader api-2 NX PX 30000
+
+# رجع فاضي بعد restart، ومفيش AOF ولا RDB
+redis-cli -p "$P" SET leader api-2 NX PX 30000
+redis-cli -p "$P" GET leader</code></pre>
+<pre><code class="language-plaintext">1> OK
+2>
+3> Could not connect to Redis at 127.0.0.1:54395: Connection refused
+4> OK
+5> api-2</code></pre>
+  <div class="ar-note">ده Redis 8 حقيقي بتاعي، والـ restart جه على port جديد لإن الـ helper بياخد port فاضي. سطر 1: <code>api-1</code> بقى leader. سطر 2 فاضي (ده معناه nil لما الـ output مش terminal): <code>api-2</code> اترفض. سطر 3: Redis واقع، ومفيش حد ينفع يبقى leader. سطر 4 و5: رجع فاضي و<code>api-2</code> بقى leader، و<code>api-1</code> لسه فاكر إن عنده lease لمدة 30 ثانية. يعني اتنين leaders.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ consensus معناه إن كذا machine يتفقوا على قيمة رغم الأعطال: كل node بيقرر بيختار نفس القيمة (agreement)، والقيمة دي حد اقترحها فعلًا (validity)، والـ nodes الشغالة في الآخر بتقرر (termination). نتيجة FLP (سنة 1985) بتقول إن في نظام asynchronous بالكامل، مفيش protocol deterministic يقدر يضمن الـ termination لو process واحد بس ممكن يقع. الـ protocols الحقيقية بتقبل ده: دايمًا safe، وبتتقدم لما الشبكة تبقى هادية كفاية، وده دور الـ randomized timeouts.</p>
+    <p>الأداة هي الـ majority quorum. أي أغلبيتين من نفس المجموعة بيشتركوا في node واحد على الأقل، فأي قرار جديد لازم يقابل حد عارف القرار القديم. الحقيقة دي شايلة التصميم كله، والسكريبت فوق بيثبتها بالقوة الغاشمة في clusters صغيرة.</p>
+    <p>بص الرقم الزوجي بيشتري إيه: ولا حاجة. 4 nodes محتاجين 3 للأغلبية، فبيستحملوا عطل واحد، زي 3 nodes بالظبط، بس بجهاز زيادة ممكن يقع. والـ quorum بالظبط نص أسوأ: مجموعتين من اتنين ممكن كل واحدة "تكسب" من غير ما يتقابلوا.</p>
+    <p>مفتاح واحد في Redis للـ leader election مش consensus. ده رأي machine واحدة: لما تقع محدش يقدر يبقى leader، ولما ترجع فاضية المفتاح بيكون ضاع والـ leader القديم لسه مصدّق الـ lease بتاعته. والتجربة الحقيقية فوق بتوضح الاتنين.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما حد يقترح في design review "نخلي الـ cron job يشتغل على واحد بس بـ <code>SET NX</code> في Redis": قوله ده ينفع لو تكرار التنفيذ مش مصيبة، زي تنضيف cache. لو الـ job بيحاسب عميل، اتنين leaders معناها فاتورتين، فمحتاج fencing و idempotency. والغلطة الشائعة: cluster من 2 أو 4 "عشان الـ HA"، وهو مش بيزوّد أي tolerance عن 1 أو 3.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Why do consensus clusters use an odd number of nodes?" → A majority of 2f+1 nodes tolerates f failures. Adding one more node raises the majority without tolerating another failure, so 4 nodes survive what 3 survive, with more hardware to fail and more acks to wait for.
+    <div class="ar-note">"ليه الـ consensus clusters بتبقى عدد فردي من الـ nodes؟" ← الأغلبية من 2f+1 بتستحمل f أعطال. لو زوّدت node واحد، الأغلبية بتكبر من غير ما تستحمل عطل زيادة، فـ 4 nodes بيستحملوا نفس اللي 3 بيستحملوه، بأجهزة أكتر ممكن تقع وacks أكتر تستناها.</div>
+  </div>
+
+  <!-- PART 2 -->
+  <h2 id="p2">Part 2 — Raft: leader election <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — Raft: انتخاب الـ leader</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Raft splits consensus into leader election, log replication and safety. Time is divided into numbered <em>terms</em>. Each term has at most one leader, and a higher term always wins: any node that sees a newer term becomes a follower. A follower waits for heartbeats. If its randomized election timeout expires, it becomes a candidate, increments the term, votes for itself and sends <code>RequestVote</code> to everyone. It wins when it collects a majority.</p>
+    <p>One rule makes it safe: each node votes at most once per term, and only for a candidate whose log is at least as up to date as its own. Votes are persistent, so a restart can't vote twice. If two candidates split the vote, nobody reaches a majority, their timers expire, and a new term starts. Randomized timeouts make a repeat unlikely.</p>
+    <p>The code below is a <strong>simulation</strong> I wrote to make this visible: virtual time and a seeded PRNG, so the output repeats exactly. It has no real disk (persistent fields simply survive a simulated crash), no real network, no snapshots and no membership change. It's one file, <code>raft.ts</code>, shown in pieces across Parts 2 and 3. Paste the pieces in order, and run it with <code>node file.ts</code> on Node 22 from a folder whose <code>package.json</code> has <code>"type": "module"</code>. To see the real thing animated, use the <a href="https://raft.github.io/">Raft visualization</a> and read the <a href="https://raft.github.io/raft.pdf">paper</a>.</p>
+  </section>
+
+<pre class="diagram">
+             times out,                 majority of votes
+             new term                         |
+  Follower ------------&gt; Candidate ------------&gt; Leader
+     ^                     |    |                  |
+     |   sees higher term  |    | split vote:      | sees higher term
+     +---------------------+    | timeout again,   |
+     +--------------------------+ new term         |
+     +---------------------------------------------+
+</pre>
+  <div class="ar-note">الدايرة: الـ follower لو الـ timeout خلص بيبقى candidate في term جديد. لو جاب أغلبية بيبقى leader. لو حصل split vote بيستنى timeout تاني ويبدأ term جديد. وأي واحد (candidate أو leader) يشوف term أعلى بيرجع follower فورًا.</div>
+
+<pre data-file="src/raft.ts"><code class="language-typescript">// محاكاة تعليمية لـ Raft: وقت افتراضي و seed، فالنتيجة بتتكرر بالظبط كل مرة.
+// مش موجود فيها: disk حقيقي، network حقيقية، snapshots، membership change.
+export type Role = "follower" | "candidate" | "leader";
+export type Entry = { term: number; cmd: string };
+export type Bug = "none" | "commit-without-majority" | "vote-ignores-log";
+export type Options = {
+  n: number;
+  seed: number;
+  timeout?: [number, number];
+  latency?: [number, number];
+  dropRate?: number;
+  bug?: Bug;
+  liar?: number;
+  trace?: boolean;
+};
+
+export const mulberry32 = (seed: number) =&gt; () =&gt; {
+  seed = (seed + 0x6d2b79f5) | 0;
+  let t = Math.imul(seed ^ (seed &gt;&gt;&gt; 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+  return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+};
+
+export type RaftNode = {
+  id: number;
+  // الجزء ده بيفضل بعد الـ crash كأنه اتعمله ⁦fsync (⁩مفيش disk حقيقي هنا)
+  term: number;
+  votedFor: number | null;
+  log: Entry[];
+  // الباقي volatile وبيضيع مع الـ crash
+  role: Role;
+  commit: number;
+  applied: string[];
+  votes: Set&lt;number&gt;;
+  next: number[];
+  match: number[];
+  timer: number;
+  alive: boolean;
+};
+
+type RequestVote = { term: number; candidate: number; lastIndex: number; lastTerm: number };
+type AppendEntries = { term: number; leader: number; prevIndex: number; prevTerm: number; entries: Entry[]; commit: number };
+type Ev = { at: number; seq: number; fn: () =&gt; void };</code></pre>
+<pre data-file="src/raft.ts"><code class="language-typescript">export class RaftSim {
+  readonly nodes: RaftNode[];
+  readonly timeline: string[] = [];
+  readonly cut = new Set&lt;number&gt;();
+  readonly decided = new Map&lt;number, string&gt;();
+  readonly violations = { twoLeadersInATerm: 0, stateMachine: 0 };
+  readonly leaderOfTerm = new Map&lt;number, number&gt;();
+  now = 0;
+  private queue: Ev[] = [];
+  private seq = 0;
+  private readonly rng: () =&gt; number;
+  private readonly quorum: number;
+  private readonly o: Required&lt;Omit&lt;Options, "liar"&gt;&gt; &amp; { liar: number };
+
+  constructor(options: Options) {
+    this.o = { timeout: [150, 300], latency: [1, 10], dropRate: 0, bug: "none", liar: -1, trace: false, ...options };
+    this.rng = mulberry32(this.o.seed);
+    this.quorum = Math.floor(this.o.n / 2) + 1;
+    this.nodes = Array.from({ length: this.o.n }, (_, id) =&gt; ({
+      id, term: 0, votedFor: null, log: [], role: "follower" as Role, commit: 0,
+      applied: [], votes: new Set&lt;number&gt;(), next: [], match: [], timer: 0, alive: true,
+    }));
+    this.nodes.forEach((n) =&gt; this.resetTimer(n));
+  }
+
+  private note(text: string) {
+    if (this.o.trace) this.timeline.push(`t=${this.now.toFixed(0).padStart(4)}  ${text}`);
+  }
+
+  private at(delay: number, fn: () =&gt; void) {
+    const ev = { at: this.now + delay, seq: this.seq++, fn };
+    let i = this.queue.length;
+    while (i &gt; 0 &amp;&amp; this.queue[i - 1].at &gt; ev.at) i--;
+    this.queue.splice(i, 0, ev);
+  }
+
+  run(until: number) {
+    while (this.queue.length &gt; 0 &amp;&amp; this.queue[0].at &lt;= until) {
+      const ev = this.queue.shift()!;
+      this.now = ev.at;
+      ev.fn();
+    }
+    this.now = until;
+  }
+
+  // الرسالة ممكن تتأخر أو تضيع، وبتوصل بس لو المستلم عايش ومش معزول
+  private send(from: number, to: number, deliver: (n: RaftNode) =&gt; void) {
+    if (this.cut.has(from) || this.cut.has(to) || this.rng() &lt; this.o.dropRate) return;
+    const [lo, hi] = this.o.latency;
+    this.at(lo + this.rng() * (hi - lo), () =&gt; {
+      const n = this.nodes[to];
+      if (n.alive &amp;&amp; !this.cut.has(to)) deliver(n);
+    });
+  }
+
+  private peers(n: RaftNode) {
+    return this.nodes.filter((p) =&gt; p.id !== n.id).map((p) =&gt; p.id);
+  }
+
+  private resetTimer(n: RaftNode) {
+    const token = ++n.timer;
+    const [lo, hi] = this.o.timeout;
+    this.at(lo + this.rng() * (hi - lo), () =&gt; {
+      if (n.alive &amp;&amp; token === n.timer &amp;&amp; n.role !== "leader") this.startElection(n);
+    });
+  }
+
+  private stepDown(n: RaftNode, term: number) {
+    if (n.role === "leader") this.resetTimer(n);
+    n.term = term;
+    n.votedFor = null;
+    n.role = "follower";
+  }</code></pre>
+<pre data-file="src/raft.ts"><code class="language-typescript">  private startElection(n: RaftNode) {
+    n.role = "candidate";
+    n.term++;
+    n.votedFor = n.id;
+    n.votes = new Set([n.id]);
+    this.resetTimer(n);
+    this.note(`n${n.id} timed out -&gt; candidate, term ${n.term}`);
+    const lying = n.id === this.o.liar;
+    const req: RequestVote = {
+      term: n.term,
+      candidate: n.id,
+      lastIndex: lying ? 1e9 : n.log.length,
+      lastTerm: lying ? 1e9 : (n.log.at(-1)?.term ?? 0),
+    };
+    for (const p of this.peers(n)) this.send(n.id, p, (peer) =&gt; this.onRequestVote(peer, req));
+  }
+
+  private onRequestVote(n: RaftNode, m: RequestVote) {
+    if (m.term &gt; n.term) this.stepDown(n, m.term);
+    const myLastTerm = n.log.at(-1)?.term ?? 0;
+    const upToDate = m.lastTerm &gt; myLastTerm || (m.lastTerm === myLastTerm &amp;&amp; m.lastIndex &gt;= n.log.length);
+    const free = n.votedFor === null || n.votedFor === m.candidate;
+    const logOk = upToDate || this.o.bug === "vote-ignores-log";
+    // القاعدة: صوت واحد في الـ term، وبس لو الـ log بتاع المرشح مش أقدم من بتاعي
+    const lying = n.id === this.o.liar;
+    const granted = lying || (m.term === n.term &amp;&amp; free &amp;&amp; logOk);
+    if (granted &amp;&amp; !lying) {
+      n.votedFor = m.candidate;
+      this.resetTimer(n);
+    }
+    if (m.term === n.term) this.note(`n${n.id} ${granted ? "votes for" : "refuses"} n${m.candidate} (term ${m.term})`);
+    const replyTerm = lying ? m.term : n.term;
+    this.send(n.id, m.candidate, (c) =&gt; this.onVoteReply(c, n.id, replyTerm, granted));
+  }
+
+  private onVoteReply(c: RaftNode, voter: number, term: number, granted: boolean) {
+    if (term &gt; c.term) return this.stepDown(c, term);
+    if (c.role !== "candidate" || term !== c.term || !granted) return;
+    c.votes.add(voter);
+    if (c.votes.size &gt;= this.quorum) this.becomeLeader(c);
+  }
+
+  private becomeLeader(n: RaftNode) {
+    n.role = "leader";
+    const prev = this.leaderOfTerm.get(n.term);
+    if (prev !== undefined &amp;&amp; prev !== n.id) this.violations.twoLeadersInATerm++;
+    this.leaderOfTerm.set(n.term, n.id);
+    n.next = this.nodes.map(() =&gt; n.log.length + 1);
+    n.match = this.nodes.map(() =&gt; 0);
+    this.note(`n${n.id} is LEADER of term ${n.term} with ${n.votes.size} votes`);
+    this.heartbeat(n, n.term);
+  }
+
+  private heartbeat(n: RaftNode, term: number) {
+    if (!n.alive || n.role !== "leader" || n.term !== term) return;
+    for (const p of this.peers(n)) this.sendAppend(n, p);
+    this.at(50, () =&gt; this.heartbeat(n, term));
+  }</code></pre>
+<pre data-file="src/s-election.ts"><code class="language-typescript">import { RaftSim } from "./raft.ts";
+
+console.log("SIMULATION (virtual time, seeded). No disk, no real network, no snapshots, no membership change.");
+
+// (1) انتخاب عادي، وبعدين نقتل الـ leader ونشوف term جديد
+const sim = new RaftSim({ n: 5, seed: 7, trace: true });
+sim.run(400);
+const first = sim.leader();
+sim.crash(first);
+sim.run(1000);
+console.log(sim.timeline.join("\n"));
+console.log("old leader:", `n${first}`, "| new leader:", `n${sim.leader()}`, "| term:", sim.nodes[sim.leader()].term);
+
+// (2) التعادل (split vote): الـ timeouts قريبين من بعض قوي عشان نضمن إن فيه تعادل
+for (let seed = 1; seed &lt; 500; seed++) {
+  const s = new RaftSim({ n: 5, seed, timeout: [150, 156], trace: true });
+  s.run(900);
+  if (!s.leaderOfTerm.has(1) &amp;&amp; s.leaderOfTerm.size &gt; 0) {
+    console.log(`\nsplit vote, seed ${seed}:`);
+    console.log(s.timeline.slice(0, 22).join("\n"));
+    break;
+  }
+}
+
+// (3) ليه الـ timeout عشوائي؟ 1000 cluster لكل range
+console.log("\ntimeout range   no leader in term 1   mean ms to first leader   worst");
+for (const [lo, hi] of [[150, 152], [150, 160], [150, 200], [150, 300]] as const) {
+  let split = 0, total = 0, worst = 0, found = 0;
+  for (let seed = 1; seed &lt;= 1000; seed++) {
+    const s = new RaftSim({ n: 5, seed, timeout: [lo, hi] });
+    let t = 0;
+    while (s.leader() &lt; 0 &amp;&amp; t &lt; 5000) s.run((t += 2));
+    if (!s.leaderOfTerm.has(1)) split++;
+    if (s.leader() &gt;= 0) {
+      found++;
+      total += t;
+      worst = Math.max(worst, t);
+    }
+  }
+  console.log(`${lo}-${hi} ms`.padEnd(15), `${((split / 1000) * 100).toFixed(1)}%`.padEnd(21), (total / found).toFixed(0).padEnd(25), worst);
+}</code></pre>
+<pre><code class="language-plaintext">SIMULATION (virtual time, seeded). No disk, no real network, no snapshots, no membership change.
+t= 152  n0 timed out -&gt; candidate, term 1
+t= 154  n3 votes for n0 (term 1)
+t= 155  n1 votes for n0 (term 1)
+t= 157  n4 votes for n0 (term 1)
+t= 159  n2 votes for n0 (term 1)
+t= 160  n0 is LEADER of term 1 with 3 votes
+t= 400  n0 CRASHED
+t= 546  n4 timed out -&gt; candidate, term 2
+t= 549  n2 votes for n4 (term 2)
+t= 551  n3 votes for n4 (term 2)
+t= 552  n1 votes for n4 (term 2)
+t= 553  n4 is LEADER of term 2 with 3 votes
+old leader: n0 | new leader: n4 | term: 2
+
+split vote, seed 1:
+t= 150  n1 timed out -&gt; candidate, term 1
+t= 153  n2 timed out -&gt; candidate, term 1
+t= 154  n0 timed out -&gt; candidate, term 1
+t= 155  n4 votes for n2 (term 1)
+t= 155  n4 refuses n1 (term 1)
+t= 155  n3 votes for n1 (term 1)
+t= 156  n4 refuses n0 (term 1)
+t= 157  n2 refuses n0 (term 1)
+t= 157  n3 refuses n2 (term 1)
+t= 158  n0 refuses n1 (term 1)
+t= 158  n1 refuses n2 (term 1)
+t= 159  n0 refuses n2 (term 1)
+t= 160  n3 refuses n0 (term 1)
+t= 160  n2 refuses n1 (term 1)
+t= 162  n1 refuses n0 (term 1)
+t= 302  n1 timed out -&gt; candidate, term 2
+t= 304  n2 votes for n1 (term 2)
+t= 306  n0 timed out -&gt; candidate, term 2
+t= 309  n4 timed out -&gt; candidate, term 2
+t= 310  n3 timed out -&gt; candidate, term 2
+t= 310  n0 refuses n1 (term 2)
+t= 311  n3 refuses n1 (term 2)
+
+timeout range   no leader in term 1   mean ms to first leader   worst
+150-152 ms      99.9%                 1955                      4992
+150-160 ms      56.2%                 323                       1544
+150-200 ms      4.1%                  176                       498
+150-300 ms      0.5%                  188                       376</code></pre>
+  <div class="ar-note">الجزء الأول: seed 7، الـ n0 خلص الـ timeout الأول، بقى candidate في term 1، وخد الأغلبية (3 أصوات) عند t=160. قتلناه عند t=400، فبعد 146ms الـ n4 بدأ term 2 وكسب. الجزء التاني split vote: n0 وn1 وn2 بدأوا مع بعض في term 1، الأصوات اتفرقت 2 و2 و1، ومحدش وصل 3، فبدأ term 2. والجدول: كل ما المدى العشوائي يوسع، الـ split votes بتقل: من 99.9% لـ 0.5%، ومتوسط الوقت لأول leader نزل من 1955ms لـ 188ms تقريبًا.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>Raft بيقسّم الـ consensus لتلات حاجات: leader election، وlog replication، وsafety. الوقت متقسم لـ <em>terms</em> بأرقام. كل term فيه leader واحد بالكتير، والـ term الأعلى دايمًا بيكسب: أي node يشوف term أحدث بيرجع follower. الـ follower بيستنى heartbeats. لو الـ election timeout العشوائي بتاعه خلص، بيبقى candidate، يزوّد الـ term، يصوّت لنفسه، ويبعت <code>RequestVote</code> للكل. بيكسب لما يجمع أغلبية.</p>
+    <p>فيه قاعدة واحدة بتخليه آمن: كل node بيصوّت مرة واحدة بالكتير في الـ term، وبس لمرشح الـ log بتاعه مش أقدم من بتاعه. والصوت بيتحفظ، فالـ restart مايخلّيهوش يصوّت مرتين. لو اتنين مرشحين قسموا الأصوات، محدش بيوصل للأغلبية، التايمرات بتخلص، وterm جديد بيبدأ. الـ timeouts العشوائية بتخلي التكرار قليل.</p>
+    <p>الكود ده <strong>simulation</strong> كتبتها عشان الموضوع يبان: وقت افتراضي وseed، فالناتج بيتكرر بالظبط. مفيهاش disk حقيقي (الحقول الـ persistent بتفضل بعد الـ crash المتمثّل)، ولا network حقيقية، ولا snapshots، ولا membership change. هي ملف واحد <code>raft.ts</code> متقسم على الجزئين 2 و3. انسخ الأجزاء بالترتيب، وشغّلها بـ <code>node file.ts</code> على Node 22 من فولدر الـ <code>package.json</code> بتاعه فيه <code>"type": "module"</code>. وعشان تشوف الحاجة الحقيقية متحركة، افتح <a href="https://raft.github.io/">الـ Raft visualization</a> واقرا <a href="https://raft.github.io/raft.pdf">الـ paper</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما etcd بتاع Kubernetes يبدأ يطلّع "leader changed" كتير والـ API بقى بطيء، إنت دلوقتي عارف إن ده election timeout بيخلص: غالبًا disk بطيء أو شبكة. الغلطة الشائعة: ترفع الـ timeouts من غير ما تدوّر على السبب، فالـ failover نفسه يبقى أبطأ.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: election timeout</b>
+    A short timeout gives fast failover but risks false elections when a disk or network hiccups. A long one is stable and slow to recover. The range also has to be much wider than one message delay: the table shows splits nearly always with a 2 ms range and rarely with 150 ms.
+    <div class="ar-note">الـ timeout القصير بيدّيك failover سريع، بس ممكن يعمل انتخابات على الفاضي لو الـ disk أو الشبكة وقفوا لحظة. والطويل ثابت بس بطيء في الرجوع. وكمان لازم المدى يبقى أوسع بكتير من وقت الرسالة الواحدة: الجدول بيبيّن split تقريبًا دايمًا مع مدى 2ms، ونادر مع 150ms.</div>
+  </div>
+
+  <!-- PART 3 -->
+  <h2 id="p3">Part 3 — Raft: log replication and safety <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — Raft: نسخ الـ log والـ safety</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The leader appends each command to its log and sends <code>AppendEntries</code>, which carries <code>prevLogIndex</code> and <code>prevLogTerm</code>. A follower accepts only if it holds the same entry at that position, so logs match by induction. When it doesn't, the follower refuses, the leader steps <code>nextIndex</code> back and retries, and conflicting entries on the follower are overwritten. That is log repair after a leader crash.</p>
+    <p>An entry is <em>committed</em> when a majority stores it and it is from the leader's current term, and only then is it applied to the state machine and reported to the client. An entry that never reached a majority may be lost, and that's correct: the client never got a success. A committed one survives every future leader, because a candidate needs a majority of votes and the up-to-date check means nobody missing a committed entry can win.</p>
+    <p>The scripted run shows a committed entry surviving and an uncommitted one being discarded. Then 1,000 seeded schedules of crashes, restarts, isolation and 5% message loss check the safety property: any two nodes that applied the same index applied the same command. Then I plant bugs to see the rule earn its keep. Zero violations in a random test doesn't prove correctness, it only fails to find a counterexample, and the callout below shows one such case.</p>
+  </section>
+
+<pre data-file="src/raft.ts"><code class="language-typescript">  private sendAppend(l: RaftNode, to: number) {
+    const prevIndex = l.next[to] - 1;
+    const prevTerm = l.log[prevIndex - 1]?.term ?? 0;
+    let entries = l.log.slice(prevIndex);
+    if (l.id === this.o.liar) entries = entries.map((e) =&gt; ({ ...e, cmd: `${e.cmd}~lie-to-n${to}` }));
+    const req: AppendEntries = { term: l.term, leader: l.id, prevIndex, prevTerm, entries, commit: l.commit };
+    this.send(l.id, to, (n) =&gt; this.onAppend(n, req));
+  }
+
+  private onAppend(n: RaftNode, m: AppendEntries) {
+    const reply = (ok: boolean, match: number, term: number) =&gt;
+      this.send(n.id, m.leader, (l) =&gt; this.onAppendReply(l, n.id, term, ok, match));
+    // الكداب بيقول "خزّنت" من غير ما يخزّن حاجة
+    if (n.id === this.o.liar) return reply(true, m.prevIndex + m.entries.length, m.term);
+    if (m.term &lt; n.term) return reply(false, n.log.length, n.term);
+    if (m.term &gt; n.term || n.role !== "follower") this.stepDown(n, m.term);
+    this.resetTimer(n);
+
+    // فحص الاتساق: لازم عندي نفس الـ entry اللي قبل الجديدة
+    const prev = n.log[m.prevIndex - 1];
+    if (m.prevIndex &gt; n.log.length || (m.prevIndex &gt; 0 &amp;&amp; prev.term !== m.prevTerm)) {
+      return reply(false, Math.min(n.log.length, m.prevIndex - 1), n.term);
+    }
+
+    let index = m.prevIndex;
+    for (const e of m.entries) {
+      index++;
+      const mine = n.log[index - 1];
+      // التعارض بس هو اللي بيتمسح، ومعاه كل اللي بعده
+      if (mine &amp;&amp; mine.term !== e.term) n.log.length = index - 1;
+      if (!n.log[index - 1]) n.log.push(e);
+    }
+    const matched = m.prevIndex + m.entries.length;
+    n.commit = Math.max(n.commit, Math.min(m.commit, matched));
+    this.apply(n);
+    reply(true, matched, n.term);
+  }
+
+  private onAppendReply(l: RaftNode, from: number, term: number, ok: boolean, match: number) {
+    if (term &gt; l.term) return this.stepDown(l, term);
+    if (l.role !== "leader" || term !== l.term) return;
+    if (!ok) {
+      // إصلاح الـ log: ارجع لورا وجرّب تاني من نقطة أقدم
+      l.next[from] = Math.max(1, Math.min(l.next[from] - 1, match + 1));
+      return this.sendAppend(l, from);
+    }
+    l.match[from] = Math.max(l.match[from], match);
+    l.next[from] = l.match[from] + 1;
+    for (let i = l.log.length; i &gt; l.commit; i--) {
+      const copies = 1 + this.peers(l).filter((p) =&gt; l.match[p] &gt;= i).length;
+      // القاعدة: أغلبية، وكمان الـ entry لازم تكون من الـ term الحالي
+      if (copies &gt;= this.quorum &amp;&amp; l.log[i - 1].term === l.term) {
+        l.commit = i;
+        this.note(`n${l.id} commits index ${i} (${l.log[i - 1].cmd}) on ${copies}/${this.o.n}`);
+        this.apply(l);
+        break;
+      }
+    }
+  }
+
+  private apply(n: RaftNode) {
+    while (n.applied.length &lt; n.commit &amp;&amp; n.log[n.applied.length]) {
+      const index = n.applied.length + 1;
+      const cmd = n.log[index - 1].cmd;
+      n.applied.push(cmd);
+      // الـ safety check: أي اتنين طبّقوا نفس الـ index لازم يكونوا طبّقوا نفس الأمر
+      const seen = this.decided.get(index);
+      if (seen === undefined) this.decided.set(index, cmd);
+      else if (seen !== cmd) this.violations.stateMachine++;
+    }
+  }</code></pre>
+<pre data-file="src/raft.ts"><code class="language-typescript">  leader(): number {
+    const live = this.nodes.filter((n) =&gt; n.alive &amp;&amp; n.role === "leader").sort((a, b) =&gt; b.term - a.term);
+    return live[0]?.id ?? -1;
+  }
+
+  propose(cmd: string, to = this.leader()): boolean {
+    const l = this.nodes[to];
+    if (!l || !l.alive || l.role !== "leader") return false;
+    l.log.push({ term: l.term, cmd });
+    this.note(`client -&gt; n${l.id}: ${cmd} (index ${l.log.length})`);
+    // ❌ الغلطة المزروعة: نقول committed قبل ما الأغلبية تأكد
+    if (this.o.bug === "commit-without-majority") {
+      l.commit = l.log.length;
+      this.apply(l);
+    }
+    for (const p of this.peers(l)) this.sendAppend(l, p);
+    return true;
+  }
+
+  crash(i: number) {
+    const n = this.nodes[i];
+    n.alive = false;
+    n.role = "follower";
+    n.timer++;
+    this.note(`n${i} CRASHED`);
+  }
+
+  restart(i: number) {
+    const n = this.nodes[i];
+    Object.assign(n, { alive: true, role: "follower", commit: 0, applied: [], votes: new Set&lt;number&gt;() });
+    this.resetTimer(n);
+    this.note(`n${i} restarted (term ${n.term}, ${n.log.length} entries kept)`);
+  }
+
+  dump() {
+    return this.nodes.map((n) =&gt; {
+      const log = n.log.map((e) =&gt; `${e.term}:${e.cmd}`).join(" ") || "(empty)";
+      return `n${n.id} ${n.alive ? "up  " : "down"} ${n.role.padEnd(9)} term ${n.term} commit ${n.commit} | ${log}`;
+    });
+  }
+}
+
+// جدول أعطال عشوائي بـ seed: كل 30ms فيه أوامر، crashes، عزل عن الشبكة، restarts، و5% من الرسايل بتضيع
+export function chaos(seed: number, bug: Bug = "none", liar = -1) {
+  const sim = new RaftSim({ n: 5, seed, bug, liar, dropRate: 0.05 });
+  const rng = mulberry32(seed * 31 + 7);
+  let id = 0;
+  for (let t = 30; t &lt;= 6000; t += 30) {
+    sim.run(t);
+    const up = sim.nodes.filter((n) =&gt; n.alive);
+    const down = sim.nodes.filter((n) =&gt; !n.alive);
+    // ملحوظة: الأوامر بتروح لأي واحد فاكر نفسه leader حتى لو قديم
+    for (const n of up) if (n.role === "leader" &amp;&amp; rng() &lt; 0.5) sim.propose(`order-${++id}`, n.id);
+    if (up.length &gt; 0 &amp;&amp; rng() &lt; 0.04) sim.crash(up[Math.floor(rng() * up.length)].id);
+    if (down.length &gt; 0 &amp;&amp; rng() &lt; 0.15) sim.restart(down[Math.floor(rng() * down.length)].id);
+    // العزل هو اللي بيعمل leader قديم لسه فاكر نفسه شغال
+    if (up.length &gt; 0 &amp;&amp; rng() &lt; 0.04) sim.cut.add(up[Math.floor(rng() * up.length)].id);
+    if (sim.cut.size &gt; 0 &amp;&amp; rng() &lt; 0.2) sim.cut.clear();
+  }
+  sim.run(6500);
+  return sim;
+}
+
+export function chaosReport(label: string, runs: number, bug: Bug = "none", liar = -1) {
+  let badRuns = 0, stateMachine = 0, twoLeaders = 0, committed = 0;
+  for (let seed = 1; seed &lt;= runs; seed++) {
+    const sim = chaos(seed, bug, liar);
+    const v = sim.violations;
+    if (v.stateMachine + v.twoLeadersInATerm &gt; 0) badRuns++;
+    stateMachine += v.stateMachine;
+    twoLeaders += v.twoLeadersInATerm;
+    committed += sim.decided.size;
+  }
+  console.log(label.padEnd(26), `runs with a violation: ${String(badRuns).padStart(4)}/${runs}`, `| state machine: ${String(stateMachine).padStart(5)}`, `| two leaders: ${String(twoLeaders).padStart(4)}`, `| avg committed: ${(committed / runs).toFixed(0)}`);
+  return badRuns;
+}</code></pre>
+<pre data-file="src/s-log.ts"><code class="language-typescript">import { RaftSim, chaosReport } from "./raft.ts";
+
+console.log("SIMULATION (virtual time, seeded). No disk, no real network, no snapshots, no membership change.");
+
+// (1) أي entry اتعمله commit لازم يعيش، واللي ماوصلش للأغلبية مسموح يضيع
+const sim = new RaftSim({ n: 5, seed: 3, trace: false });
+sim.run(500);
+const oldLeader = sim.leader();
+sim.propose("charge order-1 $50");
+sim.run(600);
+console.log("after a committed write:\n" + sim.dump().join("\n"));
+
+// الـ leader اتعزل عن الشبكة: الأمر التاني اتكتب عنده هو بس
+sim.cut.add(oldLeader);
+sim.propose("charge order-2 $70", oldLeader);
+sim.run(610);
+console.log("\nleader cut off with an uncommitted entry:\n" + sim.dump().join("\n"));
+sim.crash(oldLeader);
+sim.cut.delete(oldLeader);
+sim.run(1300);
+const newLeader = sim.leader();
+sim.propose("charge order-3 $90");
+sim.run(1500);
+console.log(`\nnew leader n${newLeader} commits another write:\n` + sim.dump().join("\n"));
+
+sim.restart(oldLeader);
+sim.run(2200);
+console.log(`\nold leader n${oldLeader} is back and got repaired:\n` + sim.dump().join("\n"));
+console.log("\napplied on the old leader:", sim.nodes[oldLeader].applied);
+console.log("violations:", sim.violations);
+
+// ⁦(2) 1000⁩ جدول crashes عشوائي، مرة الكود سليم ومرة فيه غلطة مزروعة
+console.log("\n1000 random crash schedules, 5 nodes, 5% message loss:");
+chaosReport("correct Raft", 1000);
+chaosReport("commit without majority", 1000, "commit-without-majority");
+chaosReport("vote ignores log check", 1000, "vote-ignores-log");</code></pre>
+<pre><code class="language-plaintext">SIMULATION (virtual time, seeded). No disk, no real network, no snapshots, no membership change.
+after a committed write:
+n0 up   follower  term 1 commit 1 | 1:charge order-1 $50
+n1 up   leader    term 1 commit 1 | 1:charge order-1 $50
+n2 up   follower  term 1 commit 1 | 1:charge order-1 $50
+n3 up   follower  term 1 commit 1 | 1:charge order-1 $50
+n4 up   follower  term 1 commit 1 | 1:charge order-1 $50
+
+leader cut off with an uncommitted entry:
+n0 up   follower  term 1 commit 1 | 1:charge order-1 $50
+n1 up   leader    term 1 commit 1 | 1:charge order-1 $50 1:charge order-2 $70
+n2 up   follower  term 1 commit 1 | 1:charge order-1 $50
+n3 up   follower  term 1 commit 1 | 1:charge order-1 $50
+n4 up   follower  term 1 commit 1 | 1:charge order-1 $50
+
+new leader n0 commits another write:
+n0 up   leader    term 2 commit 2 | 1:charge order-1 $50 2:charge order-3 $90
+n1 down follower  term 1 commit 1 | 1:charge order-1 $50 1:charge order-2 $70
+n2 up   follower  term 2 commit 2 | 1:charge order-1 $50 2:charge order-3 $90
+n3 up   follower  term 2 commit 2 | 1:charge order-1 $50 2:charge order-3 $90
+n4 up   follower  term 2 commit 2 | 1:charge order-1 $50 2:charge order-3 $90
+
+old leader n1 is back and got repaired:
+n0 up   leader    term 2 commit 2 | 1:charge order-1 $50 2:charge order-3 $90
+n1 up   follower  term 2 commit 2 | 1:charge order-1 $50 2:charge order-3 $90
+n2 up   follower  term 2 commit 2 | 1:charge order-1 $50 2:charge order-3 $90
+n3 up   follower  term 2 commit 2 | 1:charge order-1 $50 2:charge order-3 $90
+n4 up   follower  term 2 commit 2 | 1:charge order-1 $50 2:charge order-3 $90
+
+applied on the old leader: [ 'charge order-1 $50', 'charge order-3 $90' ]
+violations: { twoLeadersInATerm: 0, stateMachine: 0 }
+
+1000 random crash schedules, 5 nodes, 5% message loss:
+correct Raft               runs with a violation:    0/1000 | state machine:     0 | two leaders:    0 | avg committed: 85
+commit without majority    runs with a violation:  339/1000 | state machine: 12346 | two leaders:    0 | avg committed: 86
+vote ignores log check     runs with a violation:  692/1000 | state machine: 24486 | two leaders:    0 | avg committed: 82</code></pre>
+  <div class="ar-note">الناتج خطوة خطوة: <code>order-1</code> اتعمله commit عند الكل. بعدين الـ leader n1 اتعزل و<code>order-2</code> اتكتب عنده هو بس (commit لسه 1). وقع، وn0 كسب term 2 وعمل commit لـ <code>order-3</code> في index 2. لما n1 رجع الـ log بتاعه اتصلّح: <code>order-2</code> اتمسح و<code>order-3</code> مكانه، و<code>order-1</code> فضل. الـ violations صفر. آخر 3 سطور: الكود السليم 0 من 1000، و"commit من غير أغلبية" 339 من 1000، و"التصويت من غير فحص الـ log" 692 من 1000. والـ avg committed بيأكد إن النظام كان شغال فعلًا مش واقف.</div>
+
+<pre class="diagram">
+  Leader      idx 1      idx 2      idx 3
+  term 2     [1:a]      [1:b]      [2:c]
+                          |
+  AppendEntries(prevIndex=2, prevTerm=1, entries=[2:c])
+                          |
+  Follower   [1:a]      [1:x]   &lt;-- term at idx 2 differs: refuse
+                          |
+  Leader retries from idx 2, follower overwrites
+  Follower   [1:a]      [1:b]      [2:c]
+</pre>
+  <div class="ar-note">الـ leader بيبعت entry جديدة ومعاها رقم وterm اللي قبلها. الـ follower عنده term مختلف في index 2 فبيرفض. الـ leader بيرجع خطوة ويبعت من index 2، والـ follower بيكتب فوق المتعارض، والـ logs بتتطابق.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ leader بيضيف كل أمر للـ log بتاعه وبيبعت <code>AppendEntries</code> ومعاها <code>prevLogIndex</code> و<code>prevLogTerm</code>. الـ follower بيقبل بس لو عنده نفس الـ entry في المكان ده، فالـ logs بتتطابق بالاستقراء. لو مش عنده، بيرفض، والـ leader يرجّع <code>nextIndex</code> خطوة ويجرّب تاني، والـ entries المتعارضة عند الـ follower بتتكتب فوقها. ده إصلاح الـ log بعد crash الـ leader.</p>
+    <p>الـ entry بتبقى <em>committed</em> لما أغلبية يخزّنوها وتكون من الـ term الحالي للـ leader، وساعتها بس بتتطبق على الـ state machine ويتقال للـ client تمام. الـ entry اللي ماوصلتش لأغلبية ممكن تضيع، وده صح: الـ client ماخدش success أصلًا. أما الـ committed فبتعيش مع كل leader جاي، لإن المرشح محتاج أغلبية أصوات، وفحص الـ log معناه إن اللي ناقصه entry committed مايكسبش.</p>
+    <p>التشغيل المكتوب فوق بيوضح entry committed عايشة وentry مش committed اتمسحت. وبعدين 1,000 جدول بـ seed فيهم crashes وrestarts وعزل و5% ضياع رسايل بيفحصوا خاصية الـ safety: أي node-ين طبّقوا نفس الـ index لازم يكونوا طبّقوا نفس الأمر. وبعدها بزرع bugs عشان تشوف القاعدة بتعمل إيه. صفر violations في اختبار عشوائي مش إثبات صحة، ده بس معناه إنك مالقيتش مثال يكسره، والـ callout اللي تحت فيه حالة زي دي.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما تقول للـ client "اتحفظ" بعد ما الكتابة تكون على الـ primary بس، إنت بتعمل نفس غلطة "commit من غير أغلبية" اللي طلّعت 339 مخالفة: الـ primary يقع والـ write يضيع. ده الفرق بين <code>synchronous_commit</code> وasync replication في <a href="./12-replication-failover-split-brain.html">درس الـ replication</a>. وكمان: الـ simulator ده نموذج تقدر تعمل زيه لأي state machine عندك، زي order workflow، وتجرّب عليه crash schedules.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What 0 violations does not prove</b>
+    Raft has a subtle rule: a leader must not commit an entry from an older term just by counting replicas (Figure 8 in the paper). I removed that check and ran 5,000 random schedules: 0 violations. The bug is real and needs a specific interleaving that these schedules didn't produce. That's why protocols get formal proofs and TLA+ models, not just random tests.
+    <div class="ar-note">فيه قاعدة دقيقة في Raft: الـ leader مايعملش commit لـ entry من term أقدم لمجرد إنه عدّ النسخ (Figure 8 في الـ paper). شلت الفحص ده وشغّلت 5,000 جدول عشوائي: 0 violations. الـ bug حقيقي ومحتاج ترتيب معيّن الجداول دي ماطلّعتهوش. وعشان كده الـ protocols بتاخد formal proofs ونماذج TLA+، مش اختبارات عشوائية بس.</div>
+  </div>
+
+  <!-- PART 4 -->
+  <h2 id="p4">Part 4 — Paxos as a concept <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — Paxos كمفهوم</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Paxos came first (Lamport) and solves the same problem with two phases. A proposer picks a unique ballot number and sends <em>prepare</em>. An acceptor <em>promises</em> not to accept lower ballots, and reports any value it already accepted. If a majority promises, the proposer sends <em>accept</em>, and here's the core: if any promise reported an accepted value, the proposer must propose the one with the highest ballot instead of its own. A value is chosen once a majority accepts the same ballot.</p>
+    <p>That forced re-use is what makes it safe. In the run below, two proposers compete: the second one finds a value already accepted and adopts it, so both end up with the same answer. The other side of that design is the livelock risk: proposers can keep preempting each other, which is why real systems add backoff or a leader.</p>
+    <p><strong>Multi-Paxos in one line:</strong> elect a stable leader, run phase 1 once, then run only phase 2 for each log slot. That ends up looking a lot like Raft. The practical difference is that Raft specifies the full system, including elections and log repair, while classic Paxos specifies one decision and leaves the rest to you.</p>
+  </section>
+
+<pre data-file="src/paxos.ts"><code class="language-typescript">// محاكاة: Paxos لقرار واحد، والرسايل بتوصل بترتيب عشوائي بـ seed. مفيش network ولا disk حقيقي.
+import { mulberry32 } from "./raft.ts";
+
+type Acceptor = { promised: number; acceptedBallot: number; acceptedValue: string | null };
+type Msg = () =&gt; void;
+
+export function paxos(seed: number, ignoreAccepted = false, trace = false) {
+  const rng = mulberry32(seed);
+  const acceptors: Acceptor[] = Array.from({ length: 5 }, () =&gt; ({ promised: 0, acceptedBallot: 0, acceptedValue: null }));
+  const majority = 3;
+  const inbox: Msg[] = [];
+  const chosen: string[] = [];
+  const log = (s: string) =&gt; trace &amp;&amp; console.log(s);
+
+  const proposer = (id: number, value: string) =&gt; {
+    let round = 0, ballot = 0, phase = "idle", done = false;
+    let promises: Acceptor[] = [], accepts = 0;
+
+    // (1) أول مرحلة ⁦(prepare): "⁩وعدني ماتقبلش أي ballot أصغر من ده"
+    const start = () =&gt; {
+      const b = (ballot = ++round * 10 + id);
+      phase = "prepare"; promises = []; accepts = 0;
+      log(`P${id} prepare(${b})`);
+      acceptors.forEach((a, i) =&gt; inbox.push(() =&gt; {
+        if (b &lt;= a.promised) return;
+        const reply = { ...a };
+        a.promised = b;
+        log(`  A${i} promises ${b}${reply.acceptedValue ? ` (already accepted ${reply.acceptedValue})` : ""}`);
+        inbox.push(() =&gt; onPromise(b, reply));
+      }));
+    };
+
+    // (2) لو أي acceptor قبل قيمة قبل كده، لازم أكمّل بيها مش بقيمتي
+    const onPromise = (b: number, reply: Acceptor) =&gt; {
+      if (b !== ballot || phase !== "prepare") return;
+      promises.push(reply);
+      if (promises.length &lt; majority) return;
+      phase = "accept";
+      const prior = promises.filter((p) =&gt; p.acceptedValue !== null).sort((x, y) =&gt; y.acceptedBallot - x.acceptedBallot)[0];
+      const v = !ignoreAccepted &amp;&amp; prior ? prior.acceptedValue! : value;
+      log(`P${id} accept(${b}, ${v})`);
+      acceptors.forEach((a, i) =&gt; inbox.push(() =&gt; {
+        if (b &lt; a.promised) return;
+        a.promised = b; a.acceptedBallot = b; a.acceptedValue = v;
+        log(`  A${i} accepted ${b}=${v}`);
+        inbox.push(() =&gt; onAccepted(b, v));
+      }));
+    };
+
+    // (3) أغلبية قبلت نفس الـ ballot يبقى القيمة اتحددت خلاص
+    const onAccepted = (b: number, v: string) =&gt; {
+      if (b !== ballot || phase !== "accept" || ++accepts &lt; majority) return;
+      phase = "done"; done = true;
+      chosen.push(v);
+      log(`P${id} CHOSEN ${v}`);
+    };
+    return { start, isDone: () =&gt; done };
+  };
+
+  const proposers = [proposer(1, "leader=api-1"), proposer(2, "leader=api-2")];
+  proposers.forEach((p) =&gt; p.start());
+  let steps = 0, retries = 0;
+  while (steps++ &lt; 20000) {
+    if (inbox.length === 0) {
+      const pending = proposers.filter((p) =&gt; !p.isDone());
+      if (pending.length === 0) break;
+      // ملحوظة: الرسايل خلصت والقرار ماتمّش، فالـ proposer يعيد بـ ballot أعلى
+      retries++;
+      pending[Math.floor(rng() * pending.length)].start();
+    }
+    inbox.splice(Math.floor(rng() * inbox.length), 1)[0]();
+  }
+  return { chosen, retries };
+}
+
+if (process.argv[1]?.endsWith("paxos.ts")) {
+  console.log("SIMULATION (seeded message order). No disk, no real network.");
+  paxos(4, false, true);
+  for (const [label, bug] of [["correct Paxos", false], ["proposer ignores accepted value", true]] as const) {
+    let disagree = 0, retries = 0;
+    for (let seed = 1; seed &lt;= 1000; seed++) {
+      const r = paxos(seed, bug);
+      if (new Set(r.chosen).size &gt; 1) disagree++;
+      retries += r.retries;
+    }
+    console.log(`\n${label}: runs where two values were chosen: ${disagree}/1000, avg retries: ${(retries / 1000).toFixed(2)}`);
+  }
+}</code></pre>
+<pre><code class="language-plaintext">SIMULATION (seeded message order). No disk, no real network.
+P1 prepare(11)
+P2 prepare(12)
+  A4 promises 12
+  A3 promises 11
+  A2 promises 11
+  A0 promises 11
+  A0 promises 12
+  A1 promises 11
+P1 accept(11, leader=api-1)
+  A2 accepted 11=leader=api-1
+  A3 accepted 11=leader=api-1
+  A1 accepted 11=leader=api-1
+  A3 promises 12 (already accepted leader=api-1)
+P2 accept(12, leader=api-1)
+  A4 accepted 12=leader=api-1
+P1 CHOSEN leader=api-1
+  A3 accepted 12=leader=api-1
+  A2 promises 12 (already accepted leader=api-1)
+  A1 accepted 12=leader=api-1
+  A0 accepted 12=leader=api-1
+P2 CHOSEN leader=api-1
+  A2 accepted 12=leader=api-1
+
+correct Paxos: runs where two values were chosen: 0/1000, avg retries: 0.99
+
+proposer ignores accepted value: runs where two values were chosen: 1000/1000, avg retries: 0.99</code></pre>
+  <div class="ar-note">الناتج من seed 4: الـ P1 وP2 بدأوا مع بعض. P1 عمل accept لـ <code>api-1</code>. لما P2 عمل prepare بعد كده، A3 قال إنه قبل <code>api-1</code> قبل كده، فـ P2 اضطر يكمّل بـ <code>api-1</code> مش قيمته. الاتنين خلصوا بنفس القيمة. آخر سطرين: الكود السليم 0 من 1000 طلّع قيمتين مختلفتين، ولو الـ proposer تجاهل القيمة المقبولة بيطلّع قيمتين في 1000 من 1000.</div>
+
+  <table>
+    <tr><th>Aspect</th><th>Raft</th><th>Paxos</th></tr>
+    <tr><td>Scope</td><td>Whole replicated log</td><td>One decision (Multi-Paxos adds the log)</td></tr>
+    <tr><td>Leader</td><td>Required, strong</td><td>Optional in theory, used in practice</td></tr>
+    <tr><td>Log</td><td>No gaps, leader's log wins</td><td>Slots can be decided out of order</td></tr>
+    <tr><td>Livelock</td><td>Random timeouts</td><td>Needs backoff or a leader</td></tr>
+    <tr><td>Used by</td><td><a href="https://github.com/etcd-io/etcd">etcd</a>, Kafka <a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-595%3A+A+Raft+Protocol+for+the+Metadata+Quorum">KRaft</a></td><td><a href="https://static.googleusercontent.com/media/research.google.com/en//archive/spanner-osdi2012.pdf">Spanner</a>, per tablet</td></tr>
+  </table>
+  <div class="ar-note">صف صف: <b>النطاق</b>: Raft بيغطي الـ log كله، وPaxos قرار واحد (والـ Multi-Paxos بيضيف الـ log). <b>الـ leader</b>: في Raft مطلوب وقوي، وفي Paxos اختياري نظريًا بس بيتستخدم عمليًا. <b>الـ log</b>: Raft مفيهوش فجوات والـ log بتاع الـ leader هو اللي بيكسب، وPaxos الخانات ممكن تتقرر بأي ترتيب. <b>الـ livelock</b>: Raft بيحلها بالـ timeouts العشوائية، وPaxos محتاج backoff أو leader. <b>مين بيستخدم</b>: etcd وKafka KRaft بيستخدموا Raft (مكتوب في الـ README بتاع etcd وKIP-595)، وSpanner بيستخدم Paxos لكل tablet (مكتوب في الـ paper).</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>Paxos جه الأول (Lamport) وبيحل نفس المشكلة بمرحلتين. الـ proposer بيختار ballot number فريد ويبعت <em>prepare</em>. الـ acceptor بيدّي <em>promise</em> إنه مش هيقبل ballots أصغر، وبيقول على أي قيمة قبلها قبل كده. لو أغلبية ادّوا promise، الـ proposer يبعت <em>accept</em>، وهنا القلب: لو أي promise فيه قيمة مقبولة، الـ proposer لازم يقترح صاحبة أعلى ballot مش قيمته هو. القيمة بتتحدد لما أغلبية يقبلوا نفس الـ ballot.</p>
+    <p>إعادة الاستخدام الإجبارية دي هي اللي بتخليه آمن. في التشغيل فوق، اتنين proposers بيتنافسوا: التاني بيلاقي قيمة مقبولة ويكمّل بيها، فالاتنين بيخلصوا بنفس الإجابة. والناحية التانية من التصميم هي خطر الـ livelock: الـ proposers ممكن يفضلوا يقاطعوا بعض، وعشان كده الأنظمة الحقيقية بتضيف backoff أو leader.</p>
+    <p><strong>الـ Multi-Paxos في سطر:</strong> انتخب leader ثابت، شغّل المرحلة الأولى مرة واحدة، وبعدين المرحلة التانية بس لكل خانة في الـ log. وده بيبقى شبه Raft قوي. الفرق العملي إن Raft بيحدد النظام كله، بما فيه الانتخاب وإصلاح الـ log، وPaxos الكلاسيكي بيحدد قرار واحد والباقي عليك.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عمليًا مش هتكتب Paxos في شغلك أبدًا. هتحتاجه في الـ design discussion: لما حد يقول "Spanner بيعمل Paxos لكل tablet"، تفهم إن كل write بيستنى أغلبية replicas، وده بيفسر الـ latency بين الـ regions. الغلطة الشائعة: تعمل "الأغلبية وافقت" بنفسك في الكود بتاعك فوق Redis أو Postgres، وتفتكر إن ده Paxos، وإنت مابتطبقش قاعدة الـ re-use.
+    </div>
+  </section>
+
+  <!-- PART 5 -->
+  <h2 id="p5">Part 5 — Coordination services <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — الـ coordination services</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>You don't run Raft yourself. You run a service that does. etcd uses Raft and ZooKeeper uses its own <a href="https://zookeeper.apache.org/doc/current/zookeeperInternals.html">atomic broadcast</a> protocol, Zab. Both give you a small, strongly consistent key-value store, with three primitives that matter: linearizable reads and writes (etcd documents this as its default), <strong>leases or sessions</strong> (a key that disappears when the owner stops renewing, an ephemeral znode in ZooKeeper), and <strong>watches</strong> (get notified on change instead of polling).</p>
+    <p>You reach for one when you need leader election, shared configuration, service discovery or distributed locks across many services. Often you don't. If you already have Postgres and just need one worker to run a job, a session-level advisory lock (<a href="../../07-Databases/lessons/15-locks-deadlocks-advisory.html">locks lesson</a>, <a href="https://www.postgresql.org/docs/18/explicit-locking.html#ADVISORY-LOCKS">docs</a>) does it with nothing new to deploy. I measured it: when the leader's connection dies, a standby polling every 50 ms took over in about 60 ms. In Kubernetes, a <a href="https://kubernetes.io/docs/concepts/architecture/leases/"><code>Lease</code></a> object in <code>coordination.k8s.io</code> gives you the same thing.</p>
+    <p>The advisory lock has hard edges. It's tied to the session, so a hung process with a live connection holds it forever, as the run shows. And it doesn't work behind PgBouncer in transaction pooling mode, because the session isn't yours: the <a href="https://www.pgbouncer.org/features.html">PgBouncer features table</a> lists session-level advisory locks as "Never" for that mode. A lease table with a TTL fixes the hang (exercise 3). None of these protect against a paused leader writing after it lost the lock: that needs the fencing tokens in <a href="./33-distributed-locks-fencing.html">the next lesson</a>.</p>
+    <p>Current fact: Kafka removed ZooKeeper entirely in 4.0, and the 4.0 upgrade docs say so directly (<a href="https://kafka.apache.org/40/getting-started/upgrade/">"Zookeeper has been removed"</a>). It's KRaft only now, so anything you read about running Kafka with ZooKeeper is out of date.</p>
+  </section>
+
+<pre data-file="etcdctl-not-run-here.sh"><code class="language-bash"># الأوامر دي Not run here، لإن etcd مش متسطب على جهاز التجربة
+etcdctl put /config/payments/provider stripe
+etcdctl get /config/payments/provider
+
+# الـ key بيختفي لو صاحبه بطّل يجدد الـ lease
+etcdctl lease grant 10
+etcdctl put --lease="$LEASE_ID" /services/billing/api-1 10.0.0.5:3000
+
+# استنى التغيير بدل الـ polling
+etcdctl watch /config/ --prefix
+
+# الـ leader election والـ lock جاهزين
+etcdctl elect billing-cron api-1
+etcdctl lock billing-cron</code></pre>
+  <div class="ar-note">الأوامر دي <b>ماتشغّلتش هنا</b> (Not run here) وأنا مش بحط ليها output لإن مفيش تشغيل حقيقي. هي بتوضح الـ primitives: <code>put</code> و<code>get</code> للـ config، <code>lease grant</code> و<code>--lease</code> لمفتاح بيختفي مع صاحبه (service discovery)، <code>watch</code> للتغييرات، و<code>elect</code> و<code>lock</code> للانتخاب والـ lock الجاهزين.</div>
+
+<pre data-file="src/pg-leader.ts"><code class="language-typescript">import pg from "pg";
+
+// تحذير: شغّله على Postgres للتجربة بس
+const url = process.env.PG_URL;
+if (!url) throw new Error("set PG_URL to a throwaway Postgres");
+const LOCK = 7_001;
+const POLL_MS = 50;
+
+const open = async () =&gt; {
+  const c = new pg.Client({ connectionString: url });
+  c.on("error", () =&gt; {});
+  await c.connect();
+  return c;
+};
+const tryLead = async (c: pg.Client) =&gt;
+  (await c.query&lt;{ ok: boolean }&gt;("SELECT pg_try_advisory_lock($1) AS ok", [LOCK])).rows[0].ok;
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+
+// بيحاول يبقى leader كل POLL_MS لحد ما ينجح أو الوقت يخلص
+const pollUntilLeader = async (c: pg.Client, limitMs: number) =&gt; {
+  const t0 = performance.now();
+  while (performance.now() - t0 &lt; limitMs) {
+    if (await tryLead(c)) return Math.round(performance.now() - t0);
+    await sleep(POLL_MS);
+  }
+  return -1;
+};
+
+// (1) اتنين worker بيتنافسوا: واحد بس بيكسب
+const workerA = await open();
+const workerB = await open();
+console.log("A tries:", await tryLead(workerA), "| B tries:", await tryLead(workerB));
+
+// (2) الـ process بتاع A مات: الـ TCP اتقفل فالـ lock بيتحرر، وB بياخده
+const takeover: number[] = [];
+let leader = workerA;
+let standby = workerB;
+for (let i = 0; i &lt; 5; i++) {
+  const waiting = pollUntilLeader(standby, 3000);
+  await sleep(120);
+  // ملحوظة: destroy بيقفل الـ socket فجأة زي kill -9 للـ process
+  (leader as unknown as { connection: { stream: { destroy(): void } } }).connection.stream.destroy();
+  const ms = await waiting;
+  takeover.push(ms - 120);
+  leader = standby;
+  standby = await open();
+}
+console.log("takeover after the leader's connection died (ms):", takeover);
+
+// (3) الـ leader علّق بس الـ connection لسه مفتوحة: مفيش takeover خالص
+const hung = leader;
+console.log("leader is hung but its connection is open; B got the lock within 3 s:", (await pollUntilLeader(standby, 3000)) &gt;= 0);
+
+await hung.end();
+await standby.end();</code></pre>
+<pre><code class="language-plaintext">A tries: true | B tries: false
+takeover after the leader's connection died (ms): [ 69, 55, 65, 71, 61 ]
+leader is hung but its connection is open; B got the lock within 3 s: false</code></pre>
+  <div class="ar-note">ده Postgres 18 حقيقي. A خد الـ lock وB اترفض. لما قفلنا الـ socket فجأة 5 مرات، B خد الـ lock في حوالي 55–71ms (الـ poll كل 50ms، والأرقام تقريبية على جهاز عليه ضغط). آخر سطر: الـ leader معلّق والـ connection لسه مفتوحة، فـ B ماخدش الـ lock خلال 3 ثواني. ده حدّ الـ advisory lock.</div>
+
+  <table>
+    <tr><th>Need</th><th>Simplest thing that works</th><th>Reach for etcd / ZooKeeper when</th></tr>
+    <tr><td>One worker runs a job</td><td>Postgres advisory lock, or a lease table</td><td>Many services, no shared database</td></tr>
+    <tr><td>Config</td><td>Config table, env vars, redeploy</td><td>Change must reach all services in seconds, with watches</td></tr>
+    <tr><td>Service discovery</td><td>Kubernetes Services, DNS</td><td>Outside Kubernetes, custom health-based routing</td></tr>
+    <tr><td>Distributed lock</td><td>Single Redis, if a double run is only annoying</td><td>Correctness matters: pair with fencing tokens</td></tr>
+  </table>
+  <div class="ar-note">صف صف: <b>worker واحد يشغّل job</b>: advisory lock أو lease table، وetcd لما يبقى عندك خدمات كتير ومفيش DB مشتركة. <b>الـ config</b>: جدول أو env vars وredeploy، وetcd لما التغيير لازم يوصل للكل في ثواني بالـ watches. <b>الـ service discovery</b>: Kubernetes Services أو DNS، وetcd/ZooKeeper برا Kubernetes أو مع routing مخصص بالـ health. <b>الـ distributed lock</b>: Redis واحد لو التكرار مزعج بس، ولو الصحة مهمة لازم fencing tokens.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>إنت مش بتشغّل Raft بنفسك، إنت بتشغّل خدمة بتعمله. etcd بيستخدم Raft وZooKeeper بيستخدم الـ atomic broadcast protocol بتاعه، Zab. الاتنين بيدّوك key-value store صغير و strongly consistent، ومعاه 3 primitives مهمين: linearizable reads وwrites (etcd كاتب إنها الـ default)، و<strong>leases أو sessions</strong> (مفتاح بيختفي لما صاحبه يبطّل يجدد، زي ephemeral znode في ZooKeeper)، و<strong>watches</strong> (بتتبلّغ بالتغيير بدل الـ polling).</p>
+    <p>بتحتاج واحد منهم لما تكون عايز leader election، أو config مشترك، أو service discovery، أو distributed locks بين خدمات كتير. وكتير مش بتحتاج. لو عندك Postgres أصلًا وعايز worker واحد يشغّل job، الـ session-level advisory lock (<a href="../../07-Databases/lessons/15-locks-deadlocks-advisory.html">درس الـ locks</a>) بيعملها من غير ما تعمل deploy لحاجة جديدة. قسته: لما connection الـ leader تقع، الـ standby اللي بيعمل poll كل 50ms خد الدور في حوالي 60ms. وفي Kubernetes، الـ <code>Lease</code> object في <code>coordination.k8s.io</code> بيدّيك نفس الفكرة.</p>
+    <p>الـ advisory lock ليه حدود صعبة. مربوط بالـ session، فـ process معلّق وconnection لسه عايشة بيمسك الـ lock للأبد، زي ما التجربة بينت. ومش بيشتغل ورا PgBouncer في transaction pooling mode، لإن الـ session مش بتاعتك: <a href="https://www.pgbouncer.org/features.html">جدول الـ features بتاع PgBouncer</a> كاتب session-level advisory locks "Never" للـ mode ده. جدول lease بـ TTL بيحل مشكلة التعليق (تمرين 3). ولا حاجة من دول بتحمي من leader اتجمّد وكتب بعد ما فقد الـ lock: ده محتاج الـ fencing tokens في <a href="./33-distributed-locks-fencing.html">الدرس الجاي</a>.</p>
+    <p>حقيقة حالية: Kafka شال ZooKeeper خالص في 4.0، وdocs الـ upgrade بتقول كده صراحة (<a href="https://kafka.apache.org/40/getting-started/upgrade/">"Zookeeper has been removed"</a>). دلوقتي KRaft بس، فأي حاجة بتقرا عن تشغيل Kafka مع ZooKeeper بقت قديمة.</p>
+    <p>القاعدة قبل ما تضيف etcd لـ system: عندك فريق يشغّله؟ وعندك مشكلة مش محلولة بالـ Postgres اللي عندك؟ لو الإجابة لأ، ماتضيفوش.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      API في Node بتشتغل على 6 pods وعايز job واحد بس يبعت الـ invoices كل ليلة: <code>pg_try_advisory_lock</code> على connection مخصصة (مش من الـ pool بتاع PgBouncer) بتحل المشكلة. لو الـ job خطير، استخدم lease table فيها TTL وfence. الغلطة الشائعة: تضيف etcd كامل لـ system فيه service واحدة عشان "leader election".
+    </div>
+  </section>
+
+  <!-- PART 6 -->
+  <h2 id="p6">Part 6 — What consensus costs <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — الـ consensus بيكلّف إيه</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Every committed write needs an fsync on a majority of nodes, and one network round trip to reach them. That sets the cost. In one region the disk usually dominates. Across regions the round trip does. The model below (not a real cluster, and labelled so) computes commit latency as the larger of the leader's fsync and the nearest majority's RTT plus fsync, for 100,000 writes.</p>
+    <p>Reading it: 3 and 5 nodes in one region cost almost the same, because the leader waits for the fastest 1 of 2 followers or the fastest 2 of 4, and order statistics are kind. What the model doesn't show is the leader's work: it sends every entry to 4 followers instead of 2. Across regions the second-nearest region sets the latency. And a 20 ms disk ruins everything, which is why etcd's docs tell you to watch <code>wal_fsync_duration_seconds</code> and keep the p99 below 10 ms. Batching is why throughput can far exceed <code>1/latency</code>: one fsync covers many entries.</p>
+    <p>So consensus is for <strong>small data only</strong>. etcd's documented limits: maximum request size 1.5 MiB by default, default storage quota 2 GiB, and 8 GiB suggested as the maximum for normal environments, with a warning at startup if you configure more. etcd is "designed to handle small key value pairs typical for metadata." Don't put application data there.</p>
+  </section>
+
+<pre data-file="src/cost.ts"><code class="language-typescript">// حاسبة/محاكاة: الـ write بيستنى fsync عند الـ ⁦leader +⁩ رد أسرع أغلبية من الـ followers
+import { closeSync, fsyncSync, openSync, rmSync, writeSync } from "node:fs";
+import { mulberry32 } from "./raft.ts";
+
+type Setup = { name: string; followerRtt: number[]; fsync: number };
+
+function simulate({ followerRtt, fsync }: Setup, seed = 1, writes = 100_000) {
+  const rng = mulberry32(seed);
+  // ملحوظة: 1 من كل 100 fsync بطيء 5 مرات، وده اللي بيعمل الـ p99
+  const jitterFsync = () =&gt; fsync * (rng() &lt; 0.01 ? 5 : 0.8 + rng() * 0.4);
+  const needed = Math.floor((followerRtt.length + 1) / 2);
+  const samples: number[] = [];
+  for (let i = 0; i &lt; writes; i++) {
+    const leader = jitterFsync();
+    const acks = followerRtt.map((rtt) =&gt; rtt * (0.9 + rng() * 0.2) + jitterFsync()).sort((a, b) =&gt; a - b);
+    // الـ ⁦commit =⁩ الأبطأ بين الـ fsync المحلي وآخر رد لازم لاكتمال الأغلبية
+    samples.push(Math.max(leader, acks[needed - 1]));
+  }
+  samples.sort((a, b) =&gt; a - b);
+  const p = (q: number) =&gt; samples[Math.floor(q * samples.length)];
+  const mean = samples.reduce((s, x) =&gt; s + x, 0) / samples.length;
+  return { p50: p(0.5), p99: p(0.99), oneAtATime: 1000 / mean, batched100: (100 * 1000) / mean };
+}
+
+const setups: Setup[] = [
+  { name: "3 nodes, same region", followerRtt: [1, 1], fsync: 2 },
+  { name: "5 nodes, same region", followerRtt: [1, 1, 1, 1], fsync: 2 },
+  { name: "3 nodes, 3 regions", followerRtt: [30, 80], fsync: 2 },
+  { name: "5 nodes, 3 regions", followerRtt: [1, 30, 30, 80], fsync: 2 },
+  { name: "5 nodes, 5 regions", followerRtt: [30, 60, 80, 140], fsync: 2 },
+  { name: "3 nodes, slow disk 20ms", followerRtt: [1, 1], fsync: 20 },
+];
+
+console.log("MODEL (seeded, 100k writes each): latency = max(leader fsync, nearest majority RTT + fsync). No queueing, no CPU, no leader failover.");
+console.log("setup                     p50 ms   p99 ms   one-at-a-time/s   batches of 100/s");
+for (const s of setups) {
+  const r = simulate(s);
+  console.log(s.name.padEnd(25), r.p50.toFixed(1).padEnd(8), r.p99.toFixed(1).padEnd(8), r.oneAtATime.toFixed(0).padEnd(17), r.batched100.toFixed(0));
+}
+
+// قياس حقيقي: 300 كتابة 4KB كل واحدة بـ fsync على الـ disk اللي شغال عليه
+const fd = openSync("fsync-probe.bin", "w");
+const page = Buffer.alloc(4096, 1);
+const times: number[] = [];
+for (let i = 0; i &lt; 300; i++) {
+  writeSync(fd, page);
+  const t0 = performance.now();
+  fsyncSync(fd);
+  times.push(performance.now() - t0);
+}
+closeSync(fd);
+rmSync("fsync-probe.bin");
+times.sort((a, b) =&gt; a - b);
+console.log(`REAL fsync on this disk: p50 ${times[150].toFixed(1)} ms, p99 ${times[297].toFixed(1)} ms`);</code></pre>
+<pre><code class="language-plaintext">MODEL (seeded, 100k writes each): latency = max(leader fsync, nearest majority RTT + fsync). No queueing, no CPU, no leader failover.
+setup                     p50 ms   p99 ms   one-at-a-time/s   batches of 100/s
+3 nodes, same region      2.8      10.0     340               34043
+5 nodes, same region      2.9      10.0     334               33402
+3 nodes, 3 regions        32.0     37.0     31                3117
+5 nodes, 3 regions        30.8     34.5     32                3224
+5 nodes, 5 regions        62.1     68.1     16                1611
+3 nodes, slow disk 20ms   21.2     100.0    46                4571
+REAL fsync on this disk: p50 0.8 ms, p99 1.6 ms</code></pre>
+  <div class="ar-note">ده model مش cluster حقيقي، والـ RTT والـ fsync مدخلات افتراضية. في نفس الـ region الـ 3 والـ 5 قريبين (2.8 مقابل 2.9ms). مع 3 regions الـ RTT بيبقى هو التكلفة (حوالي 31ms). مع 5 regions التكلفة 62ms لإن الأغلبية محتاجة تاني أقرب region. والـ disk البطيء 20ms بيخلّي الـ p99 يوصل 100ms والـ throughput يقع لـ 46 في الثانية. وآخر سطر قياس <b>حقيقي</b> لـ fsync على الجهاز ده (SSD على Windows عليه ضغط): p50 حوالي 0.8ms وp99 حوالي 1.6ms، فالأرقام اللي في الجدول مدخلات معقولة مش قياس لـ etcd.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>كل write بيتعمله commit محتاج fsync على أغلبية الـ nodes، وnetwork round trip يوصّلهم. ده اللي بيحدد التكلفة. في region واحدة الـ disk غالبًا هو اللي مسيطر، وبين الـ regions الـ round trip. الموديل فوق (مش cluster حقيقي، ومكتوب عليه كده) بيحسب latency الـ commit على إنه الأكبر بين fsync الـ leader وبين RTT + fsync أقرب أغلبية، على 100,000 write.</p>
+    <p>القراية: 3 و5 nodes في region واحدة تكلفتهم تقريبًا واحدة، لإن الـ leader بيستنى أسرع واحد من اتنين، أو أسرع اتنين من أربعة. اللي الموديل مش بيوضحه هو شغل الـ leader: بيبعت كل entry لـ 4 followers بدل 2. وبين الـ regions، تاني أقرب region هو اللي بيحدد الـ latency. والـ disk اللي بياخد 20ms بيبوّظ كل حاجة، وعشان كده docs بتاعة etcd بتقولك راقب <code>wal_fsync_duration_seconds</code> وخلّي الـ p99 تحت 10ms. والـ batching هو السبب إن الـ throughput ممكن يبقى أكبر بكتير من <code>1/latency</code>: fsync واحد بيغطي entries كتير.</p>
+    <p>فالـ consensus للـ <strong>data الصغيرة بس</strong>. حدود etcd الموثقة: أقصى حجم request بالـ default هو 1.5 MiB، وحد التخزين الافتراضي 2 GiB، و8 GiB مقترحة كأقصى حجم للبيئات العادية، ومع تحذير عند البداية لو زوّدت عنها. والـ docs بتقول إن etcd معمول عشان "small key value pairs typical for metadata". ماتحطش data الـ application فيه.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما تختار نشر etcd أو Postgres synchronous replication بين regions: اضرب الـ RTT لتاني أقرب region في كل write، ده الحد الأدنى للـ latency. عملية بـ 3 regions معناها كل write بياخد 30ms على الأقل، فـ transaction فيها 5 writes متتاليين هتبقى 150ms. الغلطة الشائعة: تخزين الـ user sessions أو الـ feature flags الكبيرة في etcd لإنه "strongly consistent".
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Will a 5-node consensus cluster be slower than a 3-node one?" → In one region, barely: you wait for 2 of 4 followers instead of 1 of 2, so latency is about the same (2.9 vs 2.8 ms in the model). The cost is on the leader's CPU and network. Across regions it depends on placement, because the second-nearest region decides. Use 5 when you need to survive 2 failures.
+    <div class="ar-note">"هل cluster من 5 nodes هيبقى أبطأ من 3؟" ← في region واحدة بالكاد: بتستنى 2 من 4 followers بدل 1 من 2، فالـ latency تقريبًا واحدة (2.9 مقابل 2.8ms في الموديل). التكلفة على CPU وشبكة الـ leader. بين الـ regions الموضوع بيعتمد على التوزيع، لإن تاني أقرب region هو اللي بيقرر. استخدم 5 لما تحتاج تستحمل عطلين.</div>
+  </div>
+
+  <!-- PART 7 -->
+  <h2 id="p7">Part 7 — Byzantine faults <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 7 — الـ Byzantine faults</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Everything above assumes nodes fail by stopping (crash faults). A <strong>Byzantine</strong> node keeps running and lies: it sends different values to different peers, or claims to have stored things it didn't. Tolerating <em>f</em> liars needs at least <strong>3f+1</strong> nodes instead of 2f+1. A quorum has to be big enough that, even with f nodes lying and f unreachable, the honest nodes in it still outnumber the liars.</p>
+    <p>Your datacenter doesn't need this. Your nodes run your code, under your control, and the realistic faults are crashes and corrupted disks, which checksums handle. Blockchains do need it, because membership is open and participants have money to gain from lying. This part is concept only. The run shows why the assumption matters: one lying node in the Raft simulator (it votes for everyone, claims to have stored entries, and as a leader tells each follower something different) breaks agreement in every single run.</p>
+  </section>
+
+<pre data-file="src/s-byzantine.ts"><code class="language-typescript">import { RaftSim, chaosReport } from "./raft.ts";
+
+console.log("SIMULATION (virtual time, seeded). No disk, no real network, no snapshots, no membership change.");
+
+// (1) نفس الـ 1000 جدول، مرة كلهم أمناء ومرة n4 بيكدب
+chaosReport("5 honest nodes", 1000);
+chaosReport("1 liar out of 5 (n4)", 1000, "none", 4);
+
+// (2) مثال واحد: الكداب بقى leader وقال لكل follower قيمة مختلفة لنفس الـ index
+const sim = new RaftSim({ n: 5, seed: 11, liar: 4, trace: false });
+let t = 0;
+while (sim.leader() !== 4 &amp;&amp; t &lt; 20000) {
+  sim.run((t += 50));
+  const l = sim.leader();
+  // ملحوظة: لو leader أمين كسب، بنقتله عشان الكداب ياخد فرصة
+  if (l &gt;= 0 &amp;&amp; l !== 4) {
+    sim.crash(l);
+    sim.run((t += 400));
+    sim.restart(l);
+  }
+}
+sim.propose("refund order-9 to user-1");
+sim.run(t + 300);
+console.log("\nliar leader at t =", t);
+console.log(sim.nodes.map((n) =&gt; `n${n.id} applied: ${JSON.stringify(n.applied)}`).join("\n"));
+console.log("violations:", sim.violations);
+
+// (3) الحساب: كام node محتاج عشان تستحمل f عطل
+console.log("\nf   crash faults (2f+1)   byzantine faults (3f+1)");
+for (const f of [1, 2, 3]) console.log(String(f).padEnd(3), String(2 * f + 1).padEnd(21), 3 * f + 1);</code></pre>
+<pre><code class="language-plaintext">SIMULATION (virtual time, seeded). No disk, no real network, no snapshots, no membership change.
+5 honest nodes             runs with a violation:    0/1000 | state machine:     0 | two leaders:    0 | avg committed: 85
+1 liar out of 5 (n4)       runs with a violation: 1000/1000 | state machine: 494191 | two leaders:   39 | avg committed: 77
+
+liar leader at t = 650
+n0 applied: ["refund order-9 to user-1~lie-to-n0"]
+n1 applied: ["refund order-9 to user-1~lie-to-n1"]
+n2 applied: ["refund order-9 to user-1~lie-to-n2"]
+n3 applied: ["refund order-9 to user-1~lie-to-n3"]
+n4 applied: ["refund order-9 to user-1"]
+violations: { twoLeadersInATerm: 0, stateMachine: 4 }
+
+f   crash faults (2f+1)   byzantine faults (3f+1)
+1   3                     4
+2   5                     7
+3   7                     10</code></pre>
+  <div class="ar-note">نفس الـ 1000 جدول: لما كلهم أمناء صفر مخالفات، ومع كداب واحد من 5 الـ 1000 جدول كلهم فيهم مخالفات. بعدها مثال واحد: الكداب بقى leader وقال لكل follower قيمة مختلفة لنفس الـ index، فالتطبيق اختلف عند الكل، و4 مخالفات اتسجلت. وآخر جدول: عشان تستحمل f عطل عادي محتاج 2f+1، وعشان تستحمل f كدابين محتاج 3f+1.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>كل اللي فات بيفترض إن الـ nodes بتقع بإنها تقف (crash faults). الـ node الـ <strong>Byzantine</strong> بيفضل شغال وبيكدب: يبعت قيم مختلفة لناس مختلفة، أو يقول إنه خزّن حاجات ماخزّنهاش. عشان تستحمل <em>f</em> كدابين محتاج على الأقل <strong>3f+1</strong> node بدل 2f+1. الـ quorum لازم يبقى كبير كفاية إن حتى لو f بيكدبوا وf مش واصلين، الأمناء جواه يفضلوا أكتر من الكدابين.</p>
+    <p>الـ datacenter بتاعك مش محتاج ده. الـ nodes بتشغّل الكود بتاعك وتحت سيطرتك، والأعطال الواقعية هي crashes وdisks بايظة، ودي بتتحل بالـ checksums. الـ blockchains بقى محتاجاه، لإن أي حد ممكن يدخل، والمشاركين ليهم مصلحة فلوس في الكدب. الجزء ده concept بس. والتشغيل بيوضح ليه الافتراض ده مهم: node واحد كداب في الـ Raft simulator (بيصوّت لكل الناس، بيقول إنه خزّن، ولما يبقى leader بيقول لكل follower حاجة مختلفة) بيكسر الاتفاق في كل run.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما حد يقترح "نعمل multi-tenant SaaS ونحط الـ data على nodes العملاء ونشغّل Raft"، قوله إن Raft بيفترض إن كل الـ nodes أمناء، والـ node اللي العميل ماسكه ممكن يكدب. ده محتاج signatures وverification أو Byzantine protocol. أما في شغلك العادي، الأعطال الشبه Byzantine زي disk corruption أو bug بيرجّع ack غلط، بتتعالج بـ checksums وvalidation، مش بـ 3f+1.
+    </div>
+  </section>
+
+  <!-- MISTAKES -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+  <div class="compare">
+    <div class="bad"><b>❌ An even-sized cluster "for HA"</b>
+<pre><code class="language-yaml"># الـ 4 nodes بيستحملوا عطل واحد بس
+etcd:
+  replicas: 4</code></pre></div>
+    <div class="good"><b>✅ Odd size, spread across zones</b>
+<pre><code class="language-yaml"># الـ 5 nodes بتستحمل عطلين وأي zone كاملة
+etcd:
+  replicas: 5
+  zones: [a, a, b, b, c]</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ 4 محتاجين 3 للأغلبية، فبيستحملوا عطل واحد زي الـ 3، وبكده دفعت في جهاز من غير فايدة. ✅ الـ 5 بيستحملوا عطلين، وتوزيع 2-2-1 على 3 zones معناه إن أي zone كاملة تقع والأغلبية لسه موجودة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Trusting a lock after a pause</b>
+<pre><code class="language-typescript">// لو الـ process اتجمّد بعد السطر الأول، ممكن يكتب وهو مش leader
+if (await holdsLock()) {
+  await chargeCustomer(orderId);
+}</code></pre></div>
+    <div class="good"><b>✅ A fencing token the database checks</b>
+<pre><code class="language-sql">-- الـ DB بترفض أي writer الـ fence بتاعه قديم
+UPDATE orders
+   SET status = 'charged', fence = $2
+ WHERE id = $1 AND fence &lt; $2;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الفحص وبعده الكتابة بينهم فجوة: GC أو pause ممكن يخلّي الـ process يكتب بعد ما leadership راحت لغيره. ✅ الـ fencing token بيزيد مع كل leader جديد، والـ DB بترفض الأقدم، فالكاتب القديم مايقدرش يعمل حاجة. التفاصيل في <a href="./33-distributed-locks-fencing.html">درس الـ fencing</a>.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Application data in etcd</b>
+<pre><code class="language-bash"># سجل كامل كبير في الـ consensus log
+etcdctl put /orders/1042 "$(cat full-order.json)"</code></pre></div>
+    <div class="good"><b>✅ Metadata in etcd, data in the database</b>
+<pre><code class="language-bash"># مؤشر صغير بس في etcd، والبيانات في Postgres
+etcdctl put /config/orders/primary-db db-eu-1.internal</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ كل write هنا بيعدّي بـ consensus وfsync على الأغلبية، والـ request حدّه 1.5 MiB، والتخزين الافتراضي 2 GiB، فالـ cluster هيتملي ويبطّأ. ✅ etcd للـ metadata الصغيرة زي "مين الـ primary"، والـ data نفسها في الـ database. (الأوامر دي للتوضيح و Not run here.)</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Advisory lock through a pooler</b>
+<pre><code class="language-typescript">// في transaction mode الـ lock بيقع على connection غير بتاعتك
+const pool = new pg.Pool({ connectionString: PGBOUNCER_URL });
+await pool.query("SELECT pg_try_advisory_lock(7001)");</code></pre></div>
+    <div class="good"><b>✅ A dedicated direct connection</b>
+<pre><code class="language-typescript">// الـ connection دي مباشرة وعايشة طول ما الـ leader عايش
+const leader = new pg.Client({ connectionString: DIRECT_DB_URL });
+await leader.connect();
+await leader.query("SELECT pg_try_advisory_lock(7001)");</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ ورا PgBouncer في transaction mode الـ server connection بتتغير بين الـ queries، فـ الـ lock بيتاخد على session حد تاني أو بيتساب معلق. وكمان <code>pool.query</code> مش بيضمن نفس الـ connection حتى من غير PgBouncer. ✅ connection مخصصة مباشرة بتفضل مع الـ leader طول عمره، ولما يموت الـ lock يتحرر.</p>
+  </section>
+
+  <!-- EXERCISES -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Zone placement <span class="lvl lvl-1">🟢 easy</span></b>
+    Write a function that takes nodes per zone and reports whether losing any one zone keeps a majority. Check 5 nodes as 2-2-1 and 6 nodes as 3-3.
+    <div class="ar-note">اكتب function بتاخد عدد الـ nodes في كل zone، وتقول لو أي zone وقعت هل الأغلبية لسه موجودة. جرّب 5 nodes بتوزيع 2-2-1 و6 nodes بتوزيع 3-3.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/az-quorum.ts"><code class="language-typescript">// لو zone كاملة وقعت، الـ nodes الباقية لسه بتكوّن أغلبية؟
+const survives = (zones: Record&lt;string, number&gt;) =&gt; {
+  const total = Object.values(zones).reduce((a, b) =&gt; a + b, 0);
+  const quorum = Math.floor(total / 2) + 1;
+  for (const [zone, count] of Object.entries(zones)) {
+    const left = total - count;
+    console.log(`  lose ${zone}: ${left} left, quorum ${quorum} -&gt; ${left &gt;= quorum ? "still works" : "STOPS"}`);
+  }
+};
+
+console.log("5 nodes as 2-2-1 across 3 zones");
+survives({ a: 2, b: 2, c: 1 });
+console.log("6 nodes as 3-3 across 2 zones");
+survives({ a: 3, b: 3 });</code></pre>
+<pre><code class="language-plaintext">5 nodes as 2-2-1 across 3 zones
+  lose a: 3 left, quorum 3 -&gt; still works
+  lose b: 3 left, quorum 3 -&gt; still works
+  lose c: 4 left, quorum 3 -&gt; still works
+6 nodes as 3-3 across 2 zones
+  lose a: 3 left, quorum 4 -&gt; STOPS
+  lose b: 3 left, quorum 4 -&gt; STOPS</code></pre>
+      <div class="ar-note">الـ 5 بتوزيع 2-2-1 بيعيشوا لأي zone تقع. الـ 6 على zone-ين بيقفوا لو أي zone وقعت، مع إن عددهم أكبر. التوزيع أهم من العدد.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. Plant a double vote <span class="lvl lvl-2">🟡 medium</span></b>
+    In <code>onRequestVote</code>, change <code>free</code> so a node can vote twice in a term (<code>const free = true;</code>). Run <code>chaosReport</code> over 1,000 seeds. Which safety property breaks first?
+    <div class="ar-note">في <code>onRequestVote</code> غيّر <code>free</code> عشان الـ node يقدر يصوّت مرتين في نفس الـ term (<code>const free = true;</code>). شغّل <code>chaosReport</code> على 1,000 seed. أنهي safety property بتتكسر الأول؟</div>
+    <details><summary>Solution · الحل</summary>
+<pre><code class="language-plaintext">./raft-doublevote.ts       runs with a violation:  277/1000 | state machine:    24 | two leaders:  340 | avg committed: 85</code></pre>
+      <div class="ar-note">الناتج الحقيقي: 277 run فيهم مخالفات، و340 مرة اتنين leaders في نفس الـ term، و24 مخالفة state machine. يعني التصويت المزدوج بيكسر Election Safety الأول، وبعدها الكتابة المتعارضة بتكسر الاتفاق نفسه.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. A lease that survives a hang <span class="lvl lvl-3">🔴 hard</span></b>
+    The advisory lock never releases for a hung leader. Build a lease in a Postgres table: acquire with <code>INSERT ... ON CONFLICT DO UPDATE</code> only if the lease expired or you own it, with a fence that increases for each new owner. Measure the takeover after a leader stops renewing.
+    <div class="ar-note">الـ advisory lock مش بيتحرر لو الـ leader علّق. ابني lease في جدول Postgres: خدها بـ <code>INSERT ... ON CONFLICT DO UPDATE</code> بس لو الـ lease خلصت أو إنت صاحبها، ومعاها fence بيزيد مع كل مالك جديد. قيس الـ takeover بعد ما الـ leader يبطّل يجدد.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/pg-lease.ts"><code class="language-typescript">import pg from "pg";
+
+// تحذير: شغّله على Postgres للتجربة بس
+const url = process.env.PG_URL;
+if (!url) throw new Error("set PG_URL to a throwaway Postgres");
+const db = new pg.Client({ connectionString: url });
+await db.connect();
+await db.query(`CREATE TABLE leases (name text PRIMARY KEY, holder text NOT NULL, until timestamptz NOT NULL, fence bigint NOT NULL)`);
+
+// الـ update بينجح بس لو الـ lease خلصت أو أنا صاحبها، والـ fence بيزيد مع كل مالك جديد
+const acquire = async (holder: string, ttlMs: number) =&gt; {
+  const r = await db.query&lt;{ fence: string }&gt;(
+    `INSERT INTO leases AS l (name, holder, until, fence)
+       VALUES ('billing-cron', $1, now() + $2 * interval '1 ms', 1)
+     ON CONFLICT (name) DO UPDATE
+       SET holder = $1, until = now() + $2 * interval '1 ms',
+           fence = l.fence + CASE WHEN l.holder = $1 THEN 0 ELSE 1 END
+     WHERE l.until &lt; now() OR l.holder = $1
+     RETURNING fence`,
+    [holder, ttlMs],
+  );
+  return r.rows[0]?.fence ?? null;
+};
+
+const TTL = 1_000;
+console.log("api-1 acquires:", await acquire("api-1", TTL));
+console.log("api-2 tries:", await acquire("api-2", TTL));
+
+// الـ leader علّق: مش بيجدد، بس الـ connection لسه مفتوحة
+const t0 = performance.now();
+let fence: string | null = null;
+while (fence === null) {
+  await new Promise((r) =&gt; setTimeout(r, 50));
+  fence = await acquire("api-2", TTL);
+}
+console.log("api-2 took over after a hung leader (ms):", Math.round(performance.now() - t0), "fence:", fence);
+console.log("api-1 wakes up and renews:", await acquire("api-1", TTL));
+await db.end();</code></pre>
+<pre><code class="language-plaintext">api-1 acquires: 1
+api-2 tries: null
+api-2 took over after a hung leader (ms): 1013 fence: 2
+api-1 wakes up and renews: null</code></pre>
+      <div class="ar-note">الناتج الحقيقي: الـ TTL ثانية واحدة، فـ <code>api-2</code> خد الـ lease بعد حوالي 1013ms والـ fence بقى 2. ولما <code>api-1</code> صحي حاول يجدد ورجع <code>null</code>، يعني لازم يقف. الـ TTL لازم أكبر من أسوأ pause متوقع، وأي write لازم يمرر الـ fence.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project: who is the leader? <span class="lvl lvl-3">🔴 project</span></b>
+    Find one job in your side project or at work that must run on one instance only. Decide between: no lock (make it idempotent), an advisory lock, a lease table, or etcd. Write down what happens if the leader hangs, if it pauses and wakes up, and if the database is down.
+    <div class="ar-note">دوّر على job واحد في مشروعك أو شغلك لازم يشتغل على instance واحد بس. اختار بين: من غير lock (تخليه idempotent)، أو advisory lock، أو lease table، أو etcd. واكتب إيه اللي هيحصل لو الـ leader علّق، ولو اتجمّد وصحي، ولو الـ database وقعت.</div>
+    <details><summary>Hint · تلميح</summary>
+      Start with the cheapest option that holds up. If running the job twice is harmless, you may not need a leader at all.
+      <div class="ar-note">ابدأ بأرخص اختيار يستحمل. لو تشغيل الـ job مرتين مش مضر، ممكن ماتحتاجش leader أصلًا.</div>
+    </details>
+  </div>
+
+  <!-- SUMMARY -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Consensus: agreement, validity, termination. FLP: no deterministic guarantee of termination under asynchrony with one crash, so protocols are always safe and live only with timing.</li>
+    <li>Any two majorities intersect. 2f+1 nodes tolerate f failures. Even sizes add nothing.</li>
+    <li>One Redis key is a single opinion, not consensus: SPOF, and two leaders after an empty restart.</li>
+    <li>Raft: terms, one vote per term, up-to-date log check, randomized timeouts.</li>
+    <li>Commit = stored by a majority and from the current term. Uncommitted entries may be lost, committed ones never.</li>
+    <li>The safety rules aren't decoration: planted bugs gave 339 and 692 bad runs out of 1,000. Random tests can still miss a bug (0 of 5,000 for Figure 8).</li>
+    <li>Paxos: prepare/promise then accept, and you must re-propose any accepted value. Multi-Paxos: stable leader, phase 2 per slot.</li>
+    <li>Raft: etcd, Kafka KRaft. Paxos: Spanner. ZooKeeper: Zab. Kafka 4.0 has no ZooKeeper.</li>
+    <li>etcd/ZooKeeper give linearizable small KV, leases, watches. Often a Postgres advisory lock or a Kubernetes Lease is enough.</li>
+    <li>Cost: a majority fsync per write. etcd limits: 1.5 MiB request, 2 GiB default, 8 GiB suggested max, p99 fsync under 10 ms.</li>
+    <li>Byzantine: nodes lie, needs 3f+1. Not for your datacenter. Blockchains need it.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ consensus: agreement وvalidity وtermination. نتيجة FLP: مفيش ضمان deterministic للـ termination مع asynchrony وcrash واحد، فالـ protocols دايمًا safe وliveness بس مع توقيت كويس.</li>
+      <li>أي أغلبيتين بيتقاطعوا. 2f+1 nodes بيستحملوا f أعطال. الأعداد الزوجية مابتزوّدش حاجة.</li>
+      <li>مفتاح واحد في Redis رأي واحد مش consensus: SPOF، واتنين leaders بعد restart فاضي.</li>
+      <li>Raft: terms، صوت واحد في الـ term، فحص إن الـ log مش أقدم، و timeouts عشوائية.</li>
+      <li>الـ commit = متخزن عند أغلبية ومن الـ term الحالي. اللي مش committed ممكن يضيع، والـ committed أبدًا.</li>
+      <li>قواعد الـ safety مش زينة: الـ bugs المزروعة طلّعت 339 و692 run بايظين من 1,000. والاختبارات العشوائية برضه ممكن تفوّت bug (0 من 5,000 لـ Figure 8).</li>
+      <li>Paxos: prepare/promise وبعدين accept، ولازم تعيد اقتراح أي قيمة مقبولة. Multi-Paxos: leader ثابت، والمرحلة التانية بس لكل خانة.</li>
+      <li>Raft: etcd وKafka KRaft. Paxos: Spanner. ZooKeeper: Zab. وKafka 4.0 مفيهوش ZooKeeper.</li>
+      <li>etcd وZooKeeper بيدّوك linearizable small KV وleases وwatches. وكتير الـ Postgres advisory lock أو Kubernetes Lease كفاية.</li>
+      <li>التكلفة: fsync أغلبية لكل write. حدود etcd: 1.5 MiB للـ request، و2 GiB افتراضي، و8 GiB أقصى مقترح، وp99 fsync تحت 10ms.</li>
+      <li>الـ Byzantine: nodes بتكدب، محتاج 3f+1. مش للـ datacenter بتاعك. الـ blockchains محتاجاه.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 10 · 3.1 — Consensus: المشكلة (الاتفاق على قيمة رغم الأعطال)، Raft (leader election، log replication، terms — تقرأ الـ paper أو الـ visualization)، Paxos كمفهوم، quorums (majority)</label>
+    <label><input type="checkbox" data-key="r2"> 10 · 3.1 — ZooKeeper/etcd: إمتى تحتاج coordination service (leader election، config، service discovery، distributed locks)</label>
+    <label><input type="checkbox" data-key="r3"> 10 · 3.1 — Byzantine faults كمفهوم فقط (blockchain territory)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://raft.github.io/raft.pdf">Ongaro &amp; Ousterhout — In Search of an Understandable Consensus Algorithm (Raft paper)</a></li>
+    <li><a href="https://raft.github.io/">The Raft site, with the interactive visualization</a></li>
+    <li><a href="https://lamport.azurewebsites.net/pubs/paxos-simple.pdf">Lamport — Paxos Made Simple</a></li>
+    <li><a href="https://groups.csail.mit.edu/tds/papers/Lynch/jacm85.pdf">Fischer, Lynch, Paterson — Impossibility of Distributed Consensus with One Faulty Process</a></li>
+    <li><a href="https://etcd.io/docs/v3.6/dev-guide/limit/">etcd docs — System limits</a></li>
+    <li><a href="https://lamport.azurewebsites.net/pubs/byz.pdf">Lamport, Shostak, Pease — The Byzantine Generals Problem</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./31-unique-id-generation.html"><small>← Previous</small>31 · Unique IDs</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./33-distributed-locks-fencing.html"><small>Next →</small>33 · Distributed Locks</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

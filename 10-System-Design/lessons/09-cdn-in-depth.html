@@ -1,0 +1,1611 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>CDN in Depth: Keys, Invalidation, Shields &amp; API Caching — 10 System Design</title>
+<meta name="section" content="10-System-Design">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">10 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 09 / 63</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>CDN in Depth: Keys, Invalidation, Shields &amp; API Caching</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 09 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Node 22 · TypeScript 7</span>
+      <span class="chip">Prereq: 01 · HTTP caching, Load balancers</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>10 · 2.1 — <b>CDN بعمق</b>: static vs dynamic content caching، cache keys، TTL، invalidation (purge)، origin shield، edge compute (Cloudflare Workers)، push vs pull CDN</li>
+        <li>10 · 2.3 — CDN caching للـ API responses (<code>Cache-Control</code>، <code>Vary</code>، <code>stale-while-revalidate</code>)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Static vs dynamic</a></li>
+      <li><a href="#p2">Part 2 — Cache keys</a></li>
+      <li><a href="#p3">Part 3 — TTL &amp; invalidation</a></li>
+      <li><a href="#p4">Part 4 — Caching API responses</a></li>
+      <li><a href="#p5">Part 5 — Origin shield</a></li>
+      <li><a href="#p6">Part 6 — Edge compute</a></li>
+      <li><a href="#p7">Part 7 — Push vs pull &amp; CDN failure</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A CDN is usually the cheapest capacity you can buy and the easiest to get wrong. One marketing link can drop your hit ratio from 80% to 23%. One <code>Cache-Control: public</code> on the wrong route shows one customer's email to the next customer. One "purge everything" during a sale sends 100 times the normal load to your origin. And at a 95% hit ratio your origin is quietly sized for 5% of real traffic, so a CDN outage means 20× load. In system design interviews "put a CDN in front" is the easy sentence; this lesson is about the questions that follow it. We measure all of it on a Node stand-in you can read and run, and we mark clearly what a real CDN does differently.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ CDN غالبًا أرخص capacity ممكن تشتريها وأسهل حاجة تغلط فيها. لينك إعلان واحد ممكن ينزّل الـ hit ratio من 80% لـ 23%. و<code>Cache-Control: public</code> على route غلط بيوري إيميل عميل للعميل اللي بعده. و"purge everything" وقت عرض بيبعت للـ origin 100 ضعف الحمل العادي. وعند hit ratio 95% الـ origin بتاعك متظبط على 5% بس من الترافيك الحقيقي، فلو الـ CDN وقع يبقى عندك 20 ضعف الحمل. في الـ system design interviews جملة "حط CDN قدام" هي السهلة؛ الدرس ده عن الأسئلة اللي بتيجي بعدها. هنقيس كل ده على stand-in بـ Node تقدر تقراه وتشغّله، وهنقول بوضوح إيه اللي الـ CDN الحقيقي بيعمله بشكل مختلف.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Static vs dynamic <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — المحتوى الـ static والـ dynamic</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A CDN is a fleet of reverse-proxy caches (PoPs) close to users. In the usual pull model a PoP that misses fetches from your origin, stores the response according to the response's own headers, and serves later requests itself. The basics are in <a href="../../01-CS-Fundamentals/lessons/16-load-balancers-proxies-cdn.html#p5">section 01, Load balancers &amp; CDNs, part 5</a>, and the HTTP caching rules in <a href="../../01-CS-Fundamentals/lessons/15-http-tls-realtime.html#p5">section 01, HTTP, part 5</a>. Here we measure them.</p>
+    <p>The stand-in below applies the shared-cache rules: <code>s-maxage</code> beats <code>max-age</code>, <code>no-store</code> and <code>private</code> are not stored, and a response without explicit freshness is not stored. That last rule is a simplification: real CDNs have their own defaults, such as caching by file extension, so read your vendor's default behaviour.</p>
+    <p>The run sends 10,000 Zipf-distributed requests for 2,000 products at 50 requests per second, with an injected origin latency of 120 to 180 ms and a 20 ms round trip to the edge. Going from <code>no-store</code> to a 60 s TTL cuts origin hits by 76%. A 300 s TTL gets to 85.2%, and an hour gives exactly the same number, because the run lasts only 200 s. The remaining 1,476 calls are the first request for each distinct product. No TTL fixes a cold miss, and that is why the p99 stays near 196 ms while the p50 falls to 20 ms: the misses decide your tail.</p>
+    <p>Dynamic content can't be cached, but the CDN still helps. TCP and TLS terminate near the user, and the edge reuses warm keep-alive connections to the origin. On a new connection that is 540 ms versus 240 ms in the calculator. On a connection that is already open, the gain is zero (200 ms both ways), so the win is concentrated in the first request of each visit.</p>
+  </section>
+
+<pre class="diagram">
+  user ──20ms──▶ PoP ──HIT──▶ answer in ~20ms
+                  │
+                  └──MISS──150ms──▶ origin (stores per Cache-Control)
+
+  dynamic:  TLS + TCP end at the PoP ──warm keep-alive──▶ origin
+</pre>
+  <div class="ar-note">اليوزر بيوصل لأقرب PoP في 20ms. لو الـ object موجود (HIT) بيرجع فورًا. لو مش موجود (MISS) الـ PoP بيروح للـ origin ويخزّن الرد حسب الـ <code>Cache-Control</code>. في السطر التاني: حتى الـ dynamic اللي مش بيتخزن، الـ TCP والـ TLS بيخلصوا عند الـ PoP، والـ PoP بيكلم الـ origin على connection جاهز keep-alive.</div>
+
+  <details>
+    <summary>Full edge stand-in (src/edge.ts) · الملف كامل</summary>
+    <div class="ar-note">ده الـ stand-in كامل: ساعة حقيقية وساعة افتراضية، PRNG بـ seed، توزيع Zipf، وقواعد الـ shared cache. كل أجزاء الدرس بتستخدمه.</div>
+<pre data-file="src/edge.ts"><code class="language-typescript">// ده STAND-IN لـ CDN edge مكتوب بـ Node عشان نقيس، مش CDN حقيقي
+export type Hdrs = Record&lt;string, string&gt;;
+export interface Req { url: string; method?: string; headers?: Hdrs }
+export interface Res { status: number; headers: Hdrs; body: string }
+export type Origin = (req: Req) =&gt; Promise&lt;Res&gt;;
+export interface Clock { now(): number; sleep(ms: number): Promise&lt;void&gt; }
+
+export const realClock: Clock = {
+  now: () =&gt; performance.now(),
+  sleep: (ms) =&gt; new Promise((r) =&gt; setTimeout(r, ms)),
+};
+
+// الوقت هنا افتراضي: نفس الـ seed يطلّع نفس الأرقام بالظبط في كل run
+export class VirtualClock implements Clock {
+  private t = 0;
+  private seq = 0;
+  private q: { at: number; seq: number; wake: () =&gt; void }[] = [];
+  now() { return this.t; }
+  sleep(ms: number) {
+    return new Promise&lt;void&gt;((wake) =&gt; this.q.push({ at: this.t + ms, seq: this.seq++, wake }));
+  }
+  async run() {
+    for (;;) {
+      // استنى كل الـ microtasks تخلص قبل ما تحرّك الساعة
+      await new Promise&lt;void&gt;((r) =&gt; setImmediate(r));
+      if (this.q.length === 0) return;
+      let m = 0;
+      for (let i = 1; i &lt; this.q.length; i++) {
+        const a = this.q[i]!, b = this.q[m]!;
+        if (a.at &lt; b.at || (a.at === b.at &amp;&amp; a.seq &lt; b.seq)) m = i;
+      }
+      const [e] = this.q.splice(m, 1);
+      this.t = e!.at;
+      e!.wake();
+    }
+  }
+}
+
+export function mulberry32(seed: number) {
+  return () =&gt; {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed &gt;&gt;&gt; 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+// توزيع Zipf: قلة من المنتجات بتاخد معظم الطلبات، زي الترافيك الحقيقي
+export function zipfSampler(n: number, s: number, rand: () =&gt; number) {
+  const cdf: number[] = [];
+  let sum = 0;
+  for (let i = 1; i &lt;= n; i++) { sum += 1 / i ** s; cdf.push(sum); }
+  return () =&gt; {
+    const x = rand() * sum;
+    let lo = 0, hi = n - 1;
+    while (lo &lt; hi) { const mid = (lo + hi) &gt;&gt; 1; if (cdf[mid]! &lt; x) lo = mid + 1; else hi = mid; }
+    return lo;
+  };
+}
+
+export function pct(values: number[], p: number) {
+  const s = [...values].sort((a, b) =&gt; a - b);
+  return s[Math.min(s.length - 1, Math.ceil((p / 100) * s.length) - 1)] ?? 0;
+}
+
+// بيبعت طلب كل gapMs في الوقت الافتراضي ويستنى الكل يخلص
+export async function drive(clock: VirtualClock, n: number, gapMs: number, fn: (i: number) =&gt; Promise&lt;void&gt;) {
+  const pending: Promise&lt;void&gt;[] = [];
+  const arrivals = (async () =&gt; {
+    for (let i = 0; i &lt; n; i++) { pending.push(fn(i)); await clock.sleep(gapMs); }
+  })();
+  await clock.run();
+  await arrivals;
+  await Promise.all(pending);
+}
+
+function directives(cc = "") {
+  const m = new Map&lt;string, number | true&gt;();
+  for (const part of cc.split(",")) {
+    const [k, v] = part.trim().toLowerCase().split("=");
+    if (k) m.set(k, v === undefined ? true : Number(v));
+  }
+  return m;
+}
+
+// قواعد الـ shared cache من RFC 9111 و RFC 5861
+function policyOf(req: Req, res: Res) {
+  if (res.status !== 200 || res.headers.vary === "*") return null;
+  const cc = directives(res.headers["cache-control"]);
+  if (cc.has("no-store") || cc.has("private")) return null;
+  // قاعدة الـ Authorization: متتخزنش إلا لو الـ response سمح صراحة
+  const explicit = cc.has("public") || cc.has("s-maxage") || cc.has("must-revalidate");
+  if (req.headers?.authorization &amp;&amp; !explicit) return null;
+  // الـ s-maxage بيكسب الـ max-age في الـ shared cache
+  const ttl = cc.get("s-maxage") ?? cc.get("max-age");
+  if (typeof ttl !== "number") return null;
+  const num = (k: string) =&gt; { const v = cc.get(k); return typeof v === "number" ? v * 1000 : 0; };
+  return {
+    freshMs: cc.has("no-cache") ? 0 : ttl * 1000,
+    swrMs: num("stale-while-revalidate"),
+    sieMs: num("stale-if-error"),
+  };
+}
+
+export type CacheStatus = "HIT" | "MISS" | "EXPIRED" | "STALE" | "COLLAPSED" | "PASS";
+export interface Served { res: Res; cache: CacheStatus }
+interface Entry { res: Res; storedAt: number; freshMs: number; swrMs: number; sieMs: number; tags: string[] }
+
+export interface EdgeOptions {
+  keyOf?: (req: Req) =&gt; string;
+  collapse?: boolean;
+  normalizeVary?: (name: string, value: string) =&gt; string;
+}
+
+export class Edge {
+  readonly stats = { requests: 0, originCalls: 0, revalidated: 0, staleOnError: 0, HIT: 0, MISS: 0, EXPIRED: 0, STALE: 0, COLLAPSED: 0, PASS: 0 };
+  readonly store = new Map&lt;string, Entry&gt;();
+  private varyOf = new Map&lt;string, string[]&gt;();
+  private inflight = new Map&lt;string, Promise&lt;Res&gt;&gt;();
+  private passUntil = new Map&lt;string, number&gt;();
+  private opts: { keyOf: (req: Req) =&gt; string; collapse: boolean; normalizeVary: (n: string, v: string) =&gt; string };
+  private origin: Origin;
+  private clock: Clock;
+
+  constructor(origin: Origin, clock: Clock, opts: EdgeOptions = {}) {
+    this.origin = origin;
+    this.clock = clock;
+    this.opts = {
+      keyOf: opts.keyOf ?? ((r) =&gt; r.url),
+      collapse: opts.collapse ?? true,
+      normalizeVary: opts.normalizeVary ?? ((_n, v) =&gt; v),
+    };
+  }
+
+  handle(req: Req): Promise&lt;Served&gt; {
+    this.stats.requests++;
+    return this.lookup(req, false);
+  }
+
+  private async lookup(req: Req, waited: boolean): Promise&lt;Served&gt; {
+    const now = this.clock.now();
+    const base = this.opts.keyOf(req);
+    if ((req.method ?? "GET") !== "GET" || (this.passUntil.get(base) ?? 0) &gt; now) {
+      this.stats.originCalls++;
+      const passed = await this.origin(req).catch((): Res =&gt; ({ status: 502, headers: {}, body: "bad gateway" }));
+      return this.mark("PASS", passed);
+    }
+    const key = this.variantKey(base, req);
+    const entry = this.store.get(key);
+    if (entry) {
+      const age = now - entry.storedAt;
+      if (age &lt; entry.freshMs) return this.mark(waited ? "COLLAPSED" : "HIT", entry.res);
+      if (age &lt; entry.freshMs + entry.swrMs) {
+        // رجّع القديم فورًا وجدّد في الخلفية، واليوزر مبيستناش
+        void this.fill(key, base, req, entry);
+        return this.mark("STALE", entry.res);
+      }
+    }
+    const running = this.opts.collapse ? this.inflight.get(key) : undefined;
+    if (running) {
+      // الـ followers بيستنوا الـ leader، وبعدها يدوّروا تاني عشان يتأكدوا إن النتيجة بتاعتهم
+      await running;
+      return this.lookup(req, true);
+    }
+    const res = await this.fill(key, base, req, entry);
+    return this.mark(entry ? "EXPIRED" : "MISS", res);
+  }
+
+  private fill(key: string, base: string, req: Req, prev?: Entry): Promise&lt;Res&gt; {
+    const running = this.inflight.get(key);
+    if (this.opts.collapse &amp;&amp; running) return running;
+    const p = this.fetchOrigin(base, req, prev).finally(() =&gt; this.inflight.delete(key));
+    if (this.opts.collapse) this.inflight.set(key, p);
+    return p;
+  }
+
+  private async fetchOrigin(base: string, req: Req, prev?: Entry): Promise&lt;Res&gt; {
+    this.stats.originCalls++;
+    const headers: Hdrs = { ...req.headers };
+    if (prev?.res.headers.etag) headers["if-none-match"] = prev.res.headers.etag;
+    let res: Res;
+    try { res = await this.origin({ ...req, headers }); }
+    catch { res = { status: 502, headers: {}, body: "bad gateway" }; }
+    const now = this.clock.now();
+    if (res.status === 304 &amp;&amp; prev) { prev.storedAt = now; this.stats.revalidated++; return prev.res; }
+    if (res.status &gt;= 500 &amp;&amp; prev &amp;&amp; now - prev.storedAt &lt; prev.freshMs + prev.sieMs) {
+      this.stats.staleOnError++;
+      return prev.res;
+    }
+    const p = policyOf(req, res);
+    if (!p) {
+      // ده hit-for-pass: افتكر إن الـ URL ده مش بيتخزن عشان الطلبات متقفش في طابور
+      if (res.status === 200 &amp;&amp; !req.headers?.authorization) this.passUntil.set(base, now + 30_000);
+      return res;
+    }
+    const vary = (res.headers.vary ?? "").toLowerCase().split(",").map((s) =&gt; s.trim()).filter(Boolean);
+    this.varyOf.set(base, vary);
+    const tags = (res.headers["surrogate-key"] ?? "").split(" ").filter(Boolean);
+    this.store.set(this.variantKey(base, req), { res, storedAt: now, tags, ...p });
+    return res;
+  }
+
+  private variantKey(base: string, req: Req) {
+    const names = this.varyOf.get(base) ?? [];
+    return names.reduce((k, n) =&gt; `${k}|${n}=${this.opts.normalizeVary(n, req.headers?.[n] ?? "")}`, base);
+  }
+
+  private mark(cache: CacheStatus, res: Res): Served { this.stats[cache]++; return { res, cache }; }
+
+  // الـ soft purge بيعلّم الـ entry إنه stale بدل ما يمسحه، فالـ SWR يفضل شغال
+  private expire(key: string, e: Entry, soft: boolean) {
+    if (soft) { e.freshMs = 0; e.storedAt = this.clock.now(); } else this.store.delete(key);
+  }
+  purgeTag(tag: string, soft = false) {
+    for (const [k, e] of this.store) if (e.tags.includes(tag)) this.expire(k, e, soft);
+  }
+  purgeAll(soft = false) { for (const [k, e] of this.store) this.expire(k, e, soft); }
+}</code></pre>
+  </details>
+
+<pre data-file="src/cdn-p1-static.ts"><code class="language-typescript">import { Edge, VirtualClock, mulberry32, zipfSampler, pct, drive, type Req } from "./edge.ts";
+
+console.log("SIMULATION: seeded, virtual time, edge stand-in. Not modelled: eviction, TCP, real network jitter.");
+
+async function run(cacheControl: string) {
+  const clock = new VirtualClock();
+  // خلّي الطلبات والـ jitter من PRNG منفصلين، فكل الـ policies تشوف نفس الطلبات
+  const pickProduct = zipfSampler(2_000, 1.0, mulberry32(42));
+  const jitter = mulberry32(7);
+  const origin = async (_req: Req) =&gt; {
+    await clock.sleep(120 + jitter() * 60);
+    return { status: 200, headers: { "cache-control": cacheControl }, body: "{}" };
+  };
+  const edge = new Edge(origin, clock);
+  const latencies: number[] = [];
+  const edgeRtt = 20;
+  // عشرة آلاف طلب، 50 طلب في الثانية يعني 200 ثانية افتراضية
+  await drive(clock, 10_000, 20, async () =&gt; {
+    const t0 = clock.now();
+    await edge.handle({ url: `https://shop.example/products/${pickProduct()}` });
+    latencies.push(clock.now() - t0 + edgeRtt);
+  });
+  const { originCalls, requests } = edge.stats;
+  const hitRatio = ((1 - originCalls / requests) * 100).toFixed(1);
+  const mean = latencies.reduce((a, b) =&gt; a + b, 0) / latencies.length;
+  console.log(
+    cacheControl.padEnd(32),
+    `origin=${String(originCalls).padStart(5)}  hit=${hitRatio.padStart(5)}%`,
+    `mean=${mean.toFixed(0).padStart(4)}ms  p50=${pct(latencies, 50).toFixed(0).padStart(4)}ms  p99=${pct(latencies, 99).toFixed(0)}ms`,
+  );
+}
+
+for (const cc of ["no-store", "public, max-age=60", "public, max-age=5, s-maxage=300", "public, s-maxage=3600"]) await run(cc);
+
+// حاسبة للمحتوى الـ dynamic: مفيش cache، بس الـ CDN بيوفّر الـ handshakes
+const clientOrigin = 170, clientEdge = 20, edgeOrigin = 150, serverMs = 30;
+// الـ handshake: رحلة TCP واحدة ورحلة TLS 1.3 واحدة
+const handshakeRtts = 2;
+const direct = (handshakeRtts + 1) * clientOrigin + serverMs;
+const viaCdn = (handshakeRtts + 1) * clientEdge + edgeOrigin + serverMs;
+console.log(`dynamic, new connection:    direct=${direct}ms  via CDN (warm edge-origin)=${viaCdn}ms`);
+console.log(`dynamic, reused connection: direct=${clientOrigin + serverMs}ms  via CDN=${clientEdge + edgeOrigin + serverMs}ms`);</code></pre>
+
+<pre><code class="language-plaintext">SIMULATION: seeded, virtual time, edge stand-in. Not modelled: eviction, TCP, real network jitter.
+no-store                         origin=10000  hit=  0.0% mean= 170ms  p50= 170ms  p99=200ms
+public, max-age=60               origin= 2444  hit= 75.6% mean=  57ms  p50=  20ms  p99=197ms
+public, max-age=5, s-maxage=300  origin= 1476  hit= 85.2% mean=  42ms  p50=  20ms  p99=196ms
+public, s-maxage=3600            origin= 1476  hit= 85.2% mean=  42ms  p50=  20ms  p99=196ms
+dynamic, new connection:    direct=540ms  via CDN (warm edge-origin)=240ms
+dynamic, reused connection: direct=200ms  via CDN=200ms</code></pre>
+  <div class="ar-note">نفس الـ 10,000 طلب اتشافوا في كل سطر. <code>no-store</code> يعني كل طلب راح للـ origin. <code>max-age=60</code> نزّلهم لـ 2444. الـ <code>s-maxage=300</code> والـ <code>s-maxage=3600</code> نفس الرقم 1476 لأن التجربة كلها 200 ثانية بس، يعني ولا entry لحق يخلص. والـ 1476 دول أول طلب لكل منتج مختلف. آخر سطرين من الحاسبة: connection جديد 540ms مباشر مقابل 240ms عن طريق الـ CDN، وconnection مفتوح 200ms في الحالتين.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ CDN عبارة عن مجموعة reverse-proxy caches (PoPs) قريبة من اليوزرز. في الـ pull model الـ PoP لما يعمل miss بيجيب من الـ origin، ويخزّن الرد حسب الـ headers بتاعة الرد نفسه، وبعدين يرد هو على الطلبات الجاية. الأساسيات في <a href="../../01-CS-Fundamentals/lessons/16-load-balancers-proxies-cdn.html#p5">section 01، Load balancers و CDNs، الجزء 5</a>، وقواعد الـ HTTP caching في <a href="../../01-CS-Fundamentals/lessons/15-http-tls-realtime.html#p5">section 01، HTTP، الجزء 5</a>. هنا بنقيسهم.</p>
+    <p>الـ stand-in بيطبّق قواعد الـ shared cache: الـ <code>s-maxage</code> بيغلب الـ <code>max-age</code>، و<code>no-store</code> و<code>private</code> مش بيتخزنوا، والرد اللي مفيهوش freshness صريحة مش بيتخزن. القاعدة الأخيرة دي تبسيط: الـ CDNs الحقيقية ليها defaults خاصة بيها زي الـ caching حسب امتداد الملف، فاقرا الـ default بتاع الـ vendor بتاعك.</p>
+    <p>التجربة بتبعت 10,000 طلب بتوزيع Zipf على 2,000 منتج بمعدل 50 طلب في الثانية، مع latency للـ origin من 120 لـ 180ms ورحلة 20ms للـ edge. لما تنقل من <code>no-store</code> لـ TTL 60 ثانية الـ origin hits بتقل 76%. الـ TTL بتاع 300 ثانية بيوصل 85.2%، والساعة بتدي نفس الرقم بالظبط لأن التجربة 200 ثانية بس. الـ 1,476 الباقيين هما أول طلب لكل منتج مختلف. مفيش TTL بيحل الـ cold miss، وعشان كده الـ p99 بيفضل حوالين 196ms حتى لما الـ p50 ينزل لـ 20ms: الـ misses هي اللي بتحدد الـ tail بتاعك.</p>
+    <p>الـ dynamic مش بيتخزن، بس الـ CDN لسه بيساعد: الـ TCP والـ TLS بيخلصوا قريب من اليوزر، والـ edge بيستخدم keep-alive connections جاهزة للـ origin. على connection جديد 540ms مقابل 240ms في الحاسبة. وعلى connection مفتوح أصلًا الكسب صفر (200ms في الحالتين)، يعني الكسب كله في أول طلب في الزيارة.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في API بتاعة catalog لمتجر: ابدأ بقياس الـ hit ratio الحالي من الـ CDN logs، وبعدين قسّم الـ routes لـ 3: static assets (TTL طويل جدًا)، صفحات منتجات (<code>s-maxage</code>)، و<code>/api/cart</code> dynamic (الـ CDN بيفيدك في الـ TLS بس). الغلطة الشائعة إنك تفتكر الـ CDN هيحسّن الـ p99 لوحده: الـ p99 بتاع المستخدم الجديد على منتج نادر هو latency الـ origin.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Your CDN hit ratio is 85%. Can a longer TTL get you to 99%?" → Only if the remaining 15% are expiries. In our run all 1,476 misses are first requests for a product, so a longer TTL changes nothing. Look at cold keys: pre-warm the top items, or add a shield so each object is fetched once.
+    <div class="ar-note">"الـ hit ratio عندك 85%. ينفع TTL أطول يوصلك 99%؟" ← بس لو الـ 15% الباقيين هما expiries. في التجربة بتاعتنا كل الـ 1,476 miss هما أول طلب لمنتج، فالـ TTL الأطول مبيغيرش حاجة. بص على الـ cold keys: اعمل pre-warm للمنتجات الأهم، أو حط shield عشان كل object يتجاب مرة واحدة.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Cache keys <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ cache keys</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The cache key decides what counts as "the same request". A typical default is host + path + query string, taken literally. That means <code>?color=red&amp;size=m</code> and <code>?size=m&amp;color=red</code> are two objects, and every <code>utm_campaign</code> or <code>gclid</code> creates a new one. In the run below, 10,000 requests for 500 products produce 7,689 distinct keys and a 23.1% hit ratio. Dropping tracking parameters and sorting the rest gives 2,007 keys and 79.9%, with no change to the origin.</p>
+    <p><code>Vary</code> adds request headers to the key. <code>Vary: Accept-Encoding</code> is fine once the value is normalized to br, gzip or identity; raw browser strings split each object into several variants, and many CDNs normalize this header for you. <code>Accept-Language</code> has the same problem and more values: normalize it to the languages you actually ship. <code>Vary: Cookie</code> gives every session its own copy: 3.3% hit ratio here, which means the cache is doing nothing but costing memory.</p>
+    <p>The dangerous case is the opposite one. A personalized response marked <code>public</code>, or cached by a rule that ignores the cookie, is served to the next user. The run shows Bob receiving Alice's email. The fix is <code>private, no-store</code> on personalized responses. Don't fix it with <code>Vary: Cookie</code>: it hides the bug only while your key includes cookies. Also watch for Web Cache Deception, where a rule like "cache everything ending in <code>.css</code>" gets tricked into storing <code>/account/x.css</code>.</p>
+  </section>
+
+<pre data-file="src/cdn-p2-keys.ts"><code class="language-typescript">import { Edge, VirtualClock, mulberry32, zipfSampler, drive, type Req } from "./edge.ts";
+
+console.log("SIMULATION: seeded, virtual time, edge stand-in. Not modelled: eviction, real browser header mixes.");
+
+// (1) تطبيع الـ key: شيل الـ tracking params ورتّب الباقي
+const TRACKING = /^(utm_.*|gclid|fbclid)$/;
+export function normalizedKey(req: Req) {
+  const u = new URL(req.url);
+  const kept = [...u.searchParams].filter(([k]) =&gt; !TRACKING.test(k)).sort(([a], [b]) =&gt; a.localeCompare(b));
+  return `${u.host.toLowerCase()}${u.pathname}?${new URLSearchParams(kept)}`;
+}
+
+async function runUrls(label: string, keyOf?: (r: Req) =&gt; string) {
+  const clock = new VirtualClock();
+  const rnd = mulberry32(42);
+  const pick = zipfSampler(500, 1.0, rnd);
+  const origin = async () =&gt; {
+    await clock.sleep(150);
+    return { status: 200, headers: { "cache-control": "public, s-maxage=3600" }, body: "{}" };
+  };
+  const edge = new Edge(origin, clock, keyOf ? { keyOf } : {});
+  await drive(clock, 10_000, 20, async () =&gt; {
+    const params = [`color=${["red", "blue"][Math.floor(rnd() * 2)]}`, `size=${["s", "m", "l"][Math.floor(rnd() * 3)]}`];
+    // نص الروابط جاية بترتيب مختلف، ومعظمها فيها tracking من الإعلانات
+    if (rnd() &lt; 0.5) params.reverse();
+    if (rnd() &lt; 0.6) params.push(`utm_source=${["fb", "ig", "tt", "mail"][Math.floor(rnd() * 4)]}`, `utm_campaign=c${Math.floor(rnd() * 20)}`);
+    if (rnd() &lt; 0.15) params.push(`gclid=${Math.floor(rnd() * 1e9).toString(36)}`);
+    await edge.handle({ url: `https://shop.example/products/${pick()}?${params.join("&amp;")}` });
+  });
+  console.log(label.padEnd(16), `keys=${String(edge.store.size).padStart(5)}  origin=${String(edge.stats.originCalls).padStart(5)}  hit=${((1 - edge.stats.originCalls / 10_000) * 100).toFixed(1)}%`);
+}
+await runUrls("raw URL as key");
+await runUrls("normalized key", normalizedKey);
+
+// (2) إيه اللي الـ Vary بيعمله في الـ hit ratio
+const ENCODINGS = ["gzip, deflate, br", "gzip, deflate, br, zstd", "gzip", "br, gzip"];
+const LANGS = ["en-US,en;q=0.9", "en-GB,en;q=0.8", "ar-EG,ar;q=0.9,en;q=0.8", "ar,en-US;q=0.7", "fr-FR,fr;q=0.9"];
+const toEncoding = (v: string) =&gt; (v.includes("br") ? "br" : v.includes("gzip") ? "gzip" : "identity");
+const toLang = (v: string) =&gt; (v.startsWith("ar") ? "ar" : "en");
+
+async function runVary(label: string, vary: string, normalizeVary?: (n: string, v: string) =&gt; string) {
+  const clock = new VirtualClock();
+  const rnd = mulberry32(99);
+  const pick = zipfSampler(500, 1.0, rnd);
+  const origin = async () =&gt; {
+    await clock.sleep(150);
+    return { status: 200, headers: { "cache-control": "public, s-maxage=3600", vary }, body: "{}" };
+  };
+  const edge = new Edge(origin, clock, normalizeVary ? { normalizeVary } : {});
+  await drive(clock, 10_000, 20, async (i) =&gt; {
+    const headers = {
+      "accept-encoding": ENCODINGS[Math.floor(rnd() * ENCODINGS.length)]!,
+      "accept-language": LANGS[Math.floor(rnd() * LANGS.length)]!,
+      // كل يوزر ليه session cookie مختلف، وكل يوزر بيعمل 3 طلبات
+      cookie: `sid=${Math.floor(i / 3)}`,
+    };
+    await edge.handle({ url: `https://shop.example/products/${pick()}`, headers });
+  });
+  console.log(label.padEnd(36), `variants=${String(edge.store.size).padStart(5)}  hit=${((1 - edge.stats.originCalls / 10_000) * 100).toFixed(1)}%`);
+}
+const norm = (n: string, v: string) =&gt; (n === "accept-encoding" ? toEncoding(v) : n === "accept-language" ? toLang(v) : v);
+await runVary("no Vary", "");
+await runVary("Vary: Accept-Encoding (raw)", "accept-encoding");
+await runVary("Vary: Accept-Encoding (normalized)", "accept-encoding", norm);
+await runVary("Vary: Accept-Language (raw)", "accept-language");
+await runVary("Vary: Accept-Language (normalized)", "accept-language", norm);
+await runVary("Vary: Cookie", "cookie");
+
+// (3) الـ security bug: صفحة شخصية اتخزنت في الـ shared cache
+async function account(cacheControl: string) {
+  const clock = new VirtualClock();
+  const users: Record&lt;string, string&gt; = { "sid=alice": "alice@example.com", "sid=bob": "bob@example.com" };
+  const origin = async (req: Req) =&gt; ({
+    status: 200,
+    headers: { "cache-control": cacheControl },
+    body: `{"email":"${users[req.headers?.cookie ?? ""]}"}`,
+  });
+  const edge = new Edge(origin, clock);
+  const run = (async () =&gt; {
+    for (const cookie of ["sid=alice", "sid=bob"]) {
+      const { res, cache } = await edge.handle({ url: "https://shop.example/account", headers: { cookie } });
+      console.log(`  ${cookie.padEnd(10)} ${cache.padEnd(5)} ${res.body}`);
+      await clock.sleep(1000);
+    }
+  })();
+  await clock.run();
+  await run;
+}
+console.log("Cache-Control: public, max-age=60");
+await account("public, max-age=60");
+console.log("Cache-Control: private, no-store");
+await account("private, no-store");</code></pre>
+
+<pre><code class="language-plaintext">SIMULATION: seeded, virtual time, edge stand-in. Not modelled: eviction, real browser header mixes.
+raw URL as key   keys= 7689  origin= 7689  hit=23.1%
+normalized key   keys= 2007  origin= 2007  hit=79.9%
+no Vary                              variants=  496  hit=95.0%
+Vary: Accept-Encoding (raw)          variants= 1563  hit=84.4%
+Vary: Accept-Encoding (normalized)   variants=  889  hit=91.1%
+Vary: Accept-Language (raw)          variants= 1786  hit=82.1%
+Vary: Accept-Language (normalized)   variants=  912  hit=90.9%
+Vary: Cookie                         variants= 9666  hit=3.3%
+Cache-Control: public, max-age=60
+  sid=alice  MISS  {"email":"alice@example.com"}
+  sid=bob    HIT   {"email":"alice@example.com"}
+Cache-Control: private, no-store
+  sid=alice  MISS  {"email":"alice@example.com"}
+  sid=bob    PASS  {"email":"bob@example.com"}</code></pre>
+  <div class="ar-note">أول سطرين: الـ raw URL عمل 7689 key و hit ratio 23.1%، والـ key المتظبط عمل 2007 key و 79.9% بنفس الطلبات. بعدها الـ Vary: من غير Vary 95%، <code>Accept-Encoding</code> الخام 84.4% ومتظبط 91.1%، <code>Accept-Language</code> الخام 82.1% ومتظبط 90.9%، و<code>Vary: Cookie</code> 3.3% بس. آخر جزء هو الـ bug: مع <code>public</code>، Bob خد HIT وشاف إيميل Alice. مع <code>private, no-store</code> طلب Bob عدّى للـ origin (PASS) ورجع إيميله هو.</div>
+
+  <div class="callout warn">
+    <b>Not run here</b>
+    Real nginx config, shown for shape only. nginx does not run on this machine.
+<pre data-file="nginx.conf"><code class="language-nginx"># مش متشغّل هنا: الـ key معمول من الـ params اللي بتفرق بس
+proxy_cache_key "$scheme$host$uri$arg_color$arg_size$arg_page";
+# الـ Accept-Encoding بيتظبط قبل الـ cache
+proxy_set_header Accept-Encoding "";</code></pre>
+    <div class="ar-note">ده nginx config حقيقي عشان تشوف الشكل بس، وnginx مش متشغّل على الجهاز ده. الفكرة إنك تحدد الـ key بنفسك من الـ params اللي بتغيّر الرد فعلًا (<code>color</code>، <code>size</code>، <code>page</code>) بدل ما تاخد الـ query كلها زي ما هي.</div>
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ cache key هو اللي بيقرر إيه اللي يعتبر "نفس الطلب". الـ default المعتاد host + path + query زي ما هي بالحرف. يعني <code>?color=red&amp;size=m</code> و<code>?size=m&amp;color=red</code> اتنين objects مختلفين، وكل <code>utm_campaign</code> أو <code>gclid</code> بيعمل object جديد. في التجربة 10,000 طلب على 500 منتج طلّعوا 7,689 key و hit ratio 23.1%. لما شيلنا الـ tracking params ورتّبنا الباقي بقوا 2,007 key و 79.9%، من غير أي تغيير في الـ origin.</p>
+    <p>الـ <code>Vary</code> بيضيف headers من الطلب للـ key. <code>Vary: Accept-Encoding</code> كويس لو القيمة متظبطة لـ br أو gzip أو identity؛ القيم الخام بتقسم كل object لكذا نسخة، وكتير من الـ CDNs بتظبط الـ header ده لوحدها. <code>Accept-Language</code> نفس المشكلة وقيمه أكتر: ظبّطه على اللغات اللي عندك فعلًا. أما <code>Vary: Cookie</code> فبيدي لكل session نسخة لوحدها: 3.3% hit ratio هنا، يعني الـ cache مش بيعمل حاجة غير إنه بياكل memory.</p>
+    <p>الحالة الخطر هي العكس. رد شخصي متعلّم <code>public</code>، أو متخزن بـ rule بيتجاهل الـ cookie، بيروح لليوزر اللي بعده. التجربة بتوري Bob بياخد إيميل Alice. الحل <code>private, no-store</code> على أي رد شخصي. ومتحلهاش بـ <code>Vary: Cookie</code>: دي بتخبي الـ bug طول ما الـ key فيه الـ cookies بس. وخد بالك كمان من Web Cache Deception: rule زي "خزّن أي حاجة آخرها <code>.css</code>" ممكن يتخدع ويخزن <code>/account/x.css</code>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      مشروع Next بعد حملة إعلانات: الـ hit ratio وقع وفاتورة الـ origin طلعت. بتفتح الـ CDN logs وتشوف URLs فيها <code>utm_</code> و<code>gclid</code>، وتضيف cache-key rule بيشيلهم. وفي الـ code review أي route فيه <code>session</code> أو <code>req.user</code> لازم يطلع <code>Cache-Control: private, no-store</code>، وده اللي بيمنع حادثة تسريب بيانات.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "After a marketing campaign the origin load tripled, yet traffic only grew 20%. What happened?" → Campaign links added <code>utm_*</code> and click IDs, each one a new cache key, so the hit ratio collapsed. Fix the key at the CDN: drop or allow-list parameters and sort the rest.
+    <div class="ar-note">"بعد حملة تسويق الـ origin load اتضاعف 3 مرات، والترافيك زاد 20% بس. إيه اللي حصل؟" ← روابط الحملة فيها <code>utm_*</code> و click IDs، وكل واحدة بقت cache key جديد فالـ hit ratio وقع. الحل في الـ CDN نفسه: شيل الـ params دي أو استخدم allow-list ورتّب الباقي.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — TTL &amp; invalidation <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ TTL والـ invalidation</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>You have three ways to stop serving old content, and they suit different data. A TTL is simple and self-healing, but the data stays stale until it expires. A purge is immediate but adds a system you must operate. Versioned file names (<code>app.3f2a1c.js</code> with <code>max-age=31536000, immutable</code>) never need either, because a new version is a new URL.</p>
+    <p>Purges should be surgical. With a <code>Surrogate-Key</code> (Fastly) or tags (Cloudflare's Tag purge) the origin labels each response, for example <code>product-7 brand-7</code>, and one API call removes all objects with that label. For tag design see <a href="../../06-NextJS/lessons/07-revalidation-isr-tags.html">section 06, revalidation and tags</a>. In the run below a purge of one product barely registers, a brand purge adds a few origin calls, and a purge of everything takes the origin from about 1 call per second to 111 in the following second. A soft purge marks entries stale instead of deleting them: origin calls are identical (390 in 5 s), but users who waited on the origin drop from 458 to 4, because SWR keeps serving the old copy while the refresh happens.</p>
+    <p>Purges don't land everywhere at once. Cloudflare's docs call their purge "instant" and also warn that an HTTP 200 only means the request was received, so verify by checking the cache status header. In the simulation, a purge that reaches five PoPs over 800 ms leaves 34 of 300 later requests on the old price, and over 3 s it leaves 131. Hashed assets avoid this entirely, which is the trade-off to remember: purges propagate over time, hashed assets never need one.</p>
+  </section>
+
+<table>
+  <thead><tr><th>Method</th><th>Staleness</th><th>Origin load</th><th>Operational cost</th><th>Use for</th></tr></thead>
+  <tbody>
+    <tr><td>TTL only</td><td>Up to the TTL</td><td>Steady refill</td><td>None</td><td>Catalog, feeds, public read APIs</td></tr>
+    <tr><td>Tag purge</td><td>Propagation delay</td><td>Small spike</td><td>Purge pipeline, retries</td><td>Prices, product edits</td></tr>
+    <tr><td>Purge all</td><td>Propagation delay</td><td>Large spike</td><td>Risky during traffic</td><td>Emergency only</td></tr>
+    <tr><td>Versioned files</td><td>None</td><td>One fill per version</td><td>Build pipeline</td><td>JS, CSS, images</td></tr>
+  </tbody>
+</table>
+<div class="ar-note"><ul><li><b>TTL only</b>: الـ data قديمة لحد ما الـ TTL يخلص، بيتملي تدريجيًا، ومفيش تشغيل زيادة. بيناسب الـ catalog والـ feeds والـ public read APIs.</li><li><b>Tag purge</b>: القدم قد وقت الوصول بس، spike صغير، ومحتاج purge pipeline وretries. بيناسب الأسعار وتعديلات المنتجات.</li><li><b>Purge all</b>: نفس تأخير الوصول بس spike كبير وخطر وقت الترافيك. للطوارئ بس.</li><li><b>Versioned files</b>: مفيش قدم خالص، بيتملي مرة لكل نسخة، ومحتاج build pipeline. بيناسب JS و CSS والصور.</li></ul></div>
+
+<pre data-file="src/cdn-p3-purge.ts"><code class="language-typescript">import { Edge, VirtualClock, mulberry32, zipfSampler, type Req } from "./edge.ts";
+
+console.log("SIMULATION: seeded, virtual time, edge stand-in. Not modelled: real purge fan-out, eviction.");
+
+// (1) الـ origin بيرجّع كل منتج بـ Surrogate-Key عشان نقدر نعمل purge بالـ tag
+function makeWorld(cc: string) {
+  const clock = new VirtualClock();
+  let originCalls = 0;
+  const origin = async (req: Req) =&gt; {
+    originCalls++;
+    await clock.sleep(150);
+    const id = req.url.split("/").pop();
+    const brand = Number(id) % 50;
+    return { status: 200, headers: { "cache-control": cc, "surrogate-key": `product-${id} brand-${brand}` }, body: "{}" };
+  };
+  const edge = new Edge(origin, clock);
+  return { clock, edge, calls: () =&gt; originCalls };
+}
+
+async function purgeRun(label: string, purge: (e: Edge) =&gt; void, cc = "public, s-maxage=3600") {
+  const { clock, edge, calls } = makeWorld(cc);
+  const pick = zipfSampler(2_000, 1.0, mulberry32(42));
+  const perSecond = new Map&lt;number, number&gt;();
+  let waited = 0;
+  const PURGE_AT = 180_000, END = 186_000, GAP = 5;
+  const purgeTask = (async () =&gt; { await clock.sleep(PURGE_AT); purge(edge); })();
+  const arrivals = (async () =&gt; {
+    let before = calls();
+    for (let t = 0; t &lt; END; t += GAP) {
+      const sec = Math.floor(t / 1000);
+      void edge.handle({ url: `https://shop.example/products/${pick()}` }).then((s) =&gt; {
+        if (t &gt;= PURGE_AT &amp;&amp; (s.cache === "MISS" || s.cache === "COLLAPSED")) waited++;
+      });
+      await clock.sleep(GAP);
+      perSecond.set(sec, (perSecond.get(sec) ?? 0) + calls() - before);
+      before = calls();
+    }
+  })();
+  await clock.run();
+  await arrivals; await purgeTask;
+  const window = [177, 178, 179, 180, 181, 182, 183, 184].map((s) =&gt; perSecond.get(s) ?? 0);
+  const after = window.slice(3).reduce((a, b) =&gt; a + b, 0);
+  console.log(label.padEnd(22), `origin/s t=177..184: [${window.join(" ")}]  after purge=${after}  users waited=${waited}`);
+}
+
+await purgeRun("no purge", () =&gt; {});
+await purgeRun("purge tag product-7", (e) =&gt; e.purgeTag("product-7"));
+await purgeRun("purge tag brand-7", (e) =&gt; e.purgeTag("brand-7"));
+await purgeRun("purge ALL", (e) =&gt; e.purgeAll());
+await purgeRun("soft purge ALL + SWR", (e) =&gt; e.purgeAll(true), "public, s-maxage=3600, stale-while-revalidate=600");
+
+// (2) الـ purge بيوصل الـ PoPs في أوقات مختلفة: كام طلب شاف السعر القديم؟
+async function propagation(delays: number[]) {
+  const clock = new VirtualClock();
+  let price = 100;
+  const origin = async () =&gt; {
+    await clock.sleep(50);
+    return { status: 200, headers: { "cache-control": "public, s-maxage=3600", "surrogate-key": "product-7" }, body: String(price) };
+  };
+  const pops = delays.map(() =&gt; new Edge(origin, clock));
+  let stale = 0, after = 0;
+  const CHANGE_AT = 1000, END = 4000, GAP = 10;
+  const change = (async () =&gt; {
+    await clock.sleep(CHANGE_AT);
+    price = 90;
+    delays.forEach((d, i) =&gt; void clock.sleep(d).then(() =&gt; pops[i]!.purgeTag("product-7")));
+  })();
+  const arrivals = (async () =&gt; {
+    for (let t = 0; t &lt; END; t += GAP) {
+      const i = (t / GAP) % delays.length;
+      void pops[i]!.handle({ url: "https://shop.example/products/7" }).then((s) =&gt; {
+        if (t &gt;= CHANGE_AT) { after++; if (s.res.body === "100") stale++; }
+      });
+      await clock.sleep(GAP);
+    }
+  })();
+  await clock.run();
+  await arrivals; await change;
+  console.log(`purge delays ${JSON.stringify(delays)}ms: stale responses after the price change = ${stale} of ${after}`);
+}
+await propagation([0, 0, 0, 0, 0]);
+await propagation([0, 100, 250, 500, 800]);
+await propagation([0, 500, 1000, 2000, 3000]);</code></pre>
+
+<pre><code class="language-plaintext">SIMULATION: seeded, virtual time, edge stand-in. Not modelled: real purge fan-out, eviction.
+no purge               origin/s t=177..184: [2 0 1 1 1 1 0 0]  after purge=3  users waited=4
+purge tag product-7    origin/s t=177..184: [2 0 1 2 1 1 0 0]  after purge=4  users waited=5
+purge tag brand-7      origin/s t=177..184: [2 0 1 3 4 5 1 3]  after purge=16  users waited=17
+purge ALL              origin/s t=177..184: [2 0 1 111 75 85 59 60]  after purge=390  users waited=458
+soft purge ALL + SWR   origin/s t=177..184: [2 0 1 111 75 85 59 60]  after purge=390  users waited=4
+purge delays [0,0,0,0,0]ms: stale responses after the price change = 1 of 300
+purge delays [0,100,250,500,800]ms: stale responses after the price change = 34 of 300
+purge delays [0,500,1000,2000,3000]ms: stale responses after the price change = 131 of 300</code></pre>
+  <div class="ar-note">الأرقام بين الأقواس هي نداءات الـ origin كل ثانية من 177 لـ 184. من غير purge رقم صغير. purge لمنتج واحد مفيش فرق يذكر. purge لـ brand زيادة بسيطة. purge ALL قفز لـ 111 في الثانية و390 في 5 ثواني، و458 يوزر استنوا الـ origin. الـ soft purge نفس نداءات الـ origin بس اليوزرز اللي استنوا 4 بس. آخر 3 سطور: لما الـ purge بيوصل الـ PoPs في أوقات مختلفة، الطلبات اللي شافت السعر القديم بتزيد: 1 ثم 34 ثم 131 من 300.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>عندك 3 طرق تبطل بيها تقدّم محتوى قديم، وكل واحدة بتناسب نوع data. الـ TTL بسيط وبيصلّح نفسه، بس الـ data بتفضل قديمة لحد ما يخلص. الـ purge فوري بس بيضيف نظام لازم تشغّله. والـ versioned file names (<code>app.3f2a1c.js</code> مع <code>max-age=31536000, immutable</code>) مش محتاجين ولا ده ولا ده، لأن النسخة الجديدة URL جديد.</p>
+    <p>الـ purge لازم يكون دقيق. بالـ <code>Surrogate-Key</code> (Fastly) أو الـ tags (Tag purge في Cloudflare) الـ origin بيعلّم كل رد، زي <code>product-7 brand-7</code>، ونداء API واحد بيشيل كل الـ objects اللي عليها العلامة دي. تصميم الـ tags في <a href="../../06-NextJS/lessons/07-revalidation-isr-tags.html">section 06، الـ revalidation والـ tags</a>. في التجربة، purge لمنتج واحد مبيبانش، وpurge لـ brand بيزود نداءات قليلة، وpurge لكل حاجة بياخد الـ origin من حوالي نداء في الثانية لـ 111 في الثانية اللي بعدها. الـ soft purge بيعلّم الـ entries إنها stale بدل ما يمسحها: نداءات الـ origin هي هي (390 في 5 ثواني)، بس اليوزرز اللي استنوا الـ origin بينزلوا من 458 لـ 4، لأن الـ SWR بيفضل يقدّم النسخة القديمة لحد ما التجديد يخلص.</p>
+    <p>الـ purge مش بيوصل كل حتة في نفس اللحظة. docs بتاعة Cloudflare بتسمي الـ purge "instant" وفي نفس الوقت بتحذر إن HTTP 200 معناه إن الطلب اتستلم بس، فاتأكد من الـ cache status header. في المحاكاة، purge بيوصل 5 PoPs على 800ms بيسيب 34 من 300 طلب على السعر القديم، وعلى 3 ثواني بيسيب 131. الـ hashed assets بتتجنب ده خالص، وده الـ trade-off اللي تفتكره: الـ purge بياخد وقت عشان يوصل، والـ hashed assets مش محتاجة purge أصلًا.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      أدمن غيّر سعر منتج: في الـ transaction بتاع التعديل، بعد الـ commit (أو من outbox) ابعت purge للـ tag <code>product-7</code>. ولو deploy جديد: JS و CSS بأسماء hashed ومفيش purge. والأهم: السعر النهائي عند الـ checkout يتحسب من الـ DB، لأن الـ CDN ممكن يكون لسه قديم ثواني.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off</b>
+    Tag purges need the origin to emit tags, and a purge pipeline that retries, because a lost purge means stale data until the TTL. Keep the TTL as the backstop: if the purge is lost, the object still expires.
+    <div class="ar-note">الـ Tag purge محتاج الـ origin يطلّع tags، وpipeline بيعمل retry، لأن purge ضايع معناه data قديمة لحد الـ TTL. خلّي الـ TTL هو خط الدفاع التاني: لو الـ purge ضاع، الـ object هيخلص برضه.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Caching API responses <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — تخزين الـ API responses</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A public product catalog can use <code>Cache-Control: public, s-maxage=60, stale-while-revalidate=300, stale-if-error=600</code>. The first number is freshness, the second allows serving stale while refreshing in the background, and the third allows stale when the origin is failing (<a href="https://www.rfc-editor.org/rfc/rfc5861.html">RFC 5861</a>). Add an <code>ETag</code> and the refresh becomes cheap: the origin answers <code>304</code> with no body.</p>
+    <p>The experiment below is real HTTP: a Node origin, the edge stand-in over real sockets, and autocannon with 20 connections for 5 s against 10 URLs. TTLs are scaled from 60 s to 1 s so the run fits in seconds. With <code>no-store</code> the origin takes everything (about 300 requests/s). With TTL only, the origin drops to about 10/s: 10 URLs refreshed once a second. Adding SWR leaves origin load the same, about 10/s, and the p99 falls from about 56 ms to about 1 ms. That's the key point: <strong>SWR doesn't reduce origin load, it removes the users who wait for it.</strong> With <code>stale-if-error</code>, a 500 from the origin still produced a 200 for the user.</p>
+    <p>Requests with <code>Authorization</code> need care. <a href="https://www.rfc-editor.org/rfc/rfc9111.html#section-3.5">RFC 9111 section 3.5</a> says a shared cache must not reuse a response to such a request unless the response explicitly allows it, and names <code>public</code>, <code>s-maxage</code> and <code>must-revalidate</code>. The last block confirms the rule on the stand-in. Note the flip side: adding <code>public</code> to an authenticated route shares it with every other caller.</p>
+    <p>What never to cache in a shared cache: per-user data (orders, carts, balances), responses that carry <code>Set-Cookie</code>, payment and auth endpoints, anything that must be exact at decision time such as final price or stock during checkout, and POST responses. Hit ratio on per-user data would be low anyway.</p>
+  </section>
+
+<pre data-file="src/cdn-p4-api.ts"><code class="language-typescript">import http from "node:http";
+import { createHash } from "node:crypto";
+import type { AddressInfo } from "node:net";
+import autocannon from "autocannon";
+import { Edge, realClock, VirtualClock, type Origin } from "./edge.ts";
+
+const catalog = JSON.stringify(
+  Array.from({ length: 40 }, (_, i) =&gt; ({ id: i + 1, name: `Product ${i + 1}`, price: 100 + i, currency: "EGP" })),
+);
+const etag = `"${createHash("sha256").update(catalog).digest("base64url").slice(0, 16)}"`;
+const ORIGIN_DELAY_MS = 50;
+
+// ده الـ origin الحقيقي: Node server بيرد بـ ETag وبيحترم If-None-Match
+function startOrigin(cacheControl: string) {
+  const state = { calls: 0, fail: false };
+  const server = http.createServer((req, res) =&gt; {
+    state.calls++;
+    setTimeout(() =&gt; {
+      if (state.fail) { res.writeHead(500).end("db down"); return; }
+      const headers = { "cache-control": cacheControl, etag, "content-type": "application/json" };
+      if (req.headers["if-none-match"] === etag) { res.writeHead(304, headers).end(); return; }
+      res.writeHead(200, headers).end(catalog);
+    }, ORIGIN_DELAY_MS);
+  });
+  return new Promise&lt;{ url: string; state: typeof state; close: () =&gt; void }&gt;((resolve) =&gt; {
+    server.listen(0, "127.0.0.1", () =&gt; {
+      const { port } = server.address() as AddressInfo;
+      resolve({ url: `http://127.0.0.1:${port}`, state, close: () =&gt; { server.closeAllConnections(); server.close(); } });
+    });
+  });
+}
+
+// ده STAND-IN للـ edge فوق HTTP حقيقي، نفس كلاس Edge بساعة حقيقية
+function startEdge(originUrl: string) {
+  const fetcher: Origin = async (req) =&gt; {
+    const r = await fetch(originUrl + new URL(req.url).pathname + new URL(req.url).search, { headers: req.headers ?? {} });
+    return { status: r.status, headers: Object.fromEntries(r.headers), body: await r.text() };
+  };
+  const edge = new Edge(fetcher, realClock);
+  const server = http.createServer(async (req, res) =&gt; {
+    const { res: out, cache } = await edge.handle({ url: `http://edge${req.url}` });
+    res.writeHead(out.status, { "x-cache": cache, "content-type": "application/json" }).end(out.body);
+  });
+  return new Promise&lt;{ url: string; edge: Edge; close: () =&gt; void }&gt;((resolve) =&gt; {
+    server.listen(0, "127.0.0.1", () =&gt; {
+      const { port } = server.address() as AddressInfo;
+      resolve({ url: `http://127.0.0.1:${port}`, edge, close: () =&gt; { server.closeAllConnections(); server.close(); } });
+    });
+  });
+}
+
+const t0 = performance.now();
+await new Promise((r) =&gt; setTimeout(r, ORIGIN_DELAY_MS));
+console.log(`real delay of setTimeout(${ORIGIN_DELAY_MS}) on this Windows machine: ≈${(performance.now() - t0).toFixed(0)}ms`);
+
+// (1) الـ ETag والـ 304 على server حقيقي
+{
+  const o = await startOrigin("public, s-maxage=60");
+  const first = await fetch(`${o.url}/catalog`);
+  const bytes = (await first.text()).length;
+  const second = await fetch(`${o.url}/catalog`, { headers: { "if-none-match": first.headers.get("etag")! } });
+  const bytes2 = (await second.text()).length;
+  console.log(`first GET: ${first.status}, body ${bytes} bytes, etag ${first.headers.get("etag")}`);
+  console.log(`second GET with If-None-Match: ${second.status}, body ${bytes2} bytes`);
+  o.close();
+}
+
+// (2) تلات policies تحت load حقيقي بـ autocannon
+const DURATION = 5, CONNECTIONS = 20;
+const paths = Array.from({ length: 10 }, (_, i) =&gt; ({ path: `/catalog?page=${i + 1}` }));
+for (const cc of ["no-store", "public, s-maxage=1", "public, s-maxage=1, stale-while-revalidate=30"]) {
+  const o = await startOrigin(cc);
+  const e = await startEdge(o.url);
+  const r = await autocannon({ url: e.url, connections: CONNECTIONS, duration: DURATION, requests: paths });
+  console.log(
+    cc.padEnd(46),
+    `client≈${String(Math.round(r.requests.total / DURATION)).padStart(5)}/s`,
+    `origin≈${String(Math.round(o.state.calls / DURATION)).padStart(4)}/s`,
+    `p50≈${r.latency.p50}ms p99≈${r.latency.p99}ms non2xx=${r.non2xx}`,
+  );
+  e.close(); o.close();
+}
+
+// (3) الـ stale-if-error: الـ origin وقع والـ edge لسه بيرد
+{
+  const o = await startOrigin("public, s-maxage=1, stale-if-error=30");
+  const e = await startEdge(o.url);
+  const get = async () =&gt; { const r = await fetch(`${e.url}/catalog`); return `${r.status} ${r.headers.get("x-cache")}`; };
+  console.log("warm:", await get());
+  o.state.fail = true;
+  await new Promise((r) =&gt; setTimeout(r, 1100));
+  console.log("origin returns 500, TTL over:", await get(), `(staleOnError=${e.edge.stats.staleOnError})`);
+  e.close(); o.close();
+}
+
+// (4) قاعدة الـ Authorization في RFC 9111 قسم 3.5
+for (const cc of ["max-age=60", "public, max-age=60", "s-maxage=60", "private, max-age=60"]) {
+  const clock = new VirtualClock();
+  const edge = new Edge(async () =&gt; ({ status: 200, headers: { "cache-control": cc }, body: "{}" }), clock);
+  const headers = { authorization: "Bearer abc" };
+  const run = (async () =&gt; {
+    await edge.handle({ url: "https://api.example/orders", headers });
+    await clock.sleep(1);
+    const second = await edge.handle({ url: "https://api.example/orders", headers });
+    console.log(`Authorization + ${cc.padEnd(20)} second request: ${second.cache}`);
+  })();
+  await clock.run(); await run;
+}
+process.exit(0);</code></pre>
+
+<pre><code class="language-plaintext">real delay of setTimeout(50) on this Windows machine: ≈62ms
+first GET: 200, body 2343 bytes, etag "lNoH1rdBPiVvgj27"
+second GET with If-None-Match: 304, body 0 bytes
+no-store                                       client≈  312/s origin≈ 316/s p50≈62ms p99≈153ms non2xx=0
+public, s-maxage=1                             client≈13018/s origin≈  10/s p50≈0ms p99≈56ms non2xx=0
+public, s-maxage=1, stale-while-revalidate=30  client≈28316/s origin≈  10/s p50≈0ms p99≈1ms non2xx=0
+warm: 200 MISS
+origin returns 500, TTL over: 200 EXPIRED (staleOnError=1)
+Authorization + max-age=60           second request: MISS
+Authorization + public, max-age=60   second request: HIT
+Authorization + s-maxage=60          second request: HIT
+Authorization + private, max-age=60  second request: MISS</code></pre>
+  <div class="ar-note">أول سطر: <code>setTimeout(50)</code> اتأخر فعليًا ≈62ms على Windows. بعدها الـ ETag: أول طلب 200 و2343 byte، والتاني بـ <code>If-None-Match</code> رجّع 304 بجسم صفر. الجدول: <code>no-store</code> الـ origin ≈316/ثانية و p99 ≈153ms. الـ TTL لوحده الـ origin ≈10/ثانية و p99 ≈56ms. الـ TTL+SWR نفس الـ origin ≈10/ثانية بس p99 ≈1ms. بعد كده الـ <code>stale-if-error</code>: الـ origin رجّع 500 واليوزر خد 200 (<code>staleOnError=1</code>). آخر 4 سطور قاعدة الـ Authorization: <code>max-age</code> لوحده و<code>private</code> طلعوا MISS (متخزنوش)، و<code>public</code> و<code>s-maxage</code> طلعوا HIT. الأرقام دي من جهاز Windows عليه حمل، فبص على النسب مش القيم نفسها.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ catalog العام ينفع يستخدم <code>Cache-Control: public, s-maxage=60, stale-while-revalidate=300, stale-if-error=600</code>. الرقم الأول freshness، التاني بيسمح تقدّم stale وإنت بتجدد في الخلفية، والتالت بيسمح بالـ stale لما الـ origin يقع (<a href="https://www.rfc-editor.org/rfc/rfc5861.html">RFC 5861</a>). ضيف <code>ETag</code> والتجديد يبقى رخيص: الـ origin بيرد <code>304</code> من غير body.</p>
+    <p>التجربة حقيقية: Node origin، والـ edge stand-in فوق sockets حقيقية، وautocannon بـ 20 connection لمدة 5 ثواني على 10 URLs. الـ TTLs متصغرة من 60 ثانية لثانية واحدة عشان التجربة تخلص بسرعة. بـ <code>no-store</code> الـ origin بياخد كل حاجة (حوالي 300 طلب/ثانية). بالـ TTL لوحده الـ origin بينزل لحوالي 10/ثانية: 10 URLs بيتجددوا مرة كل ثانية. ولما تضيف الـ SWR حمل الـ origin بيفضل زي ما هو، حوالي 10/ثانية، والـ p99 بينزل من حوالي 56ms لحوالي 1ms. وده أهم حاجة: <strong>الـ SWR مش بيقلل حمل الـ origin، هو بيلغي اليوزرز اللي بيستنوه.</strong> ومع <code>stale-if-error</code>، الـ 500 من الـ origin طلع برضه 200 لليوزر.</p>
+    <p>الطلبات اللي فيها <code>Authorization</code> محتاجة حرص. <a href="https://www.rfc-editor.org/rfc/rfc9111.html#section-3.5">RFC 9111 قسم 3.5</a> بيقول الـ shared cache مينفعش يعيد استخدام رد لطلب زي ده إلا لو الرد سمح صراحةً، وذكر <code>public</code> و<code>s-maxage</code> و<code>must-revalidate</code>. آخر بلوك بيأكد القاعدة على الـ stand-in. وخد بالك من الناحية التانية: لو ضفت <code>public</code> على route عليها auth، الرد بيتشارك مع كل اللي بيندهوا عليها.</p>
+    <p>الحاجات اللي متتخزنش أبدًا في shared cache: الـ data الخاصة بكل يوزر (orders، carts، balances)، الردود اللي فيها <code>Set-Cookie</code>، الـ endpoints بتاعة الـ payment والـ auth، أي حاجة لازم تبقى مظبوطة وقت القرار زي السعر النهائي أو الـ stock في الـ checkout، والـ POST responses. وأصلًا الـ hit ratio على data كل يوزر كان هيبقى ضعيف.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      <code>GET /api/products</code> في Express أو Next route handler: حط الـ header ده وضيف ETag من hash للـ JSON. لما الـ DB يقع ساعة تعديل، الـ catalog يفضل شغال من الـ CDN لمدة 10 دقايق بـ <code>stale-if-error</code>. الغلطة الشائعة: تحط <code>public, s-maxage</code> على <code>/api/orders</code> بتاعة اليوزر عشان الأداء، وكده بتبعت orders يوزر لليوزر اللي بعده.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks</b>
+    Support for <code>stale-while-revalidate</code> and <code>stale-if-error</code> differs between vendors, and some ignore them unless configured. Test yours by watching the response's cache-status header during a forced origin failure.
+    <div class="ar-note">دعم <code>stale-while-revalidate</code> و<code>stale-if-error</code> بيختلف من vendor للتاني، وبعضهم بيتجاهلهم لو متفعلوش. جرّب بنفسك: اعمل فشل متعمّد في الـ origin وبص على الـ cache-status header في الرد.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Origin shield <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ origin shield</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Each PoP has its own cache. With 50 PoPs, a cold object produces up to 50 origin requests, one per PoP. An origin shield adds one more cache layer between the PoPs and the origin: every PoP asks the shield, the shield asks the origin once. In the run: 50 origin calls without a shield, 1 with it.</p>
+    <p>Request collapsing is the same idea inside one PoP. When 1,000 requests for the same cold key arrive inside 100 ms, a cache without collapsing sends all 1,000 to the origin. With collapsing one request goes and the other 999 wait for it. The stand-in re-checks after waiting, because a follower must not receive a response that was private or belongs to another variant: real CDNs handle this with "hit-for-pass".</p>
+    <p>The shield isn't free. It adds a hop on a shield miss: in the model a leader takes 190 ms against 180 ms direct, though shield hits are faster, so the mean is 166 ms. It costs extra per request on most vendors. And it's a shared dependency. If it fails with no fallback, every miss in every PoP fails: 50 of 50 users got errors in the run. With fallback to the origin nobody errors, but all 50 calls hit the origin, so the protection vanishes exactly when you're in trouble. AWS documents that Origin Shield routes to a secondary location if the primary is unavailable, and it says the feature fits badly with dynamic or infrequently requested content.</p>
+  </section>
+
+<pre class="diagram">
+  without shield                 with shield
+  PoP1 ─┐                        PoP1 ─┐
+  PoP2 ─┼──▶ origin (50 calls)   PoP2 ─┼──▶ shield ──▶ origin (1 call)
+  PoP50 ┘                        PoP50 ┘
+</pre>
+  <div class="ar-note">على الشمال: كل PoP بيروح للـ origin لوحده، يعني 50 نداء على object واحد cold. على اليمين: كل الـ PoPs بتروح للـ shield، والـ shield بيروح للـ origin مرة واحدة.</div>
+
+<pre data-file="src/cdn-p5-shield.ts"><code class="language-typescript">import { Edge, VirtualClock, type Origin, type Res } from "./edge.ts";
+
+console.log("SIMULATION: virtual time, 50 edge stand-ins. Not modelled: PoP capacity, real routing, failover timers.");
+
+const POPS = 50;
+const CC = "public, s-maxage=60";
+const body = (): Res =&gt; ({ status: 200, headers: { "cache-control": CC }, body: "video-manifest" });
+const URL_HOT = "https://cdn.example/live/manifest.m3u8";
+
+async function coldObject(useShield: boolean) {
+  const clock = new VirtualClock();
+  let originCalls = 0;
+  const realOrigin: Origin = async () =&gt; { originCalls++; await clock.sleep(30); return body(); };
+  const shield = new Edge(async (r) =&gt; { await clock.sleep(20); return realOrigin(r); }, clock);
+  // الـ shield قريب من الـ origin: الـ PoP بياخد 140ms ليه، و20ms من الـ shield للـ origin
+  const toParent: Origin = useShield
+    ? async (r) =&gt; { await clock.sleep(140); return (await shield.handle(r)).res; }
+    : async (r) =&gt; { await clock.sleep(150); return realOrigin(r); };
+  const pops = Array.from({ length: POPS }, () =&gt; new Edge(toParent, clock));
+  const latencies: number[] = [];
+  const all = pops.map(async (p, i) =&gt; {
+    await clock.sleep(i);
+    const t0 = clock.now();
+    await p.handle({ url: URL_HOT });
+    latencies.push(clock.now() - t0);
+  });
+  await clock.run();
+  await Promise.all(all);
+  const mean = latencies.reduce((a, b) =&gt; a + b, 0) / latencies.length;
+  console.log(`${useShield ? "with shield   " : "without shield"}  origin calls=${String(originCalls).padStart(2)}  mean miss latency=${mean.toFixed(0)}ms`);
+}
+await coldObject(false);
+await coldObject(true);
+
+// الـ collapsing جوه PoP واحد: ألف طلب على نفس الـ key وهو cold
+async function collapse(on: boolean) {
+  const clock = new VirtualClock();
+  let originCalls = 0;
+  const edge = new Edge(async () =&gt; { originCalls++; await clock.sleep(200); return body(); }, clock, { collapse: on });
+  const all = Array.from({ length: 1000 }, (_, i) =&gt; (async () =&gt; {
+    await clock.sleep(i * 0.1);
+    await edge.handle({ url: URL_HOT });
+  })());
+  await clock.run();
+  await Promise.all(all);
+  console.log(`collapse ${on ? "ON " : "OFF"}  1000 requests inside 100ms -&gt; origin calls=${originCalls}`);
+}
+await collapse(false);
+await collapse(true);
+
+// الـ shield نقطة مشتركة: لو وقع والـ PoPs كلها cold؟
+async function shieldDown(fallbackToOrigin: boolean) {
+  const clock = new VirtualClock();
+  let originCalls = 0, errors = 0;
+  const realOrigin: Origin = async () =&gt; { originCalls++; await clock.sleep(30); return body(); };
+  const toParent: Origin = async (r) =&gt; {
+    await clock.sleep(140);
+    // الـ shield واقع: يا fallback مباشر للـ origin يا 503 لليوزر
+    if (fallbackToOrigin) { await clock.sleep(150); return realOrigin(r); }
+    return { status: 503, headers: {}, body: "shield unavailable" };
+  };
+  const pops = Array.from({ length: POPS }, () =&gt; new Edge(toParent, clock));
+  const all = pops.map(async (p, i) =&gt; {
+    await clock.sleep(i);
+    const { res } = await p.handle({ url: URL_HOT });
+    if (res.status &gt;= 500) errors++;
+  });
+  await clock.run();
+  await Promise.all(all);
+  console.log(`shield down, fallback=${String(fallbackToOrigin).padEnd(5)} user errors=${String(errors).padStart(2)}/${POPS}  origin calls=${originCalls}`);
+}
+await shieldDown(false);
+await shieldDown(true);</code></pre>
+
+<pre><code class="language-plaintext">SIMULATION: virtual time, 50 edge stand-ins. Not modelled: PoP capacity, real routing, failover timers.
+without shield  origin calls=50  mean miss latency=180ms
+with shield     origin calls= 1  mean miss latency=166ms
+collapse OFF  1000 requests inside 100ms -&gt; origin calls=1000
+collapse ON   1000 requests inside 100ms -&gt; origin calls=1
+shield down, fallback=false user errors=50/50  origin calls=0
+shield down, fallback=true  user errors= 0/50  origin calls=50</code></pre>
+  <div class="ar-note">من غير shield 50 نداء للـ origin ومتوسط 180ms، ومع shield نداء واحد ومتوسط 166ms. الـ collapsing: ألف طلب في 100ms من غيره ألف نداء، ومعاه نداء واحد. وآخر سطرين لو الـ shield وقع: من غير fallback كل الـ 50 يوزر خدوا error، ومع fallback مفيش errors بس الـ 50 نداء راحوا للـ origin تاني.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>كل PoP ليه cache لوحده. لو عندك 50 PoP، object cold بيعمل لحد 50 طلب على الـ origin، طلب من كل PoP. الـ origin shield بيضيف طبقة cache واحدة بين الـ PoPs والـ origin: كل الـ PoPs بتسأل الـ shield، والـ shield بيسأل الـ origin مرة واحدة. في التجربة: 50 نداء من غير shield، و1 معاه.</p>
+    <p>الـ request collapsing نفس الفكرة بس جوه PoP واحد. لما 1000 طلب على نفس الـ key الـ cold يوصلوا في 100ms، الـ cache من غير collapsing بيبعتهم كلهم للـ origin. مع الـ collapsing طلب واحد بيروح والـ 999 بيستنوا نتيجته. الـ stand-in بيعيد البحث بعد الانتظار، عشان الـ follower مينفعش ياخد رد كان private أو بتاع variant تاني: الـ CDNs الحقيقية بتعالج ده بـ "hit-for-pass".</p>
+    <p>الـ shield مش ببلاش. بيزود hop على الـ shield miss: في النموذج الـ leader بياخد 190ms مقابل 180ms مباشر، بس الـ shield hits أسرع، فالمتوسط 166ms. وبيتحاسب عليه زيادة لكل طلب عند معظم الـ vendors. وهو shared dependency. لو وقع من غير fallback، كل miss في كل PoP بيفشل: 50 من 50 يوزر خدوا errors في التجربة. ومع الـ fallback للـ origin مفيش errors، بس الـ 50 نداء بيوصلوا الـ origin، يعني الحماية بتروح في الوقت اللي إنت محتاجها فيه. AWS كاتبة إن Origin Shield بيحوّل لمكان تاني لو الأساسي مش متاح، وكاتبة كمان إنه مش مناسب للمحتوى الـ dynamic أو اللي نادرًا بيتطلب.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      صور المنتجات اللي بتتعمل on-the-fly resize، أو live stream manifest: كل miss غالي على الـ origin، فالـ shield بيوفر فعلًا. وعلى API بتاعة data شخصية مش هيفيدك لأن مفيش hits أصلًا. الغلطة الشائعة: تشغّل shield وتنسى تعمل load test لسيناريو "الـ shield واقع والـ fallback شغال".
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "A cached object expires and 10,000 requests hit the origin at once. How do you prevent that at the CDN?" → Request collapsing within each PoP, an origin shield across PoPs, and SWR so nobody waits. Together they reduce a stampede to one origin call.
+    <div class="ar-note">"object متخزن خلص و10,000 طلب ضربوا الـ origin مع بعض. تمنع ده إزاي على الـ CDN؟" ← request collapsing جوه كل PoP، وorigin shield بين الـ PoPs، وSWR عشان محدش يستنى. مع بعض بينزّلوا الـ stampede لنداء واحد على الـ origin.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Edge compute <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ edge compute</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Edge functions run your code inside the PoP, in a <code>fetch(request)</code> handler built on Web APIs. They fit decisions made from the request alone: geo redirects, token verification, A/B assignment, header rewrites. The handler below runs in Node by calling it directly with real <code>Request</code> objects. <strong>It was not run on Cloudflare.</strong> Runtimes and platform status are covered in <a href="../../04-NodeJS/lessons/33-deployment-serverless-edge.html#p3">section 04, edge runtimes</a>; here we focus on the design consequences.</p>
+    <p>Two details matter. The token check rejects bad requests before they reach your origin. And the A/B variant must become part of the cache key, otherwise the cached page for variant A is served to users in variant B.</p>
+    <p>Limits shape what fits. Per Cloudflare's docs as read in November 2026: CPU time per request is 10 ms on Free and up to 5 minutes on Paid (30 s by default), memory is 128 MB per isolate, subrequests per request are 50 on Free and 10,000 on Paid, Worker size is capped at 64 MiB uncompressed, and a request can hold 6 simultaneous outgoing connections. Check the current numbers before you design around them.</p>
+    <p>The main trap is data gravity. An edge function is close to the user but far from your database, so every query pays the full edge-to-DB round trip. With a user 20 ms from the edge and 70 ms from the region, and a database 60 ms from the edge and 1 ms from a regional function, one query already loses: 80 ms at the edge, 71 ms in the region. At 5 queries it's 320 ms against 75 ms. The crossover here is below one query, so run edge functions that use data only with a cache, a read replica, or regional placement.</p>
+  </section>
+
+<pre data-file="src/cdn-p6-edge.ts"><code class="language-typescript">// الـ handler ده Workers-style: Web APIs بس، ومن غير أي import من Node
+interface Env { JWT_SECRET: string; ORIGIN: (req: Request) =&gt; Promise&lt;Response&gt; }
+
+const enc = new TextEncoder();
+const b64url = (s: string) =&gt; Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) =&gt; c.charCodeAt(0));
+
+async function verifyJwt(token: string, secret: string): Promise&lt;{ sub: string } | null&gt; {
+  const [h, p, s] = token.split(".");
+  if (!h || !p || !s) return null;
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+  const ok = await crypto.subtle.verify("HMAC", key, b64url(s), enc.encode(`${h}.${p}`));
+  if (!ok) return null;
+  const claims = JSON.parse(new TextDecoder().decode(b64url(p)));
+  return claims.exp * 1000 &gt; Date.now() ? claims : null;
+}
+
+// اختيار ثابت لنفس اليوزر: نفس الـ IP يطلّع نفس الـ bucket
+function bucketOf(seed: string): "a" | "b" {
+  let h = 0;
+  for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return h % 2 === 0 ? "a" : "b";
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise&lt;Response&gt; {
+    const url = new URL(request.url);
+
+    // (1) تحويل حسب البلد قبل ما الطلب يوصل الـ origin
+    if (url.pathname === "/") {
+      const country = request.headers.get("cf-ipcountry") ?? "XX";
+      return Response.redirect(new URL(country === "EG" ? "/ar" : "/en", url), 302);
+    }
+
+    // (2) فحص الـ token على الـ edge: الطلبات الغلط متوصلش الـ origin أصلًا
+    if (url.pathname.startsWith("/api/")) {
+      const token = request.headers.get("authorization")?.replace("Bearer ", "") ?? "";
+      const user = await verifyJwt(token, env.JWT_SECRET);
+      if (!user) return new Response("unauthorized", { status: 401 });
+      const forwarded = new Request(request, { headers: { ...Object.fromEntries(request.headers), "x-user-id": user.sub } });
+      return env.ORIGIN(forwarded);
+    }
+
+    // (3) توزيع A/B: الـ variant لازم يدخل في الـ cache key
+    const cookie = request.headers.get("cookie") ?? "";
+    const assigned = /ab=(a|b)/.exec(cookie)?.[1] as "a" | "b" | undefined;
+    const variant = assigned ?? bucketOf(request.headers.get("cf-connecting-ip") ?? "0");
+    const upstream = new Request(request, { headers: { ...Object.fromEntries(request.headers), "x-variant": variant } });
+    const res = await env.ORIGIN(upstream);
+    const out = new Response(res.body, res);
+    if (!assigned) out.headers.append("set-cookie", `ab=${variant}; Path=/; Max-Age=2592000`);
+    return out;
+  },
+};</code></pre>
+
+<pre data-file="src/cdn-p6-run.ts"><code class="language-typescript">import handler from "./cdn-p6-edge.ts";
+
+console.log("Run locally: the handler is called directly with real Request objects. NOT run on Cloudflare.");
+
+const SECRET = "dev-secret";
+const env = {
+  JWT_SECRET: SECRET,
+  ORIGIN: async (req: Request) =&gt; new Response(`origin saw x-user-id=${req.headers.get("x-user-id")} x-variant=${req.headers.get("x-variant")}`),
+};
+const b64 = (d: string | Uint8Array) =&gt; Buffer.from(d).toString("base64url");
+
+async function sign(payload: object) {
+  const h = b64(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const p = b64(JSON.stringify(payload));
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${h}.${p}`));
+  return `${h}.${p}.${b64(new Uint8Array(sig))}`;
+}
+
+async function show(label: string, url: string, headers: Record&lt;string, string&gt; = {}) {
+  const r = await handler.fetch(new Request(url, { headers }), env);
+  console.log(label.padEnd(26), r.status, r.headers.get("location") ?? "", r.headers.get("set-cookie") ?? "", r.status === 302 ? "" : await r.text());
+}
+
+const valid = await sign({ sub: "user_42", exp: Math.floor(Date.now() / 1000) + 600 });
+const expired = await sign({ sub: "user_42", exp: Math.floor(Date.now() / 1000) - 10 });
+
+await show("/ from Egypt", "https://shop.example/", { "cf-ipcountry": "EG" });
+await show("/ from Germany", "https://shop.example/", { "cf-ipcountry": "DE" });
+await show("/api no token", "https://shop.example/api/orders");
+await show("/api expired token", "https://shop.example/api/orders", { authorization: `Bearer ${expired}` });
+await show("/api valid token", "https://shop.example/api/orders", { authorization: `Bearer ${valid}` });
+await show("/page first visit", "https://shop.example/page", { "cf-connecting-ip": "41.32.1.9" });
+await show("/page returning, ab=b", "https://shop.example/page", { "cf-connecting-ip": "41.32.1.9", cookie: "ab=b" });
+
+// حاسبة الـ data gravity: كل query بتدفع الـ RTT لقاعدة البيانات
+const userToEdge = 20, userToRegion = 70, edgeToDb = 60, regionToDb = 1;
+console.log("queries   edge function   regional function");
+for (const q of [0, 1, 2, 5, 10]) {
+  const edge = userToEdge + q * edgeToDb;
+  const region = userToRegion + q * regionToDb;
+  console.log(String(q).padStart(7), `${edge}ms`.padStart(15), `${region}ms`.padStart(19), edge &lt; region ? "edge wins" : "region wins");
+}
+const crossover = (userToRegion - userToEdge) / (edgeToDb - regionToDb);
+console.log(`edge wins only when queries &lt; ${crossover.toFixed(2)}`);</code></pre>
+
+<pre><code class="language-plaintext">Run locally: the handler is called directly with real Request objects. NOT run on Cloudflare.
+/ from Egypt               302 https://shop.example/ar  
+/ from Germany             302 https://shop.example/en  
+/api no token              401   unauthorized
+/api expired token         401   unauthorized
+/api valid token           200   origin saw x-user-id=user_42 x-variant=null
+/page first visit          200  ab=a; Path=/; Max-Age=2592000 origin saw x-user-id=null x-variant=a
+/page returning, ab=b      200   origin saw x-user-id=null x-variant=b
+queries   edge function   regional function
+      0            20ms                70ms edge wins
+      1            80ms                71ms region wins
+      2           140ms                72ms region wins
+      5           320ms                75ms region wins
+     10           620ms                80ms region wins
+edge wins only when queries &lt; 0.85</code></pre>
+  <div class="ar-note">ده تشغيل محلي للـ handler بـ Request حقيقي، مش على Cloudflare. من مصر الـ redirect رايح <code>/ar</code>، ومن ألمانيا <code>/en</code>. <code>/api</code> من غير token أو بـ token منتهي: 401 ومفيش طلب وصل الـ origin. بـ token سليم الـ origin شاف <code>user_42</code>. أول زيارة للصفحة اتعمل لها <code>Set-Cookie</code> بالـ variant، والزيارة الراجعة بـ cookie <code>ab=b</code> الـ origin شاف <code>b</code>. جدول الـ data gravity: الـ edge بيكسب بس لو مفيش queries، ومن أول query الـ region بيكسب، ونقطة التعادل تحت 0.85 query.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ edge functions بتشغّل الكود بتاعك جوه الـ PoP، في handler شكله <code>fetch(request)</code> مبني على Web APIs. بتناسب القرارات اللي بتتاخد من الطلب نفسه: geo redirects، فحص tokens، توزيع A/B، تعديل headers. الـ handler ده اتشغّل في Node بنداء مباشر بـ <code>Request</code> objects حقيقية. <strong>متشغّلش على Cloudflare.</strong> الـ runtimes وحالة المنصات في <a href="../../04-NodeJS/lessons/33-deployment-serverless-edge.html#p3">section 04، الـ edge runtimes</a>؛ هنا بنركز على تأثيرها على الـ design.</p>
+    <p>فيه تفصيلتين مهمين. فحص الـ token بيرفض الطلبات الغلط قبل ما توصل الـ origin. والـ A/B variant لازم يبقى جزء من الـ cache key، وإلا الصفحة المتخزنة بتاعة A هتروح لليوزرز بتوع B.</p>
+    <p>الـ limits بتحدد إيه اللي ينفع. حسب docs بتاعة Cloudflare زي ما اتقرت في نوفمبر 2026: الـ CPU time لكل طلب 10ms في Free، ولحد 5 دقايق في Paid (الـ default 30 ثانية)، والـ memory 128MB لكل isolate، والـ subrequests لكل طلب 50 في Free و10,000 في Paid، وحجم الـ Worker أقصاه 64 MiB غير مضغوط، والطلب الواحد يقدر يفتح 6 connections خارجة في نفس الوقت. راجع الأرقام قبل ما تبني عليها.</p>
+    <p>الفخ الأساسي هو الـ data gravity. الـ edge function قريبة من اليوزر بس بعيدة عن الـ database، فكل query بتدفع رحلة كاملة من الـ edge للـ DB. لو اليوزر على بعد 20ms من الـ edge و70ms من الـ region، والـ database على بعد 60ms من الـ edge و1ms من function إقليمية، query واحدة بس بتخسر: 80ms على الـ edge مقابل 71ms في الـ region. عند 5 queries يبقى 320ms مقابل 75ms. نقطة التعادل هنا تحت query واحدة، يعني شغّل الـ edge functions اللي بتستخدم data بس لو عندك cache أو read replica أو regional placement.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      رفض JWT منتهي على الـ edge بيوفر على الـ origin في هجمة بطلبات كتير. Redirect حسب البلد قبل ما الصفحة تتحمل. بس لو الـ API بتعمل 5 queries على Postgres في Frankfurt، حطها في الـ region نفسه. الغلطة الشائعة: Next middleware أو route handler على الـ edge بيعمل <code>await db.query</code> بدون مستوى cache.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off</b>
+    Edge functions give low latency for logic and worse latency for data. Before moving a route to the edge, count the database round trips it makes, then compute it.
+    <div class="ar-note">الـ edge بيدي latency أقل للـ logic وأسوأ للـ data. قبل ما تنقل route للـ edge، عدّ رحلات الـ database اللي بتعملها، واحسبها.</div>
+  </div>
+
+  <!-- ===================== PART 7 ===================== -->
+  <h2 id="p7">Part 7 — Push vs pull &amp; CDN failure <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 7 — الـ push مقابل الـ pull ولما الـ CDN يقع</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Pull is the default: you do nothing and objects fill on first request. Push means uploading content to the CDN's storage or pre-warming it before demand. It fits large, known files that will all be requested at once, such as a game patch or a video premiere. The calculator shows a 4 GB launch file across 50 PoPs: pull without a shield makes the origin send 200 GB, with a shield 4 GB, and only push gets to 4 GB with no user waiting.</p>
+    <p>On cost, per-gigabyte CDN egress is often only slightly cheaper than origin egress. The prices below are inputs from third-party sources read in November 2026, so confirm them on the vendor's page before you quote them: about $0.09/GB from S3 after 100 GB free, and CloudFront tiers starting around $0.085/GB after 1 TB free, with S3-to-CloudFront transfer reported as free. AWS's own page also lists flat-rate CloudFront plans now. At 50 TB/month the difference is about $500, roughly 12%. The real savings are the origin servers you don't run and the latency you don't serve.</p>
+    <p>Then the question interviewers like: what if the CDN fails? A 95% hit ratio means the origin sees 5% of traffic, so bypassing the CDN multiplies its load by 20. For 10,000 peak QPS that means 500 QPS today and 10,000 tomorrow, or 21 instances against the 2 you run. Real CDNs have failed: the <a href="https://blog.cloudflare.com/18-november-2025-outage/">Cloudflare outage of 18 November 2025</a> began at about 11:20 UTC, core traffic largely recovered by 14:30, and everything was normal by 17:06. Its cause was a database permissions change that doubled a generated file past a software limit. It wasn't an attack, and nothing you did could have prevented it.</p>
+    <p>So you need a plan, not hope. First, decide per route what survives: serve a static or read-only site from object storage instead of the full origin. Second, make bypass possible: a short DNS TTL on the CDN record, an origin TLS certificate for the public hostname, and an origin firewall that can admit direct traffic, since most origins only allow the CDN's IP ranges. Third, shed load at the origin with rate limits and 429s so it stays up for the routes that matter. Fourth, consider a second CDN only if the business justifies the cost. Fifth, rehearse it, because an untested failover plan usually fails on the firewall rule.</p>
+  </section>
+
+<pre data-file="src/cdn-p7-cost.ts"><code class="language-typescript">console.log("CALCULATOR: prices are list prices read Nov 2026 from third-party sources. Verify before you quote them.");
+
+type Tier = { upToGb: number; perGb: number };
+
+function tieredCost(gb: number, freeGb: number, tiers: Tier[]) {
+  let left = Math.max(0, gb - freeGb);
+  let cost = 0, prev = 0;
+  for (const t of tiers) {
+    const inTier = Math.min(left, t.upToGb - prev);
+    cost += inTier * t.perGb;
+    left -= inTier;
+    prev = t.upToGb;
+  }
+  return cost;
+}
+
+// الأسعار دي مدخلات: غيّرها بالسعر الفعلي بتاعك قبل أي قرار
+const s3Tiers: Tier[] = [{ upToGb: Infinity, perGb: 0.09 }];
+const cdnTiers: Tier[] = [
+  { upToGb: 10_000, perGb: 0.085 },
+  { upToGb: 50_000, perGb: 0.08 },
+  { upToGb: 150_000, perGb: 0.06 },
+  { upToGb: Infinity, perGb: 0.04 },
+];
+const usd = (n: number) =&gt; `$${Math.round(n).toLocaleString("en-US")}`;
+
+console.log("TB/month  direct S3   CDN (S3 origin)  CDN + non-AWS origin at 95% hit");
+for (const tb of [1, 10, 50, 200]) {
+  const gb = tb * 1000;
+  const direct = tieredCost(gb, 100, s3Tiers);
+  const cdn = tieredCost(gb, 1000, cdnTiers);
+  const originFill = gb * 0.05 * 0.09;
+  console.log(String(tb).padStart(8), usd(direct).padStart(10), usd(cdn).padStart(16), usd(cdn + originFill).padStart(32));
+}
+
+// الـ push مقابل الـ pull: ملف كبير معروف ينزل وقت launch
+const fileGb = 4, pops = 50;
+console.log(`launch file ${fileGb} GB across ${pops} PoPs`);
+console.log(`  pull, no shield: origin sends ${fileGb * pops} GB, and the first user in every PoP waits for the fill`);
+console.log(`  pull + shield:   origin sends ${fileGb} GB, the shield fans out, first users still wait`);
+console.log(`  push/pre-warm:   origin sends ${fileGb} GB before launch, no user waits, you pay storage and manage the upload`);
+
+// لو الـ CDN وقع: الـ origin هيستحمل كام؟
+function failover(peakQps: number, hitRatio: number, instanceRps: number, utilisation: number, running: number) {
+  const originNow = peakQps * (1 - hitRatio);
+  const multiplier = peakQps / originNow;
+  const needed = Math.ceil(peakQps / (instanceRps * utilisation));
+  console.log(
+    `peak ${peakQps} QPS, hit ${(hitRatio * 100).toFixed(0)}%: origin sees ${originNow.toFixed(0)} QPS today,`,
+    `${multiplier.toFixed(0)}x if the CDN is bypassed; need ${needed} instances, have ${running}`,
+    `(${running &gt;= needed ? "survives" : `short by ${needed - running}`})`,
+  );
+}
+failover(10_000, 0.95, 800, 0.6, 2);
+failover(10_000, 0.8, 800, 0.6, 5);
+failover(10_000, 0.99, 800, 0.6, 2);</code></pre>
+
+<pre><code class="language-plaintext">CALCULATOR: prices are list prices read Nov 2026 from third-party sources. Verify before you quote them.
+TB/month  direct S3   CDN (S3 origin)  CDN + non-AWS origin at 95% hit
+       1        $81               $0                               $5
+      10       $891             $765                             $810
+      50     $4,491           $3,970                           $4,195
+     200    $17,991          $12,010                          $12,910
+launch file 4 GB across 50 PoPs
+  pull, no shield: origin sends 200 GB, and the first user in every PoP waits for the fill
+  pull + shield:   origin sends 4 GB, the shield fans out, first users still wait
+  push/pre-warm:   origin sends 4 GB before launch, no user waits, you pay storage and manage the upload
+peak 10000 QPS, hit 95%: origin sees 500 QPS today, 20x if the CDN is bypassed; need 21 instances, have 2 (short by 19)
+peak 10000 QPS, hit 80%: origin sees 2000 QPS today, 5x if the CDN is bypassed; need 21 instances, have 5 (short by 16)
+peak 10000 QPS, hit 99%: origin sees 100 QPS today, 100x if the CDN is bypassed; need 21 instances, have 2 (short by 19)</code></pre>
+  <div class="ar-note">الأسعار مدخلات من مصادر third-party، راجعها على صفحة الـ vendor. الجدول الأول: 50TB في الشهر من S3 مباشر ≈$4,491 ومن CDN ≈$3,970، يعني الفرق حوالي 12%. بعده الـ push مقابل الـ pull لملف 4GB على 50 PoP: 200GB من غير shield، 4GB مع shield، وpush 4GB ومن غير ما حد يستنى. آخر 3 سطور: لو الـ CDN اتشال، الـ origin هيشوف 20 ضعف عند 95%، و5 أضعاف عند 80%، و100 ضعف عند 99%، ومحتاج 21 instance في كل الحالات.</div>
+
+<pre class="diagram">
+  normal:  users ──▶ CDN (95% hits) ──5%──▶ origin (2 instances)
+
+  CDN down: users ──▶ DNS failover ──100%──▶ origin (needs 21)
+                                  └──▶ static site from object storage
+</pre>
+  <div class="ar-note">في الوضع العادي الـ CDN بيمسك 95% والـ origin بيشوف 5% بس. لما الـ CDN يقع، الـ DNS failover بيبعت كل الترافيك للـ origin اللي محتاج 21 instance، أو الأحسن تبعت جزء منه لـ static site من الـ object storage عشان تستحمل.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ pull هو الـ default: مبتعملش حاجة والـ objects بتتملي مع أول طلب. الـ push معناه إنك ترفع المحتوى على storage الـ CDN أو تعمله pre-warm قبل الطلب. بيناسب الملفات الكبيرة المعروفة اللي الناس كلها هتطلبها مرة واحدة، زي game patch أو عرض فيلم. الحاسبة بتوري ملف 4GB على 50 PoP: الـ pull من غير shield بيخلي الـ origin يبعت 200GB، مع shield 4GB، والـ push بس هو اللي بيوصل 4GB ومن غير ما حد يستنى.</p>
+    <p>في التكلفة، سعر الـ GB في الـ CDN غالبًا أرخص شوية بس من الـ origin. الأسعار دي مدخلات من مصادر third-party اتقرت في نوفمبر 2026، فأكدها على صفحة الـ vendor قبل ما تقولها لحد: حوالي $0.09/GB من S3 بعد أول 100GB مجانًا، وشرايح CloudFront بتبدأ حوالي $0.085/GB بعد أول 1TB مجانًا، والنقل من S3 لـ CloudFront متذكر إنه مجاني. وصفحة AWS نفسها بقت بتعرض flat-rate plans لـ CloudFront. عند 50TB في الشهر الفرق حوالي $500، يعني 12% تقريبًا. التوفير الحقيقي هو الـ origin servers اللي مش هتشغّلها والـ latency اللي مش هتقدّمها.</p>
+    <p>وبعدين السؤال اللي الـ interviewers بيحبوه: لو الـ CDN وقع؟ الـ 95% hit ratio معناها الـ origin بيشوف 5% من الترافيك، فلو الـ CDN اتشال حمله بيتضرب في 20. عند 10,000 QPS في الذروة يبقى 500 QPS النهاردة و10,000 بكرة، يعني 21 instance مقابل 2 شغالين. والـ CDNs وقعت فعلًا: <a href="https://blog.cloudflare.com/18-november-2025-outage/">Cloudflare في 18 نوفمبر 2025</a> وقعت حوالي 11:20 UTC، الترافيك الأساسي رجع على 14:30 تقريبًا، وكل حاجة بقت طبيعية على 17:06. السبب كان تغيير في صلاحيات database ضاعف ملف generated لحد ما عدّى limit في السوفتوير. ماكانتش هجمة، ومفيش حاجة إنت كنت تقدر تعملها تمنعها.</p>
+    <p>فمحتاج خطة، مش أمل. أولًا: حدد لكل route إيه اللي هيفضل شغال، وقدّم static أو read-only site من object storage بدل الـ origin كله. تانيًا: خلّي الـ bypass ممكن: DNS TTL قصير على record الـ CDN، وTLS certificate على الـ origin لنفس الـ hostname العام، وfirewall في الـ origin يقدر يسمح بترافيك مباشر، لأن معظم الـ origins بتسمح بس لـ IP ranges بتاعة الـ CDN. تالتًا: اعمل load shedding على الـ origin بـ rate limits و429 عشان يفضل واقف للـ routes المهمة. رابعًا: فكّر في CDN تاني بس لو الـ business يبرر التكلفة. خامسًا: جرّب الخطة، لأن الـ failover اللي متجربش غالبًا بيقع على قاعدة firewall.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في الـ postmortem بعد outage عند الـ CDN، أول سؤال: "الـ origin كان يقدر يستحمل؟" احسبها قبلها: الـ peak × (1 − hit ratio) وبعدين الـ peak كله، وشوف عندك كام instance. واعمل تجربة failover شهرية في staging: غيّر الـ DNS وشوف الـ firewall والـ TLS بيكملوا ولا لأ.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Your CDN is down and your hit ratio was 95%. What happens and what's your plan?" → Origin load jumps 20×, so full failover usually kills it. Serve static/read-only pages from object storage, keep DNS TTL short, make sure the origin firewall and TLS allow direct traffic, shed load with rate limits so critical routes survive, and rehearse it.
+    <div class="ar-note">"الـ CDN وقع والـ hit ratio كان 95%. إيه اللي هيحصل وخطتك إيه؟" ← حمل الـ origin بيطلع 20 ضعف، فالـ failover الكامل غالبًا هيوقعه. قدّم صفحات static أو read-only من الـ object storage، وخلّي الـ DNS TTL قصير، وتأكد إن الـ firewall والـ TLS في الـ origin بيسمحوا بالترافيك المباشر، واعمل load shedding بـ rate limits عشان الـ routes المهمة تعيش، وجرّب ده قبلها.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Personal data marked public</b>
+<pre><code class="language-typescript">res.setHeader("Cache-Control", "public, max-age=60");
+res.json({ email: req.user.email });
+// اليوزر اللي بعده هياخد نفس الرد</code></pre></div>
+    <div class="good"><b>✅ Personal data stays out of shared caches</b>
+<pre><code class="language-typescript">res.setHeader("Cache-Control", "private, no-store");
+res.json({ email: req.user.email });
+// كل يوزر بياخد رده هو من الـ origin</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>public</code> على رد فيه data شخصية معناه إن الـ CDN هيقدّمه لليوزر اللي بعده: ده اللي شوفناه في Part 2 لما Bob خد إيميل Alice. ✅ <code>private, no-store</code> بيخلي كل طلب يروح للـ origin ويرجع بـ data صاحبه.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Raw URL as the cache key</b>
+<pre><code class="language-typescript">const key = req.url;
+// كل utm وترتيب params بقى key جديد</code></pre></div>
+    <div class="good"><b>✅ Allow-list the params that change the response</b>
+<pre><code class="language-typescript">const ALLOWED = new Set(["page", "sort", "color"]);
+const kept = [...url.searchParams]
+  .filter(([k]) =&gt; ALLOWED.has(k))
+  .sort(([a], [b]) =&gt; a.localeCompare(b));
+// الـ key بقى من الـ params المهمة بس</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ لو خدت الـ URL زي ما هو، كل حملة تسويق وكل ترتيب params مختلف بيعمل object جديد، فالـ hit ratio بيقع (23.1% في التجربة). ✅ الـ allow-list بتخلي الـ key مبني على الـ params اللي بتغيّر الرد فعلًا، وده بيرجّعك لحوالي 79.9%.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Purge everything on each deploy</b>
+<pre><code class="language-bash">curl -X POST "$CDN_API/purge" -d '{"purge_everything":true}'
+# الـ origin بياخد كل الطلبات مرة واحدة</code></pre></div>
+    <div class="good"><b>✅ Hashed assets and tag purges</b>
+<pre><code class="language-bash">curl -X POST "$CDN_API/purge" -d '{"tags":["product-7"]}'
+# الملفات بأسماء hashed مش محتاجة purge أصلًا</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ purge لكل حاجة وقت الترافيك بيفضّي الـ cache كله، والـ origin في التجربة قفز من نداء في الثانية لـ 111. ✅ الـ JS والـ CSS بأسماء hashed مش محتاجين purge خالص، والـ data بتتعمل لها purge بالـ tag على قد اللي اتغيّر.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ TTL without SWR on a hot API</b>
+<pre><code class="language-typescript">res.setHeader("Cache-Control", "public, s-maxage=60");
+// كل دقيقة، اللي بيوصل وقت التجديد بيستنى الـ origin</code></pre></div>
+    <div class="good"><b>✅ TTL, SWR and stale-if-error together</b>
+<pre><code class="language-typescript">res.setHeader("Cache-Control",
+  "public, s-maxage=60, stale-while-revalidate=300, stale-if-error=600");
+// اليوزر مبيستناش، ولو الـ origin وقع لسه بيرد</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ TTL لوحده بيخلي اللي بيوصل وقت انتهاء الـ entry يستنى الـ origin، وده ظهر في الـ p99 (≈56ms في التجربة). ✅ مع SWR الـ p99 نزل لحوالي 1ms بنفس حمل الـ origin، و<code>stale-if-error</code> بيخليك ترد حتى لو الـ origin وقع.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Find your TTL's knee <span class="lvl lvl-1">🟢 easy</span></b>
+    Run <code>cdn-p1-static.ts</code> with TTLs of 5, 15, 30 and 60 seconds and plot origin hits against TTL. Where does doubling the TTL stop helping?
+    <div class="ar-note">شغّل <code>cdn-p1-static.ts</code> بـ TTL قيمته 5 و15 و30 و60 ثانية وارسم origin hits مقابل الـ TTL. عند إيه تضعيف الـ TTL بيبطل يفيد؟</div>
+    <details><summary>Hint · تلميح</summary>
+      Keep the 200-second run. Once the TTL gets close to the run length, the remaining misses are cold keys only.
+      <div class="ar-note">خلّي التجربة 200 ثانية. لما الـ TTL يقرب من طول التجربة، الـ misses اللي باقية هتبقى cold keys بس.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. Answer 304 at the edge <span class="lvl lvl-2">🟡 medium</span></b>
+    Extend the stand-in so a client sending <code>If-None-Match</code> gets a 304 from the edge, without any origin call.
+    <div class="ar-note">طوّر الـ stand-in بحيث الـ client اللي بيبعت <code>If-None-Match</code> ياخد 304 من الـ edge، من غير أي نداء للـ origin.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/cdn-ex.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { Edge, VirtualClock, type Req, type Served } from "./edge.ts";
+
+// تمرين 2: الـ edge يرد 304 بنفسه لو الـ client عنده نفس الـ ETag
+export async function serve(edge: Edge, req: Req): Promise&lt;Served&gt; {
+  const served = await edge.handle(req);
+  const inm = req.headers?.["if-none-match"];
+  if (inm &amp;&amp; served.res.status === 200 &amp;&amp; served.res.headers.etag === inm) {
+    return { cache: served.cache, res: { status: 304, headers: { etag: inm }, body: "" } };
+  }
+  return served;
+}</code></pre>
+      <div class="ar-note">بعد ما الـ edge يرجّع الرد، قارن الـ <code>ETag</code> بتاعه بالـ <code>If-None-Match</code>. لو متطابقين رجّع 304 من غير body. التشغيل طلّع <code>200 MISS | 304 HIT | origin calls: 1</code>.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. An allow-list key <span class="lvl lvl-2">🟡 medium</span></b>
+    Write <code>catalogKey(url)</code> that keeps only <code>page</code>, <code>sort</code> and <code>color</code>, sorted. Prove two URLs with different junk give the same key.
+    <div class="ar-note">اكتب <code>catalogKey(url)</code> تحتفظ بـ <code>page</code> و<code>sort</code> و<code>color</code> بس ومترتبين. وأثبت إن URLين مختلفين في الـ junk بيطلّعوا نفس الـ key.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/cdn-ex.ts"><code class="language-typescript">// تمرين 3: allow-list للـ query params بدل block-list
+const ALLOWED = new Set(["page", "sort", "color"]);
+export function catalogKey(rawUrl: string) {
+  const u = new URL(rawUrl);
+  const kept = [...u.searchParams].filter(([k]) =&gt; ALLOWED.has(k)).sort(([a], [b]) =&gt; a.localeCompare(b));
+  return `${u.host}${u.pathname}?${new URLSearchParams(kept)}`;
+}
+const a = catalogKey("https://shop.example/products?utm_source=fb&amp;sort=price&amp;page=2&amp;sessionid=abc");
+const b = catalogKey("https://shop.example/products?page=2&amp;sort=price");
+assert.equal(a, b);
+console.log(a);</code></pre>
+      <div class="ar-note">الـ allow-list أأمن من الـ block-list: أي param جديد بيتجاهل تلقائيًا بدل ما يبوّظ الـ hit ratio. التشغيل طلّع <code>shop.example/products?page=2&amp;sort=price</code>.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project: a caching table <span class="lvl lvl-3">🔴 project</span></b>
+    List every route in your side project with its <code>Cache-Control</code>, cache key, purge method, and what happens if the origin is down. Add <code>ETag</code> to one public route and measure origin QPS with autocannon before and after, behind the stand-in.
+    <div class="ar-note">اكتب كل route في مشروعك مع الـ <code>Cache-Control</code> بتاعها، والـ cache key، وطريقة الـ purge، وإيه اللي يحصل لو الـ origin وقع. ضيف <code>ETag</code> على route عام واحد وقيس origin QPS بـ autocannon قبل وبعد، قدام الـ stand-in.</div>
+    <details><summary>Hint · تلميح</summary>
+      Any route that reads <code>req.user</code> should end up as <code>private, no-store</code>. Start from the routes with the most traffic.
+      <div class="ar-note">أي route بتقرا <code>req.user</code> لازم تطلع <code>private, no-store</code>. ابدأ بالـ routes اللي عليها أكبر ترافيك.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Hit ratio is the metric; the misses that remain after a long TTL are cold keys, and they set your p99.</li>
+    <li>Dynamic content still gains on new connections (540 → 240 ms in the calculator), and gains nothing on open ones.</li>
+    <li>Normalize the key: drop tracking params, sort the rest. 23.1% → 79.9% in the run.</li>
+    <li>Normalize <code>Vary</code> values. <code>Vary: Cookie</code> means no cache (3.3%).</li>
+    <li>Personal data: <code>private, no-store</code>. <code>Authorization</code> requests aren't reused unless <code>public</code>, <code>s-maxage</code> or <code>must-revalidate</code> allows it (RFC 9111 §3.5).</li>
+    <li>Tag purge or hashed assets instead of purge-all; soft purge hides the spike from users, not from the origin.</li>
+    <li>Purges take time to reach every PoP; keep a TTL as the backstop.</li>
+    <li><code>s-maxage</code> + SWR + <code>stale-if-error</code> + ETag: same origin load, p99 gone, survives origin failure.</li>
+    <li>Shield: 50 calls → 1. Collapsing: 1,000 → 1. A shield is a shared dependency, so plan its failure.</li>
+    <li>Edge functions: fine for request-only logic, wrong for routes with many DB round trips.</li>
+    <li>Pull by default; push for large known files.</li>
+    <li>CDN down means origin × 1/(1 − hit ratio). Have a rehearsed plan.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ hit ratio هو المقياس، والـ misses اللي بتفضل بعد TTL طويل هي cold keys، وهي اللي بتحدد الـ p99.</li>
+      <li>الـ dynamic بيكسب على الـ connections الجديدة (540 لـ 240ms في الحاسبة) ومبيكسبش حاجة على المفتوحة.</li>
+      <li>ظبّط الـ key: شيل الـ tracking params ورتّب الباقي. من 23.1% لـ 79.9% في التجربة.</li>
+      <li>ظبّط قيم الـ <code>Vary</code>. و<code>Vary: Cookie</code> معناها مفيش cache (3.3%).</li>
+      <li>الـ data الشخصية: <code>private, no-store</code>. والطلبات اللي فيها <code>Authorization</code> مبتتعادش إلا لو <code>public</code> أو <code>s-maxage</code> أو <code>must-revalidate</code> سمحوا (RFC 9111 قسم 3.5).</li>
+      <li>Tag purge أو hashed assets بدل purge-all، والـ soft purge بيخبي الـ spike عن اليوزرز مش عن الـ origin.</li>
+      <li>الـ purge بياخد وقت عشان يوصل كل PoP، فخلّي TTL كخط دفاع.</li>
+      <li><code>s-maxage</code> + SWR + <code>stale-if-error</code> + ETag: نفس حمل الـ origin، والـ p99 بيروح، وبتستحمل وقوع الـ origin.</li>
+      <li>الـ shield: 50 نداء لـ 1، والـ collapsing: 1000 لـ 1. والـ shield shared dependency، فخطط لفشله.</li>
+      <li>الـ edge functions كويسة للـ logic اللي من الطلب بس، وغلط للـ routes اللي فيها DB round trips كتير.</li>
+      <li>الـ pull هو الـ default، والـ push للملفات الكبيرة المعروفة.</li>
+      <li>الـ CDN لو وقع يبقى حمل الـ origin مضروب في 1/(1 − hit ratio). لازم خطة مجربة.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 10 · 2.1 — CDN بعمق: static vs dynamic content caching، cache keys، TTL، invalidation (purge)، origin shield، edge compute (Cloudflare Workers)، push vs pull CDN</label>
+    <label><input type="checkbox" data-key="r2"> 10 · 2.3 — CDN caching للـ API responses (<code>Cache-Control</code>، <code>Vary</code>، <code>stale-while-revalidate</code>)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.rfc-editor.org/rfc/rfc9111.html">RFC 9111 — HTTP Caching</a></li>
+    <li><a href="https://www.rfc-editor.org/rfc/rfc5861.html">RFC 5861 — stale-while-revalidate and stale-if-error</a></li>
+    <li><a href="https://developers.cloudflare.com/cache/how-to/purge-cache/">Cloudflare — Purge cache</a></li>
+    <li><a href="https://www.fastly.com/documentation/guides/full-site-delivery/purging/working-with-surrogate-keys/">Fastly — Working with surrogate keys</a></li>
+    <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/origin-shield.html">Amazon CloudFront — Origin Shield</a></li>
+    <li><a href="https://developers.cloudflare.com/workers/platform/limits/">Cloudflare Workers — Limits</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./08-reverse-proxy-gateway-mesh.html"><small>← Previous</small>08 · Proxy, Gateway, Mesh</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./10-protocols-http2-http3.html"><small>Next →</small>10 · Protocols</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

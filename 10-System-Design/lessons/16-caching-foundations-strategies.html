@@ -1,0 +1,1654 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Caching: Levels, Hit Ratio, Eviction &amp; Write Strategies — 10 System Design</title>
+<meta name="section" content="10-System-Design">
+<meta name="level" content="🟢 → 🟡">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">10 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 16 / 63</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <header>
+    <h1>Caching: Levels, Hit Ratio, Eviction &amp; Write Strategies</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 16 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🟢 → 🟡</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Redis 8.10 · Postgres 18 · Node 22</span>
+      <span class="chip">Prereq: 04 Redis patterns</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>10 · 1.4 — ليه الـ cache: تقليل latency وتقليل load على الـ DB</li>
+        <li>10 · 1.4 — Cache levels: browser، CDN، application (in-memory)، distributed (Redis)</li>
+        <li>10 · 1.4 — Cache-aside pattern (الأشهر): read cache → miss → read DB → write cache</li>
+        <li>10 · 1.4 — TTL، eviction (LRU)</li>
+        <li>10 · 1.4 — Cache hit ratio كـ metric</li>
+        <li>10 · 2.3 — Strategies: cache-aside (lazy)، read-through، write-through، write-back/write-behind (خطر)، refresh-ahead</li>
+        <li>10 · 2.3 — Eviction: LRU، LFU، FIFO، TTL-based — وإمتى كل واحد</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Why cache, measured</a></li>
+      <li><a href="#p2">Part 2 — Cache levels</a></li>
+      <li><a href="#p3">Part 3 — Cache-aside &amp; hit ratio</a></li>
+      <li><a href="#p4">Part 4 — Eviction policies</a></li>
+      <li><a href="#p5">Part 5 — Read-through &amp; write-through</a></li>
+      <li><a href="#p6">Part 6 — Write-behind &amp; refresh-ahead</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Caching is the first tool anyone reaches for and the one most often applied without numbers. Put simply, a cache buys two different things, lower latency and lower load on the database, and on a healthy primary-key query the first one can be almost nothing while the second is huge. Choosing well means knowing which level holds the data, what hit ratio you actually have per data type, what gets evicted under memory pressure, and what happens to a write when one of the two stores fails.</p>
+    <p>This lesson measures each of those on real Redis and Postgres. It deliberately stops at the foundations: invalidation is <a href="./17-cache-invalidation-consistency.html">the next lesson</a>, and stampede and hot keys are in <a href="./18-cache-stampede-hot-keys-topology.html">the one after</a>.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ caching هو أول أداة أي حد بيمسكها، وأكتر أداة بتتحط من غير أرقام. الـ cache بيشتريلك حاجتين مختلفين: latency أقل، و load أقل على الداتابيز. وعلى query بالـ primary key على داتابيز سليمة، الأولى ممكن تبقى ولا حاجة تقريبًا والتانية ضخمة. الاختيار الصح معناه تعرف أنهي level شايل الداتا، والـ hit ratio الحقيقي لكل نوع داتا، وإيه اللي بيتشال لما الـ memory تضغط، وإيه اللي بيحصل للـ write لو واحد من المكانين وقع.</p>
+    <p>الدرس ده بيقيس كل ده على Redis و Postgres حقيقيين، وبيقف عند الأساسيات عن قصد: الـ invalidation في <a href="./17-cache-invalidation-consistency.html">الدرس الجاي</a>، والـ stampede والـ hot keys في <a href="./18-cache-stampede-hot-keys-topology.html">اللي بعده</a>.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Why cache, measured <span class="lvl lvl-1">🟢 Basic</span><span class="ar-sub">الجزء 1 — ليه الـ cache بالقياس</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Two separate benefits.</b> Latency: the hit is cheaper than the query. Load: every hit is a query the database never ran. Measure both, because they aren't the same size. In the run below a primary-key lookup on local Postgres was about as fast as a Redis GET (a 1.6× difference), so caching it buys almost no latency. A product-page join and aggregate over about 2,000 reviews was about 12× slower than the GET, which is where latency improves.</p>
+    <p><b>The load result is the one that pays.</b> Under 40 connections for 6 seconds the API did about 3,768 req/s going straight to the database and about 29,300 req/s with a warmed Redis, with zero database queries. Notice the middle line of the load output: the cold cache sent 7,063 queries in that run, because 40 connections asked for the same key at once before anyone had filled it. That is a stampede, the subject of <a href="./18-cache-stampede-hot-keys-topology.html">lesson 18</a>.</p>
+    <p><b>The formula.</b> Effective latency = h × cache + (1 − h) × (cache + db). A miss pays for the cache lookup too, which is why a cache with a poor hit ratio makes things slower than having none. Plugging in the measured means shows the shape: 2.1 ms at 0%, 0.35 ms at 90%, 0.18 ms at 99%.</p>
+  </section>
+
+<pre data-file="src/p1-why.ts"><code class="language-typescript">// ليه الـ cache: قياس حقيقي Postgres مقابل Redis، وبعدين السيرفر تحت الضغط
+import { fork } from "node:child_process";
+import { once } from "node:events";
+import autocannon from "autocannon";
+import { createPrimary, connect, stopAll } from "./pg-cluster.mjs";
+import { newRedis, stats } from "./lab.ts";
+
+console.log("REAL Postgres 18 + REAL Redis 8.10.3 on localhost, Windows, loaded machine: all numbers are approximate.");
+const cluster = await createPrimary();
+const db = await connect(cluster.port);
+const redis = newRedis();
+await redis.flushall();
+
+await db.query(`create table products (id bigint primary key, name text not null, price_cents int not null)`);
+await db.query(`create table reviews (id bigint generated always as identity primary key, product_id bigint not null references products, rating int not null)`);
+await db.query(`insert into products select g, 'product-' || g, 1000 + g from generate_series(1, 200) g`);
+await db.query(`insert into reviews (product_id, rating) select 1 + (g % 200), 1 + (g % 5) from generate_series(1, 400000) g`);
+await db.query(`create index on reviews (product_id)`);
+await db.query(`analyze`);
+
+const PAGE_SQL = `
+  select p.id, p.name, p.price_cents, count(r.id)::int reviews, round(avg(r.rating), 2) rating
+  from products p left join reviews r on r.product_id = p.id
+  where p.id = $1 group by p.id`;
+const sample = JSON.stringify((await db.query(PAGE_SQL, [1])).rows[0]);
+await redis.set("product:1", sample);
+
+async function time(label: string, n: number, f: () =&gt; Promise&lt;unknown&gt;) {
+  const xs: number[] = [];
+  for (let i = 0; i &lt; n; i++) {
+    const t0 = performance.now();
+    await f();
+    xs.push(performance.now() - t0);
+  }
+  const { mean, p50, p99 } = stats(xs);
+  console.log(label.padEnd(30), `mean≈${mean.toFixed(3)} ms  p50≈${p50.toFixed(3)} ms  p99≈${p99.toFixed(3)} ms`);
+  return mean;
+}
+const pk = await time("Postgres PK lookup", 2000, () =&gt; db.query(`select * from products where id=$1`, [7]));
+const agg = await time("Postgres product page (join)", 2000, () =&gt; db.query(PAGE_SQL, [7]));
+const cache = await time("Redis GET (same page JSON)", 2000, () =&gt; redis.get("product:1"));
+
+// الـ ⁦formula: h×cache + (1−h)×(cache+db) —⁩ الـ miss بيدفع رحلة الـ cache برضه
+for (const h of [0, 0.5, 0.8, 0.9, 0.95, 0.99]) {
+  const effective = h * cache + (1 - h) * (cache + agg);
+  console.log(`hit ratio ${String(h * 100).padStart(3)}%: effective ≈ ${effective.toFixed(3)} ms, DB gets ${((1 - h) * 100).toFixed(0)}% of reads`);
+}
+console.log(`ratio page/redis ≈ ${(agg / cache).toFixed(1)}x, ratio PK/redis ≈ ${(pk / cache).toFixed(1)}x`);
+
+async function load(mode: "db" | "cache", warm: boolean) {
+  await redis.flushall();
+  const child = fork(new URL("./p1-server.ts", import.meta.url), {
+    env: { ...process.env, MODE: mode, PG_PORT: String(cluster.port), REDIS_PORT: String(redis.options.port) },
+  });
+  const [{ port }] = (await once(child, "message")) as [{ port: number }];
+  const base = `http://127.0.0.1:${port}`;
+  const stat = async () =&gt; (await (await fetch(`${base}/stats`)).json()) as { dbQueries: number };
+  // الـ warm-up: كل منتج مرة واحدة قبل الضغط، فالـ cache مليان من الأول
+  if (warm) for (let i = 1; i &lt;= 200; i++) await (await fetch(`${base}/products/${i}`)).text();
+  const before = (await stat()).dbQueries;
+  const requests = Array.from({ length: 200 }, (_, i) =&gt; ({ path: `/products/${i + 1}` }));
+  const r = await autocannon({ url: base, connections: 40, duration: 6, requests });
+  const queries = (await stat()).dbQueries - before;
+  child.kill();
+  console.log(`${mode}${warm ? " warm" : " cold"}`.padEnd(11), `req/s≈${Math.round(r.requests.average)}  p50≈${r.latency.p50} ms  p99≈${r.latency.p99} ms  errors=${r.errors + r.non2xx}  DB queries=${queries}  (${(queries / 6).toFixed(0)}/s)`);
+}
+await load("db", false);
+await load("cache", false);
+await load("cache", true);
+
+await db.end();
+await redis.quit();
+await stopAll(cluster);
+process.exit(0);
+</code></pre>
+<pre data-file="src/p1-server.ts"><code class="language-typescript">// سيرفر المنتج: وضع db كل request بينزل لـ Postgres، ووضع cache عن طريق Redis
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { newPool, newRedis } from "./lab.ts";
+
+const mode = process.env.MODE as "db" | "cache";
+const pool = newPool(process.env.PG_PORT!);
+const redis = newRedis();
+const counters = { dbQueries: 0, requests: 0 };
+
+const PAGE_SQL = `
+  select p.id, p.name, p.price_cents, count(r.id)::int reviews, round(avg(r.rating), 2) rating
+  from products p left join reviews r on r.product_id = p.id
+  where p.id = $1 group by p.id`;
+
+async function loadProduct(id: number) {
+  counters.dbQueries++;
+  return (await pool.query(PAGE_SQL, [id])).rows[0];
+}
+
+async function getProduct(id: number) {
+  if (mode === "db") return loadProduct(id);
+  const key = `product:${id}`;
+  const hit = await redis.get(key);
+  if (hit !== null) return JSON.parse(hit);
+  const row = await loadProduct(id);
+  await redis.set(key, JSON.stringify(row), "EX", 120);
+  return row;
+}
+
+const server = http.createServer(async (req, res) =&gt; {
+  if (req.url === "/stats") return res.end(JSON.stringify(counters));
+  counters.requests++;
+  const id = Number(req.url!.split("/")[2]);
+  res.setHeader("content-type", "application/json");
+  res.end(JSON.stringify(await getProduct(id)));
+});
+server.listen(0, "127.0.0.1", () =&gt; process.send!({ port: (server.address() as AddressInfo).port }));
+</code></pre>
+<pre><code class="language-plaintext">REAL Postgres 18 + REAL Redis 8.10.3 on localhost, Windows, loaded machine: all numbers are approximate.
+Postgres PK lookup             mean≈0.253 ms  p50≈0.234 ms  p99≈0.938 ms
+Postgres product page (join)   mean≈1.958 ms  p50≈1.856 ms  p99≈3.730 ms
+Redis GET (same page JSON)     mean≈0.157 ms  p50≈0.134 ms  p99≈0.734 ms
+hit ratio   0%: effective ≈ 2.115 ms, DB gets 100% of reads
+hit ratio  50%: effective ≈ 1.136 ms, DB gets 50% of reads
+hit ratio  80%: effective ≈ 0.549 ms, DB gets 20% of reads
+hit ratio  90%: effective ≈ 0.353 ms, DB gets 10% of reads
+hit ratio  95%: effective ≈ 0.255 ms, DB gets 5% of reads
+hit ratio  99%: effective ≈ 0.177 ms, DB gets 1% of reads
+ratio page/redis ≈ 12.4x, ratio PK/redis ≈ 1.6x
+db cold     req/s≈3768  p50≈10 ms  p99≈16 ms  errors=0  DB queries=22641  (3774/s)
+cache cold  req/s≈21433  p50≈1 ms  p99≈12 ms  errors=0  DB queries=7063  (1177/s)
+cache warm  req/s≈29317  p50≈1 ms  p99≈3 ms  errors=0  DB queries=0  (0/s)
+</code></pre>
+  <div class="ar-note">تشغيل حقيقي. أول 3 سطور: الـ PK lookup قريب جدًا من Redis، والـ join أبطأ حوالي 12 مرة. السطور اللي بعدها بتحط الأرقام في المعادلة: كل ما الـ hit ratio يعلى الـ latency بيقل والـ DB بتاخد نسبة أصغر. آخر 3 سطور تحت ضغط 40 connection: من غير cache حوالي 3768 طلب في الثانية وكلهم DB. الـ cache وهو فاضي: 21 ألف بس 7063 query بسبب stampede أول ما بدأنا. الـ cache مليان: حوالي 29 ألف وصفر queries. الأرقام تقريبية على Windows تحت ضغط، فبص على النسب.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>فايدتين منفصلين.</b> الـ latency: الـ hit أرخص من الـ query. والـ load: كل hit هو query الداتابيز معملتهاش. قيس الاتنين لأنهم مش نفس الحجم. في التشغيل فوق، الـ primary-key lookup على Postgres محلي كان تقريبًا زي Redis GET (فرق 1.6 مرة)، فالـ cache عليه مش بيشتريلك latency تقريبًا. أما صفحة المنتج بـ join و aggregate على حوالي 2000 review كانت أبطأ حوالي 12 مرة، وهنا الـ latency بيتحسن فعلًا.</p>
+    <p><b>نتيجة الـ load هي اللي بتفرق.</b> تحت 40 connection لمدة 6 ثواني، الـ API عمل حوالي 3,768 طلب في الثانية وهو نازل على الداتابيز مباشرة، وحوالي 29,300 طلب في الثانية مع Redis مليان ومن غير ولا query. بص على السطر اللي في النص: الـ cache الفاضي بعت 7,063 query في الـ run ده، لأن 40 connection طلبوا نفس الـ key في نفس الوقت قبل ما حد يملاه. ده الـ stampede، وموضوع <a href="./18-cache-stampede-hot-keys-topology.html">درس 18</a>.</p>
+    <p><b>المعادلة:</b> الـ latency الفعلي = h × cache + (1 − h) × (cache + db). الـ miss بيدفع رحلة الـ cache برضه، وعشان كده cache بـ hit ratio وحش ممكن يخلّي الدنيا أبطأ من مفيش cache خالص. لما حطينا الأرقام المتقاسة طلع: 2.1 ms عند 0%، و0.35 ms عند 90%، و0.18 ms عند 99%.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      قبل ما تضيف Redis لـ endpoint، قيس. لو الـ query بتاعتك PK بسيط والداتابيز مرتاحة، الـ cache مش هيحسن الـ latency وهيزود كود invalidation. لو الـ endpoint صفحة منتج بـ joins و aggregates بتتطلب 3000 مرة في الثانية، الـ cache هينقذ الـ primary من ضغط حقيقي حتى لو الـ latency مش هو المشكلة. والـ PR بتاعك يقول الرقمين.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: a cache is a second copy of the truth</b>
+    Every cache adds a staleness window, an invalidation path and a new failure mode. If the database is comfortable and the query is cheap, an index or a read replica may solve the problem with fewer moving parts. Add the cache when the numbers say the database is the constraint.
+    <div class="ar-note">كل cache بيضيف فترة stale، ومسار invalidation، وطريقة فشل جديدة. لو الداتابيز مرتاحة والـ query رخيصة، ممكن index أو read replica يحلوا المشكلة بأجزاء أقل. ضيف الـ cache لما الأرقام تقول إن الداتابيز هي القيد.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Would you put Redis in front of a primary-key lookup?" → Measure first. On a healthy database it often buys little latency, so I'd add it for load: if that query is a large share of primary CPU, a cache lets me shrink the database or survive a traffic spike. Then I'd state the hit ratio I expect and the staleness I'm accepting.
+    <div class="ar-note">"هتحط Redis قدام primary-key lookup؟" ← أقيس الأول. على داتابيز سليمة غالبًا مش بيوفر latency كتير، فهضيفه عشان الـ load: لو الـ query دي جزء كبير من الـ CPU بتاع الـ primary، الـ cache بيخليني أصغّر الداتابيز أو أستحمل traffic spike. وبعدها أقول الـ hit ratio المتوقع والـ staleness اللي قابله.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Cache levels <span class="lvl lvl-1">🟢 Basic</span><span class="ar-sub">الجزء 2 — مستويات الـ cache</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A product request can be answered at four levels: the <b>browser</b> (no network at all), the <b>CDN edge</b> (tens of milliseconds, near the user), <b>application memory</b> with <code>lru-cache</code> (sub-microsecond, per process) and <b>Redis</b> (a network hop, shared by all pods). Behind them sits the database. HTTP cache headers, CDN behaviour and in-process LRU are covered in <a href="../../06-NextJS/lessons/10-caching-strategy-debugging.html">Next caching</a>, <a href="./09-cdn-in-depth.html">the CDN lesson</a> and <a href="../../04-NodeJS/lessons/21-redis-patterns-caching.html">the Redis patterns lesson</a>, so this part only adds the cost comparison.</p>
+    <p><b>The rule: the closer to the user, the faster and the harder to invalidate.</b> One <code>DEL</code> clears Redis. Twenty pods each hold their own memory, so they need an event or a short TTL. A CDN needs a purge API call that takes seconds. A browser can't be reached at all: you wait for <code>max-age</code>, or you change the URL.</p>
+    <p><b>Read the trace carefully.</b> Once a request has crossed the internet to your origin, the hops inside your data center are rounding errors: the L1 hit, the Redis hit and even the database query all show about 80 ms in the table below. In this run the browser and CDN hops are assumed numbers (not run here), while L1, Redis and Postgres are measured. Inner levels are about protecting your origin, and outer levels are about the user.</p>
+  </section>
+
+<pre class="diagram">
+   Browser        CDN edge        App pod (L1)      Redis (L2)     Postgres
+   max-age        s-maxage        lru-cache         shared         truth
+   0 ms           ~20 ms *        +60 ms * + &lt;1 us  +~0.1 ms       +~0.1-2 ms
+     |              |                |                 |              |
+   hard to invalidate  &lt;------------------------------&gt;  easy to invalidate
+   (one user only)                                       (one DEL)
+
+   * assumed, not measured here
+</pre>
+  <div class="ar-note">من الشمال لليمين: كل ما تقرّب من الـ database التكلفة في الـ network بتزيد والـ invalidate بيبقى أسهل. الـ browser ببلاش بس مش تقدر توصله، بعده الـ CDN (حوالي 20 ms افتراضي)، بعده الـ app memory، بعده Redis، وآخر حاجة Postgres. الأرقام اللي عليها علامة (*) افتراض مش قياس. واللي تحت: الـ browser أصعب حاجة تعمله invalidate، و Redis أسهل حاجة (DEL واحدة).</div>
+
+<pre data-file="src/p2-levels.ts"><code class="language-typescript">// طلب منتج واحد ماشي على كل طبقات الـ cache، وتكلفة الـ hit في كل طبقة
+import { LRUCache } from "lru-cache";
+import { createPrimary, connect, stopAll } from "./pg-cluster.mjs";
+import { newRedis, stats } from "./lab.ts";
+
+const cluster = await createPrimary();
+const db = await connect(cluster.port);
+const redis = newRedis();
+await db.query(`create table products (id bigint primary key, name text, price_cents int)`);
+await db.query(`insert into products select g, 'product-' || g, 1000 + g from generate_series(1, 1000) g`);
+const page = { id: 7, name: "product-7", price_cents: 1007, description: "x".repeat(400) };
+const json = JSON.stringify(page);
+
+const l1 = new LRUCache&lt;string, typeof page&gt;({ max: 5000, ttl: 5000 });
+l1.set("product:7", page);
+await redis.set("product:7", json);
+
+async function measure(n: number, f: () =&gt; unknown) {
+  const xs: number[] = [];
+  for (let i = 0; i &lt; n; i++) {
+    const t0 = performance.now();
+    await f();
+    xs.push(performance.now() - t0);
+  }
+  return stats(xs).mean;
+}
+// قياسات حقيقية للطبقات اللي بنقدر نشغّلها هنا
+const l1Ms = await measure(20000, () =&gt; l1.get("product:7"));
+const l2Ms = await measure(2000, async () =&gt; JSON.parse((await redis.get("product:7"))!));
+const dbMs = await measure(2000, () =&gt; db.query(`select * from products where id=$1`, [7]));
+
+// الـ browser والـ CDN مش شغالين هنا: دي افتراضات تقريبية للرحلة، مش قياس
+const ASSUMED = { browserToCdn: 20, cdnToOrigin: 60 };
+
+console.log("MEASURED on this loaded Windows machine: L1, Redis, Postgres. ASSUMED (not run here): browser and CDN hops.");
+console.log(`measured L1 lru-cache get: ≈${(l1Ms * 1000).toFixed(1)} µs`);
+console.log(`measured Redis GET + JSON.parse: ≈${l2Ms.toFixed(3)} ms`);
+console.log(`measured Postgres PK query: ≈${dbMs.toFixed(3)} ms`);
+
+const levels = [
+  ["browser cache hit", 0],
+  ["CDN edge hit", ASSUMED.browserToCdn],
+  ["app memory (L1) hit", ASSUMED.browserToCdn + ASSUMED.cdnToOrigin + l1Ms],
+  ["Redis (L2) hit", ASSUMED.browserToCdn + ASSUMED.cdnToOrigin + l1Ms + l2Ms],
+  ["full miss to Postgres", ASSUMED.browserToCdn + ASSUMED.cdnToOrigin + l1Ms + l2Ms + dbMs],
+] as const;
+for (const [label, ms] of levels) console.log(label.padEnd(24), `≈${ms.toFixed(1).padStart(7)} ms`);
+
+// عدد النسخ اللي لازم تتمسح لو السعر اتغير: الأقرب للمستخدم الأصعب في الـ invalidate
+const copies = [
+  ["browsers", "millions, you cannot reach them: wait for max-age"],
+  ["CDN edges", "hundreds of PoPs: purge API, seconds"],
+  ["app memory", "20 pods: each must hear the event (pub/sub or short TTL)"],
+  ["Redis", "1 logical copy: one DEL"],
+] as const;
+for (const [level, how] of copies) console.log(level.padEnd(12), how);
+
+await db.end();
+await redis.quit();
+await stopAll(cluster);
+process.exit(0);
+</code></pre>
+<pre><code class="language-plaintext">MEASURED on this loaded Windows machine: L1, Redis, Postgres. ASSUMED (not run here): browser and CDN hops.
+measured L1 lru-cache get: ≈0.3 µs
+measured Redis GET + JSON.parse: ≈0.094 ms
+measured Postgres PK query: ≈0.125 ms
+browser cache hit        ≈    0.0 ms
+CDN edge hit             ≈   20.0 ms
+app memory (L1) hit      ≈   80.0 ms
+Redis (L2) hit           ≈   80.1 ms
+full miss to Postgres    ≈   80.2 ms
+browsers     millions, you cannot reach them: wait for max-age
+CDN edges    hundreds of PoPs: purge API, seconds
+app memory   20 pods: each must hear the event (pub/sub or short TTL)
+Redis        1 logical copy: one DEL
+</code></pre>
+  <div class="ar-note">الـ L1 حوالي 0.3 µs، و Redis حوالي 0.09 ms، و Postgres حوالي 0.125 ms: قياس حقيقي على localhost. الجدول التاني بيضيف افتراض 20 ms للـ CDN و60 ms للـ origin، فكل حاجة ورا الـ origin بتظهر حوالي 80 ms. يعني بعد ما الطلب وصل الـ origin، الفرق بين L1 و Redis و Postgres مش هو اللي المستخدم هيحس بيه. وآخر 4 سطور: بتمسح منين لو السعر اتغير.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>طلب المنتج ممكن يتجاوب من 4 مستويات: الـ <b>browser</b> (مفيش network خالص)، و <b>CDN edge</b> (عشرات الـ milliseconds وقريب من المستخدم)، و <b>app memory</b> بـ <code>lru-cache</code> (أقل من microsecond ولكل process لوحده)، و <b>Redis</b> (network hop ومشترك بين كل الـ pods). ووراهم الداتابيز. الـ HTTP headers والـ CDN والـ LRU جوه الـ process متغطيين في <a href="../../06-NextJS/lessons/10-caching-strategy-debugging.html">درس Next caching</a> و<a href="./09-cdn-in-depth.html">درس الـ CDN</a> و<a href="../../04-NodeJS/lessons/21-redis-patterns-caching.html">درس Redis patterns</a>، فالجزء ده بيضيف مقارنة التكلفة بس.</p>
+    <p><b>القاعدة: كل ما تقرّب من المستخدم، بيبقى أسرع وأصعب في الـ invalidate.</b> <code>DEL</code> واحدة بتمسح Redis. عشرين pod كل واحد عنده memory لوحده، فمحتاجين event أو TTL قصير. الـ CDN محتاج purge API بياخد ثواني. والـ browser مفيش طريقة توصله: يا تستنى الـ <code>max-age</code> يا تغيّر الـ URL.</p>
+    <p><b>اقرا الـ trace كويس.</b> بعد ما الطلب عدّى الإنترنت ووصل الـ origin، المسافات جوه الـ data center بقت أرقام مهملة: L1 و Redis وحتى الداتابيز كلهم حوالي 80 ms في الجدول اللي فوق. والـ browser والـ CDN هنا أرقام مفترضة (مشغلناهمش هنا)، أما L1 و Redis و Postgres فمتقاسين. المستويات الداخلية هدفها تحمي الـ origin، والخارجية هدفها المستخدم.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      صفحة منتج في Next: <code>public, s-maxage=60</code> على الـ CDN عشان المستخدم، و Redis ورا الـ API عشان الـ DB، و <code>lru-cache</code> بـ TTL 5 ثواني في الـ pod للـ feature flags اللي بتتقرا في كل request. وقرار "أحط إيه فين" بيتبني على سؤال واحد: لو القيمة دي اتغيرت، أقدر أوصل للنسخة دي وأمسحها؟
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks: user-specific data at a shared level</b>
+    Caching a per-user response at the CDN or under a key without the user or tenant id serves one customer's data to another. The level has to match the scope of the data, and the key must include whatever decides who may see it.
+    <div class="ar-note">لو خزّنت response خاص بمستخدم على CDN أو بـ key مفيهوش الـ user أو الـ tenant، هتبعت داتا عميل لعميل تاني. المستوى لازم يناسب نطاق الداتا، والـ key لازم يحتوي على اللي بيحدد مين يشوفها.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Cache-aside &amp; hit ratio <span class="lvl lvl-1">🟢 Basic</span><span class="ar-sub">الجزء 3 — الـ cache-aside والـ hit ratio</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Cache-aside</b> is read the cache, on a miss read the database, then write the cache with a TTL. The full helper with its fail-open behaviour is in <a href="../../04-NodeJS/lessons/21-redis-patterns-caching.html">the Node Redis lesson, part 1</a>; the Redis-side details are in <a href="../../07-Databases/lessons/36-caching-sessions-rate-limits.html">the Databases lesson</a>. What's new here is measuring it. The helper below only adds a counter per namespace.</p>
+    <p><b>The global number lies.</b> <code>INFO stats</code> gives <code>keyspace_hits</code> and <code>keyspace_misses</code> for the whole instance. In the run it said 82.1%, which looks acceptable, while the <code>cart</code> namespace was at 0.5%: every cart read went to the database and also paid a useless Redis write. Only per-namespace counters show that.</p>
+    <p><b>Small hit ratio changes are large load changes.</b> What matters to the database is the miss rate. Going from 90% to 99% cuts misses from 10% to 1%, a tenfold difference. At 10,000 reads per second that's 1,000 versus 100 database reads per second. Measured with real <code>pg_stat_statements</code> counts on 20,000 requests: 2,009 queries against 185, about 10.9×.</p>
+    <p><b>Cold start.</b> After a deploy that flushes the cache, or a Redis restart, the hit ratio starts at zero and climbs. In the run it was 48% in the first thousand requests and took about 9,000 requests to level off near 80%, while the database took about 2.6 times the steady-state queries in the first bucket. Plan warm-up or capacity for it.</p>
+  </section>
+
+<pre data-file="src/cache-aside.ts"><code class="language-typescript">// نفس الـ helper بتاع درس 04، زائد counters لكل namespace
+import type { Redis } from "ioredis";
+
+export type NsStats = { hits: number; misses: number; errors: number };
+
+export function createCache(redis: Redis) {
+  const byNs = new Map&lt;string, NsStats&gt;();
+  const statsFor = (ns: string) =&gt; {
+    let s = byNs.get(ns);
+    if (!s) byNs.set(ns, (s = { hits: 0, misses: 0, errors: 0 }));
+    return s;
+  };
+
+  async function getOrSet&lt;T&gt;(ns: string, id: string | number, ttlSeconds: number, loader: () =&gt; Promise&lt;T&gt;): Promise&lt;T&gt; {
+    const s = statsFor(ns);
+    const key = `${ns}:${id}`;
+    let cached: string | null = null;
+    try {
+      cached = await redis.get(key);
+    } catch {
+      // لو Redis وقع نكمل على الـ DB: الـ cache مش لازم يوقّع الـ request
+      s.errors++;
+      return loader();
+    }
+    if (cached !== null) {
+      s.hits++;
+      return JSON.parse(cached) as T;
+    }
+    s.misses++;
+    const value = await loader();
+    await redis.set(key, JSON.stringify(value), "EX", ttlSeconds).catch(() =&gt; { s.errors++; });
+    return value;
+  }
+  return { getOrSet, byNs };
+}
+
+export const hitRatio = (s: NsStats) =&gt; ((100 * s.hits) / (s.hits + s.misses)).toFixed(1) + "%";
+</code></pre>
+<pre data-file="src/p3-hitratio.ts"><code class="language-typescript">// الـ hit ratio: رقم Redis العام بيخبّي namespace بايظ، و 90 مقابل 99 يعني 10 أضعاف الـ DB
+import { createPrimary, connect, stopAll } from "./pg-cluster.mjs";
+import { newRedis, mulberry32, zipf } from "./lab.ts";
+import { createCache, hitRatio } from "./cache-aside.ts";
+
+console.log("REAL Redis + REAL Postgres. Key choices come from a seeded PRNG, so the counts repeat.");
+const cluster = await createPrimary({ conf: "shared_preload_libraries='pg_stat_statements'" });
+const db = await connect(cluster.port);
+const redis = newRedis();
+await db.query(`create extension pg_stat_statements`);
+await db.query(`create table products (id bigint primary key, name text not null, price_cents int not null)`);
+await db.query(`insert into products select g, 'product-' || g, 1000 + g from generate_series(1, 100000) g`);
+
+const loadProduct = async (id: number) =&gt;
+  (await db.query(`select id, name, price_cents from products where id = $1`, [id])).rows[0];
+const redisInfo = async () =&gt; {
+  const lines = (await redis.info("stats")).split("\r\n");
+  const get = (k: string) =&gt; Number(lines.find((l) =&gt; l.startsWith(k + ":"))!.split(":")[1]);
+  return { hits: get("keyspace_hits"), misses: get("keyspace_misses") };
+};
+// عدّ الـ queries من ناحية Postgres نفسها، مش من الـ app
+const dbCalls = async () =&gt; Number((await db.query(
+  `select coalesce(sum(calls),0)::bigint n from pg_stat_statements where query like '%from products where id%'`)).rows[0].n);
+
+// (1) خليط من namespaces: الرقم العام شكله حلو والـ cart بايظ تمامًا
+await redis.flushall();
+await redis.config("RESETSTAT");
+{
+  const cache = createCache(redis);
+  const rand = mulberry32(42);
+  const pickProduct = zipf(2000, 1.1, rand);
+  for (let i = 0; i &lt; 18_000; i++) {
+    const id = pickProduct();
+    await cache.getOrSet("product", id, 300, () =&gt; loadProduct(id));
+  }
+  for (let i = 0; i &lt; 2_000; i++) {
+    // كل مستخدم بيطلب الـ cart بتاعه مرة كل فين وفين: 200 ألف مستخدم
+    const userId = Math.floor(rand() * 200_000);
+    await cache.getOrSet("cart", userId, 30, async () =&gt; ({ userId, items: [] }));
+  }
+  const info = await redisInfo();
+  console.log("INFO stats global :", info, "hit ratio", ((100 * info.hits) / (info.hits + info.misses)).toFixed(1) + "%");
+  for (const [ns, s] of cache.byNs) console.log(`namespace ${ns.padEnd(8)}: ${JSON.stringify(s)} hit ratio ${hitRatio(s)}`);
+}
+
+// (2) حساب: عند 10 آلاف read/s الفرق بين 90% و 99%
+for (const h of [0.9, 0.95, 0.99]) console.log(`CALCULATED at 10000 reads/s, hit ratio ${h * 100}%: ${Math.round(10000 * (1 - h))} DB reads/s`);
+
+// (3) قياس: نفس عدد الطلبات، و hit ratio محدد بالظبط
+async function measured(h: number, requests: number) {
+  await redis.flushall();
+  const rand = mulberry32(7);
+  const cache = createCache(redis);
+  // ألف مفتاح دافي مسبقًا: الطلبات دي دايمًا hit
+  for (let id = 1; id &lt;= 1000; id++) await redis.set(`product:${id}`, JSON.stringify({ id }), "EX", 600);
+  const before = await dbCalls();
+  let nextCold = 1001;
+  for (let i = 0; i &lt; requests; i++) {
+    const id = rand() &lt; h ? 1 + Math.floor(rand() * 1000) : nextCold++;
+    await cache.getOrSet("product", id, 600, () =&gt; loadProduct(id));
+  }
+  return { real: (await dbCalls()) - before, ratio: hitRatio(cache.byNs.get("product")!) };
+}
+const r90 = await measured(0.90, 20_000);
+const r99 = await measured(0.99, 20_000);
+console.log("MEASURED 90%:", r90, "| 99%:", r99, `| DB queries ratio ≈ ${(r90.real / r99.real).toFixed(1)}x`);
+
+// (4) البداية الباردة بعد deploy أو restart: الـ cache فاضي والـ DB بتاخد الضربة كلها
+await redis.flushall();
+{
+  const cache = createCache(redis);
+  const rand = mulberry32(99);
+  const pick = zipf(10_000, 1.0, rand);
+  const before = await dbCalls();
+  let prev = before;
+  for (let bucket = 1; bucket &lt;= 12; bucket++) {
+    let hits = 0;
+    for (let i = 0; i &lt; 1000; i++) {
+      const id = pick();
+      const s = cache.byNs.get("product");
+      const h0 = s?.hits ?? 0;
+      await cache.getOrSet("product", id, 600, () =&gt; loadProduct(id));
+      hits += (cache.byNs.get("product")!.hits - h0);
+    }
+    const now = await dbCalls();
+    console.log(`after ${String(bucket * 1000).padStart(5)} requests: hit ratio ${(hits / 10).toFixed(1).padStart(5)}%  DB queries this bucket ${String(now - prev).padStart(4)}`);
+    prev = now;
+  }
+}
+await db.end();
+await redis.quit();
+await stopAll(cluster);
+process.exit(0);
+</code></pre>
+<pre><code class="language-plaintext">REAL Redis + REAL Postgres. Key choices come from a seeded PRNG, so the counts repeat.
+INFO stats global : { hits: 16411, misses: 3589 } hit ratio 82.1%
+namespace product : {"hits":16402,"misses":1598,"errors":0} hit ratio 91.1%
+namespace cart    : {"hits":9,"misses":1991,"errors":0} hit ratio 0.5%
+CALCULATED at 10000 reads/s, hit ratio 90%: 1000 DB reads/s
+CALCULATED at 10000 reads/s, hit ratio 95%: 500 DB reads/s
+CALCULATED at 10000 reads/s, hit ratio 99%: 100 DB reads/s
+MEASURED 90%: { real: 2009, ratio: '90.0%' } | 99%: { real: 185, ratio: '99.1%' } | DB queries ratio ≈ 10.9x
+after  1000 requests: hit ratio  48.3%  DB queries this bucket  517
+after  2000 requests: hit ratio  63.5%  DB queries this bucket  365
+after  3000 requests: hit ratio  68.3%  DB queries this bucket  317
+after  4000 requests: hit ratio  72.0%  DB queries this bucket  280
+after  5000 requests: hit ratio  75.1%  DB queries this bucket  249
+after  6000 requests: hit ratio  75.6%  DB queries this bucket  244
+after  7000 requests: hit ratio  75.0%  DB queries this bucket  250
+after  8000 requests: hit ratio  78.3%  DB queries this bucket  217
+after  9000 requests: hit ratio  80.5%  DB queries this bucket  195
+after 10000 requests: hit ratio  79.8%  DB queries this bucket  202
+after 11000 requests: hit ratio  80.1%  DB queries this bucket  199
+after 12000 requests: hit ratio  80.3%  DB queries this bucket  197
+</code></pre>
+  <div class="ar-note">تشغيل حقيقي. أول 3 سطور: الرقم العام 82.1% بيخبّي إن الـ cart 0.5% بس. بعدها حساب: عند 10 آلاف قراءة في الثانية، 90% يعني 1000 قراءة DB، و99% يعني 100. وسطر القياس على 20 ألف طلب من <code>pg_stat_statements</code>: 2009 query مقابل 185، يعني حوالي 10.9 مرة. والجدول الأخير الـ cold start: بيبدأ 48% ويطلع لحد 80% بعد حوالي 9000 طلب، والـ DB بتاخد الضربة الأكبر في الأول.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>cache-aside</b>: اقرا من الـ cache، لو miss اقرا من الداتابيز، واكتب في الـ cache بـ TTL. الـ helper الكامل بالـ fail-open في <a href="../../04-NodeJS/lessons/21-redis-patterns-caching.html">الجزء 1 من درس Redis في Node</a>، وتفاصيل ناحية Redis في <a href="../../07-Databases/lessons/36-caching-sessions-rate-limits.html">درس الداتابيز</a>. الجديد هنا هو القياس، والـ helper هنا بيضيف بس counter لكل namespace.</p>
+    <p><b>الرقم العام بيكدب.</b> <code>INFO stats</code> بيدّيك <code>keyspace_hits</code> و<code>keyspace_misses</code> للـ instance كله. في التشغيل قال 82.1%، شكلها مقبول، بينما الـ namespace بتاع <code>cart</code> كان 0.5%: كل قراءة cart راحت للداتابيز ودفعت كمان write مالوش لازمة على Redis. الـ counters لكل namespace بس هي اللي بتكشف ده.</p>
+    <p><b>فرق صغير في الـ hit ratio يعني فرق كبير في الـ load.</b> اللي يهم الداتابيز هو الـ miss rate. من 90% لـ 99% يعني الـ miss من 10% لـ 1%، عشر أضعاف. عند 10,000 قراءة في الثانية ده 1000 مقابل 100 قراءة DB في الثانية. وبالقياس الحقيقي بـ <code>pg_stat_statements</code> على 20,000 طلب: 2,009 query مقابل 185، حوالي 10.9 مرة.</p>
+    <p><b>الـ cold start.</b> بعد deploy بيمسح الـ cache أو restart لـ Redis، الـ hit ratio بيبدأ من الصفر ويطلع. في التشغيل كان 48% في أول ألف طلب، وخد حوالي 9000 طلب لحد ما استقر حوالي 80%، والداتابيز خدت في أول bucket حوالي 2.6 مرة الـ queries بتاعة الوضع المستقر. خطّط للـ warm-up أو للـ capacity بتاعته.</p>
+    <p>الغلطة الشائعة: dashboard فيه hit ratio واحد للـ instance كله. أضف counter بالـ namespace وابعته لـ Prometheus، وخلي الـ alert على الـ namespace مش على الرقم العام.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في code review لـ <code>getOrSet("cart:" + userId, 30, ...)</code>: اسأل "الـ hit ratio المتوقع كام؟". لو كل مستخدم بيفتح الـ cart مرة كل كام دقيقة و الـ TTL 30 ثانية، الـ cache ده بيزوّد latency وعمره ما هيفيد. ولو داشبورد الـ DB قال load زاد فجأة، أول حاجة تبص عليها: هل الـ hit ratio لـ namespace معين نزل من 99 لـ 95؟ ده خمس أضعاف الـ load عليه.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Hit ratio dropped from 99% to 95%. Is that a big deal?" → Yes. Misses went from 1% to 5%, so the database gets five times the read load from that cache. If it was running at 40% CPU because of the misses, it's about to fall over. I'd check which namespace moved, then look for a bad deploy, a changed key format or a TTL change.
+    <div class="ar-note">"الـ hit ratio نزل من 99% لـ 95%. مشكلة كبيرة؟" ← أيوه. الـ miss من 1% لـ 5%، يعني الداتابيز بقت بتاخد 5 أضعاف load القراءة من الـ cache ده. لو كانت شغالة 40% CPU بسبب الـ misses، هتقع. أشوف أنهي namespace اتغير، وبعدها أدور على deploy بايظ أو key format اتغير أو TTL اتغير.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Eviction policies <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — سياسات الـ eviction</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Eviction decides what leaves when memory is full; TTL decides what leaves when it's old. They're different mechanisms and you usually want both. How LRU is built is covered in <a href="../../01-CS-Fundamentals/lessons/04-hash-tables-lru.html">the hash tables and LRU lesson</a>, and Redis's own options in <a href="../../07-Databases/lessons/38-running-redis.html">Running Redis</a>. This part compares policies on the same traces.</p>
+    <p>The simulator replays three seeded traces at the same capacity of 1,000 entries:</p>
+    <ul>
+      <li><b>Plain Zipf:</b> LFU wins (51.4%) because it keeps genuinely popular keys, ahead of LRU (42.3%), TTL-only (40.1%) and FIFO (38.4%).</li>
+      <li><b>Zipf plus a nightly scan:</b> a reporting job reads 20,000 unrelated keys once. In the first 500 user requests after each scan, LRU falls to 26.5% because the scan flushed it, and LFU holds at 52.5%. FIFO and TTL-only behave like LRU here.</li>
+      <li><b>Zipf where popularity shifts each day:</b> LFU drops to 27.6% because yesterday's favourites keep high counts and block new ones. LRU stays at 42.2%. Adding decay, which halves the counters periodically, brings LFU to 47.0%, and that is why Redis's LFU has <code>lfu-decay-time</code>.</li>
+    </ul>
+    <p><b>TTL-only has no memory bound.</b> With a 2,000-tick TTL it peaked at 2,000 entries during the scan, double the capacity the others were limited to, so its row is not directly comparable. Memory is roughly the rate of new keys times the TTL, which is why a TTL alone doesn't protect you.</p>
+    <p><b>On real Redis</b> at 5 MB, the same order showed up: <code>allkeys-lfu</code> at 75.8%, <code>allkeys-lru</code> at 70.3%, and <code>volatile-ttl</code> at 58.3%, because it evicts by time-to-live, whatever the popularity. And a <code>volatile-*</code> policy with no TTLs set has nothing to evict, so writes fail with an OOM error. This Redis build also accepts <code>allkeys-lrm</code> and <code>volatile-lrm</code>, which the Redis docs describe as least recently <em>modified</em>; we only confirmed the setting is accepted, not how it behaves.</p>
+  </section>
+
+<pre data-file="src/p4-sim.ts"><code class="language-typescript">// المحاكي: نفس الـ trace على LRU و LFU و FIFO و TTL-only و LFU بالـ decay
+import { mulberry32, zipf } from "./lab.ts";
+
+console.log("SIMULATION: seeded traces, logical time (1 tick per request). Capacity 1000 entries, same-size objects.");
+console.log("Not modelled: object sizes, Redis sampling, memory overhead, concurrency, the real cost of a miss.");
+
+type Policy = { name: string; get(k: number, now: number): boolean; put(k: number, now: number): void; size(): number };
+
+function lru(cap: number): Policy {
+  const m = new Map&lt;number, true&gt;();
+  return {
+    name: "LRU",
+    get: (k) =&gt; { if (!m.has(k)) return false; m.delete(k); m.set(k, true); return true; },
+    put: (k) =&gt; { m.set(k, true); if (m.size &gt; cap) m.delete(m.keys().next().value!); },
+    size: () =&gt; m.size,
+  };
+}
+function fifo(cap: number): Policy {
+  const m = new Map&lt;number, true&gt;();
+  return {
+    name: "FIFO",
+    get: (k) =&gt; m.has(k),
+    put: (k) =&gt; { m.set(k, true); if (m.size &gt; cap) m.delete(m.keys().next().value!); },
+    size: () =&gt; m.size,
+  };
+}
+function lfu(cap: number, decayEvery = 0): Policy {
+  const freq = new Map&lt;number, number&gt;();
+  let buckets = new Map&lt;number, Set&lt;number&gt;&gt;();
+  let minF = 1, ops = 0;
+  const addTo = (f: number, k: number) =&gt; { if (!buckets.has(f)) buckets.set(f, new Set()); buckets.get(f)!.add(k); };
+  const bump = (k: number) =&gt; {
+    const f = freq.get(k)!;
+    const b = buckets.get(f)!;
+    b.delete(k);
+    if (b.size === 0) { buckets.delete(f); if (minF === f) minF = f + 1; }
+    freq.set(k, f + 1);
+    addTo(f + 1, k);
+  };
+  const evict = () =&gt; {
+    while (!buckets.has(minF)) minF++;
+    const b = buckets.get(minF)!;
+    const victim = b.values().next().value!;
+    b.delete(victim);
+    if (b.size === 0) buckets.delete(minF);
+    freq.delete(victim);
+  };
+  // الـ decay بيقسم الـ counters على 2: اللي كان نجم زمان لازم يفضل يتطلب عشان يفضل
+  const decay = () =&gt; {
+    buckets = new Map();
+    minF = Infinity;
+    for (const [k, f] of freq) { const nf = Math.max(1, f &gt;&gt; 1); freq.set(k, nf); addTo(nf, k); minF = Math.min(minF, nf); }
+    if (minF === Infinity) minF = 1;
+  };
+  return {
+    name: decayEvery ? "LFU+decay" : "LFU",
+    get: (k) =&gt; {
+      if (decayEvery &amp;&amp; ++ops % decayEvery === 0) decay();
+      if (!freq.has(k)) return false;
+      bump(k);
+      return true;
+    },
+    put: (k) =&gt; { if (freq.size &gt;= cap) evict(); freq.set(k, 1); addTo(1, k); minF = 1; },
+    size: () =&gt; freq.size,
+  };
+}
+function ttlOnly(ttl: number): Policy &amp; { peak(): number } {
+  const m = new Map&lt;number, number&gt;();
+  let peak = 0;
+  const purge = (now: number) =&gt; { for (const [k, exp] of m) { if (exp &gt; now) break; m.delete(k); } };
+  return {
+    name: `TTL-only(${ttl})`,
+    get: (k, now) =&gt; { purge(now); const e = m.get(k); return e !== undefined &amp;&amp; e &gt; now; },
+    put: (k, now) =&gt; { m.delete(k); m.set(k, now + ttl); peak = Math.max(peak, m.size); },
+    size: () =&gt; m.size,
+    peak: () =&gt; peak,
+  };
+}
+
+type Req = { key: number; user: boolean };
+function buildTrace(kind: "zipf" | "scan" | "shift"): Req[] {
+  const rand = mulberry32(2026);
+  const pick = zipf(100_000, 0.95, rand);
+  const out: Req[] = [];
+  for (let day = 0; day &lt; 4; day++) {
+    // الـ shift: الترتيب بيتحرك كل يوم فالمنتجات النجوم بتتغير
+    const offset = kind === "shift" ? day * 37_000 : 0;
+    for (let i = 0; i &lt; 100_000; i++) out.push({ key: ((pick() - 1 + offset) % 100_000) + 1, user: true });
+    // الـ nightly scan: reporting job بيقرا 20 ألف منتج مرة واحدة ومحدش هيطلبهم تاني
+    if (kind === "scan") for (let i = 0; i &lt; 20_000; i++) out.push({ key: 200_000 + day * 20_000 + i, user: false });
+  }
+  return out;
+}
+
+function run(trace: Req[], p: Policy) {
+  let hits = 0, reqs = 0, afterHits = 0, afterReqs = 0, sinceScan = Infinity;
+  trace.forEach((r, t) =&gt; {
+    const hit = p.get(r.key, t);
+    if (!hit) p.put(r.key, t);
+    if (!r.user) { sinceScan = 0; return; }
+    reqs++;
+    if (hit) hits++;
+    if (sinceScan &lt; 500) { afterReqs++; if (hit) afterHits++; sinceScan++; }
+  });
+  return { ratio: (100 * hits) / reqs, after: afterReqs ? (100 * afterHits) / afterReqs : NaN };
+}
+
+const CAP = 1000;
+const factories: Array&lt;() =&gt; Policy &amp; { peak?: () =&gt; number }&gt; = [
+  () =&gt; lru(CAP), () =&gt; lfu(CAP), () =&gt; lfu(CAP, 25_000), () =&gt; fifo(CAP), () =&gt; ttlOnly(2000),
+];
+for (const kind of ["zipf", "scan", "shift"] as const) {
+  const trace = buildTrace(kind);
+  console.log(`--- trace ${kind}: ${trace.length} requests ---`);
+  for (const f of factories) {
+    const p = f();
+    const { ratio, after } = run(trace, p);
+    const peak = p.peak ? ` peak entries ${p.peak()}` : "";
+    const a = Number.isNaN(after) ? "" : ` first 500 after each scan ${after.toFixed(1).padStart(5)}%`;
+    console.log(p.name.padEnd(16), `hit ratio ${ratio.toFixed(1).padStart(5)}%${a}${peak}`);
+  }
+}
+process.exit(0);
+</code></pre>
+<pre><code class="language-plaintext">SIMULATION: seeded traces, logical time (1 tick per request). Capacity 1000 entries, same-size objects.
+Not modelled: object sizes, Redis sampling, memory overhead, concurrency, the real cost of a miss.
+--- trace zipf: 400000 requests ---
+LRU              hit ratio  42.3%
+LFU              hit ratio  51.4%
+LFU+decay        hit ratio  51.4%
+FIFO             hit ratio  38.4%
+TTL-only(2000)   hit ratio  40.1% peak entries 1273
+--- trace scan: 480000 requests ---
+LRU              hit ratio  42.2% first 500 after each scan  26.5%
+LFU              hit ratio  51.4% first 500 after each scan  52.5%
+LFU+decay        hit ratio  50.9% first 500 after each scan  50.9%
+FIFO             hit ratio  38.3% first 500 after each scan  26.5%
+TTL-only(2000)   hit ratio  40.0% first 500 after each scan  26.5% peak entries 2000
+--- trace shift: 400000 requests ---
+LRU              hit ratio  42.2%
+LFU              hit ratio  27.6%
+LFU+decay        hit ratio  47.0%
+FIFO             hit ratio  38.3%
+TTL-only(2000)   hit ratio  40.0% peak entries 1297
+</code></pre>
+  <div class="ar-note">simulation بـ seed وبوقت منطقي، والكود بيقول إيه اللي مش متمثل فيها. الـ Zipf العادي: LFU الأحسن. مع الـ scan: أول 500 طلب بعد كل scan الـ LRU نزل لـ 26.5% لأن الـ scan طرد كل حاجة، والـ LFU فضل 52.5%. مع تغيّر الشعبية: الـ LFU وقع لـ 27.6% بسبب المفضلين القدام، والـ LFU بالـ decay رجع 47%. والـ TTL-only وصل peak لـ 2000 entry يعني ضعف الـ capacity.</div>
+
+<pre data-file="src/p4-redis.ts"><code class="language-typescript">// الـ eviction على Redis حقيقي: maxmemory 5mb وقراية evicted_keys من INFO
+import { newRedis, mulberry32, zipf } from "./lab.ts";
+
+console.log("REAL Redis 8.10.3, maxmemory 5mb. Windows build, loaded machine.");
+const redis = newRedis();
+const VALUE = "v".repeat(512);
+
+async function info(section: string, field: string) {
+  const line = (await redis.info(section)).split("\r\n").find((l) =&gt; l.startsWith(field + ":"))!;
+  return Number(line.split(":")[1]);
+}
+
+async function pipelineSet(keys: Array&lt;[string, number?]&gt;) {
+  const p = redis.pipeline();
+  for (const [k, ttl] of keys) {
+    if (ttl) p.set(k, VALUE, "EX", ttl); else p.set(k, VALUE);
+  }
+  await p.exec();
+}
+
+async function trial(policy: string) {
+  await redis.flushall();
+  await redis.config("SET", "maxmemory-policy", policy);
+  await redis.config("SET", "maxmemory", "5mb");
+  await redis.config("RESETSTAT");
+  const rand = mulberry32(11);
+  const pick = zipf(50_000, 1.0, rand);
+  let hits = 0, reads = 0;
+  // عدد الطلبات 120 ألف: read، ولو miss نكتب القيمة زي الـ cache-aside
+  for (let batch = 0; batch &lt; 120; batch++) {
+    const keys = Array.from({ length: 1000 }, () =&gt; `product:${pick()}`);
+    const res = await redis.mget(keys);
+    const misses: Array&lt;[string, number?]&gt; = [];
+    keys.forEach((k, i) =&gt; {
+      reads++;
+      if (res[i] !== null) hits++;
+      else {
+        // في volatile-ttl لازم يكون فيه TTL، والمفاتيح ذات الـ TTL الأقصر تتشال الأول
+        const ttl = policy.startsWith("volatile") ? 600 + (Number(k.split(":")[1]) % 3000) : undefined;
+        misses.push([k, ttl]);
+      }
+    });
+    if (misses.length) await pipelineSet(misses);
+  }
+  const evicted = await info("stats", "evicted_keys");
+  const used = await info("memory", "used_memory");
+  console.log(policy.padEnd(14), `hit ratio ${((100 * hits) / reads).toFixed(1).padStart(5)}%  evicted_keys ${String(evicted).padStart(6)}  keys ${String(await redis.dbsize()).padStart(6)}  used_memory ${(used / 2 ** 20).toFixed(1)} MB`);
+}
+
+for (const policy of ["allkeys-lru", "allkeys-lfu", "volatile-ttl"]) await trial(policy);
+
+// (2) سياسة ⁦volatile-*⁩ من غير أي TTL: مفيش حاجة تتشال، والكتابة بتفشل
+await redis.flushall();
+await redis.config("SET", "maxmemory-policy", "volatile-ttl");
+await redis.config("SET", "maxmemory", "2mb");
+await redis.config("RESETSTAT");
+try {
+  for (let i = 0; i &lt; 30_000; i++) await redis.set(`session:${i}`, VALUE);
+  console.log("no error?");
+} catch (e) {
+  console.log("volatile-ttl, no TTLs:", (e as Error).message);
+}
+console.log("evicted_keys:", await info("stats", "evicted_keys"));
+
+// (3) إيه الـ policies اللي النسخة دي بتقبلها فعلًا؟
+for (const p of ["allkeys-lrm", "volatile-lrm", "noeviction"]) {
+  try { await redis.config("SET", "maxmemory-policy", p); console.log(p, "accepted"); }
+  catch (e) { console.log(p, "rejected:", (e as Error).message); }
+}
+await redis.flushall();
+await redis.config("SET", "maxmemory", "0");
+await redis.quit();
+process.exit(0);
+</code></pre>
+<pre><code class="language-plaintext">REAL Redis 8.10.3, maxmemory 5mb. Windows build, loaded machine.
+allkeys-lru    hit ratio  70.3%  evicted_keys  25482  keys   7610  used_memory 5.0 MB
+allkeys-lfu    hit ratio  75.8%  evicted_keys  20674  keys   7628  used_memory 5.0 MB
+volatile-ttl   hit ratio  58.3%  evicted_keys  34164  keys   7229  used_memory 5.0 MB
+volatile-ttl, no TTLs: OOM command not allowed when used memory &gt; 'maxmemory'.
+evicted_keys: 0
+allkeys-lrm accepted
+volatile-lrm accepted
+noeviction accepted
+</code></pre>
+  <div class="ar-note">Redis حقيقي بـ <code>maxmemory 5mb</code>. الـ LFU 75.8%، الـ LRU 70.3%، والـ <code>volatile-ttl</code> 58.3% لأنه بيطرد بالـ TTL مش بالشعبية، وعدد الـ evicted_keys أعلى عنده. بعدها: <code>volatile-ttl</code> ومفيش TTL على أي key: الكتابة بتفشل بـ OOM والـ evicted_keys صفر. وآخر 3 سطور: النسخة دي بتقبل <code>allkeys-lrm</code> و<code>volatile-lrm</code> و<code>noeviction</code> (إحنا اتأكدنا إنها متقبولة بس، مش سلوكها).</div>
+
+  <table>
+    <tr><th>Policy</th><th>Keeps</th><th>Good for</th><th>Breaks when</th></tr>
+    <tr><td>LRU</td><td>recently used</td><td>general default, popularity that moves</td><td>one big scan flushes it</td></tr>
+    <tr><td>LFU</td><td>frequently used</td><td>stable popularity, resists scans</td><td>trends shift: needs decay</td></tr>
+    <tr><td>FIFO</td><td>recently added</td><td>simple, cheap, read-once data</td><td>ignores usage completely</td></tr>
+    <tr><td>TTL-only</td><td>not expired yet</td><td>freshness rules, bounded key sets</td><td>no size limit: memory grows with key rate</td></tr>
+    <tr><td><code>volatile-ttl</code></td><td>longest remaining TTL</td><td>TTL as a priority signal</td><td>keys without TTL: nothing to evict, OOM</td></tr>
+  </table>
+  <div class="ar-note">صف صف: الـ LRU بيحتفظ باللي اتستخدم قريب، ده الـ default المعقول وبيتأثر بالـ scan. الـ LFU بيحتفظ باللي بيتطلب كتير، بيقاوم الـ scan بس محتاج decay لما الشعبية تتغير. الـ FIFO بيحتفظ باللي دخل آخر حاجة، بسيط ورخيص وبيتجاهل الاستخدام خالص. الـ TTL-only بيعتمد على الوقت، ومفيش حد للحجم، فالـ memory بتكبر مع معدل المفاتيح الجديدة. والـ <code>volatile-ttl</code> بيعتبر الـ TTL أولوية، ولو مفيش TTL مفيش حاجة تتشال والكتابة بتفشل.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ eviction بيحدد إيه اللي يمشي لما الـ memory تتملي، والـ TTL بيحدد إيه اللي يمشي لما يقدم. دول حاجتين مختلفين وغالبًا محتاج الاتنين. بناء الـ LRU نفسه في <a href="../../01-CS-Fundamentals/lessons/04-hash-tables-lru.html">درس الـ hash tables والـ LRU</a>، وخيارات Redis في <a href="../../07-Databases/lessons/38-running-redis.html">درس Running Redis</a>. هنا بنقارن السياسات على نفس الـ traces.</p>
+    <p>الـ simulator بيعيد 3 traces بـ seed ثابت على capacity 1000:</p>
+    <ul>
+      <li><b>Zipf عادي:</b> الـ LFU كسب (51.4%) لأنه بيحتفظ بالمفاتيح الشعبية فعلًا، وبعده LRU (42.3%) و TTL-only (40.1%) و FIFO (38.4%).</li>
+      <li><b>Zipf ومعاه scan كل ليلة:</b> reporting job بيقرا 20,000 مفتاح مرة واحدة. في أول 500 طلب بعد كل scan، الـ LRU نزل لـ 26.5% لأن الـ scan طرد كل حاجة، والـ LFU فضل 52.5%. والـ FIFO والـ TTL-only زي الـ LRU هنا.</li>
+      <li><b>Zipf والشعبية بتتغير كل يوم:</b> الـ LFU وقع لـ 27.6% لأن المفضلين بتوع إمبارح عندهم counters عالية بيحجزوا مكان الجداد، والـ LRU فضل 42.2%. لما ضيفنا decay، يعني نقسم الـ counters كل فترة، الـ LFU رجع 47.0%، وعشان كده Redis عنده <code>lfu-decay-time</code>.</li>
+    </ul>
+    <p><b>الـ TTL-only مالوش حد memory.</b> بـ TTL قدره 2000 tick وصل peak لـ 2000 entry أثناء الـ scan، ضعف الـ capacity اللي الباقي محبوسين فيها، فالصف بتاعه مش بينقارن مباشرة. الـ memory تقريبًا هي معدل المفاتيح الجديدة ضرب الـ TTL، وعشان كده الـ TTL لوحده مش بيحميك.</p>
+    <p><b>على Redis الحقيقي</b> عند 5 MB طلع نفس الترتيب: <code>allkeys-lfu</code> عند 75.8%، و<code>allkeys-lru</code> عند 70.3%، و<code>volatile-ttl</code> عند 58.3% لأنه بيطرد بالـ TTL مهما كانت الشعبية. وأي <code>volatile-*</code> من غير TTLs ملوش حاجة يطردها، فالكتابة بتفشل بـ OOM. والنسخة دي من Redis بتقبل كمان <code>allkeys-lrm</code> و<code>volatile-lrm</code>، واللي docs Redis بتوصفهم بـ least recently <b>modified</b>؛ إحنا اتأكدنا إن الإعداد متقبول بس، مجربناش سلوكه.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      Redis cache للكتالوج: ابدأ بـ <code>allkeys-lru</code> كـ default. لو عندك cron ليلي بيقرا كل المنتجات، وشايف الـ hit ratio بيقع كل صبح، جرّب <code>allkeys-lfu</code> أو خلّي الـ job يقرا من replica ومن غير cache. ولو نفس الـ instance فيها sessions من غير TTL وcache مع TTL، <code>volatile-lru</code> بيحمي الـ sessions، بس الأنضف تفصلهم في instances.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: exact vs approximate</b>
+    Redis doesn't keep an exact LRU list. It samples <code>maxmemory-samples</code> keys and evicts the best candidate, which saves memory and CPU per key at the cost of an occasional wrong choice. Our simulator is exact, so treat its hit ratios as the shape of the behaviour rather than a Redis prediction.
+    <div class="ar-note">Redis مش بيحتفظ بقايمة LRU دقيقة. بياخد عينة بعدد <code>maxmemory-samples</code> ويطرد أحسن مرشح، وده بيوفر memory و CPU لكل key مقابل اختيار غلط أحيانًا. الـ simulator عندنا دقيق، فخد نتايجه كشكل السلوك مش كتوقع لـ Redis.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Which eviction policy would you pick for a product cache?" → Start with <code>allkeys-lru</code>. If nightly scans hurt the hit ratio I'd try <code>allkeys-lfu</code>, and watch for trends shifting. I'd never use <code>noeviction</code> for a pure cache, because a full cache would then fail writes instead of forgetting something. Then I'd track <code>evicted_keys</code> and hit ratio per namespace to confirm.
+    <div class="ar-note">"هتختار أنهي eviction policy لـ cache المنتجات؟" ← أبدأ بـ <code>allkeys-lru</code>. لو الـ scans الليلية بتضر الـ hit ratio أجرب <code>allkeys-lfu</code>، وأراقب تغيّر الشعبية. عمري ما أستخدم <code>noeviction</code> لـ cache بس، لأن الـ cache لما يتملي هيفشّل الكتابات بدل ما ينسى حاجة. وبعدها أتابع <code>evicted_keys</code> والـ hit ratio لكل namespace عشان أتأكد.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Read-through &amp; write-through <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ read-through والـ write-through</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Read-through</b> moves the loader inside the cache layer: callers ask the cache and never touch the database. The logic is the same as cache-aside, but the ownership differs, so one class controls keys, TTLs and metrics, and callers can't forget to populate. The cost is coupling: the cache layer now knows how to load the data.</p>
+    <p><b>Write-through</b> writes both stores synchronously on every write. Reads after a write are fresh, and the price is added write latency: in the run about 0.63 ms instead of 0.33 ms mean, because the request now waits for Postgres and Redis.</p>
+    <p><b>Order is the whole game.</b> With the cache first, if the database then rejects the write (a check constraint here) the cache holds a value that never existed in your system: the run shows the cache returning <code>-500</code> while the database says <code>1000</code>. Every reader sees it until the TTL. Write the database first, because the database is where the rules live, then update the cache.</p>
+    <p><b>The cache write can still fail</b> after a successful commit. In the last line of the run, Redis was down during the write: the database has the new price, the old value is still cached. Handle it by trying a <code>DEL</code>, counting the error and keeping a TTL as the safety net. The remaining races between concurrent writers are the next lesson's subject.</p>
+  </section>
+
+<pre data-file="src/p5-through.ts"><code class="language-typescript">// الـ read-through و الـ write-through: الترتيب الغلط بيخلّي الـ cache يكدب
+import type { Redis } from "ioredis";
+import { createPrimary, connect, stopAll } from "./pg-cluster.mjs";
+import { newRedis, stats } from "./lab.ts";
+
+console.log("REAL Postgres 18 (durable commits) + REAL Redis 8.10.3, Windows, loaded machine: latencies are approximate.");
+const cluster = await createPrimary();
+const db = await connect(cluster.port);
+const redis = newRedis();
+await redis.flushall();
+await db.query(`create table products (
+  id bigint primary key, name text not null, price_cents int not null check (price_cents &gt;= 0))`);
+await db.query(`insert into products select g, 'product-' || g, 1000 + g from generate_series(1, 2000) g`);
+
+type Product = { id: number; name: string; price_cents: number };
+
+// الـ read-through: الـ class ده بيملك الـ loader، والكود اللي بيستخدمه مش عارف فيه DB أصلًا
+class ReadThroughCache&lt;T&gt; {
+  hits = 0;
+  misses = 0;
+  private readonly redis: Redis;
+  private readonly ns: string;
+  private readonly ttl: number;
+  private readonly loader: (id: number) =&gt; Promise&lt;T | null&gt;;
+  constructor(redis: Redis, ns: string, ttl: number, loader: (id: number) =&gt; Promise&lt;T | null&gt;) {
+    this.redis = redis;
+    this.ns = ns;
+    this.ttl = ttl;
+    this.loader = loader;
+  }
+  key(id: number) { return `${this.ns}:${id}`; }
+  async get(id: number): Promise&lt;T | null&gt; {
+    const hit = await this.redis.get(this.key(id));
+    if (hit !== null) { this.hits++; return JSON.parse(hit) as T; }
+    this.misses++;
+    const value = await this.loader(id);
+    if (value !== null) await this.redis.set(this.key(id), JSON.stringify(value), "EX", this.ttl);
+    return value;
+  }
+}
+
+const products = new ReadThroughCache&lt;Product&gt;(redis, "product", 300, async (id) =&gt; {
+  const { rows } = await db.query(`select id, name, price_cents from products where id = $1`, [id]);
+  return (rows[0] as Product | undefined) ?? null;
+});
+console.log("read-through:", await products.get(1), await products.get(1), `hits=${products.hits} misses=${products.misses}`);
+
+// (1) تكلفة الـ write-through: كل write بقى بيستنى الاتنين
+async function timeWrites(label: string, n: number, f: (id: number) =&gt; Promise&lt;unknown&gt;) {
+  const xs: number[] = [];
+  for (let i = 0; i &lt; n; i++) {
+    const t0 = performance.now();
+    await f(1 + (i % 2000));
+    xs.push(performance.now() - t0);
+  }
+  const s = stats(xs);
+  console.log(label.padEnd(30), `mean≈${s.mean.toFixed(2)} ms  p50≈${s.p50.toFixed(2)} ms  p99≈${s.p99.toFixed(2)} ms`);
+}
+await timeWrites("DB only (commit)", 800, (id) =&gt; db.query(`update products set price_cents = price_cents + 1 where id=$1`, [id]));
+await timeWrites("write-through (DB + SET)", 800, async (id) =&gt; {
+  const { rows: [row] } = await db.query(`update products set price_cents = price_cents + 1 where id=$1 returning id, name, price_cents`, [id]);
+  await redis.set(`product:${id}`, JSON.stringify(row), "EX", 300);
+});
+
+// ⁦(2) ❌⁩ الـ cache الأول: لو الـ DB رفضت، الـ cache فيه قيمة عمرها ما كانت موجودة
+const dbPrice = async (id: number) =&gt; (await db.query(`select price_cents from products where id=$1`, [id])).rows[0].price_cents as number;
+async function setPriceBad(id: number, cents: number) {
+  await redis.set(`product:${id}`, JSON.stringify({ id, name: `product-${id}`, price_cents: cents }), "EX", 300);
+  await db.query(`update products set price_cents=$1 where id=$2`, [cents, id]);
+}
+await db.query(`update products set price_cents = 1000 where id = 5`);
+await redis.del("product:5");
+try { await setPriceBad(5, -500); } catch (e) { console.log("setPriceBad failed:", (e as Error).message); }
+console.log("cache says:", (await products.get(5))!.price_cents, "| DB says:", await dbPrice(5));
+
+// ⁦(3) ✅⁩ الـ DB الأول، و الـ cache بعدها، وفشل الـ cache ميوقّعش الـ request
+let cacheErrors = 0;
+async function setPriceGood(cache: Redis, id: number, cents: number) {
+  const { rows: [row] } = await db.query(
+    `update products set price_cents=$1 where id=$2 returning id, name, price_cents`, [cents, id]);
+  const key = `product:${id}`;
+  try {
+    await cache.set(key, JSON.stringify(row), "EX", 300);
+  } catch {
+    cacheErrors++;
+    // لو الـ SET فشل حاول تمسح القديم، ولو ده كمان فشل الـ TTL هو حزام الأمان
+    await cache.del(key).catch(() =&gt; { cacheErrors++; });
+  }
+  return row as Product;
+}
+await redis.del("product:5");
+try { await setPriceGood(redis, 5, -500); } catch (e) { console.log("setPriceGood failed:", (e as Error).message); }
+console.log("cache says:", (await products.get(5))!.price_cents, "| DB says:", await dbPrice(5));
+
+// (4) لو Redis وقع أثناء الـ write: الـ DB صح، والنسخة القديمة في الـ cache لسه موجودة
+await products.get(6);
+const broken = newRedis();
+await broken.quit();
+await setPriceGood(broken, 6, 7777);
+console.log("Redis down during write -&gt; cacheErrors:", cacheErrors, "| DB says:", await dbPrice(6), "| cache still says:", (await products.get(6))!.price_cents, "(stale until TTL or invalidation)");
+
+await db.end();
+await redis.quit();
+await stopAll(cluster);
+process.exit(0);
+</code></pre>
+<pre><code class="language-plaintext">REAL Postgres 18 (durable commits) + REAL Redis 8.10.3, Windows, loaded machine: latencies are approximate.
+read-through: { id: '1', name: 'product-1', price_cents: 1001 } { id: '1', name: 'product-1', price_cents: 1001 } hits=1 misses=1
+DB only (commit)               mean≈0.33 ms  p50≈0.29 ms  p99≈0.92 ms
+write-through (DB + SET)       mean≈0.63 ms  p50≈0.57 ms  p99≈1.40 ms
+setPriceBad failed: new row for relation "products" violates check constraint "products_price_cents_check"
+cache says: -500 | DB says: 1000
+setPriceGood failed: new row for relation "products" violates check constraint "products_price_cents_check"
+cache says: 1000 | DB says: 1000
+Redis down during write -&gt; cacheErrors: 2 | DB says: 7777 | cache still says: 1008 (stale until TTL or invalidation)
+</code></pre>
+  <div class="ar-note">تشغيل حقيقي. الـ read-through: أول قراءة miss والتانية hit. الـ write: حوالي 0.33 ms للداتابيز لوحدها، وحوالي 0.63 ms مع Redis، يعني الـ cache ضيف على الـ write latency. سطر <code>setPriceBad</code>: الـ DB رفضت بالـ check constraint، بس الـ cache اتكتب قبلها فبيقول -500 والـ DB بتقول 1000. سطر <code>setPriceGood</code>: نفس الفشل والـ cache سليم. وآخر سطر Redis واقع وقت الـ write: الـ DB فيها 7777 والـ cache لسه 1008 لحد ما الـ TTL يخلص أو يحصل invalidate.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>read-through</b> بينقل الـ loader جوه طبقة الـ cache: اللي بيستخدمها بيسأل الـ cache بس وعمره ما بيلمس الداتابيز. المنطق هو هو الـ cache-aside، بس الملكية مختلفة، فـ class واحد بيتحكم في الـ keys والـ TTLs والـ metrics، ومحدش ينسى يملا الـ cache. التكلفة coupling: طبقة الـ cache بقت عارفة إزاي تجيب الداتا.</p>
+    <p>الـ <b>write-through</b> بيكتب في المكانين في نفس الوقت مع كل write. القراءة بعد الكتابة بتبقى طازة، والثمن latency زيادة: في التشغيل حوالي 0.63 ms بدل 0.33 ms في المتوسط، لأن الطلب بقى بيستنى Postgres و Redis.</p>
+    <p><b>الترتيب هو الموضوع كله.</b> لو كتبت في الـ cache الأول والداتابيز رفضت (check constraint هنا)، الـ cache هيبقى فيه قيمة عمرها ما كانت موجودة في النظام: التشغيل بيوريك الـ cache بيرجّع <code>-500</code> والداتابيز بتقول <code>1000</code>. وكل اللي بيقرا هيشوفها لحد الـ TTL. اكتب في الداتابيز الأول لأن القواعد هناك، وبعدين حدّث الـ cache.</p>
+    <p><b>كتابة الـ cache ممكن تفشل برضه</b> بعد commit ناجح. في آخر سطر من التشغيل، Redis كان واقع وقت الـ write: الداتابيز فيها السعر الجديد والقديم لسه في الـ cache. الحل: جرّب <code>DEL</code>، وعدّ الـ error، وسيب TTL كحزام أمان. والـ races بين كذا writer مع بعض هي موضوع الدرس الجاي.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      تعديل سعر المنتج من لوحة التحكم: <code>setPrice</code> بيعمل <code>UPDATE ... RETURNING</code> في transaction، وبعدين <code>SET</code> بالصف الراجع من الداتابيز (مش من الـ input). كده الـ client مبيشوفش قيمة مرفوضة أبدًا، ولو Redis وقع السعر في الداتابيز صح والـ TTL القصير بينضّف الباقي.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: write-through vs delete-on-write</b>
+    Write-through keeps the entry warm but writes rows nobody may read, and two concurrent writers can leave the older value in the cache. Deleting the key on write is simpler and pays one miss afterwards. For most CRUD data, delete-on-write is the safer default; write-through earns its place when reads right after writes are common.
+    <div class="ar-note">الـ write-through بيخلّي الـ entry دافية، بس بيكتب صفوف يمكن محدش يقراها، واتنين writers مع بعض ممكن يسيبوا القيمة الأقدم في الـ cache. مسح الـ key وقت الـ write أبسط وبيدفع miss واحد بعدها. لمعظم الـ CRUD، المسح هو الـ default الأأمن، والـ write-through يستاهل لما القراءة بعد الكتابة مباشرة تبقى شائعة.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Write-behind &amp; refresh-ahead <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ write-behind والـ refresh-ahead</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Write-behind</b> (write-back) acknowledges first and writes to the database later, in batches. The gain is dramatic for high-frequency, low-value updates: 5,000 article views took 5,000 database writes write-through and 10 batched upserts write-behind, and about 24 times less total time. The price is in the third line of the run: the process died by <code>SIGKILL</code> after acknowledging 3,737 views, and only 3,500 reached the database. <b>237 acknowledged increments were lost</b>, and every one of those requests had already received a success response.</p>
+    <p>For view counters that's an acceptable error, and you'd say so in writing. For money, inventory or anything a customer was told succeeded, it is not. Moving the buffer to Redis with <code>HINCRBY</code> survives an app crash but not a Redis loss, and the helper Redis here runs with no persistence. If the increments must survive, you want a durable log, that is the outbox from <a href="../../07-Databases/lessons/41-outbox-cdc-idempotency.html">the outbox lesson</a>, and then you've left caching behind.</p>
+    <p><b>Refresh-ahead</b> reloads a key in the background when a read finds it past some fraction of its TTL, so popular keys never expire under a user. In the virtual-time simulation at 80% of TTL, the hot-catalog p99 dropped from 54.5 ms to 1 ms with no wasted refreshes. On the long-tail catalog it barely moved, 94.8 to 92.6 ms, and 412 of 3,184 refreshes were never read. Refresh-ahead only helps keys that are read often enough to be read again, and it spends database capacity on predictions. It does not fix cold misses.</p>
+    <p><b>Picking one.</b> Use the table below. Cache-aside is the default; the others are answers to a specific, measured problem.</p>
+  </section>
+
+<pre class="diagram">
+  write-through                        write-behind
+  -------------                        ------------
+  request                              request
+     |                                    |
+     v                                    v
+  [ DB commit ]  &lt;- rules live here    [ memory buffer ] --> 200 OK returned
+     |                                    |
+     v                                    |  every N writes / T ms
+  [ cache SET ]                           v
+     |                                 [ DB batch upsert ]
+     v
+  200 OK                               crash here = acknowledged data lost
+</pre>
+  <div class="ar-note">الشمال write-through: الطلب بيكتب في الداتابيز الأول، بعدها الـ cache، وبعدها يرد 200 — تقريبًا كل حاجة في مكانها قبل الرد. اليمين write-behind: الطلب بيكتب في buffer في الـ memory ويرد 200 على طول، وبعد كل N كتابة أو كل فترة بيتعمل batch upsert. لو الـ process مات قبل الـ flush، الـ views اللي المستخدم خد عليها 200 راحت.</div>
+
+<pre data-file="src/p6-counter.ts"><code class="language-typescript">// العدّاد في process لوحده: بيسجّل الـ views، ولو KILL_AT متحدد بيموت نفسه فجأة قبل الـ flush
+import { writeFileSync } from "node:fs";
+import { newPool, mulberry32, zipf } from "./lab.ts";
+
+const mode = process.env.MODE as "write-through" | "write-behind";
+const total = Number(process.env.VIEWS);
+const killAt = Number(process.env.KILL_AT ?? 0);
+const pool = newPool(process.env.PG_PORT!, 4);
+const pick = zipf(500, 1.0, mulberry32(5));
+
+const pending = new Map&lt;number, number&gt;();
+let dbWrites = 0;
+let acked = 0;
+
+async function flush() {
+  if (pending.size === 0) return;
+  const ids = [...pending.keys()];
+  const deltas = [...pending.values()];
+  pending.clear();
+  dbWrites++;
+  await pool.query(
+    `insert into article_views (article_id, views)
+     select * from unnest($1::bigint[], $2::bigint[])
+     on conflict (article_id) do update set views = article_views.views + excluded.views`,
+    [ids, deltas]);
+}
+
+async function recordView(articleId: number) {
+  if (mode === "write-through") {
+    dbWrites++;
+    await pool.query(
+      `insert into article_views values ($1, 1)
+       on conflict (article_id) do update set views = article_views.views + 1`, [articleId]);
+  } else {
+    pending.set(articleId, (pending.get(articleId) ?? 0) + 1);
+    if (acked % 500 === 499) await flush();
+  }
+  // من اللحظة دي المستخدم خد 200 OK: الـ view اتحسبت من وجهة نظره
+  acked++;
+  if (killAt &amp;&amp; acked === killAt) {
+    writeFileSync("acked.txt", String(acked));
+    // موت مفاجئ زي OOM kill أو crash: مفيش flush ومفيش shutdown hook
+    process.kill(process.pid, "SIGKILL");
+  }
+}
+
+const t0 = performance.now();
+for (let i = 0; i &lt; total; i++) await recordView(pick());
+await flush();
+process.send!({ dbWrites, acked, ms: Math.round(performance.now() - t0) });
+await pool.end();
+</code></pre>
+<pre data-file="src/p6-write-behind.ts"><code class="language-typescript">// الـ write-behind: الكتابة على الـ DB بتقل جدًا، والـ kill بيضيّع اللي لسه في الـ memory
+import { fork } from "node:child_process";
+import { once } from "node:events";
+import { readFileSync, rmSync } from "node:fs";
+import { createPrimary, connect, stopAll } from "./pg-cluster.mjs";
+
+console.log("REAL Postgres 18 (durable commits). The child process really dies with SIGKILL. Windows, loaded machine.");
+const cluster = await createPrimary();
+const db = await connect(cluster.port);
+await db.query(`create table article_views (article_id bigint primary key, views bigint not null)`);
+const sum = async () =&gt; Number((await db.query(`select coalesce(sum(views),0)::bigint n from article_views`)).rows[0].n);
+
+function runChild(mode: string, views: number, killAt?: number) {
+  const child = fork(new URL("./p6-counter.ts", import.meta.url), {
+    env: { ...process.env, MODE: mode, VIEWS: String(views), PG_PORT: String(cluster.port), KILL_AT: killAt ? String(killAt) : "" },
+  });
+  let result: { dbWrites: number; acked: number; ms: number } | undefined;
+  child.on("message", (m) =&gt; { result = m as typeof result; });
+  return once(child, "exit").then(([code, signal]) =&gt; ({ result, code, signal }));
+}
+
+const VIEWS = 5000;
+for (const mode of ["write-through", "write-behind"]) {
+  await db.query(`truncate article_views`);
+  const { result } = await runChild(mode, VIEWS);
+  console.log(mode.padEnd(14), `views=${VIEWS}  DB writes=${String(result!.dbWrites).padStart(5)}  total≈${result!.ms} ms  stored=${await sum()}`);
+}
+
+await db.query(`truncate article_views`);
+rmSync("acked.txt", { force: true });
+const killed = await runChild("write-behind", VIEWS, 3737);
+const acked = Number(readFileSync("acked.txt", "utf8"));
+const stored = await sum();
+console.log(`write-behind + SIGKILL at view ${acked}: process exit code=${killed.code}  acknowledged=${acked}  stored in DB=${stored}  LOST=${acked - stored}`);
+
+rmSync("acked.txt", { force: true });
+await db.end();
+await stopAll(cluster);
+process.exit(0);
+</code></pre>
+<pre><code class="language-plaintext">REAL Postgres 18 (durable commits). The child process really dies with SIGKILL. Windows, loaded machine.
+write-through  views=5000  DB writes= 5000  total≈2161 ms  stored=5000
+write-behind   views=5000  DB writes=   10  total≈89 ms  stored=5000
+write-behind + SIGKILL at view 3737: process exit code=1  acknowledged=3737  stored in DB=3500  LOST=237
+</code></pre>
+  <div class="ar-note">تشغيل حقيقي بـ <code>SIGKILL</code> فعلي. الـ write-through: 5000 كتابة DB. الـ write-behind: 10 batches بس وحوالي 24 مرة أسرع. آخر سطر: الـ process مات عند view رقم 3737، والـ DB فيها 3500 بس لأن آخر batch اتعمل عند 3500، فـ 237 ضاعوا وكلهم كانوا خدوا 200. على Windows الـ exit code طلع 1 بدل signal، بس الـ process اتقتل زي ما هو.</div>
+
+<pre data-file="src/p6-refresh-ahead.ts"><code class="language-typescript">// الـ refresh-ahead: تجديد المفتاح قبل ما يخلص، و simulation بوقت افتراضي
+import { mulberry32, zipf, stats } from "./lab.ts";
+
+console.log("SIMULATION: virtual time, seeded PRNG. TTL 30 s, hit 1 ms, loader about 30 ms plus an exponential tail.");
+console.log("Not modelled: real concurrency, the extra load refreshes put on a busy database, cache memory, clock skew.");
+
+type Entry = { storedAt: number; readsSince: number; fromRefresh: boolean; refreshingUntil: number };
+const TTL = 30_000;
+
+function run(refreshAt: number | null, keys: number, s: number) {
+  const rand = mulberry32(4242);
+  const pick = zipf(keys, s, rand);
+  const latency = () =&gt; 30 + 20 * -Math.log(1 - rand());
+  const cache = new Map&lt;number, Entry&gt;();
+  const lat: number[] = [];
+  let misses = 0, refreshes = 0, wasted = 0, now = 0;
+
+  for (let i = 0; i &lt; 60_000; i++) {
+    now += 5;
+    const k = pick();
+    let e = cache.get(k);
+    if (e &amp;&amp; e.refreshingUntil &gt; 0 &amp;&amp; now &gt;= e.refreshingUntil) {
+      if (e.fromRefresh &amp;&amp; e.readsSince === 0) wasted++;
+      e = { storedAt: e.refreshingUntil, readsSince: 0, fromRefresh: true, refreshingUntil: 0 };
+      cache.set(k, e);
+    }
+    if (e &amp;&amp; now - e.storedAt &lt; TTL) {
+      e.readsSince++;
+      lat.push(1);
+      const trigger = refreshAt !== null &amp;&amp; now - e.storedAt &gt;= refreshAt * TTL;
+      if (trigger &amp;&amp; e.refreshingUntil === 0) {
+        refreshes++;
+        e.refreshingUntil = now + latency();
+      }
+      continue;
+    }
+    if (e &amp;&amp; e.fromRefresh &amp;&amp; e.readsSince === 0) wasted++;
+    misses++;
+    const l = latency();
+    lat.push(1 + l);
+    cache.set(k, { storedAt: now + l, readsSince: 0, fromRefresh: false, refreshingUntil: 0 });
+  }
+  for (const e of cache.values()) if (e.fromRefresh &amp;&amp; e.readsSince === 0) wasted++;
+  const r = stats(lat);
+  return { mean: r.mean.toFixed(2), p50: r.p50.toFixed(1), p99: r.p99.toFixed(1), misses, refreshes, wasted };
+}
+
+for (const [label, keys, s] of [["hot small catalog (200 keys, zipf 0.8)", 200, 0.8], ["long tail (5000 keys, zipf 1.0)", 5000, 1.0]] as const) {
+  console.log(`--- ${label} ---`);
+  console.log("cache-aside  ", JSON.stringify(run(null, keys, s)));
+  console.log("refresh@80%  ", JSON.stringify(run(0.8, keys, s)));
+}
+process.exit(0);
+</code></pre>
+<pre><code class="language-plaintext">SIMULATION: virtual time, seeded PRNG. TTL 30 s, hit 1 ms, loader about 30 ms plus an exponential tail.
+Not modelled: real concurrency, the extra load refreshes put on a busy database, cache memory, clock skew.
+--- hot small catalog (200 keys, zipf 0.8) ---
+cache-aside   {"mean":"2.62","p50":"1.0","p99":"54.5","misses":1958,"refreshes":0,"wasted":0}
+refresh@80%   {"mean":"1.29","p50":"1.0","p99":"1.0","misses":342,"refreshes":2063,"wasted":0}
+--- long tail (5000 keys, zipf 1.0) ---
+cache-aside   {"mean":"13.14","p50":"1.0","p99":"94.8","misses":14511,"refreshes":0,"wasted":0}
+refresh@80%   {"mean":"11.52","p50":"1.0","p99":"92.6","misses":12574,"refreshes":3184,"wasted":412}
+</code></pre>
+  <div class="ar-note">simulation بوقت افتراضي، ومكتوب في أول سطرين إيه اللي مش متمثل. كتالوج صغير سخن: الـ p99 نزل من 54.5 لـ 1 ms، والـ misses من 1958 لـ 342، ومفيش refresh ضاع. ذيل طويل: الـ p99 يدوب اتحرك من 94.8 لـ 92.6 لأن المفاتيح البعيدة بتبقى miss بدري، و412 refresh من 3184 محدش قراهم. يعني refresh-ahead بيفيد المفاتيح اللي بتتقرا كتير بس.</div>
+
+  <table>
+    <tr><th>Strategy</th><th>Read latency</th><th>Write latency</th><th>Consistency</th><th>Loss risk</th><th>Complexity</th></tr>
+    <tr><td>Cache-aside</td><td>miss pays DB</td><td>DB only</td><td>stale until TTL or invalidation</td><td>none (cache is a copy)</td><td>low</td></tr>
+    <tr><td>Read-through</td><td>miss pays DB</td><td>DB only</td><td>same as cache-aside</td><td>none</td><td>medium (cache layer owns loader)</td></tr>
+    <tr><td>Write-through</td><td>hits after writes</td><td>DB + cache</td><td>best of these, still races</td><td>none if DB first</td><td>medium</td></tr>
+    <tr><td>Write-behind</td><td>hits after writes</td><td>memory only, very low</td><td>DB lags behind</td><td><b>acknowledged writes lost</b></td><td>high</td></tr>
+    <tr><td>Refresh-ahead</td><td>hot keys never miss</td><td>none added</td><td>fresher for hot keys</td><td>none</td><td>medium, wastes refreshes</td></tr>
+  </table>
+  <div class="ar-note">صف صف: الـ cache-aside الـ miss بيدفع الداتابيز، والـ write على الداتابيز بس، والداتا ممكن تبقى قديمة لحد الـ TTL، ومفيش خطر فقد لأن الـ cache نسخة، وبسيط. الـ read-through زيه بس طبقة الـ cache هي اللي شايلة الـ loader. الـ write-through القراية بعد الكتابة hit، والـ write بيدفع المكانين، أحسن consistency هنا مع وجود races، ومفيش فقد لو الداتابيز الأول. الـ write-behind الكتابة في الـ memory وسريعة جدًا، والداتابيز متأخرة، و<b>ممكن يضيع كتابات اتقال عنها نجحت</b>، وأعقد واحد. الـ refresh-ahead المفاتيح السخنة مبتعملش miss، ومبيضيفش على الـ write، وبيصرف refreshes ممكن محدش يقراها.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>write-behind</b> (write-back) بيرد الأول ويكتب في الداتابيز بعدين في batches. المكسب ضخم للـ updates الكتيرة قليلة القيمة: 5,000 view خدوا 5,000 كتابة DB في الـ write-through و10 batched upserts في الـ write-behind، ووقت إجمالي أقل بحوالي 24 مرة. الثمن في السطر التالت من التشغيل: الـ process مات بـ <code>SIGKILL</code> بعد ما رد على 3,737 view، و3,500 بس وصلوا الداتابيز. <b>237 increment ضاعوا</b>، وكل الطلبات دي كانت خدت success.</p>
+    <p>في عدّاد المشاهدات ده error مقبول، وتكتبه صراحةً. أما الفلوس أو المخزون أو أي حاجة قولت للعميل إنها نجحت فلأ. لو نقلت الـ buffer لـ Redis بـ <code>HINCRBY</code> هينجو من crash الـ app بس مش من ضياع Redis، و Redis عندنا هنا من غير persistence أصلًا. لو الـ increments لازم تعيش، إنت محتاج durable log، يعني الـ outbox في <a href="../../07-Databases/lessons/41-outbox-cdc-idempotency.html">درس الـ outbox</a>، وساعتها إنت خرجت من موضوع الـ caching.</p>
+    <p>الـ <b>refresh-ahead</b> بيعيد تحميل الـ key في الخلفية لما قراءة تلاقيه عدّى نسبة من الـ TTL، فالمفاتيح الشعبية عمرها ما بتخلص قدام المستخدم. في الـ simulation بوقت افتراضي عند 80% من الـ TTL، الـ p99 للكتالوج السخن نزل من 54.5 ms لـ 1 ms من غير أي refresh ضايع. في الكتالوج اللي ذيله طويل بالكاد اتحرك، 94.8 لـ 92.6 ms، و412 من 3,184 refresh محدش قراهم. يعني الـ refresh-ahead بيفيد المفاتيح اللي بتتقرا كفاية بس، وبيصرف capacity من الداتابيز على توقعات، ومش بيحل الـ cold misses.</p>
+    <p><b>الاختيار:</b> الجدول فوق. الـ cache-aside هو الـ default، والباقي إجابات لمشكلة محددة متقاسة.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      زراير "إعجاب" و"عدد مشاهدات" الفيديو على موقع ضغطه عالي: write-behind كل ثانية أو كل 500 حدث، وقول للـ PM "ممكن نفقد ثواني من العدّ لو حصل crash". أما الرصيد والمخزون: أبدًا. والـ refresh-ahead يبقى في صفحة الـ top sellers اللي بتتقرا آلاف المرات في الدقيقة وحسابها غالي، ومتستخدمهوش على كتالوج 5 مليون منتج.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks: write-behind without an accounting of loss</b>
+    The dangerous form isn't the batching, it's a team that doesn't know how much it can lose. Write down the maximum loss as "N events or T seconds", flush on <code>SIGTERM</code>, and accept that <code>SIGKILL</code> and power loss skip the handler entirely, as the run shows.
+    <div class="ar-note">الخطر مش في الـ batching، الخطر في فريق مش عارف ممكن يخسر قد إيه. اكتب أقصى خسارة بصيغة "N حدث أو T ثانية"، واعمل flush على <code>SIGTERM</code>، واعرف إن <code>SIGKILL</code> وانقطاع الكهربا بيتخطوا الـ handler خالص، زي ما التشغيل بيوريك.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Would you use write-behind for a shopping cart total or a payment?" → Not for a payment: a success response has to mean the money is recorded, and write-behind can lose acknowledged writes. For a cart I'd still usually write through, or store it in Redis as the primary with its durability limits understood. Write-behind fits counters and analytics, where a small loss is agreed in advance.
+    <div class="ar-note">"هتستخدم write-behind في مجموع السلة أو في عملية دفع؟" ← الدفع لأ: رد الـ success لازم يعني إن الفلوس اتسجلت، والـ write-behind ممكن يضيّع كتابات اتقال إنها نجحت. السلة برضه غالبًا write-through، أو تخزّنها في Redis كمكان أساسي وإنت فاهم حدود الـ durability. الـ write-behind مناسب للعدّادات والـ analytics لما يكون الفقد الصغير متفق عليه مقدمًا.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Trusting one global hit ratio</b>
+<pre><code class="language-typescript">// الرقم العام طالع 82% والـ cart الحقيقي 0.5%
+const { keyspace_hits, keyspace_misses } = parseInfo(await redis.info("stats"));
+metrics.hitRatio.set(keyspace_hits / (keyspace_hits + keyspace_misses));</code></pre></div>
+    <div class="good"><b>✅ Count per namespace in the app</b>
+<pre><code class="language-typescript">// كل namespace بعدّاده عشان نلقط اللي بايظ
+const res = await cache.getOrSet("cart", userId, 30, load);
+hitRatioGauge.set({ ns: "cart" }, cache.ratio("cart"));
+if (cache.ratio("cart") &lt; 0.5) alert("cart cache is not helping");</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>INFO stats</code> بيدي رقم واحد للـ instance كله، وفي التشغيل كان 82% والـ cart كان 0.5%. ✅ عدّ لكل namespace في الـ app، واعمل الـ alert على كل namespace. لو عدّاد قال إن الـ cache مش بيفيد، امسحه بدل ما تسيبه بيزوّد latency.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Cache first, database second</b>
+<pre><code class="language-typescript">// لو الـ DB رفضت، الـ cache فيه قيمة عمرها ما حصلت
+await redis.set(key, JSON.stringify({ price_cents: cents }), "EX", 300);
+await db.query("update products set price_cents=$1 where id=$2", [cents, id]);</code></pre></div>
+    <div class="good"><b>✅ Database first, from the returned row</b>
+<pre><code class="language-typescript">// الـ SET بيستخدم الصف اللي الـ DB رجعته مش الـ input
+const { rows: [row] } = await db.query(
+  "update products set price_cents=$1 where id=$2 returning *", [cents, id]);
+await redis.set(key, JSON.stringify(row), "EX", 300).catch(() =&gt; redis.del(key));</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ لما الداتابيز ترفض الـ write بسبب constraint، الـ cache فيه <code>-500</code> والداتابيز <code>1000</code>، وده اللي طلع في القياس فعلًا. ✅ الداتابيز الأول لأن القواعد عندها، والـ SET بالصف الراجع، ولو الـ SET فشل حاول <code>DEL</code>، والـ TTL هو حزام الأمان.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Using <code>noeviction</code> or <code>volatile-*</code> for a pure cache</b>
+<pre><code class="language-bash"># لو الـ keys مفيهاش TTL، الكتابة بتفشل بـ OOM
+redis-cli -p "$PORT" config set maxmemory-policy volatile-ttl
+# OOM command not allowed when used memory &gt; 'maxmemory'.</code></pre></div>
+    <div class="good"><b>✅ An <code>allkeys-*</code> policy, sized on purpose</b>
+<pre><code class="language-bash"># كل المفاتيح تبقى قابلة للطرد وراقب evicted_keys
+redis-cli -p "$PORT" config set maxmemory-policy allkeys-lru
+redis-cli -p "$PORT" info stats | grep evicted_keys</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>volatile-ttl</code> على مفاتيح من غير TTL معناها مفيش حاجة تتطرد، والكتابات بتفشل بـ OOM، وده اللي شوفناه في القياس. ✅ لـ cache خالص استخدم <code>allkeys-lru</code> أو <code>allkeys-lfu</code>، وخلّي <code>maxmemory</code> مقصود، وراقب <code>evicted_keys</code>.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Write-behind with no flush on shutdown</b>
+<pre><code class="language-typescript">// الـ buffer بيضيع في أي rolling deploy عادي
+const pending = new Map&lt;number, number&gt;();
+setInterval(flush, 1000);</code></pre></div>
+    <div class="good"><b>✅ Flush on SIGTERM, and say what's still at risk</b>
+<pre><code class="language-typescript">// الـ deploy العادي بيبعت SIGTERM فنلحق نعمل flush
+process.on("SIGTERM", async () =&gt; {
+  await flush();
+  process.exit(0);
+});
+// بس SIGKILL أو انقطاع الكهربا برضه بيضيّع اللي في الـ memory</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ buffer في الـ memory من غير flush عند الإغلاق يعني أي rolling deploy بيضيّع increments. ✅ <code>SIGTERM</code> بيدّيك فرصة تعمل flush، بس زي ما شوفنا في القياس، <code>SIGKILL</code> مبيستناش حد، فالخسارة القصوى لازم تتكتب وتتقبل.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. The hit ratio you actually need <span class="lvl lvl-1">🟢 easy</span></b>
+    Write <code>requiredHitRatio(targetMs, cacheMs, dbMs)</code>: the lowest hit ratio that reaches a target average latency. Use numbers you measured yourself.
+    <div class="ar-note">اكتب <code>requiredHitRatio(targetMs, cacheMs, dbMs)</code>: أقل hit ratio يوصلك لـ latency متوسط معين. استخدم أرقام قستها بنفسك.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex1.ts"><code class="language-typescript">// حل التمرين: أقل hit ratio يوصلني لمتوسط latency معين
+export function requiredHitRatio(targetMs: number, cacheMs: number, dbMs: number): number {
+  // من المعادلة: target = cache + (1 - h) * db
+  if (targetMs &lt; cacheMs) throw new Error("target is below the cache latency itself");
+  const h = 1 - (targetMs - cacheMs) / dbMs;
+  return Math.min(1, Math.max(0, h));
+}
+
+const cache = 0.117, db = 1.311;
+for (const target of [1.0, 0.5, 0.2, 0.13]) {
+  console.log(`target ${target} ms -&gt; hit ratio &gt;= ${(requiredHitRatio(target, cache, db) * 100).toFixed(1)}%`);
+}
+try { requiredHitRatio(0.05, cache, db); } catch (e) { console.log((e as Error).message); }
+</code></pre>
+<pre><code class="language-plaintext">target 1 ms -&gt; hit ratio &gt;= 32.6%
+target 0.5 ms -&gt; hit ratio &gt;= 70.8%
+target 0.2 ms -&gt; hit ratio &gt;= 93.7%
+target 0.13 ms -&gt; hit ratio &gt;= 99.0%
+target is below the cache latency itself
+</code></pre>
+      <div class="ar-note">الحل طالع من نفس المعادلة بعد ما نفصل الـ h. بالأرقام المتقاسة، عشان توصل لـ 0.5 ms محتاج حوالي 71%، و0.13 ms محتاجة 99%. ولو الهدف أقل من latency الـ cache نفسه، مفيش hit ratio هيوصّلك، فالدالة بترمي error.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Alert per namespace <span class="lvl lvl-2">🟡 medium</span></b>
+    Given counters per namespace, return the namespaces below a hit-ratio threshold, ignoring namespaces with too few reads to be meaningful.
+    <div class="ar-note">عندك counters لكل namespace: رجّع الـ namespaces اللي تحت حد معين من الـ hit ratio، واتجاهل اللي عددها قليل عشان رقمها ملوش معنى.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex2.ts"><code class="language-typescript">// حل التمرين: تنبيه لكل namespace واطي، بشرط يكون عنده طلبات كفاية عشان الرقم يتصدق
+type Ns = { hits: number; misses: number };
+
+export function lowHitRatio(byNs: Record&lt;string, Ns&gt;, minRatio: number, minReads: number) {
+  return Object.entries(byNs).flatMap(([ns, s]) =&gt; {
+    const reads = s.hits + s.misses;
+    const ratio = reads === 0 ? 0 : s.hits / reads;
+    return reads &gt;= minReads &amp;&amp; ratio &lt; minRatio ? [{ ns, reads, ratio: Number((ratio * 100).toFixed(1)) }] : [];
+  });
+}
+
+// الأرقام دي من تشغيل الـ hit ratio الحقيقي فوق
+const measured = {
+  product: { hits: 16402, misses: 1598 },
+  cart: { hits: 9, misses: 1991 },
+  featureFlags: { hits: 3, misses: 7 },
+};
+console.log(lowHitRatio(measured, 0.8, 100));
+</code></pre>
+<pre><code class="language-plaintext">[ { ns: 'cart', reads: 2000, ratio: 0.4 } ]
+</code></pre>
+      <div class="ar-note">الـ <code>cart</code> اتحدد عشان عنده 2000 قراءة وهو تحت الـ 80%. والـ <code>featureFlags</code> هيبقى 30% بس عنده 10 قراءات بس، فاتجاهلناه: شرط الحد الأدنى من القراءات بيمنع إنذارات كدابة. ولاحظ إن الدالة بترجّع النسبة من غير ما تبعت alert بنفسها، عشان تبقى سهلة في الـ test.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Find your own scan <span class="lvl lvl-3">🔴 hard</span></b>
+    Add a trace to <code>p4-sim.ts</code> that models your real workload, for example a nightly report plus a Monday traffic peak. Which policy wins, and how much does a decay change it?
+    <div class="ar-note">ضيف trace في <code>p4-sim.ts</code> يمثل شغلك الحقيقي، مثلًا تقرير ليلي مع ذروة يوم الاتنين. أنهي سياسة بتكسب؟ وقد إيه الـ decay بيغيّر النتيجة؟</div>
+    <details><summary>Hint · تلميح</summary>
+      Extend <code>buildTrace</code> with a new <code>kind</code>, keep the seed fixed so the comparison is fair, and add a row for each policy.
+      <div class="ar-note">زوّد <code>kind</code> جديد في <code>buildTrace</code>، وسيب الـ seed ثابت عشان المقارنة تبقى عادلة، وضيف صف لكل سياسة.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project: a counter you're allowed to lose <span class="lvl lvl-3">🔴 project</span></b>
+    Add per-namespace cache metrics to your side project. Then add a view or impression counter with write-behind, a written maximum loss, a <code>SIGTERM</code> flush, and a test that kills the process and counts what was lost.
+    <div class="ar-note">في مشروعك الجانبي: ضيف metrics للـ cache لكل namespace. وبعدين ضيف عدّاد مشاهدات بـ write-behind، مع أقصى خسارة مكتوبة، و flush على <code>SIGTERM</code>، و test بيقتل الـ process ويعدّ اللي ضاع.</div>
+    <details><summary>Hint · تلميح</summary>
+      <code>p6-counter.ts</code> and <code>p6-write-behind.ts</code> already do the kill and the count. Replace the view loop with your real route.
+      <div class="ar-note"><code>p6-counter.ts</code> و<code>p6-write-behind.ts</code> بيعملوا الـ kill والعدّ فعلًا. بدّل الـ loop بتاع الـ views بالـ route الحقيقي بتاعك.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>A cache buys latency and load. Measure both: a primary-key lookup may gain almost no latency, while load falls hard.</li>
+    <li>Effective latency = h × cache + (1 − h) × (cache + db). A miss pays for both.</li>
+    <li>Levels: browser, CDN, app memory, Redis. Closer to the user is faster and harder to invalidate.</li>
+    <li>Read the miss rate: 90% to 99% is 10× fewer DB reads (measured 10.9×).</li>
+    <li>Track hit ratio per namespace: the global 82% hid a 0.5% cart.</li>
+    <li>Plan for cold start: hit ratio takes thousands of requests to recover.</li>
+    <li>Eviction: start with <code>allkeys-lru</code>; LFU beats it on stable popularity and scans, but needs decay when trends shift. TTL-only has no memory bound.</li>
+    <li><code>volatile-*</code> without TTLs, or <code>noeviction</code>, means writes fail with OOM.</li>
+    <li>Write-through: database first, then cache from the returned row, then <code>DEL</code> and TTL on failure.</li>
+    <li>Write-behind loses acknowledged writes on a crash (237 here). Fine for views, never for money.</li>
+    <li>Refresh-ahead helps hot keys only; on long tails it mostly wastes refreshes.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ cache بيشتري latency و load. قيس الاتنين: الـ primary-key lookup ممكن مايكسبش latency تقريبًا، بس الـ load بيقع جامد.</li>
+      <li>الـ latency الفعلي = h × cache + (1 − h) × (cache + db). الـ miss بيدفع الاتنين.</li>
+      <li>المستويات: browser و CDN و app memory و Redis. كل ما تقرّب من المستخدم أسرع وأصعب في الـ invalidate.</li>
+      <li>بص على الـ miss rate: من 90% لـ 99% يعني 10 أضعاف أقل قراءات DB (اتقاس 10.9 مرة).</li>
+      <li>تابع الـ hit ratio لكل namespace: الـ 82% العام كان مخبّي cart عند 0.5%.</li>
+      <li>خطّط للـ cold start: الـ hit ratio بياخد آلاف الطلبات عشان يرجع.</li>
+      <li>الـ eviction: ابدأ بـ <code>allkeys-lru</code>. الـ LFU أحسن مع الشعبية الثابتة والـ scans، بس محتاج decay لما الشعبية تتغير. والـ TTL-only مالوش حد memory.</li>
+      <li><code>volatile-*</code> من غير TTLs أو <code>noeviction</code> معناها الكتابة بتفشل بـ OOM.</li>
+      <li>الـ write-through: الداتابيز الأول، وبعدين الـ cache بالصف الراجع، ولو فشل <code>DEL</code> و TTL.</li>
+      <li>الـ write-behind بيضيّع كتابات اتقال إنها نجحت لو حصل crash (237 هنا). ينفع للـ views، وأبدًا للفلوس.</li>
+      <li>الـ refresh-ahead بيفيد المفاتيح السخنة بس، وعلى الذيل الطويل بيضيّع refreshes.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 10 · 1.4 — ليه الـ cache: تقليل latency وتقليل load على الـ DB</label>
+    <label><input type="checkbox" data-key="r2"> 10 · 1.4 — Cache levels: browser، CDN، application (in-memory)، distributed (Redis)</label>
+    <label><input type="checkbox" data-key="r3"> 10 · 1.4 — Cache-aside pattern (الأشهر): read cache → miss → read DB → write cache</label>
+    <label><input type="checkbox" data-key="r4"> 10 · 1.4 — TTL، eviction (LRU)</label>
+    <label><input type="checkbox" data-key="r5"> 10 · 1.4 — Cache hit ratio كـ metric</label>
+    <label><input type="checkbox" data-key="r6"> 10 · 2.3 — Strategies: cache-aside (lazy)، read-through، write-through، write-back/write-behind (خطر)، refresh-ahead</label>
+    <label><input type="checkbox" data-key="r7"> 10 · 2.3 — Eviction: LRU، LFU، FIFO، TTL-based — وإمتى كل واحد</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://redis.io/docs/latest/develop/reference/eviction/">Redis docs: key eviction</a></li>
+    <li><a href="https://redis.io/docs/latest/commands/info/">Redis docs: INFO (keyspace_hits, evicted_keys)</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/pgstatstatements.html">PostgreSQL: pg_stat_statements</a></li>
+    <li><a href="https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/Strategies.html">AWS ElastiCache: caching strategies (lazy loading, write-through, TTL)</a></li>
+    <li><a href="https://github.com/isaacs/node-lru-cache">node-lru-cache</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./15-object-storage-retention-backups.html"><small>← Previous</small>15 · Object Storage &amp; Backups</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./17-cache-invalidation-consistency.html"><small>Next →</small>17 · Invalidation</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

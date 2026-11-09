@@ -1,0 +1,1622 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Back-of-the-Envelope Estimation: QPS, Storage, Memory &amp; Latency — 10 System Design</title>
+<meta name="section" content="10-System-Design">
+<meta name="level" content="🟢 Basic">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">10 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 02 / 63</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Back-of-the-Envelope Estimation: QPS, Storage, Memory &amp; Latency</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 02 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🟢 Basic</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">Node 22+ · TypeScript 7 · Postgres 18 · Redis 8</span>
+      <span class="chip">Prereq: 01 Design Method</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>10 · 1.1 — <b>Back-of-the-envelope estimation</b>: QPS (users/day × actions ÷ 86400 ≈ users/day ÷ 100K per QPS)، peak = 2–3× average، storage (rows × size × years)، bandwidth، memory للـ cache (80/20 rule)</li>
+        <li>10 · 1.1 — <b>الأرقام اللي لازم تحفظها</b>: 1M users/day ≈ 12 QPS متوسط و ~100 QPS peak؛ 1 day ≈ 100K seconds؛ 1 million × 1KB = 1GB؛ powers of two (2^10 ≈ 1K، 2^20 ≈ 1M، 2^30 ≈ 1G)</li>
+        <li>10 · 1.1 — Latency numbers (من قسم CS Fundamentals) — RAM ~100ns، SSD ~100μs، datacenter RTT ~0.5ms، cross-continent ~150ms</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — QPS &amp; peak</a></li>
+      <li><a href="#p2">Part 2 — Storage</a></li>
+      <li><a href="#p3">Part 3 — Bandwidth</a></li>
+      <li><a href="#p4">Part 4 — Cache memory &amp; the 80/20 rule</a></li>
+      <li><a href="#p5">Part 5 — Numbers to memorize</a></li>
+      <li><a href="#p6">Part 6 — Latency numbers, measured</a></li>
+      <li><a href="#p7">Part 7 — Putting it together</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>An estimate decides whether you need one database or twenty before anyone writes code. It's also the step in a design interview where a candidate shows they can reason about real machines. The goal is the right order of magnitude with assumptions you can defend, so the arithmetic is deliberately rough.</p>
+    <p>You'll build one small calculator and reuse it through this section. Every rule of thumb here is then checked against something real: a generated day of traffic, real Postgres row sizes, real Redis memory and real latencies from this machine. Some of the rules hold and some don't.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>التقدير هو اللي بيقرر محتاج database واحدة ولا عشرين قبل ما حد يكتب كود. وهو كمان الخطوة في الـ design interview اللي بتبيّن إنك بتفكر في machines حقيقية. الهدف إنك تجيب رتبة الرقم صح بافتراضات تقدر تدافع عنها، فالحساب تقريبي عن قصد.</p>
+    <p>هتبني calculator صغير وتستخدمه طول القسم. وكل قاعدة هنا هنراجعها على حاجة حقيقية: يوم traffic متولّد، وأحجام صفوف Postgres حقيقية، وذاكرة Redis حقيقية، و latencies حقيقية من الجهاز ده. فيه قواعد هتطلع صح، وفيه قواعد لأ.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — QPS &amp; peak <span class="lvl lvl-1">🟢 Basic</span><span class="ar-sub">الجزء 1 — الـ QPS والـ peak</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Average QPS = users per day × actions per user ÷ 86,400. The shortcut is to divide by 100,000 instead. For 1M users with 10 requests each, that's 115.7 QPS exactly, or 100 with the shortcut. Peak is the average times a factor: 2–3× gives 231–347 QPS.</p>
+    <p><strong>A correction to the README.</strong> Its rule of thumb says "1M users/day ≈ 12 QPS average and ~100 QPS peak". The 12 only holds if each user does exactly one action. And 100 is 8.6× the average, while the same README line says peak is 2–3×. Both can't be the default. Always say which you assume: <strong>2–3× for a steady SaaS, 8–10× or worse for flash sales</strong>. At 2–3×, those 12 QPS peak at 23–35.</p>
+    <p>You don't have to guess the factor. The second script generates a whole day, second by second, using a seeded random generator: a quiet night and an evening peak, then the same day with a five-minute sale at 10× traffic. It reports the peak factor from the trace itself. A normal day peaks at 2.7× measured over one second, so 2–3× is fair. The sale day peaks at 7.4×, and a fleet sized for 3× is over capacity for all 300 seconds of the sale, which is exactly when the money is.</p>
+  </section>
+
+<pre data-file="estimate.ts"><code class="language-typescript">// الملف ده الـ calculator اللي هتستخدمه طول القسم، كل دالة بترجع أرقام مش نص
+export const SECONDS_PER_DAY = 86_400;
+export const KB = 1_000;
+export const MB = 1_000_000;
+export const GB = 1_000_000_000;
+export const TB = 1_000_000_000_000;
+
+export function qps(input: { dau: number; actionsPerUser: number; peakFactor: number }) {
+  const avg = (input.dau * input.actionsPerUser) / SECONDS_PER_DAY;
+  return { avg, peak: avg * input.peakFactor };
+}
+
+export function storageBytes(input: {
+  itemsPerDay: number;
+  bytesPerItem: number;
+  years: number;
+  // ده مضاعف الـ tuple header والـ indexes، قيسه ومتخمّنوش
+  overheadFactor?: number;
+  replicas?: number;
+}) {
+  const days = input.years * 365;
+  const raw = input.itemsPerDay * input.bytesPerItem * days;
+  return { raw, total: raw * (input.overheadFactor ?? 1) * (input.replicas ?? 1) };
+}
+
+export function bandwidth(input: { qps: number; bytesPerRequest: number; compressionRatio?: number }) {
+  const bytesPerSec = (input.qps * input.bytesPerRequest) / (input.compressionRatio ?? 1);
+  // الشبكة بتتباع بالـ bits، والملفات بتتحسب بالـ bytes
+  return { bytesPerSec, megabitsPerSec: (bytesPerSec * 8) / MB };
+}
+
+export function monthlyEgressBytes(bytesPerSec: number) {
+  return bytesPerSec * SECONDS_PER_DAY * 30;
+}
+
+export function cacheBytes(input: { readsPerDay: number; valueBytes: number; hotShare?: number; overheadPerKey?: number }) {
+  const hotKeys = input.readsPerDay * (input.hotShare ?? 0.2);
+  return { hotKeys, bytes: hotKeys * (input.valueBytes + (input.overheadPerKey ?? 0)) };
+}
+
+export function human(bytes: number): string {
+  if (bytes &gt;= TB) return `${(bytes / TB).toFixed(2)} TB`;
+  if (bytes &gt;= GB) return `${(bytes / GB).toFixed(2)} GB`;
+  if (bytes &gt;= MB) return `${(bytes / MB).toFixed(2)} MB`;
+  return `${(bytes / KB).toFixed(1)} KB`;
+}
+
+// المولّد ده بـ seed ثابت عشان نفس الأرقام تطلع كل مرة
+export function mulberry32(seed: number): () =&gt; number {
+  let a = seed &gt;&gt;&gt; 0;
+  return () =&gt; {
+    a = (a + 0x6d2b79f5) &gt;&gt;&gt; 0;
+    let t = a;
+    t = Math.imul(t ^ (t &gt;&gt;&gt; 15), t | 1);
+    t ^= t + Math.imul(t ^ (t &gt;&gt;&gt; 7), t | 61);
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}</code></pre>
+
+<pre data-file="qps-check.ts"><code class="language-typescript">// الملف ده بيحل سؤال الـ exit وبيصحح رقم الـ README.
+// للتشغيل: node qps-check.ts
+import { qps, SECONDS_PER_DAY } from "./estimate.ts";
+
+const q1 = qps({ dau: 1_000_000, actionsPerUser: 10, peakFactor: 2 });
+const q1High = qps({ dau: 1_000_000, actionsPerUser: 10, peakFactor: 3 });
+console.log(`exit Q1: avg ${q1.avg.toFixed(1)} QPS, peak ${q1.peak.toFixed(0)}-${q1High.peak.toFixed(0)} QPS`);
+
+// الاختصار: قسمة على 100 ألف بدل 86400
+const shortcut = (1_000_000 * 10) / 100_000;
+console.log(`shortcut users/day / 100K: ${shortcut} QPS (exact ${q1.avg.toFixed(1)}, off by ${(100 - (shortcut / q1.avg) * 100).toFixed(1)}%)`);
+
+// رقم الـ README افترض action واحد لكل يوزر
+const oneAction = qps({ dau: 1_000_000, actionsPerUser: 1, peakFactor: 1 });
+console.log(`README rule: 1M users x 1 action = ${oneAction.avg.toFixed(2)} QPS average`);
+console.log(`and "~100 QPS peak" is ${(100 / oneAction.avg).toFixed(1)}x average, not 2-3x`);
+console.log(`at 2-3x the same load peaks at ${(oneAction.avg * 2).toFixed(0)}-${(oneAction.avg * 3).toFixed(0)} QPS`);
+
+for (const [shape, factor] of [["steady B2B SaaS", 2.5], ["consumer app, evening peak", 4], ["flash sale", 10]] as const) {
+  const r = qps({ dau: 1_000_000, actionsPerUser: 10, peakFactor: factor });
+  console.log(`${shape.padEnd(28)} ${String(factor).padStart(4)}x -&gt; ${r.peak.toFixed(0).padStart(5)} QPS`);
+}
+console.log(`seconds per day: ${SECONDS_PER_DAY}`);</code></pre>
+
+<pre><code class="language-plaintext">exit Q1: avg 115.7 QPS, peak 231-347 QPS
+shortcut users/day / 100K: 100 QPS (exact 115.7, off by 13.6%)
+README rule: 1M users x 1 action = 11.57 QPS average
+and "~100 QPS peak" is 8.6x average, not 2-3x
+at 2-3x the same load peaks at 23-35 QPS
+steady B2B SaaS               2.5x -&gt;   289 QPS
+consumer app, evening peak      4x -&gt;   463 QPS
+flash sale                     10x -&gt;  1157 QPS
+seconds per day: 86400</code></pre>
+  <div class="ar-note">سؤال الـ exit: المتوسط 115.7 والـ peak من 231 لـ 347. الاختصار طلّع 100 بدل 115.7، يعني أقل بـ 13.6%، وده مقبول. قاعدة الـ README: الـ 11.57 دي على أساس action واحد لكل يوزر، والـ 100 دي 8.6 ضعف مش 2–3. ولو طبقنا 2–3 ضعف، الذروة هتبقى من 23 لـ 35. وآخر 3 سطور: نفس الحمل بثلاث أشكال: SaaS ثابت 289، و consumer app 463، و flash sale حوالي 1157.</div>
+
+<pre data-file="traffic-trace.ts"><code class="language-typescript">// الملف ده بيولّد يوم كامل ثانية بثانية ويحسب الـ peak factor الحقيقي.
+// للتشغيل: node traffic-trace.ts
+import { mulberry32, SECONDS_PER_DAY } from "./estimate.ts";
+
+const DAILY_REQUESTS = 10_000_000;
+
+// المنحنى ده بيعمل هدوء بالليل وذروة حوالين الساعة 9 مساءً
+function diurnalWeight(sec: number): number {
+  const hours = sec / 3600;
+  return 0.35 + Math.max(0, Math.sin(((hours - 9) / 24) * 2 * Math.PI)) ** 2;
+}
+
+// العرض ده بيبدأ الساعة 8 مساءً ويطلع 10 أضعاف لمدة 5 دقايق
+const SALE_START = 20 * 3600;
+const SALE_LEN = 300;
+function saleMultiplier(sec: number): number {
+  return sec &gt;= SALE_START &amp;&amp; sec &lt; SALE_START + SALE_LEN ? 10 : 1;
+}
+
+function trace(withSale: boolean, seed: number): Int32Array {
+  const rand = mulberry32(seed);
+  const weights = new Float64Array(SECONDS_PER_DAY);
+  let sum = 0;
+  for (let s = 0; s &lt; SECONDS_PER_DAY; s++) {
+    weights[s] = diurnalWeight(s) * (withSale ? saleMultiplier(s) : 1);
+    sum += weights[s]!;
+  }
+  const counts = new Int32Array(SECONDS_PER_DAY);
+  for (let s = 0; s &lt; SECONDS_PER_DAY; s++) {
+    const lambda = (weights[s]! / sum) * DAILY_REQUESTS;
+    // تقريب Poisson بالتوزيع الطبيعي، وده كفاية لمعدلات فوق 30 في الثانية
+    const u = Math.max(1e-12, rand());
+    const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rand());
+    counts[s] = Math.max(0, Math.round(lambda + Math.sqrt(lambda) * z));
+  }
+  return counts;
+}
+
+function analyse(name: string, counts: Int32Array): void {
+  const total = counts.reduce((a, b) =&gt; a + b, 0);
+  const avg = total / SECONDS_PER_DAY;
+  const peak1s = counts.reduce((a, b) =&gt; Math.max(a, b), 0);
+  let peak1m = 0;
+  let window = 0;
+  for (let s = 0; s &lt; SECONDS_PER_DAY; s++) {
+    window += counts[s]!;
+    if (s &gt;= 60) window -= counts[s - 60]!;
+    if (s &gt;= 59) peak1m = Math.max(peak1m, window / 60);
+  }
+  // لو حجمت السيرفرات على 3 أضعاف المتوسط، كام ثانية هتبقى فوق الطاقة؟
+  const capacity = avg * 3;
+  const overload = counts.reduce((n, c) =&gt; n + (c &gt; capacity ? 1 : 0), 0);
+  console.log(`${name}: avg ${avg.toFixed(1)}/s, seconds over 3x capacity: ${overload}`);
+  console.log(`  peak over 1 s: ${peak1s}/s = ${(peak1s / avg).toFixed(1)}x, over 1 min: ${peak1m.toFixed(0)}/s = ${(peak1m / avg).toFixed(1)}x`);
+}
+
+analyse("normal day", trace(false, 2027));
+analyse("flash sale", trace(true, 2027));</code></pre>
+
+<pre><code class="language-plaintext">normal day: avg 115.8/s, seconds over 3x capacity: 0
+  peak over 1 s: 312/s = 2.7x, over 1 min: 268/s = 2.3x
+flash sale: avg 115.8/s, seconds over 3x capacity: 300
+  peak over 1 s: 854/s = 7.4x, over 1 min: 795/s = 6.9x</code></pre>
+  <div class="ar-note">اليوم العادي: الذروة في ثانية 312 يعني 2.7 ضعف المتوسط، وفي دقيقة 268 يعني 2.3 ضعف، ومفيش ولا ثانية فوق طاقة الـ 3 أضعاف. يوم العرض: الذروة 854 يعني 7.4 ضعف، و300 ثانية (الخمس دقايق كلها) فوق الطاقة. الأرقام دي simulation بـ seed ثابت، مش traffic حقيقي.</div>
+
+<pre class="diagram">
+ req/s
+  854 |                                  #           flash sale: 5 minutes, 7.4x
+      |                                  #
+      |                                  #
+  347 |- - - - - - - - - - - - - - - - - #- - - - -  capacity sized at 3x
+  312 |                              ___-#-___       normal evening peak: 2.7x
+  116 |- - - - - - - - - - - - -_--'''- -#- - -'''-  average
+   40 |_____________________---'                     quiet night
+      +-----+-----+-----+-----+-----+-----+-----+--> hour
+      0     3     6     9     12    15    18    21
+</pre>
+  <div class="ar-note">المحور الأفقي ساعات اليوم، والرأسي requests في الثانية. بالليل هادي حوالي 40. المتوسط 116. الذروة المسائية العادية 312 وفوقيها خط الطاقة عند 3 أضعاف (347). العمود بتاع الـ flash sale بيعدّي الخط ده ويوصل 854 لمدة 5 دقايق، وده اللي الحساب بالمتوسط مش بيوريهولك. الرسمة توضيحية مش بمقياس دقيق.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>متوسط الـ QPS = users في اليوم × actions لكل user ÷ 86400. والاختصار إنك تقسم على 100 ألف. يعني مليون يوزر بـ 10 requests لكل واحد: 115.7 QPS بالظبط، أو 100 بالاختصار. والـ peak هو المتوسط في معامل: من 2 لـ 3 ضعف يطلع من 231 لـ 347 QPS.</p>
+    <p><b>تصحيح للـ README.</b> القاعدة بتقول "1M users/day ≈ 12 QPS متوسط و ~100 QPS peak". الـ 12 دي صح بس لو كل يوزر بيعمل action واحد. والـ 100 دي 8.6 ضعف المتوسط، في حين إن نفس الـ README بيقول الـ peak من 2 لـ 3 ضعف. الاتنين مينفعوش يبقوا الـ default. قول دايمًا إنت فارض إيه: <b>2–3 ضعف لـ SaaS ثابت، و 8–10 ضعف أو أكتر للـ flash sales</b>. وعلى 2–3 ضعف، الـ 12 QPS دول ذروتهم من 23 لـ 35.</p>
+    <p>ومش لازم تخمّن المعامل. السكريبت التاني بيولّد يوم كامل ثانية بثانية بـ random generator ليه seed: ليل هادي وذروة بالليل، وبعدين نفس اليوم بعرض مدته 5 دقايق بـ 10 أضعاف الـ traffic. وبيطلّع الـ peak factor من الـ trace نفسه. اليوم العادي ذروته 2.7 ضعف مقاسة على ثانية، فالـ 2–3 ضعف معقولة. يوم العرض ذروته 7.4 ضعف، والسيرفرات المحسوبة على 3 أضعاف بتبقى فوق طاقتها الـ 300 ثانية بتوع العرض كلهم، وده بالظبط الوقت اللي الفلوس بتيجي فيه.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ marketing جاي يقولك "هنعمل عرض الجمعة الساعة 8". لو عندك access logs، احسب الـ peak factor من يوم عرض قديم بنفس طريقة السكريبت ده: <code>requests/second</code> لكل ثانية وخد الأعلى على المتوسط. وبعدين حدد عدد الـ instances على الرقم ده، مش على المتوسط، وخلي الـ autoscaling يجهز قبلها لأن الـ spike أسرع منه.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "1M users a day, 10 requests each. QPS?" About 100 on average with the shortcut, 116 exact. Then say the assumption out loud: "I'll take a 3× peak, so about 350. If this is a sale, I'd plan for 8–10×, around 1,000." The number matters less than naming the assumption.
+    <div class="ar-note">"مليون يوزر في اليوم، 10 requests لكل واحد. الـ QPS كام؟" حوالي 100 متوسط بالاختصار، و116 بالظبط. وبعدين قول الافتراض بصوت عالي: "هاخد peak بـ 3 أضعاف، يعني حوالي 350. ولو ده عرض هخطط لـ 8–10 أضعاف، حوالي 1000". الرقم أهميته أقل من إنك تسمّي الافتراض.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Storage <span class="lvl lvl-1">🟢 Basic</span><span class="ar-sub">الجزء 2 — الـ storage</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Storage = items per day × bytes per item × days, then multiply by overhead and by copies. The exit question, 10M requests a day at 1 KB for 5 years, is 18.25 TB raw. That number is the start of the estimate.</p>
+    <p>I inserted 100,000 orders into real Postgres 18 twice, with small rows and with rows near 1 KB, each with a UUID primary key and two secondary indexes. Then I compared the sum of the column widths with <code>pg_total_relation_size</code>. Small rows of 146 bytes actually take 274 (1.88×). Rows of 1,010 bytes take 1,252 (1.24×). So the overhead is not a fixed percentage:</p>
+    <ul>
+      <li>Each row carries a tuple header of about 24 bytes and a 4-byte pointer in its page.</li>
+      <li>The three indexes cost about 80 bytes per row in both tables, whatever the row width. The index size depends on the indexed columns.</li>
+      <li>The 1 KB rows lose space to page fit: 8,192 ÷ 1,171 is almost exactly 7 rows per page, and the leftover in each page is wasted.</li>
+    </ul>
+    <p>Then add copies. A primary and two replicas is 3×. The exit answer becomes 18.25 × 1.24 × 3 ≈ 68 TB, nearly four times the naive figure, and that's before WAL, backups and bloat. Use the factor measured on rows that look like yours. This is <code>fast: true</code> Postgres, since durability doesn't affect sizes.</p>
+  </section>
+
+<pre data-file="storage-check.ts"><code class="language-typescript">// الملف ده بيقارن الحجم المحسوب بالحجم الحقيقي على Postgres.
+// للتشغيل: PG_PORT=54329 node storage-check.ts
+import pg from "pg";
+import { human, storageBytes, TB } from "./estimate.ts";
+import { throwawayPort } from "./db-guard.ts";
+
+const c = new pg.Client({ host: "127.0.0.1", port: throwawayPort(process.env.PG_PORT), user: "app", database: "postgres" });
+await c.connect();
+try {
+  const exit = storageBytes({ itemsPerDay: 10_000_000, bytesPerItem: 1_000, years: 5 });
+  console.log(`exit Q1: 10M/day x 1 KB x 5 years = ${human(exit.raw)}`);
+
+  async function measure(table: string, noteRepeats: number): Promise&lt;{ naive: number; total: number }&gt; {
+    await c.query(`CREATE TABLE ${table} (
+      id uuid PRIMARY KEY DEFAULT uuidv7(),
+      user_id bigint NOT NULL,
+      status text NOT NULL,
+      total_cents bigint NOT NULL,
+      currency char(3) NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      shipping_note text NOT NULL)`);
+    await c.query(`CREATE INDEX ON ${table} (user_id, created_at DESC)`);
+    await c.query(`CREATE INDEX ON ${table} (status, created_at)`);
+    await c.query(`INSERT INTO ${table} (user_id, status, total_cents, currency, shipping_note)
+      SELECT (random() * 500000)::bigint,
+             (ARRAY[$$pending$$,$$paid$$,$$shipped$$,$$delivered$$])[1 + floor(random() * 4)::int],
+             (random() * 200000)::bigint, $$EGP$$,
+             repeat(md5(g::text), ${noteRepeats})
+      FROM generate_series(1, 100000) g`);
+    await c.query(`ANALYZE ${table}`);
+    const { rows } = await c.query&lt;Record&lt;string, string&gt;&gt;(`SELECT
+      count(*) AS n,
+      avg(16 + 8 + octet_length(status) + 8 + 3 + 8 + octet_length(shipping_note)) AS naive,
+      pg_table_size($$${table}$$) AS heap,
+      pg_indexes_size($$${table}$$) AS indexes,
+      pg_total_relation_size($$${table}$$) AS total
+      FROM ${table}`);
+    const r = rows[0]!;
+    const n = Number(r.n);
+    const naive = Number(r.naive);
+    const total = Number(r.total) / n;
+    console.log(`${table}: naive ${naive.toFixed(0)} B/row, heap ${(Number(r.heap) / n).toFixed(0)}, 3 indexes ${(Number(r.indexes) / n).toFixed(0)}`);
+    console.log(`  total ${total.toFixed(0)} B/row =&gt; ${(total / naive).toFixed(2)}x, +${(total - naive).toFixed(0)} B/row`);
+    return { naive, total };
+  }
+
+  await measure("orders_small", 3);
+  const wide = await measure("orders_1kb", 30);
+
+  // المعامل بيتغير مع حجم الصف، فاستخدم القياس اللي شبه صفوفك إنت
+  const factor = wide.total / wide.naive;
+  const real = storageBytes({ itemsPerDay: 10_000_000, bytesPerItem: 1_000, years: 5, overheadFactor: factor, replicas: 3 });
+  console.log(`exit Q1 with the 1 KB factor and 3 copies: ${(real.total / TB).toFixed(1)} TB`);
+} finally {
+  await c.end();
+}</code></pre>
+
+<pre><code class="language-plaintext">exit Q1: 10M/day x 1 KB x 5 years = 18.25 TB
+orders_small: naive 146 B/row, heap 193, 3 indexes 81
+  total 274 B/row =&gt; 1.88x, +128 B/row
+orders_1kb: naive 1010 B/row, heap 1171, 3 indexes 81
+  total 1252 B/row =&gt; 1.24x, +242 B/row
+exit Q1 with the 1 KB factor and 3 copies: 67.9 TB</code></pre>
+  <div class="ar-note">أول سطر حساب الـ exit: 18.25 TB. الجدول الصغير: الأعمدة 146 byte، والحقيقي 274، يعني 1.88 ضعف. جدول الـ 1 KB: الأعمدة 1010، والحقيقي 1252، يعني 1.24 ضعف. الـ 3 indexes واخدين حوالي 80 byte للصف في الاتنين. وآخر سطر: نفس السؤال بعد المعامل المقاس و3 نسخ: حوالي 68 TB.</div>
+
+<pre class="diagram">
+  rows/day x bytes x 365 x years          =  raw          18.25 TB
+  raw x overhead (headers, indexes)       =  one copy     22.6  TB   (x1.24, measured)
+  one copy x copies (primary + 2)         =  total        67.9  TB
+  not counted yet: WAL, backups, bloat, free space for growth
+</pre>
+  <div class="ar-note">السلسلة بتتقرا من فوق لتحت: الـ raw من الأرقام 18.25 TB. بعد الـ overhead المقاس (الـ headers والـ indexes) بقى 22.6 TB لنسخة واحدة. وبعد 3 نسخ بقى 67.9 TB. وتحت منهم اللي لسه ماتحسبش: الـ WAL والـ backups والـ bloat ومساحة فاضية للنمو.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ storage = العناصر في اليوم × حجم العنصر بالـ bytes × عدد الأيام، وبعدين تضرب في الـ overhead وعدد النسخ. سؤال الـ exit، 10 مليون request في اليوم بـ 1 KB لمدة 5 سنين، يطلع 18.25 TB raw. والرقم ده بداية التقدير بس.</p>
+    <p>دخّلت 100 ألف order في Postgres 18 حقيقية مرتين، مرة بصفوف صغيرة ومرة بصفوف قريبة من 1 KB، وكل مرة بـ UUID primary key و2 secondary indexes. وبعدين قارنت مجموع عرض الأعمدة بـ <code>pg_total_relation_size</code>. الصفوف الصغيرة 146 byte بقت 274 (1.88 ضعف). والصفوف 1010 byte بقت 1252 (1.24 ضعف). يعني الـ overhead مش نسبة ثابتة:</p>
+    <ul>
+      <li>كل صف معاه tuple header حوالي 24 byte، و pointer بـ 4 bytes في الصفحة بتاعته.</li>
+      <li>الـ 3 indexes بياخدوا حوالي 80 byte للصف في الجدولين، مهما كان عرض الصف. حجم الـ index بيعتمد على الأعمدة المتفهرسة.</li>
+      <li>صفوف الـ 1 KB بتخسر مساحة في تقسيم الصفحات: 8192 ÷ 1171 تقريبًا 7 صفوف بالظبط في الصفحة، والفاضل في كل صفحة بيضيع.</li>
+    </ul>
+    <p>وبعدين النسخ. primary واتنين replicas يعني 3 أضعاف. إجابة الـ exit بتبقى 18.25 × 1.24 × 3 ≈ 68 TB، حوالي 4 أضعاف الحساب البسيط، وده قبل الـ WAL والـ backups والـ bloat. استخدم المعامل المقاس على صفوف شبه صفوفك إنت. والتجربة دي على Postgres بـ <code>fast: true</code>، لأن الـ durability مش بتأثر على الأحجام.</p>
+    <p><b>الغلطة الشائعة:</b> تنسى الـ 3 أضعاف بتوع الـ replicas وحجم الـ indexes، وتقدّم 18 TB لما الرقم الحقيقي قريب من 70.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      قبل ما تعمل migration بتضيف عمود كبير أو index جديد على جدول orders، شغّل <code>SELECT pg_size_pretty(pg_total_relation_size('orders'))</code> وقسّم على عدد الصفوف في production. ده بيقولك الـ disk هيكفي كام شهر. وفي الميزانية السنوية، الرقم ده مضروب في عدد النسخ هو اللي بتحطه، مش مجموع الأعمدة.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks if you skip this</b>
+    Plan for 18 TB, get 68 TB, and the disk fills up in about a quarter of the time you promised. On a full disk Postgres can't write WAL, so writes stop. That's an outage from a multiplication you skipped.
+    <div class="ar-note">لو خططت لـ 18 TB وطلع 68 TB، الـ disk هيتملي في حوالي ربع الوقت اللي وعدت بيه. ولما الـ disk يتملي، Postgres مش هتعرف تكتب WAL فالكتابة بتقف. يعني outage بسبب عملية ضرب نسيتها.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Bandwidth <span class="lvl lvl-1">🟢 Basic</span><span class="ar-sub">الجزء 3 — الـ bandwidth</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Bandwidth = QPS × bytes per request. The exit question at 2 KB gives about 231 KB/s, which is 1.85 Mbit/s. Those two figures differ by a factor of 8, and that factor is the classic unit bug. Networks are sold in <strong>bits</strong> per second, files are measured in <strong>bytes</strong>. A 1 Gbps link carries at most 125 MB/s, so a 50 GB backup takes 400 seconds at line rate, not 50, and in practice longer because protocols have overhead.</p>
+    <p>Compression changes the answer, by an amount that depends on size. Real <code>node:zlib</code> gzip on an orders JSON gave only 1.07× for one order (203 bytes; the gzip header is a large part of a small payload), 3.54× for ten orders (about 2 KB), and 5.40× for 500 orders. Repeated keys are what compress. So use the ratio measured at your typical response size.</p>
+    <p>Monthly egress is the number that turns into money: bytes per second × 86,400 × 30. At 115.7 QPS × 2 KB that's about 600 GB raw and 169 GB with gzip. <a href="./44-cost-overengineering-evolution.html">Lesson 44</a> takes this number and prices it.</p>
+  </section>
+
+<pre data-file="bandwidth-check.ts"><code class="language-typescript">// الملف ده بيحسب الـ bandwidth وبيقيس الـ gzip على JSON حقيقي.
+// للتشغيل: node bandwidth-check.ts
+import { gzipSync } from "node:zlib";
+import { bandwidth, human, monthlyEgressBytes, mulberry32 } from "./estimate.ts";
+
+const q = bandwidth({ qps: 115.7, bytesPerRequest: 2_000 });
+console.log(`exit Q1: ${(q.bytesPerSec / 1000).toFixed(1)} KB/s = ${q.megabitsPerSec.toFixed(2)} Mbit/s`);
+
+// الغلطة الكلاسيكية: تعامل الـ Gbps كأنها GB في الثانية
+const linkGbps = 1;
+const realMBps = (linkGbps * 1_000_000_000) / 8 / 1_000_000;
+console.log(`a ${linkGbps} Gbps link carries ${realMBps} MB/s, not ${linkGbps * 1000} MB/s`);
+const fileGb = 50;
+console.log(`copying a ${fileGb} GB backup: ${(fileGb * 1000 / realMBps).toFixed(0)} s at line rate, not ${fileGb} s`);
+
+const rand = mulberry32(42);
+const order = (i: number) =&gt; ({
+  id: `0198${Math.floor(rand() * 1e12).toString(16)}-${Math.floor(rand() * 1e12).toString(16)}`,
+  userId: Math.floor(rand() * 500_000),
+  status: ["pending", "paid", "shipped", "delivered"][i % 4],
+  totalCents: Math.floor(rand() * 200_000),
+  currency: "EGP",
+  createdAt: new Date(1_790_000_000_000 + i * 61_000).toISOString(),
+  items: [{ sku: `SKU-${Math.floor(rand() * 9000)}`, qty: 1 + (i % 3), priceCents: Math.floor(rand() * 90_000) }],
+});
+
+function ratio(payload: unknown): { size: number; gz: number; ratio: number } {
+  const body = Buffer.from(JSON.stringify(payload));
+  const gz = gzipSync(body).length;
+  return { size: body.length, gz, ratio: body.length / gz };
+}
+
+for (const n of [1, 10, 20, 500]) {
+  const r = ratio(Array.from({ length: n }, (_, i) =&gt; order(i)));
+  console.log(`${String(n).padStart(4)} orders: ${String(r.size).padStart(7)} B -&gt; ${String(r.gz).padStart(6)} B gzip, ratio ${r.ratio.toFixed(2)}x`);
+}
+
+// الـ response بتاعنا 2 KB يعني حوالي 10 orders، فبناخد نسبة الحجم ده
+const typical = ratio(Array.from({ length: 10 }, (_, i) =&gt; order(i)));
+const raw = bandwidth({ qps: 115.7, bytesPerRequest: 2_000 });
+const zipped = bandwidth({ qps: 115.7, bytesPerRequest: 2_000, compressionRatio: typical.ratio });
+console.log(`monthly egress at 115.7 QPS x 2 KB: ${human(monthlyEgressBytes(raw.bytesPerSec))} raw, ${human(monthlyEgressBytes(zipped.bytesPerSec))} gzip`);</code></pre>
+
+<pre><code class="language-plaintext">exit Q1: 231.4 KB/s = 1.85 Mbit/s
+a 1 Gbps link carries 125 MB/s, not 1000 MB/s
+copying a 50 GB backup: 400 s at line rate, not 50 s
+   1 orders:     203 B -&gt;    189 B gzip, ratio 1.07x
+  10 orders:    2001 B -&gt;    566 B gzip, ratio 3.54x
+  20 orders:    4015 B -&gt;    939 B gzip, ratio 4.28x
+ 500 orders:  100303 B -&gt;  18558 B gzip, ratio 5.40x
+monthly egress at 115.7 QPS x 2 KB: 599.79 GB raw, 169.02 GB gzip</code></pre>
+  <div class="ar-note">سؤال الـ exit: 231 KB/s يعني 1.85 Mbit/s. لينك 1 Gbps بيشيل 125 MB/s مش 1000، فـ backup حجمه 50 GB بياخد 400 ثانية مش 50. الـ gzip: order واحد 1.07 ضعف بس، 10 orders حوالي 3.54، 20 حوالي 4.28، 500 حوالي 5.4. وآخر سطر الـ egress الشهري: حوالي 600 GB من غير ضغط، و169 GB بالـ gzip.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ bandwidth = الـ QPS × حجم الـ request بالـ bytes. سؤال الـ exit بـ 2 KB بيطلع حوالي 231 KB/s، يعني 1.85 Mbit/s. الرقمين دول بينهم معامل 8، والمعامل ده هو الـ unit bug الكلاسيكي. الشبكات بتتباع بالـ <b>bits</b> في الثانية، والملفات بتتحسب بالـ <b>bytes</b>. لينك 1 Gbps بيشيل بالكتير 125 MB/s، فـ backup حجمه 50 GB بياخد 400 ثانية مش 50، وفي الواقع أكتر لأن الـ protocols ليها overhead.</p>
+    <p>الضغط بيغيّر الإجابة، بمقدار بيعتمد على الحجم. الـ gzip الحقيقي من <code>node:zlib</code> على JSON بتاع orders طلّع 1.07 ضعف بس لـ order واحد (203 byte، والـ header بتاع الـ gzip جزء كبير من payload صغير)، و3.54 ضعف لـ 10 orders (حوالي 2 KB)، و5.40 ضعف لـ 500 order. الـ keys المتكررة هي اللي بتتضغط. فاستخدم النسبة المقاسة على حجم الـ response المعتاد عندك.</p>
+    <p>الـ egress الشهري هو الرقم اللي بيتحول لفلوس: bytes في الثانية × 86400 × 30. على 115.7 QPS × 2 KB ده حوالي 600 GB raw و169 GB بالـ gzip. و<a href="./44-cost-overengineering-evolution.html">الدرس 44</a> بياخد الرقم ده ويحسب تكلفته.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      export بيطلع CSV كبير لـ S3 أو بين regions: احسب بالـ bits على سرعة اللينك قبل ما تحدد الـ timeout بتاع الـ job. وفي Next.js أو Express، قبل ما تفعّل الـ compression على كل حاجة، بص على حجم الـ responses: لو معظمها 200 byte هتدفع CPU عشان مكسب صغير، فحدد threshold زي ما <code>compression</code> بيعمل.
+    </div>
+  </section>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Cache memory &amp; the 80/20 rule <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — ذاكرة الـ cache وقاعدة 80/20</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The rule of thumb is to cache 20% of daily reads, on the assumption that 20% of the keys get 80% of the traffic. The formula counts <em>reads</em>, while what you actually store are <em>distinct keys</em>, so it can overestimate when the same keys are read many times.</p>
+    <p>The 80/20 part is an assumption about skew, so I tested it. A seeded Zipf generator over 1M keys, 2M warm-up requests and 2M measured, simulated against an LRU of 1%, 5% and 20% of the keys, for three skews:</p>
+    <ul>
+      <li><code>s = 0</code> (flat): the hit ratio simply equals the cache size. Twenty percent of the keys buys 20% of the traffic.</li>
+      <li><code>s = 0.8</code>: the top 20% of keys get 70.8% of traffic, so "80/20" isn't even true here. A 20% cache hits 60.7%, below that 70.8% because LRU also holds keys that won't be read again soon.</li>
+      <li><code>s = 1.2</code>: the top 20% get 97.7%, and a 1% cache already hits 87.5%.</li>
+    </ul>
+    <p>So the skew is the whole answer: a 1% cache on skewed traffic beats a 20% cache on flat traffic. Measure your real access pattern if you can. Flat patterns, like users each reading their own private data, need far more memory.</p>
+    <p>The other assumption is that N keys of 1 KB take N KB. Real Redis says no. <code>MEMORY USAGE</code> reports about 44 extra bytes on a single key, and a bulk test of 50,000 keys with TTLs costs 1,101 bytes per key, about 10% over the value size. Small values suffer most: a 64-byte value takes 106 bytes.</p>
+  </section>
+
+<pre data-file="lru-zipf.ts"><code class="language-typescript">// الملف ده بيختبر قاعدة 80/20 بـ Zipf و LRU حقيقي.
+// للتشغيل: node lru-zipf.ts
+import { mulberry32 } from "./estimate.ts";
+
+const KEYS = 1_000_000;
+const WARMUP = 2_000_000;
+const MEASURED = 2_000_000;
+
+// جدول تراكمي بنعمل عليه binary search عشان نختار key بسرعة
+function zipfCdf(s: number): Float64Array {
+  const cdf = new Float64Array(KEYS);
+  let sum = 0;
+  for (let k = 0; k &lt; KEYS; k++) {
+    sum += 1 / (k + 1) ** s;
+    cdf[k] = sum;
+  }
+  for (let k = 0; k &lt; KEYS; k++) cdf[k]! /= sum;
+  return cdf;
+}
+
+function sample(cdf: Float64Array, u: number): number {
+  let lo = 0;
+  let hi = KEYS - 1;
+  while (lo &lt; hi) {
+    const mid = (lo + hi) &gt;&gt;&gt; 1;
+    if (cdf[mid]! &lt; u) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+// الـ keys أرقام، فبنعمل الـ linked list بتاعة الـ LRU بـ arrays وكل عملية ⁦O(1)⁩
+function hitRatio(trace: Int32Array, capacity: number): number {
+  const HEAD = KEYS;
+  const next = new Int32Array(KEYS + 1);
+  const prev = new Int32Array(KEYS + 1);
+  const cached = new Uint8Array(KEYS);
+  next[HEAD] = HEAD;
+  prev[HEAD] = HEAD;
+  const unlink = (k: number) =&gt; {
+    next[prev[k]!] = next[k]!;
+    prev[next[k]!] = prev[k]!;
+  };
+  const toFront = (k: number) =&gt; {
+    next[k] = next[HEAD]!;
+    prev[k] = HEAD;
+    prev[next[HEAD]!] = k;
+    next[HEAD] = k;
+  };
+  let size = 0;
+  let hits = 0;
+  for (let i = 0; i &lt; trace.length; i++) {
+    const key = trace[i]!;
+    if (cached[key]) {
+      if (i &gt;= WARMUP) hits++;
+      unlink(key);
+    } else {
+      if (size === capacity) {
+        // آخر عنصر قبل الـ HEAD هو الأقدم استخدامًا، فبيتطرد
+        const oldest = prev[HEAD]!;
+        unlink(oldest);
+        cached[oldest] = 0;
+      } else {
+        size++;
+      }
+      cached[key] = 1;
+    }
+    toFront(key);
+  }
+  return hits / MEASURED;
+}
+
+const percents = [1, 5, 20];
+console.log(`keys=${KEYS}, ${WARMUP} warmup + ${MEASURED} measured requests, LRU`);
+console.log("skew   traffic to top 20%   " + percents.map((p) =&gt; `cache ${p}%`.padEnd(10)).join(""));
+for (const s of [0, 0.8, 1.2]) {
+  const cdf = zipfCdf(s);
+  const top20 = cdf[Math.floor(KEYS * 0.2) - 1]!;
+  const rand = mulberry32(11);
+  const trace = Int32Array.from({ length: WARMUP + MEASURED }, () =&gt; sample(cdf, rand()));
+  const cells = percents.map((p) =&gt; `${(hitRatio(trace, (KEYS * p) / 100) * 100).toFixed(1)}%`.padEnd(10));
+  console.log(`s=${s.toFixed(1)}  ${(top20 * 100).toFixed(1).padStart(10)}%          ${cells.join("")}`);
+}</code></pre>
+
+<pre><code class="language-plaintext">keys=1000000, 2000000 warmup + 2000000 measured requests, LRU
+skew   traffic to top 20%   cache 1%  cache 5%  cache 20% 
+s=0.0        20.0%          1.0%      5.0%      20.0%     
+s=0.8        70.8%          23.3%     39.2%     60.7%     
+s=1.2        97.7%          87.5%     93.1%     96.3%     </code></pre>
+  <div class="ar-note">كل صف درجة skew مختلفة. العمود التاني نسبة الـ traffic اللي بتروح لأعلى 20% من الـ keys. بعده الـ hit ratio لـ LRU بحجم 1% و5% و20%. عند s=0 التوزيع مسطح: الـ hit ratio بالظبط قد حجم الـ cache. عند s=0.8 أعلى 20% بياخدوا 70.8% بس، و cache بحجم 20% بيوصل 60.7%. عند s=1.2 أعلى 20% بياخدوا 97.7%، و cache بحجم 1% بس بيوصل 87.5%.</div>
+
+<pre data-file="redis-memory.ts"><code class="language-typescript">// الملف ده بيقيس ذاكرة Redis الحقيقية لكل key.
+// للتشغيل: REDIS_PORT=63999 node redis-memory.ts
+import { Redis } from "ioredis";
+import { human } from "./estimate.ts";
+import { throwawayPort } from "./db-guard.ts";
+
+const redis = new Redis({ host: "127.0.0.1", port: throwawayPort(process.env.REDIS_PORT), lazyConnect: true });
+await redis.connect();
+
+const usedMemory = async (): Promise&lt;number&gt; =&gt; Number(/used_memory:(\d+)/.exec(await redis.info("memory"))![1]);
+
+function orderJson(bytes: number): string {
+  const base = JSON.stringify({ id: "0198f1c2", userId: 42, status: "paid", note: "" });
+  return base.replace(`"note":""`, `"note":"${"x".repeat(Math.max(0, bytes - base.length))}"`);
+}
+
+for (const size of [64, 256, 1_000, 10_000]) {
+  await redis.flushall();
+  const value = orderJson(size);
+  await redis.set("order:0198f1c2-0001", value);
+  const used = (await redis.call("MEMORY", "USAGE", "order:0198f1c2-0001")) as number;
+  console.log(`${String(value.length).padStart(6)} byte value: MEMORY USAGE ${String(used).padStart(6)} (${used - value.length} bytes extra)`);
+}
+
+// قياس جماعي: عشرات الآلاف من الـ keys بـ 1 KB زي الـ cache الحقيقي
+await redis.flushall();
+const N = 50_000;
+const before = await usedMemory();
+const value = orderJson(1_000);
+for (let batch = 0; batch &lt; N; batch += 1_000) {
+  const pipe = redis.pipeline();
+  for (let i = 0; i &lt; 1_000; i++) pipe.set(`order:${batch + i}`, value, "EX", 3600);
+  await pipe.exec();
+}
+const perKey = ((await usedMemory()) - before) / N;
+console.log(`${N} keys, 1 KB values with TTL: ${perKey.toFixed(0)} bytes/key`);
+console.log(`so 100M such keys need about ${human(perKey * 1e8)}, not ${human(1000 * 1e8)}`);
+await redis.flushall();
+redis.disconnect();</code></pre>
+
+<pre><code class="language-plaintext">    64 byte value: MEMORY USAGE    106 (42 bytes extra)
+   256 byte value: MEMORY USAGE    300 (44 bytes extra)
+  1000 byte value: MEMORY USAGE   1044 (44 bytes extra)
+ 10000 byte value: MEMORY USAGE  10044 (44 bytes extra)
+50000 keys, 1 KB values with TTL: 1101 bytes/key
+so 100M such keys need about 110.09 GB, not 100.00 GB</code></pre>
+  <div class="ar-note">دي على Redis 8 حقيقي، على private instance. أول 4 سطور <code>MEMORY USAGE</code> على key واحد: الزيادة حوالي 44 byte، فالقيمة الصغيرة (64 byte) بتاخد 106. السطر الخامس: 50 ألف key بـ 1 KB و TTL طلعوا 1101 byte للـ key الواحد، يعني حوالي 100 byte زيادة عن القيمة (الـ hash table والـ expires). وعليه 100 مليون key محتاجين حوالي 110 GB مش 100.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>القاعدة المشهورة إنك تعمل cache لـ 20% من الـ reads اليومية، على افتراض إن 20% من الـ keys بتاخد 80% من الـ traffic. المعادلة بتعد <em>reads</em>، بس اللي بتخزنه فعلًا هو <em>keys مختلفة</em>، فممكن تطلع أكبر من اللازم لما نفس الـ keys تتقرا كتير.</p>
+    <p>وجزء الـ 80/20 ده افتراض عن الـ skew، فاختبرته. Zipf generator بـ seed ثابت على مليون key، 2 مليون request warm-up و2 مليون بنقيس عليهم، مع LRU بحجم 1% و5% و20% من الـ keys، وعلى 3 درجات skew:</p>
+    <ul>
+      <li><code>s = 0</code> (مسطح): الـ hit ratio بيساوي حجم الـ cache وخلاص. 20% من الـ keys بتجيب 20% من الـ traffic.</li>
+      <li><code>s = 0.8</code>: أعلى 20% من الـ keys بياخدوا 70.8% من الـ traffic، يعني "80/20" نفسها مش صحيحة هنا. و cache بحجم 20% بيوصل 60.7%، أقل من الـ 70.8% دول لأن الـ LRU بيمسك كمان keys مش هتتقرا قريب.</li>
+      <li><code>s = 1.2</code>: أعلى 20% بياخدوا 97.7%، و cache بحجم 1% بس بيوصل 87.5%.</li>
+    </ul>
+    <p>يعني الـ skew هو الإجابة كلها: cache بحجم 1% على traffic فيه skew بيكسب cache بحجم 20% على traffic مسطح. قيس الـ access pattern الحقيقي لو تقدر. والـ patterns المسطحة، زي كل يوزر بيقرا الـ data الخاصة بيه، محتاجة ذاكرة أكتر بكتير.</p>
+    <p>والافتراض التاني إن N key بـ 1 KB تساوي N KB. Redis الحقيقي بيقول لأ. <code>MEMORY USAGE</code> بيقول حوالي 44 byte زيادة على key واحد، واختبار جماعي على 50 ألف key بـ TTL طلع 1101 byte للـ key، يعني حوالي 10% فوق حجم القيمة. والقيم الصغيرة هي اللي بتتظلم: قيمة 64 byte بتاخد 106.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      هتحجز Redis لـ cache الـ product pages. قبل ما تختار الحجم، خد access log يوم، واحسب كام key مختلفة وأعلى 20% بياخدوا كام في المية. ولو الـ pattern شبه s=1.2، كام GB كفاية. ولو cache لـ "الـ orders بتاعتي" لكل user، توقع hit ratio أقل بكتير. وبعد الـ launch راقب الـ hit ratio نفسه بدل ما تثق في الـ 80/20.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: 80/20 is a guess about your users</b>
+    Assuming 80/20 is cheap, and fine for a first number in an interview. Paying for it in production without measuring can go wrong both ways: too small on a flat pattern means a low hit ratio and a loaded database, and too large on a skewed pattern is memory you pay for every month.
+    <div class="ar-note">افتراض 80/20 رخيص، ومناسب لأول رقم في الـ interview. لكن إنك تدفع عليه في production من غير قياس ممكن يغلط في الاتجاهين: أصغر من اللازم على pattern مسطح معناها hit ratio ضعيف و DB مضغوطة، وأكبر من اللازم على pattern فيه skew معناها ذاكرة بتدفع تمنها كل شهر.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "How big should the cache be?" State the formula, then its assumption: "20% of daily reads at 1 KB is my first number, and that assumes real skew. I'd add about 100 bytes per key for Redis overhead, and after launch I'd size it from the measured hit ratio."
+    <div class="ar-note">"الـ cache حجمه يبقى قد إيه؟" قول المعادلة، وبعدها افتراضها: "20% من الـ reads اليومية بـ 1 KB هو أول رقم عندي، وده بيفترض إن فيه skew حقيقي. هضيف حوالي 100 byte لكل key كـ overhead لـ Redis، وبعد الـ launch هحدد الحجم من الـ hit ratio المقاس".</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Numbers to memorize <span class="lvl lvl-1">🟢 Basic</span><span class="ar-sub">الجزء 5 — الأرقام اللي لازم تحفظها</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>You need these available without thinking, because in a session the arithmetic can't be what you're concentrating on. The table below is the set to memorize. The rounding is deliberate: 100,000 is 15.7% bigger than 86,400, so a QPS worked out with the shortcut comes out 13.6% low. At this level that's fine, because your inputs are usually uncertain by far more than 16%.</p>
+    <p>Rather than rereading the table, drill it. The small script below draws random questions from a seeded list and prints the computed answers, so you can cover the answer and check yourself. Change the seed for a fresh set.</p>
+  </section>
+
+  <table>
+    <tr><th>Fact</th><th>Use it as</th></tr>
+    <tr><td>1 day = 86,400 s</td><td>≈ 100K seconds</td></tr>
+    <tr><td>1 month</td><td>≈ 2.6M seconds (use 3M for speed)</td></tr>
+    <tr><td>1M users × 1 action a day</td><td>≈ 12 QPS average</td></tr>
+    <tr><td>1 million × 1 KB</td><td>= 1 GB</td></tr>
+    <tr><td>1 billion × 1 KB</td><td>= 1 TB</td></tr>
+    <tr><td>2<sup>10</sup> = 1,024</td><td>≈ 1 thousand (KiB)</td></tr>
+    <tr><td>2<sup>20</sup> = 1,048,576</td><td>≈ 1 million (MiB)</td></tr>
+    <tr><td>2<sup>30</sup> = 1,073,741,824</td><td>≈ 1 billion (GiB)</td></tr>
+  </table>
+  <div class="ar-note">دول الأرقام اللي تحفظها:
+    <ul>
+      <li><b>اليوم 86400 ثانية</b> واستخدمه كـ 100 ألف.</li>
+      <li><b>الشهر</b> حوالي 2.6 مليون ثانية، وللسرعة 3 مليون.</li>
+      <li><b>مليون يوزر × action واحد في اليوم</b> حوالي 12 QPS متوسط.</li>
+      <li><b>مليون × 1 KB</b> = 1 GB، و<b>مليار × 1 KB</b> = 1 TB.</li>
+      <li><b>2^10</b> حوالي ألف، و<b>2^20</b> حوالي مليون، و<b>2^30</b> حوالي مليار.</li>
+    </ul>
+  </div>
+
+<pre data-file="drill.ts"><code class="language-typescript">// الملف ده بيسألك سؤال عشوائي بـ seed ثابت ويطلّع الإجابة المحسوبة.
+// للتشغيل: node drill.ts --seed=7 --count=4
+import { parseArgs } from "node:util";
+import { human, mulberry32, SECONDS_PER_DAY } from "./estimate.ts";
+
+type Drill = { q: string; a: () =&gt; string };
+
+// الـ 100 ألف أكبر من اليوم الحقيقي، فالقسمة عليها بتطلّع رقم أقل شوية
+const bigger = (100_000 / SECONDS_PER_DAY - 1) * 100;
+const low = (1 - SECONDS_PER_DAY / 100_000) * 100;
+console.log(`rounding: 100000 is ${bigger.toFixed(1)}% bigger than ${SECONDS_PER_DAY},`);
+console.log(`so QPS comes out ${low.toFixed(1)}% low. Fine at this level.\n`);
+
+const DRILLS: Drill[] = [
+  { q: "2 million users, 10 actions each. Average QPS?", a: () =&gt; `${((2e6 * 10) / SECONDS_PER_DAY).toFixed(0)} QPS (shortcut: 2M x 10 / 100K = 200)` },
+  { q: "1 million items of 1 KB. How much data?", a: () =&gt; human(1e6 * 1e3) },
+  { q: "1 billion items of 2 KB. How much data?", a: () =&gt; human(1e9 * 2e3) },
+  { q: "What is 2^30 approximately?", a: () =&gt; `${2 ** 30} (about 1 billion, 1 GiB)` },
+  { q: "What is 2^20 approximately?", a: () =&gt; `${2 ** 20} (about 1 million, 1 MiB)` },
+  { q: "What is 2^10 approximately?", a: () =&gt; `${2 ** 10} (about 1 thousand)` },
+  { q: "Seconds in a day, and your shortcut?", a: () =&gt; `${SECONDS_PER_DAY}, shortcut 100000 (${bigger.toFixed(0)}% bigger)` },
+  { q: "Seconds in a month, using the shortcut?", a: () =&gt; `100K x 30 = 3M (exact ${SECONDS_PER_DAY * 30})` },
+  { q: "A 10 Gbps link: how many MB/s at line rate?", a: () =&gt; `${(10e9 / 8 / 1e6).toFixed(0)} MB/s` },
+  { q: "99.9% over 30 days: how many minutes down?", a: () =&gt; `${(30 * 24 * 60 * 0.001).toFixed(1)} min` },
+  { q: "500 orders/min at peak. Per second?", a: () =&gt; `${(500 / 60).toFixed(1)}/s` },
+  { q: "100 QPS, each 5 KB, per day?", a: () =&gt; human(100 * 5e3 * SECONDS_PER_DAY) },
+];
+
+const { values } = parseArgs({ options: { seed: { type: "string", default: "7" }, count: { type: "string", default: "4" } } });
+const rand = mulberry32(Number(values.seed));
+
+// خلط Fisher-Yates عشان السؤال ميتكررش في نفس الجولة
+const order = DRILLS.map((_, i) =&gt; i);
+for (let i = order.length - 1; i &gt; 0; i--) {
+  const j = Math.floor(rand() * (i + 1));
+  [order[i], order[j]] = [order[j]!, order[i]!];
+}
+for (const i of order.slice(0, Number(values.count))) {
+  console.log(`Q: ${DRILLS[i]!.q}`);
+  console.log(`A: ${DRILLS[i]!.a()}\n`);
+}</code></pre>
+
+<pre><code class="language-plaintext">rounding: 100000 is 15.7% bigger than 86400,
+so QPS comes out 13.6% low. Fine at this level.
+
+Q: Seconds in a month, using the shortcut?
+A: 100K x 30 = 3M (exact 2592000)
+
+Q: 500 orders/min at peak. Per second?
+A: 8.3/s
+
+Q: What is 2^30 approximately?
+A: 1073741824 (about 1 billion, 1 GiB)
+
+Q: What is 2^10 approximately?
+A: 1024 (about 1 thousand)</code></pre>
+  <div class="ar-note">أول سطر هو خطأ التقريب: الـ 100 ألف أكبر من 86400 بـ 15.7%، فالـ QPS بيطلع أقل بـ 13.6%. وبعدها 4 أسئلة بـ seed رقم 7: ثواني الشهر، 500 order في الدقيقة كام في الثانية (8.3)، و2^30 و2^10. غطّي سطور A وحاول تجاوب قبل ما تبص.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>لازم الأرقام دي تبقى جاهزة من غير تفكير، لأن في الجلسة مينفعش الحساب يبقى هو اللي واخد تركيزك. الجدول فوق هو اللي تحفظه. والتقريب مقصود: الـ 100 ألف أكبر من 86400 بـ 15.7%، فالـ QPS المحسوب بالاختصار بيطلع أقل بـ 13.6%. وعلى المستوى ده مفيش مشكلة، لأن المدخلات عندك عادةً مش مؤكدة بأكتر بكتير من 16%.</p>
+    <p>وبدل ما تعيد قراية الجدول، اتمرن عليه. السكريبت الصغير بيختار أسئلة عشوائية من قايمة بـ seed ثابت وبيطبع الإجابات المحسوبة، فتغطي الإجابة وتختبر نفسك. غيّر الـ seed عشان تجيب أسئلة جديدة.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في meeting حد قال "الجدول هيوصل مليار صف". تقول على طول: "بـ 1 KB ده 1 TB raw، يعني حوالي 4 TB بالـ indexes والـ replicas". ده بياخد 5 ثواني ويغيّر مسار النقاش. شغّل الـ drill 5 دقايق كل يوم لمدة أسبوع.
+    </div>
+  </section>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Latency numbers, measured <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — أرقام الـ latency بالقياس</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The reference table and what each number means is in <a href="../../01-CS-Fundamentals/lessons/16-load-balancers-proxies-cdn.html#p7">CS Fundamentals lesson 16, part 7</a>, and why constants matter is in <a href="../../01-CS-Fundamentals/lessons/02-big-o-complexity.html">lesson 02</a>. The four to carry into a design are RAM about 100 ns, SSD about 100 µs, a datacenter round trip about 0.5 ms and a cross-continent round trip about 150 ms. Here I measured them on this machine, a loaded Windows box, so read the ratios.</p>
+    <ul>
+      <li>Random memory hops through 128 MB cost about 113 ns, close to the reference. Sequential access was 0.8 ns per element, about 140× cheaper.</li>
+      <li>A 4 KB read that the OS cache answers takes about 4 µs. The same read with the OS cache bypassed (<code>FILE_FLAG_NO_BUFFERING</code>) took 272 µs in the run below and 56–117 µs in the others, depending on what else the disk was doing. A quick file-read benchmark usually measures the cache.</li>
+      <li><code>fsync</code> took about 0.8 ms at the median. A durable Postgres single-row <code>INSERT</code> took about 0.2 ms, using <code>open_datasync</code> on an already allocated WAL file, and 0.1–0.4 ms across runs. I didn't determine why it beats a plain <code>fsync</code> here. Consumer SSDs can acknowledge writes from their own cache, so don't carry that figure to a production volume.</li>
+      <li>On loopback an HTTP round trip took about 75 µs, a Postgres primary-key read about 141 µs and a Redis <code>GET</code> about 103 µs. Across six runs of this script those three ranged over 67–113, 79–253 and 80–229 µs, so every median here moves by 2–3× with the load on this machine, and Redis and Postgres stayed within about 1.5× of each other. No network is involved, the row was in Postgres's buffer cache, and the cost is the client, the socket and the event loop.</li>
+    </ul>
+    <p>That last one contradicts a common belief. Redis is not 100× faster than a Postgres primary-key lookup that's already in memory. Caching pays off when the query is expensive or the database is loaded. The two real network rows can't be measured here, and the table says so.</p>
+    <p>Now use the numbers. Budget a 200 ms checkout: load balancer, app work, four database round trips, and one cross-region call to a tax service. The sum of medians is 174 ms, which looks like it fits. A simulation with long-tailed latencies shows a p99 of 259 ms, and 25% of requests over budget, with warm connections. A cold connection adds two more round trips (TCP plus TLS 1.3, 300 ms) and a retry after a 250 ms timeout blows it too. Moving the tax call out of the request brings p99 down to 69 ms. These step latencies are assumptions from the table, not measurements.</p>
+  </section>
+
+<pre data-file="latency-lab.ts"><code class="language-typescript">// الملف ده بيقيس الأرقام اللي بتحفظها على الجهاز ده.
+// للتشغيل: PG_PORT=54329 REDIS_PORT=63999 node latency-lab.ts
+import { closeSync, constants, fsyncSync, openSync, readSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { createServer, request, Agent } from "node:http";
+import type { AddressInfo } from "node:net";
+import pg from "pg";
+import { Redis } from "ioredis";
+import { mulberry32 } from "./estimate.ts";
+import { throwawayPort } from "./db-guard.ts";
+
+const median = (xs: number[]) =&gt; [...xs].sort((a, b) =&gt; a - b)[xs.length &gt;&gt; 1]!;
+const p99 = (xs: number[]) =&gt; [...xs].sort((a, b) =&gt; a - b)[Math.floor(xs.length * 0.99)]!;
+async function sampleUs(n: number, fn: () =&gt; unknown | Promise&lt;unknown&gt;): Promise&lt;number[]&gt; {
+  const out: number[] = [];
+  for (let i = 0; i &lt; n; i++) {
+    const t = performance.now();
+    await fn();
+    out.push((performance.now() - t) * 1000);
+  }
+  return out;
+}
+const row = (name: string, measured: string, reference: string) =&gt; console.log(`${name.padEnd(37)} ${measured.padEnd(22)} ${reference}`);
+
+function memoryLatency(): { seqNs: number; randNs: number } {
+  const size = 1 &lt;&lt; 25;
+  const next = new Int32Array(size);
+  for (let i = 0; i &lt; size; i++) next[i] = i;
+  // خوارزمية Sattolo بتعمل دايرة واحدة كبيرة، فكل قفزة بتروح لمكان عشوائي
+  const rand = mulberry32(7);
+  for (let i = size - 1; i &gt; 0; i--) {
+    const j = Math.floor(rand() * i);
+    const tmp = next[i]!;
+    next[i] = next[j]!;
+    next[j] = tmp;
+  }
+  const hops = 8_000_000;
+  let p = 0;
+  let t = performance.now();
+  for (let i = 0; i &lt; hops; i++) p = next[p]!;
+  const randNs = ((performance.now() - t) * 1e6) / hops;
+  let sum = 0;
+  t = performance.now();
+  for (let i = 0; i &lt; size; i++) sum += next[i]!;
+  const seqNs = ((performance.now() - t) * 1e6) / size;
+  if (p &lt; 0 || sum &lt; 0) throw new Error("unreachable");
+  return { seqNs, randNs };
+}
+
+function fileLatencies(): { cachedReadUs: number[]; directReadUs: number[] | null; fsyncUs: number[] } {
+  const path = "latency-probe.bin";
+  const total = 256 * 1024 * 1024;
+  const chunk = Buffer.alloc(1 &lt;&lt; 20, 7);
+  const w = openSync(path, "w");
+  for (let off = 0; off &lt; total; off += chunk.length) writeSync(w, chunk);
+  fsyncSync(w);
+  closeSync(w);
+
+  const rand = mulberry32(3);
+  const page = Buffer.allocUnsafeSlow(4096);
+  const offset = () =&gt; Math.floor(rand() * (total / 4096 - 1)) * 4096;
+
+  const r = openSync(path, "r");
+  const cachedReadUs: number[] = [];
+  for (let i = 0; i &lt; 2000; i++) {
+    const t = performance.now();
+    readSync(r, page, 0, 4096, offset());
+    cachedReadUs.push((performance.now() - t) * 1000);
+  }
+  closeSync(r);
+
+  // الفلاج ده على Windows معناه FILE_FLAG_NO_BUFFERING، وبيطلب buffer متظبط على حدود الـ sector
+  const NO_BUFFERING = process.platform === "win32" ? 0x02000000 : (constants.O_DIRECT ?? 0);
+  let directReadUs: number[] | null = null;
+  if (NO_BUFFERING) {
+    try {
+      const d = openSync(path, constants.O_RDONLY | NO_BUFFERING);
+      const out: number[] = [];
+      const big = Buffer.allocUnsafeSlow(1 &lt;&lt; 21);
+      for (let i = 0; i &lt; 1000; i++) {
+        const t = performance.now();
+        readSync(d, big, 0, 4096, offset());
+        out.push((performance.now() - t) * 1000);
+      }
+      closeSync(d);
+      directReadUs = out;
+    } catch (err) {
+      console.log(`unbuffered read failed: ${(err as Error).message}`);
+    }
+  }
+
+  const f = openSync("latency-fsync.bin", "w");
+  const fsyncUs: number[] = [];
+  const small = Buffer.alloc(4096, 1);
+  for (let i = 0; i &lt; 300; i++) {
+    writeSync(f, small);
+    const t = performance.now();
+    fsyncSync(f);
+    fsyncUs.push((performance.now() - t) * 1000);
+  }
+  closeSync(f);
+  rmSync("latency-fsync.bin");
+  rmSync(path);
+  return { cachedReadUs, directReadUs, fsyncUs };
+}
+
+async function httpLoopbackUs(): Promise&lt;number[]&gt; {
+  const server = createServer((_req, res) =&gt; res.end("ok"));
+  await new Promise&lt;void&gt;((r) =&gt; server.listen(0, "127.0.0.1", r));
+  const { port } = server.address() as AddressInfo;
+  const agent = new Agent({ keepAlive: true, maxSockets: 1 });
+  const once = () =&gt;
+    new Promise&lt;void&gt;((resolve, reject) =&gt; {
+      const req = request({ host: "127.0.0.1", port, agent }, (res) =&gt; {
+        res.resume();
+        res.on("end", resolve);
+      });
+      req.on("error", reject);
+      req.end();
+    });
+  await once();
+  const out = await sampleUs(3000, once);
+  agent.destroy();
+  server.close();
+  return out;
+}
+
+const mem = memoryLatency();
+const file = fileLatencies();
+const http = await httpLoopbackUs();
+
+const db = new pg.Client({ host: "127.0.0.1", port: throwawayPort(process.env.PG_PORT), user: "app", database: "postgres" });
+await db.connect();
+await db.query("CREATE TABLE orders (id bigint PRIMARY KEY, user_id bigint NOT NULL, total_cents bigint NOT NULL)");
+await db.query("INSERT INTO orders SELECT g, g % 1000, g FROM generate_series(1, 100000) g");
+const rand = mulberry32(9);
+const pgRead = await sampleUs(3000, () =&gt; db.query("SELECT user_id, total_cents FROM orders WHERE id = $1", [1 + Math.floor(rand() * 100_000)]));
+let nextId = 200_000;
+const pgCommit = await sampleUs(500, () =&gt; db.query("INSERT INTO orders VALUES ($1, 1, 100)", [nextId++]));
+const walSync = (await db.query&lt;{ wal_sync_method: string }&gt;("SHOW wal_sync_method")).rows[0]!.wal_sync_method;
+await db.end();
+
+const redis = new Redis({ host: "127.0.0.1", port: throwawayPort(process.env.REDIS_PORT), lazyConnect: true });
+await redis.connect();
+await redis.set("order:1", "x".repeat(1000));
+const redisGet = await sampleUs(5000, () =&gt; redis.get("order:1"));
+redis.disconnect();
+
+const us = (x: number) =&gt; (x &gt;= 1000 ? `≈${(x / 1000).toFixed(2)} ms` : `≈${x.toFixed(0)} µs`);
+row("operation", "measured here", "reference to memorize");
+row("sequential memory (per element)", `≈${mem.seqNs.toFixed(1)} ns`, "~1 ns");
+row("random memory hop, 128 MB (per hop)", `≈${mem.randNs.toFixed(0)} ns`, "RAM ~100 ns");
+row("file read 4 KB, OS cache", `${us(median(file.cachedReadUs))} median`, "the OS answers, not the SSD");
+if (file.directReadUs) row("SSD read 4 KB, no OS cache", `${us(median(file.directReadUs))} median`, "SSD ~100 µs");
+else row("SSD read 4 KB, no OS cache", "not measured", "SSD ~100 µs");
+row("fsync of 4 KB", `${us(median(file.fsyncUs))} / p99 ${us(p99(file.fsyncUs))}`, "~1 ms to several ms");
+row("HTTP round trip, loopback, keep-alive", `${us(median(http))} median`, "no network involved");
+row("Postgres PK read, loopback", `${us(median(pgRead))} median`, "RTT ~0.5 ms + query");
+row("Postgres durable INSERT, loopback", `${us(median(pgCommit))} median`, "WAL flush + round trip");
+row("Redis GET 1 KB, loopback", `${us(median(redisGet))} median`, "RTT ~0.5 ms + ~1 µs");
+row("datacenter round trip", "cannot measure here", "~0.5 ms");
+row("cross-continent round trip", "cannot measure here", "~150 ms");
+console.log(`wal_sync_method: ${walSync}`);</code></pre>
+
+<pre><code class="language-plaintext">operation                             measured here          reference to memorize
+sequential memory (per element)       ≈0.8 ns                ~1 ns
+random memory hop, 128 MB (per hop)   ≈113 ns                RAM ~100 ns
+file read 4 KB, OS cache              ≈4 µs median           the OS answers, not the SSD
+SSD read 4 KB, no OS cache            ≈272 µs median         SSD ~100 µs
+fsync of 4 KB                         ≈840 µs / p99 ≈1.97 ms ~1 ms to several ms
+HTTP round trip, loopback, keep-alive ≈75 µs median          no network involved
+Postgres PK read, loopback            ≈141 µs median         RTT ~0.5 ms + query
+Postgres durable INSERT, loopback     ≈186 µs median         WAL flush + round trip
+Redis GET 1 KB, loopback              ≈103 µs median         RTT ~0.5 ms + ~1 µs
+datacenter round trip                 cannot measure here    ~0.5 ms
+cross-continent round trip            cannot measure here    ~150 ms
+wal_sync_method: open_datasync</code></pre>
+  <div class="ar-note">العمود الأول العملية، والتاني القياس على الجهاز ده (Windows تحت ضغط، فكل الأرقام تقريبية)، والتالت الرقم المرجعي. الذاكرة: متتابع 0.8 ns، عشوائي 113 ns. قراية 4 KB من كاش الـ OS حوالي 4 µs، ومن غير الكاش 272 µs في الـ run ده. الـ fsync حوالي 840 µs. الـ HTTP حوالي 75 µs، و Postgres PK read حوالي 141 µs، و Redis GET حوالي 103 µs، لأن مفيش network هنا والتكلفة في الـ client. آخر سطرين (الـ datacenter وبين القارات) ماينفعش يتقاسوا من جهاز واحد، ومكتوبين "cannot measure here".</div>
+
+<pre data-file="budget.ts"><code class="language-typescript">// الملف ده بيوزّع ميزانية 200ms على الـ steps ويشوف بتتكسر فين.
+// للتشغيل: node budget.ts
+import { mulberry32 } from "./estimate.ts";
+
+type Step = { name: string; p50: number; p99: number; times?: number };
+
+const BUDGET_MS = 200;
+
+// الأرقام دي افتراضات مأخوذة من الجدول اللي فوق، مش قياس
+const base: Step[] = [
+  { name: "LB + TLS on a warm connection", p50: 2, p99: 8 },
+  { name: "app CPU and JSON", p50: 10, p99: 25 },
+  { name: "DB round trip", p50: 3, p99: 25, times: 4 },
+];
+const crossRegion: Step = { name: "cross-region tax service", p50: 150, p99: 220 };
+
+// الـ lognormal شكلها قريب من الـ latency الحقيقية: ديل طويل على اليمين
+function sampler(step: Step, rand: () =&gt; number): () =&gt; number {
+  const mu = Math.log(step.p50);
+  const sigma = (Math.log(step.p99) - mu) / 2.326;
+  return () =&gt; {
+    const u = Math.max(1e-12, rand());
+    const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rand());
+    return Math.exp(mu + sigma * z);
+  };
+}
+
+function simulate(label: string, steps: Step[], extraMs = 0): void {
+  const rand = mulberry32(99);
+  const draws = steps.flatMap((s) =&gt; Array.from({ length: s.times ?? 1 }, () =&gt; sampler(s, rand)));
+  const n = 200_000;
+  const totals = new Float64Array(n);
+  for (let i = 0; i &lt; n; i++) {
+    let t = extraMs;
+    for (const d of draws) t += d();
+    totals[i] = t;
+  }
+  totals.sort();
+  const over = totals.reduce((c, x) =&gt; c + (x &gt; BUDGET_MS ? 1 : 0), 0);
+  const p50 = totals[n &gt;&gt; 1]!;
+  const p99 = totals[Math.floor(n * 0.99)]!;
+  console.log(`${label.padEnd(36)} p50 ${p50.toFixed(0).padStart(4)} ms  p99 ${p99.toFixed(0).padStart(4)} ms  over ${BUDGET_MS} ms: ${((over / n) * 100).toFixed(1)}%`);
+}
+
+const sumP50 = [...base, crossRegion].reduce((s, x) =&gt; s + x.p50 * (x.times ?? 1), 0);
+const sumP99 = [...base, crossRegion].reduce((s, x) =&gt; s + x.p99 * (x.times ?? 1), 0);
+console.log(`sum of p50s ${sumP50} ms, sum of p99s ${sumP99} ms (a bound, not the real p99)`);
+
+simulate("as designed, warm connections", [...base, crossRegion]);
+// الـ connection الجديدة عبر القارات: TCP و TLS 1.3 يعني رحلتين زيادة
+simulate("cold connection (+2 RTT)", [...base, crossRegion], 300);
+// إعادة المحاولة بعد timeout مش مجانية: بتدفع النداء مرتين
+simulate("one retry after a 250 ms timeout", [...base, crossRegion], 250);
+simulate("tax call moved out of the request", base);</code></pre>
+
+<pre><code class="language-plaintext">sum of p50s 174 ms, sum of p99s 353 ms (a bound, not the real p99)
+as designed, warm connections        p50  181 ms  p99  259 ms  over 200 ms: 25.4%
+cold connection (+2 RTT)             p50  481 ms  p99  559 ms  over 200 ms: 100.0%
+one retry after a 250 ms timeout     p50  431 ms  p99  509 ms  over 200 ms: 100.0%
+tax call moved out of the request    p50   29 ms  p99   69 ms  over 200 ms: 0.0%</code></pre>
+  <div class="ar-note">مجموع الـ medians 174 ms، ومجموع الـ p99s 353 ms، وده حد أقصى مش الـ p99 الحقيقي. الـ simulation: مع connections جاهزة الـ p50 181 والـ p99 259، و25.4% من الـ requests فوق الـ 200 ms. Connection جديدة أو retry بعد 250 ms: كل الـ requests فوق الميزانية. ولما نشيل نداء الضرايب من الـ request: الـ p99 69 ms ومفيش حاجة فوق الميزانية.</div>
+
+<pre class="diagram">
+ 0        50       100      150      200 ms
+ |--------|--------|--------|--------|   budget
+ [LB 2][app 10][4 DB 12][ cross-region tax call 150      ]    medians add up to 174
+                                                        ^ 26 ms of slack
+ cross-region p99 alone = 220 ms: one slow call is already over budget
+</pre>
+  <div class="ar-note">الشريط ده الـ 200 ms. الـ LB 2 ms، والـ app 10، و4 DB round trips 12، ونداء الضرايب عبر الـ region لوحده 150. المجموع 174 والباقي 26 ms بس. وتحت: الـ p99 لنداء الـ cross-region لوحده 220 ms، يعني نداء بطيء واحد بيكسر الميزانية من غير أي حاجة تانية.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الجدول المرجعي ومعنى كل رقم في <a href="../../01-CS-Fundamentals/lessons/16-load-balancers-proxies-cdn.html#p7">درس CS Fundamentals رقم 16، الجزء 7</a>، وليه الـ constants مهمة في <a href="../../01-CS-Fundamentals/lessons/02-big-o-complexity.html">الدرس 02</a>. الأربعة اللي تاخدهم معاك في أي design: الـ RAM حوالي 100 ns، والـ SSD حوالي 100 µs، والـ round trip في الـ datacenter حوالي 0.5 ms، وبين القارات حوالي 150 ms. هنا قستهم على الجهاز ده، Windows تحت ضغط، فاقرا النسب.</p>
+    <ul>
+      <li>القفزات العشوائية في 128 MB ذاكرة أخدت حوالي 113 ns، قريب من الرقم المرجعي. والوصول المتتابع 0.8 ns للعنصر، أرخص حوالي 140 مرة.</li>
+      <li>قراية 4 KB من كاش الـ OS حوالي 4 µs. ونفس القراية من غير كاش الـ OS (<code>FILE_FLAG_NO_BUFFERING</code>) أخدت 272 µs في الـ run اللي تحت، ومن 56 لـ 117 µs في الـ runs التانية، حسب اللي الـ disk بيعمله ساعتها. يعني أي benchmark سريع للملفات غالبًا بيقيس الكاش.</li>
+      <li>الـ <code>fsync</code> أخد حوالي 0.8 ms في الـ median. و<code>INSERT</code> durable لصف واحد في Postgres أخد حوالي 0.2 ms، بـ <code>open_datasync</code> على ملف WAL متحجز جاهز، ومن 0.1 لـ 0.4 ms بين الـ runs. ماحددتش ليه أسرع من <code>fsync</code> عادي هنا. والـ SSDs العادية ممكن ترد إن الكتابة خلصت من الكاش بتاعها، فمتاخدش الرقم ده على volume في production.</li>
+      <li>على الـ loopback، الـ HTTP round trip أخد حوالي 75 µs، و Postgres primary-key read حوالي 141 µs، و Redis <code>GET</code> حوالي 103 µs. وعلى 6 runs من نفس السكريبت، الأرقام التلاتة اتحركت بين 67–113 و79–253 و80–229 µs، يعني كل median هنا بيتغير 2 لـ 3 أضعاف مع الضغط على الجهاز، و Redis و Postgres فضلوا قريبين من بعض بحوالي 1.5 ضعف. مفيش network، والصف كان في الـ buffer cache بتاع Postgres، والتكلفة هي الـ client والـ socket والـ event loop.</li>
+    </ul>
+    <p>النقطة الأخيرة عكس اعتقاد شائع. Redis مش أسرع 100 مرة من primary-key lookup في Postgres لو الصف أصلًا في الذاكرة. الـ caching بيكسب لما الـ query تقيلة أو الـ DB مضغوطة. وسطرين الشبكة الحقيقية ماينفعش يتقاسوا هنا، والجدول بيقول كده.</p>
+    <p>وبعدين استخدم الأرقام. وزّع ميزانية 200 ms على checkout: load balancer، شغل الـ app، 4 database round trips، ونداء cross-region لخدمة ضرايب. مجموع الـ medians 174 ms، وشكله داخل. لكن simulation بـ latencies ليها ديل طويل بتدي p99 بـ 259 ms، و25% من الـ requests فوق الميزانية، مع connections جاهزة. والـ connection الجديدة بتزود رحلتين (TCP و TLS 1.3، يعني 300 ms)، و retry بعد timeout بـ 250 ms بيكسرها برضه. ولما نشيل نداء الضرايب من الـ request الـ p99 بينزل لـ 69 ms. أرقام الخطوات دي افتراضات من الجدول، مش قياس.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو الـ endpoint عندك بطيء، اكتب ميزانية زي دي: كل نداء والـ p50 والـ p99 بتوعه من الـ traces. غالبًا هتلاقي نداء واحد واكل الميزانية، زي خدمة ضرايب أو payment في region تانية. الحل مش "نسرّع الكود": تخلي النداء async، أو تعمل cache للنتيجة، أو تحرك الخدمة لنفس الـ region.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What a laptop can't tell you</b>
+    Loopback hides the network, so a local Postgres read looks as cheap as Redis. A real datacenter round trip adds about 0.5 ms, so four sequential queries cost at least 2 ms in the network alone, and N+1 queries turn that into your whole budget. Your measurements are good for ratios and bad for absolute production numbers.
+    <div class="ar-note">الـ loopback بيخبّي الشبكة، فقراية Postgres المحلية تبان رخيصة زي Redis. الـ round trip الحقيقي في الـ datacenter بيزود حوالي 0.5 ms، فـ 4 queries ورا بعض بياخدوا على الأقل 2 ms في الشبكة لوحدها، و N+1 queries بتحوّل ده للميزانية كلها. القياسات بتاعتك كويسة للنسب، ووحشة للأرقام المطلقة في production.</div>
+  </div>
+
+  <!-- ===================== PART 7 ===================== -->
+  <h2 id="p7">Part 7 — Putting it together <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 7 — نجمع كله مع بعض</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>An orders platform with 5M daily users. Every assumption is at the top of the file and said out loud: 20 requests per user, a 3× peak, 5% writes, 1M orders a day at 300 bytes, overhead 1.5× (the +128 bytes per row measured in Part 2 works out to about 1.4× at this size, rounded up for bloat), 3 copies, 2 KB responses compressing 3.5× (Part 3), and about 100 bytes of Redis overhead per key (Part 4).</p>
+    <p>The result: 1,157 QPS on average and 3,472 at peak, of which only 174 are writes; about 493 GB of storage a year including indexes and copies; 19M hot keys in about 21 GB of Redis; 15.9 Mbit/s of egress at peak; and 1.7 TB of egress a month. Read that as a design conclusion: storage and bandwidth are small, and the interesting number is the read peak.</p>
+    <p>For a sanity check I ran one real Postgres on this machine for 5 seconds: 16 connections, a 95/5 read/write mix, durable commits. It did about 14,900 QPS with a p99 of about 3 ms, and an earlier run of the same script did about 29,900, a 2× swing from other jobs on the box. That is well above the 3,472 peak, with big caveats: the data was 300,000 rows that fit in memory, there was no network, no replication and no long queries. It tells you one well-run database is not obviously out of range. It doesn't tell you it's enough.</p>
+    <p><strong>How to say it in an interview:</strong> round aggressively, state each assumption, and sanity-check the result against something you know. "About 3,500 QPS at peak, mostly reads, so one primary with replicas and a cache is plausible. Storage is about 500 GB a year, which isn't the problem. I'd spend the deep dive on the read path."</p>
+  </section>
+
+<pre data-file="platform.ts"><code class="language-typescript">// الملف ده بيجمع كل الحسابات لمنصة orders عليها 5 مليون يوزر.
+// للتشغيل: node platform.ts
+import { bandwidth, cacheBytes, human, monthlyEgressBytes, qps, storageBytes } from "./estimate.ts";
+
+// كل سطر هنا افتراض، وأول حاجة تتقال بصوت عالي
+const assume = {
+  dau: 5_000_000,
+  actionsPerUser: 20,
+  peakFactor: 3,
+  writeShare: 0.05,
+  ordersPerDay: 1_000_000,
+  orderBytes: 300,
+  overheadFactor: 1.5,
+  replicas: 3,
+  responseBytes: 2_000,
+  gzipRatio: 3.5,
+  cachedValueBytes: 1_000,
+  redisOverheadPerKey: 100,
+};
+
+const all = qps({ dau: assume.dau, actionsPerUser: assume.actionsPerUser, peakFactor: assume.peakFactor });
+const writes = { avg: all.avg * assume.writeShare, peak: all.peak * assume.writeShare };
+const store = storageBytes({ itemsPerDay: assume.ordersPerDay, bytesPerItem: assume.orderBytes, years: 1, overheadFactor: assume.overheadFactor, replicas: assume.replicas });
+const readsPerDay = assume.dau * assume.actionsPerUser * (1 - assume.writeShare);
+const cache = cacheBytes({ readsPerDay, valueBytes: assume.cachedValueBytes, overheadPerKey: assume.redisOverheadPerKey });
+const peakOut = bandwidth({ qps: all.peak, bytesPerRequest: assume.responseBytes, compressionRatio: assume.gzipRatio });
+const avgOut = bandwidth({ qps: all.avg, bytesPerRequest: assume.responseBytes, compressionRatio: assume.gzipRatio });
+
+console.log(`requests        avg ${all.avg.toFixed(0)} QPS, peak ${all.peak.toFixed(0)} QPS`);
+console.log(`writes          avg ${writes.avg.toFixed(0)} QPS, peak ${writes.peak.toFixed(0)} QPS`);
+console.log(`storage/year    ${human(store.raw)} raw, ${human(store.total)} with indexes and ${assume.replicas} copies`);
+console.log(`cache (80/20)   ${(cache.hotKeys / 1e6).toFixed(1)}M keys, ${human(cache.bytes)} in Redis`);
+console.log(`bandwidth       ${peakOut.megabitsPerSec.toFixed(1)} Mbit/s at peak, gzip`);
+console.log(`egress/month    ${human(monthlyEgressBytes(avgOut.bytesPerSec))}, gzip`);</code></pre>
+
+<pre><code class="language-plaintext">requests        avg 1157 QPS, peak 3472 QPS
+writes          avg 58 QPS, peak 174 QPS
+storage/year    109.50 GB raw, 492.75 GB with indexes and 3 copies
+cache (80/20)   19.0M keys, 20.90 GB in Redis
+bandwidth       15.9 Mbit/s at peak, gzip
+egress/month    1.71 TB, gzip</code></pre>
+  <div class="ar-note">الـ requests: متوسط 1157 وذروة 3472. الـ writes: متوسط 58 وذروة 174. الـ storage في السنة: حوالي 110 GB raw، و493 GB بالـ indexes والـ 3 نسخ. الـ cache: 19 مليون key حوالي 21 GB. الـ bandwidth: 15.9 Mbit/s في الذروة بالـ gzip. والـ egress الشهري 1.71 TB.</div>
+
+<pre data-file="pg-capacity.ts"><code class="language-typescript">// الملف ده بيجرّب Postgres واحدة بخليط 95% قراية و 5% كتابة.
+// للتشغيل: PG_PORT=54329 node pg-capacity.ts
+import pg from "pg";
+import { mulberry32 } from "./estimate.ts";
+import { throwawayPort } from "./db-guard.ts";
+
+const port = throwawayPort(process.env.PG_PORT);
+const open = async () =&gt; {
+  const c = new pg.Client({ host: "127.0.0.1", port, user: "app", database: "postgres" });
+  await c.connect();
+  return c;
+};
+
+const admin = await open();
+await admin.query(`CREATE TABLE orders (
+  id bigint PRIMARY KEY, user_id bigint NOT NULL, status text NOT NULL,
+  total_cents bigint NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
+await admin.query(`CREATE INDEX ON orders (user_id, created_at DESC)`);
+await admin.query(`INSERT INTO orders (id, user_id, status, total_cents)
+  SELECT g, g % 50000, 'paid', g FROM generate_series(1, 300000) g`);
+await admin.query("ANALYZE orders");
+
+const clients = await Promise.all(Array.from({ length: 16 }, open));
+const SECONDS = 5;
+let reads = 0;
+let writes = 0;
+let nextId = 1_000_000;
+const latencies: number[] = [];
+const end = performance.now() + SECONDS * 1000;
+
+await Promise.all(
+  clients.map(async (c, i) =&gt; {
+    const rand = mulberry32(100 + i);
+    while (performance.now() &lt; end) {
+      const t = performance.now();
+      if (rand() &lt; 0.05) {
+        await c.query("INSERT INTO orders (id, user_id, status, total_cents) VALUES ($1, $2, 'pending', 1999)", [nextId++, i]);
+        writes++;
+      } else {
+        await c.query("SELECT id, status, total_cents FROM orders WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20", [Math.floor(rand() * 50_000)]);
+        reads++;
+      }
+      latencies.push(performance.now() - t);
+    }
+  }),
+);
+
+latencies.sort((a, b) =&gt; a - b);
+const total = reads + writes;
+console.log(`16 connections, ${SECONDS} s, durable commits, 95/5 mix`);
+console.log(`throughput ≈${(total / SECONDS).toFixed(0)} QPS (reads ≈${(reads / SECONDS).toFixed(0)}, writes ≈${(writes / SECONDS).toFixed(0)})`);
+console.log(`latency p50 ≈${latencies[latencies.length &gt;&gt; 1]!.toFixed(1)} ms, p99 ≈${latencies[Math.floor(latencies.length * 0.99)]!.toFixed(1)} ms`);
+await Promise.all(clients.map((c) =&gt; c.end()));
+await admin.end();</code></pre>
+
+<pre><code class="language-plaintext">16 connections, 5 s, durable commits, 95/5 mix
+throughput ≈14948 QPS (reads ≈14206, writes ≈742)
+latency p50 ≈0.9 ms, p99 ≈3.2 ms</code></pre>
+  <div class="ar-note">Postgres 18 حقيقية على الجهاز ده، 5 ثواني، 16 connection، 95% قراية و5% كتابة، بـ commits durable: حوالي 14900 QPS منهم حوالي 740 كتابة، و p99 حوالي 3 ms. نفس السكريبت في مرة تانية طلّع حوالي 29900، يعني فرق الضعف من الشغل التاني على الجهاز. ده مش production: الـ data صغيرة في الذاكرة، ومفيش شبكة ولا replication.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>منصة orders عليها 5 مليون يوزر في اليوم. كل افتراض مكتوب في أول الملف وبيتقال بصوت عالي: 20 request لكل يوزر، peak بـ 3 أضعاف، 5% writes، مليون order في اليوم بـ 300 byte، overhead بـ 1.5 ضعف (الـ 128 byte الزيادة لكل صف اللي قسناهم في الجزء 2 بيطلعوا حوالي 1.4 ضعف عند الحجم ده، ومقرّب لفوق عشان الـ bloat)، 3 نسخ، responses بـ 2 KB بتتضغط 3.5 ضعف (الجزء 3)، وحوالي 100 byte overhead لكل key في Redis (الجزء 4).</p>
+    <p>النتيجة: 1157 QPS متوسط و3472 في الذروة، منهم 174 writes بس؛ وحوالي 493 GB storage في السنة بالـ indexes والنسخ؛ و19 مليون key ساخنة في حوالي 21 GB Redis؛ و15.9 Mbit/s egress في الذروة؛ و1.7 TB egress في الشهر. اقرا ده كنتيجة design: الـ storage والـ bandwidth صغيرين، والرقم المهم هو الـ read peak.</p>
+    <p>وللتأكد شغّلت Postgres واحدة حقيقية على الجهاز ده 5 ثواني: 16 connection، خليط 95/5 قراية وكتابة، و commits durable. عملت حوالي 14900 QPS و p99 حوالي 3 ms، ومرة قبلها نفس السكريبت عمل حوالي 29900، يعني تذبذب الضعف بسبب الشغل التاني على الجهاز. ده فوق الـ 3472 بكتير، بس بتحفظات كبيرة: الـ data كانت 300 ألف صف داخلين في الذاكرة، ومفيش شبكة ولا replication ولا queries طويلة. ده بيقول إن database واحدة متظبطة مش بعيدة عن الرقم. مش بيقول إنها كفاية.</p>
+    <p><b>تقولها إزاي في الـ interview:</b> قرّب بجرأة، قول كل افتراض، وراجع النتيجة على حاجة تعرفها. "حوالي 3500 QPS في الذروة، معظمها قراية، فـ primary واحدة مع replicas و cache معقول. الـ storage حوالي 500 GB في السنة ودي مش المشكلة. هقضي الـ deep dive على الـ read path".</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      قبل ما تقترح تقسيم الـ database أو إضافة Kafka، اعمل الحساب ده على الـ traffic الحقيقي عندك في صفحة واحدة، وحطه في أول الـ design doc. كتير هتلاقي إن الحل المقترح أكبر من المشكلة بعشرات المرات، وهتلاقي إن الـ bottleneck الحقيقي واحد بس، غالبًا قراية تقيلة مش عدد الـ requests.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question (preview of exit Q9)</b>
+    "Your design handles 100 QPS. What breaks first at 1,000 and at 10,000?" Don't guess a component. For each resource, compute its use at 10× and see which crosses its limit first: connections, the slowest query, the single write path, a hot key. At 1,000 it's usually connections and unindexed queries, at 10,000 usually the write path or one hot row, and your real numbers override that. <a href="./43-tradeoff-thinking-bottlenecks.html">Lesson 43</a> takes this further.
+    <div class="ar-note">"التصميم بتاعك بيستحمل 100 QPS. إيه اللي هيكسر الأول عند 1000 وعند 10000؟" متخمنش component. لكل resource، احسب استخدامه عند 10 أضعاف وشوف مين هيعدّي حده الأول: الـ connections، أبطأ query، مسار الكتابة الواحد، hot key. عند 1000 غالبًا الـ connections والـ queries من غير index، وعند 10000 غالبًا مسار الكتابة أو صف سخن واحد، والأرقام الحقيقية عندك هي اللي تحكم. <a href="./43-tradeoff-thinking-bottlenecks.html">الدرس 43</a> بيكمّل في ده.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Sizing for the average</b>
+<pre><code class="language-typescript">const instances = Math.ceil(avgQps / qpsPerInstance);
+// المتوسط بيعدّي، والذروة بتوقّع السيرفرات</code></pre></div>
+    <div class="good"><b>✅ Sizing for the peak, with headroom</b>
+<pre><code class="language-typescript">const instances = Math.ceil(peakQps / (qpsPerInstance * 0.7));
+// نسبة 70% دي عشان لو instance وقع الباقي يستحمل</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ لو حسبت عدد الـ instances على المتوسط، كل يوم وقت الذروة هتبقى فوق طاقتك. ✅ احسب على الـ peak وسيب headroom، عشان وقوع instance واحد ميبقاش outage.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Treating Gbps as GB/s</b>
+<pre><code class="language-typescript">const seconds = 50 / 1;
+// كده فاكر إن 50 GB على 1 Gbps بياخدوا 50 ثانية</code></pre></div>
+    <div class="good"><b>✅ Convert the units</b>
+<pre><code class="language-typescript">const seconds = (50 * 8) / 1;
+// الناتج 400 ثانية، وفي الواقع أكتر بسبب الـ protocols</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ Gbps دي bits، فلو عاملتها كأنها GB في الثانية هتغلط بـ 8 أضعاف. ✅ اضرب في 8 الأول، وتوقع إن الواقع أبطأ من line rate.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Storage from column widths alone</b>
+<pre><code class="language-typescript">const bytes = rowsPerDay * 1_000 * 365 * 5;
+// الرقم ده 18.25 TB، ومش حاسب indexes ولا نسخ</code></pre></div>
+    <div class="good"><b>✅ Overhead and copies</b>
+<pre><code class="language-typescript">const { total } = storageBytes({
+  itemsPerDay: rowsPerDay, bytesPerItem: 1_000, years: 5,
+  overheadFactor: 1.24, replicas: 3,
+});
+// المعامل ده مقاس، والناتج حوالي 68 TB</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ مجموع الأعمدة بيتجاهل الـ headers والـ indexes والنسخ، فبيدّيك ربع الرقم الحقيقي. ✅ قيس المعامل على صفوف شبه صفوفك، واضرب في عدد النسخ.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Cache size without overhead or skew</b>
+<pre><code class="language-typescript">const cacheBytes = dailyReads * 0.2 * valueBytes;
+// افتراض الـ 20% ماتقاسش، و Redis ليه overhead لكل key</code></pre></div>
+    <div class="good"><b>✅ Measured skew, per-key cost</b>
+<pre><code class="language-typescript">const cacheBytes = distinctHotKeys * (valueBytes + 100);
+// عدد الـ keys من الـ access log، والزيادة من MEMORY USAGE</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ 20% تخمين، و N × حجم القيمة بينسى الـ overhead بتاع كل key. ✅ عدد الـ keys الساخنة من الـ access log، وكل key معاه حوالي 100 byte زيادة في Redis.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. A URL shortener, by hand first <span class="lvl lvl-1">🟢 easy</span></b>
+    100M new links a month, 100 reads per write, 500 bytes each, stored for 5 years. Work out write and read QPS (average and 3× peak), storage, peak egress and cache size on paper. Then check yourself with <code>estimate.ts</code>.
+    <div class="ar-note">URL shortener: 100 مليون لينك جديد في الشهر، 100 قراية لكل كتابة، 500 byte لكل لينك، يتخزنوا 5 سنين. احسب على الورق الـ QPS للكتابة والقراية (متوسط و peak بـ 3 أضعاف)، والـ storage، والـ egress في الذروة، وحجم الـ cache. وبعدين راجع نفسك بـ <code>estimate.ts</code>.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="ex1-shortener.ts"><code class="language-typescript">// الحل ده تقدير لخدمة URL shortener باستخدام نفس الـ calculator.
+// للتشغيل: node ex1-shortener.ts
+import { bandwidth, cacheBytes, human, qps, storageBytes } from "./estimate.ts";
+
+const newLinksPerDay = 100_000_000 / 30;
+const writes = qps({ dau: newLinksPerDay, actionsPerUser: 1, peakFactor: 3 });
+const reads = { avg: writes.avg * 100, peak: writes.peak * 100 };
+const store = storageBytes({ itemsPerDay: newLinksPerDay, bytesPerItem: 500, years: 5, overheadFactor: 1.3, replicas: 3 });
+const out = bandwidth({ qps: reads.peak, bytesPerRequest: 500 });
+const cache = cacheBytes({ readsPerDay: newLinksPerDay * 100, valueBytes: 500, overheadPerKey: 100 });
+
+console.log(`writes ${writes.avg.toFixed(0)}/s avg, ${writes.peak.toFixed(0)}/s peak`);
+console.log(`reads  ${reads.avg.toFixed(0)}/s avg, ${reads.peak.toFixed(0)}/s peak`);
+console.log(`storage 5y: ${human(store.raw)} raw, ${human(store.total)} with overhead and 3 copies`);
+console.log(`egress at peak: ${out.megabitsPerSec.toFixed(0)} Mbit/s`);
+console.log(`cache (20% of daily reads): ${human(cache.bytes)}`);</code></pre>
+<pre><code class="language-plaintext">writes 39/s avg, 116/s peak
+reads  3858/s avg, 11574/s peak
+storage 5y: 3.04 TB raw, 11.86 TB with overhead and 3 copies
+egress at peak: 46 Mbit/s
+cache (20% of daily reads): 40.00 GB</code></pre>
+      <div class="ar-note">الكتابة 39 في الثانية متوسط و116 ذروة، والقراية حوالي 3858 متوسط و11574 ذروة، يعني الخدمة قراية بالأساس. الـ storage في 5 سنين حوالي 3 TB raw وحوالي 12 TB بالـ overhead والنسخ. الـ egress في الذروة 46 Mbit/s. والـ cache حوالي 40 GB، وده تقدير عالي لأن المعادلة بتعد reads مش keys مختلفة.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Your own skew <span class="lvl lvl-2">🟡 medium</span></b>
+    Change <code>lru-zipf.ts</code> to <code>s = 1.0</code> and a cache of 10% of keys. Predict the hit ratio first, then run it. What does the "traffic to top 20%" column say about 80/20?
+    <div class="ar-note">غيّر <code>lru-zipf.ts</code> لـ <code>s = 1.0</code> و cache بحجم 10% من الـ keys. توقّع الـ hit ratio الأول، وبعدين شغّله. عمود "traffic to top 20%" بيقول إيه عن 80/20؟</div>
+    <details><summary>Solution · الحل</summary>
+<pre><code class="language-plaintext">keys=1000000, 2000000 warmup + 2000000 measured requests, LRU
+skew   traffic to top 20%   cache 10% 
+s=1.0        88.8%          78.0%     </code></pre>
+      <div class="ar-note">عند s=1.0، أعلى 20% بياخدوا 88.8% من الـ traffic، و cache بحجم 10% بيوصل 78%. يعني 80/20 الحقيقية بتقع حوالين s بين 0.8 و1.0. والدرس إن الرقم حساس جدًا لـ s.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Save the budget with a cache <span class="lvl lvl-2">🟡 medium</span></b>
+    Keep the cross-region tax call, but cache its result. How high must the hit ratio be for fewer than 1% of checkouts to go over 200 ms?
+    <div class="ar-note">خلي نداء الضرايب عبر الـ region زي ما هو، بس اعمل cache لنتيجته. لازم الـ hit ratio يوصل كام عشان أقل من 1% من الـ checkouts يعدّوا 200 ms؟</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="ex3-budget.ts"><code class="language-typescript">// الحل ده بيحط cache قدام النداء البعيد ويقيس تأثير الـ hit ratio.
+// للتشغيل: node ex3-budget.ts
+import { mulberry32 } from "./estimate.ts";
+
+const rand = mulberry32(5);
+const BUDGET = 200;
+
+function lognormal(p50: number, p99: number): () =&gt; number {
+  const mu = Math.log(p50);
+  const sigma = (Math.log(p99) - mu) / 2.326;
+  return () =&gt; {
+    const u = Math.max(1e-12, rand());
+    const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rand());
+    return Math.exp(mu + sigma * z);
+  };
+}
+
+const local = [lognormal(2, 8), lognormal(10, 25), lognormal(3, 25), lognormal(3, 25), lognormal(3, 25), lognormal(3, 25)];
+const remote = lognormal(150, 220);
+const cacheHit = lognormal(0.5, 3);
+
+for (const hitRatio of [0, 0.5, 0.9, 0.99]) {
+  const n = 200_000;
+  let over = 0;
+  const totals: number[] = [];
+  for (let i = 0; i &lt; n; i++) {
+    let t = rand() &lt; hitRatio ? cacheHit() : remote();
+    for (const step of local) t += step();
+    totals.push(t);
+    if (t &gt; BUDGET) over++;
+  }
+  totals.sort((a, b) =&gt; a - b);
+  console.log(`hit ratio ${String(hitRatio * 100).padStart(3)}%: p50 ${totals[n &gt;&gt; 1]!.toFixed(0).padStart(3)} ms, p99 ${totals[Math.floor(n * 0.99)]!.toFixed(0).padStart(3)} ms, over budget ${((over / n) * 100).toFixed(1)}%`);
+}</code></pre>
+<pre><code class="language-plaintext">hit ratio   0%: p50 181 ms, p99 258 ms, over budget 25.6%
+hit ratio  50%: p50 114 ms, p99 247 ms, over budget 12.7%
+hit ratio  90%: p50  31 ms, p99 220 ms, over budget 2.6%
+hit ratio  99%: p50  30 ms, p99 129 ms, over budget 0.2%</code></pre>
+      <div class="ar-note">عند 0% زي التصميم الأصلي، 25.6% فوق الميزانية. عند 90% لسه 2.6%، وعند 99% 0.2%. النسبة تقريبًا خطية: نسبة الـ miss × 25.6%، فعشان تنزل تحت 1% محتاج hit ratio حوالي 96% أو أكتر. ولاحظ إن الـ p99 عند 90% لسه 220 ms، لأن الـ 10% miss كلهم أبطأ من أي hit، فالـ p99 بيقع جواهم.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    Estimate your side project at 100× its current traffic with <code>estimate.ts</code>: QPS, peak, storage per year, cache size, egress. Replace the overhead factor with one you measure on your own largest table, and measure your slowest real query. Write the result into the Estimation section of your design doc, and name the first resource that breaks.
+    <div class="ar-note">قدّر مشروعك الجانبي عند 100 ضعف الـ traffic الحالي بـ <code>estimate.ts</code>: الـ QPS، الـ peak، الـ storage في السنة، حجم الـ cache، والـ egress. بدّل معامل الـ overhead بواحد تقيسه على أكبر جدول عندك، وقيس أبطأ query حقيقية. واكتب الناتج في قسم Estimation في الـ design doc، وسمّي أول resource هيكسر.</div>
+    <details><summary>Hint · تلميح</summary>
+      <code>SELECT pg_total_relation_size('orders') / count(*) FROM orders;</code> gives the real bytes per row. <code>pg_stat_statements</code> gives the slowest queries, sorted by total time.
+      <div class="ar-note">الـ query دي بتديك الـ bytes الحقيقية لكل صف. و<code>pg_stat_statements</code> بتديك أبطأ الـ queries مترتبة بالوقت الكلي.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>QPS = users × actions ÷ 86,400, or ÷ 100K for speed (13.6% low, fine).</li>
+    <li>Peak: 2–3× for steady SaaS, 8–10× or worse for flash sales. Say which. Measure it from a trace if you have one.</li>
+    <li>README's "12 QPS, ~100 peak" assumes 1 action per user, and 100 is 8.6×.</li>
+    <li>Storage = items × bytes × days × overhead × copies. Measured overhead: 1.88× at 146-byte rows, 1.24× at 1 KB.</li>
+    <li>Exit Q1: 115.7 QPS, 231–347 peak, 231 KB/s, 18.25 TB raw (about 68 TB real).</li>
+    <li>Bandwidth is bits on the wire, bytes in files: 1 Gbps = 125 MB/s.</li>
+    <li>gzip ratio grows with payload size: 1.07× for one order, 3.54× at 2 KB.</li>
+    <li>80/20 is a skew assumption. Flat traffic: hit ratio equals cache size. s = 1.2: a 1% cache hits 87.5%.</li>
+    <li>Redis costs about 100 bytes per key beyond the value at 1 KB, relatively more for small values.</li>
+    <li>RAM 100 ns, SSD 100 µs, datacenter 0.5 ms, cross-continent 150 ms. One cross-region call eats a 200 ms budget.</li>
+    <li>On loopback, Redis and an in-memory Postgres PK read stayed within about 1.5×. Local medians move 2–3× between runs, so trust ratios only.</li>
+    <li>Round, state every assumption, sanity-check against something you know.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ QPS = users × actions ÷ 86400، أو ÷ 100 ألف للسرعة (أقل بـ 13.6%، ومفيش مشكلة).</li>
+      <li>الـ peak: من 2 لـ 3 ضعف لـ SaaS ثابت، ومن 8 لـ 10 ضعف أو أكتر للـ flash sales. قول إنت فارض إيه، وقيسه من trace لو عندك.</li>
+      <li>"12 QPS و ~100 peak" بتاعة الـ README بتفترض action واحد لكل يوزر، والـ 100 دي 8.6 ضعف.</li>
+      <li>الـ storage = العناصر × الـ bytes × الأيام × الـ overhead × النسخ. الـ overhead المقاس: 1.88 ضعف لصفوف 146 byte، و1.24 ضعف لصفوف 1 KB.</li>
+      <li>سؤال الـ exit: 115.7 QPS، والـ peak من 231 لـ 347، و231 KB/s، و18.25 TB raw (حوالي 68 TB في الحقيقة).</li>
+      <li>الـ bandwidth بالـ bits على السلك، والملفات بالـ bytes: 1 Gbps = 125 MB/s.</li>
+      <li>نسبة الـ gzip بتكبر مع حجم الـ payload: 1.07 ضعف لـ order واحد، و3.54 عند 2 KB.</li>
+      <li>الـ 80/20 افتراض عن الـ skew. الـ traffic المسطح: الـ hit ratio قد حجم الـ cache. وعند s = 1.2 الـ cache بحجم 1% بيوصل 87.5%.</li>
+      <li>Redis بياخد حوالي 100 byte لكل key زيادة عن القيمة عند 1 KB، ونسبيًا أكتر مع القيم الصغيرة.</li>
+      <li>الـ RAM 100 ns، الـ SSD 100 µs، الـ datacenter 0.5 ms، بين القارات 150 ms. ونداء cross-region واحد بياكل ميزانية 200 ms.</li>
+      <li>على الـ loopback، Redis و Postgres PK read في الذاكرة فضلوا قريبين بحوالي 1.5 ضعف. والـ medians المحلية بتتحرك 2 لـ 3 أضعاف بين الـ runs، فثق في النسب بس.</li>
+      <li>قرّب، قول كل افتراض، وراجع النتيجة على حاجة تعرفها.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 10 · 1.1 — <b>Back-of-the-envelope estimation</b>: QPS (users/day × actions ÷ 86400 ≈ users/day ÷ 100K per QPS)، peak = 2–3× average، storage (rows × size × years)، bandwidth، memory للـ cache (80/20 rule)</label>
+    <label><input type="checkbox" data-key="r2"> 10 · 1.1 — <b>الأرقام اللي لازم تحفظها</b>: 1M users/day ≈ 12 QPS متوسط و ~100 QPS peak؛ 1 day ≈ 100K seconds؛ 1 million × 1KB = 1GB؛ powers of two (2^10 ≈ 1K، 2^20 ≈ 1M، 2^30 ≈ 1G)</label>
+    <label><input type="checkbox" data-key="r3"> 10 · 1.1 — Latency numbers (من قسم CS Fundamentals) — RAM ~100ns، SSD ~100μs، datacenter RTT ~0.5ms، cross-continent ~150ms</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://github.com/donnemartin/system-design-primer">The System Design Primer: back-of-the-envelope section</a></li>
+    <li><a href="https://colin-scott.github.io/personal_website/research/interactive_latency.html">Colin Scott: Latency Numbers Every Programmer Should Know (interactive)</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/storage-page-layout.html">PostgreSQL docs: Database Page Layout</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/functions-admin.html">PostgreSQL docs: Database Object Size Functions</a></li>
+    <li><a href="https://nodejs.org/api/zlib.html">Node.js docs: zlib</a></li>
+    <li><a href="https://en.wikipedia.org/wiki/Zipf%27s_law">Zipf's law</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./01-how-to-approach-a-design.html"><small>← Previous</small>01 · Design Method</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./03-scalability-stateless-spof.html"><small>Next →</small>03 · Scalability &amp; SPOF</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

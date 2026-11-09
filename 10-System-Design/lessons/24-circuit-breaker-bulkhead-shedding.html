@@ -1,0 +1,1738 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Circuit Breaker, Bulkhead, Fallback &amp; Load Shedding — 10 System Design</title>
+<meta name="section" content="10-System-Design">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">10 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 24 / 63</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Circuit Breaker, Bulkhead, Fallback &amp; Load Shedding</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 24 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Node 22 · TypeScript 7 · opossum 10</span>
+      <span class="chip">Postgres 18 · Redis 8</span>
+      <span class="chip">Prereq: <a href="./23-timeouts-retries-storms.html">23 Timeouts &amp; Retries</a></span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>10 · 2.5 — <b>Circuit breaker</b>: closed → open (بعد N failures) → half-open (تجرب) — بيحمي الـ downstream وبيفشل بسرعة</li>
+        <li>10 · 2.5 — <b>Bulkhead</b>: عزل الـ resources (thread pools، connection pools) لكل dependency عشان واحد بيقع ميوقّعش الباقي</li>
+        <li>10 · 2.5 — <b>Fallback</b> و <b>graceful degradation</b>: الـ recommendations وقعت → اعرض popular items؛ الـ search وقع → اعرض cached results</li>
+        <li>10 · 2.5 — <b>Load shedding</b>: ارفض requests لما الـ load يعدّي الحد (503 بسرعة أحسن من timeout بطيء)، priority-based shedding</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — The cascade</a></li>
+      <li><a href="#p2">Part 2 — Circuit breaker behaviour</a></li>
+      <li><a href="#p3">Part 3 — Bulkhead</a></li>
+      <li><a href="#p4">Part 4 — Fallback &amp; degradation</a></li>
+      <li><a href="#p5">Part 5 — Load shedding</a></li>
+      <li><a href="#p6">Part 6 — Priority shedding</a></li>
+      <li><a href="#p7">Part 7 — Which when</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The previous lesson was about how one call behaves. This one is about what happens to the whole service when one dependency goes bad or the traffic exceeds what it can do. In this lesson's runs a slow recommendations service took an unrelated <code>/orders</code> endpoint from a 1 ms median to 3-second timeouts; one reports endpoint sharing a connection pool pushed orders to a 949 ms median; and at 150% load a server with no protection served 42% of its traffic while one that rejected the excess served 63% with no timeouts at all. "Explain circuit breaker, bulkhead and load shedding, and when each applies" is question 5 on this section's exit test, and these numbers are how you answer it with substance.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الدرس اللي فات كان عن call واحد بيتصرف إزاي. ده عن اللي بيحصل للـ service كله لما dependency واحدة تبوظ أو الـ traffic يعدّي اللي يقدر عليه. في الـ runs بتاعة الدرس: خدمة recommendations بطيئة خدت <code>/orders</code> اللي ملوش علاقة من median بـ 1ms لـ timeouts كل 3 ثواني؛ وendpoint تقارير شاركت الـ connection pool وطلّعت الـ orders لـ median بـ 949ms؛ وعند 150% load سيرفر من غير حماية نجّح 42% من الـ traffic بتاعه، وواحد بيرفض الزيادة نجّح 63% ومن غير ولا timeout. و"اشرح circuit breaker و bulkhead و load shedding وإمتى كل واحد" ده السؤال الخامس في اختبار الخروج بتاع القسم ده، والأرقام دي هي اللي بتخليك تجاوب بعمق.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — The cascade <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الانهيار المتسلسل</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The end-to-end cascade with timeouts, retries and a breaker is in <a href="../../04-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html#p5">04 Node, lesson 25, Part 5</a>, and it's the baseline here. The new question is diagnostic: <b>which resource saturated first, and how would you have known from your metrics?</b></p>
+    <p>The shop API runs in its own process, with a Postgres pool of 10. <code>/product</code> holds a DB connection while it waits for recommendations (the common "transaction around the whole handler" bug), and <code>/orders</code> is a short query that has nothing to do with recommendations. At t=4 s the recommendations service goes from 20 ms to 4 s. Traffic is open-loop, because real users don't wait for each other, and the client gives up after 3 s as a load balancer would.</p>
+    <p>The sampled metrics give the answer in a clear order. By the first sample after the slowdown (t=5) the pool is 10/0 busy with 36 waiters, and <code>/orders</code> has gone from a 1 ms median to about 3 s, which is the client's timeout. In-flight requests climb about 50 per second, linearly. And the event loop is flat at about 16 ms the whole time, which is just the Windows timer floor (<a href="./23-timeouts-retries-storms.html#p1">lesson 23</a> measured <code>setTimeout(5)</code> at ≈15.2 ms). So the first thing to saturate was the <b>connection pool</b>, and <b>pool waiters</b> were the signal, one sample ahead of in-flight. A CPU or event-loop-lag dashboard would have said everything was fine.</p>
+    <p>This is the USE method applied to the Node process: for each resource, track Utilization (pool busy), Saturation (<code>waitingCount</code> above zero, a queue forming) and Errors. A latency increase on an endpoint that doesn't use the slow dependency almost always means a shared resource: a connection pool, the event loop, memory or outbound sockets. Find the one that saturated first and the graph explains itself. In code, <code>pool.totalCount</code>, <code>idleCount</code> and <code>waitingCount</code> are exposed by node-postgres, so there is no excuse for not graphing them.</p>
+  </section>
+
+  <pre class="diagram">
+t=4s   recommendations turns slow (20 ms -> 4 s)
+         |
+t=4-5  /product holds a pool connection while waiting
+         |
+         v   FIRST TO SATURATE: DB pool  (10/10 busy, waiters 0 -> 36)
+         |
+         +--> /orders needs the same pool --> waits behind 36 others
+         |      median 1 ms -> 3 s (client timeout)
+         |
+         +--> in-flight requests climb 50 per second (lagging signal)
+
+         event loop p99 stays ~16 ms (Windows timer floor): NOT the problem
+  </pre>
+  <div class="ar-note">عند t=4 الـ recommendations بقت بطيئة. الـ <code>/product</code> ماسك connection وهو مستني، فأول حاجة شبعت هي الـ DB pool: 10 من 10 busy و waiters من 0 لـ 36. الـ <code>/orders</code> محتاج نفس الـ pool فبيقف ورا الـ 36، والـ median من 1ms لـ 3 ثواني (الـ timeout بتاع الـ client). والـ in-flight بيطلع 50 في الثانية كإشارة متأخرة. والـ event loop p99 ثابت حوالي 16ms، وده أرضية الـ timers في Windows، يعني مش هو المشكلة.</div>
+
+<pre data-file="src/l24-p1-cascade.ts"><code class="language-typescript">import { monitorEventLoopDelay } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
+import pg from "pg";
+import { forkService, openLoop, percentile, privatePort, serve, sleep } from "./lab.ts";
+import { createPrimary, stopAll } from "./pg-cluster.mjs";
+
+type Snapshot = { t: number; inflight: number; total: number; idle: number; waiting: number; lagP99: number };
+
+// الـ shop API: بيشتغل في process لوحده، والـ ⁦/product⁩ بيمسك DB connection وهو مستني الـ recommendations
+async function shop(pgPort: number, recsUrl: string) {
+  const pool = new pg.Pool({ host: "127.0.0.1", port: privatePort(pgPort), user: "app", database: "postgres", max: 10 });
+  const lag = monitorEventLoopDelay({ resolution: 10 });
+  lag.enable();
+  let inflight = 0;
+  const started = performance.now();
+  const server = await serve(async (req, res) =&gt; {
+    inflight++;
+    try {
+      if (req.url === "/orders") {
+        await pool.query("select 1 as id, 'paid' as status");
+      } else {
+        const client = await pool.connect();
+        try {
+          await client.query("select 1 as product");
+          await fetch(`${recsUrl}/recs`, { signal: AbortSignal.timeout(10_000) }).then((r) =&gt; r.text());
+        } finally {
+          client.release();
+        }
+      }
+      res.end("ok");
+    } catch {
+      res.statusCode = 500;
+      res.end();
+    } finally {
+      inflight--;
+    }
+  });
+  setInterval(() =&gt; {
+    const snap: Snapshot = {
+      t: Math.round((performance.now() - started) / 1000), inflight,
+      total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount,
+      lagP99: lag.percentile(99) / 1e6,
+    };
+    lag.reset();
+    process.send!(snap);
+  }, 1000);
+  process.send!({ port: Number(new URL(server.url).port) });
+}
+
+async function main() {
+  const cluster = await createPrimary({});
+  const pgPort = privatePort(cluster.port);
+  let slow = false;
+  const recs = await serve(async (_req, res) =&gt; { await sleep(slow ? 4000 : 20); res.end("[]"); });
+  const app = await forkService(fileURLToPath(import.meta.url), ["shop", String(pgPort), recs.url]);
+  const snaps: Snapshot[] = [];
+  app.child.on("message", (m: Snapshot | { port: number }) =&gt; { if ("t" in m) snaps.push(m); });
+
+  const orders = new Map&lt;number, number[]&gt;();
+  const hit = async (path: string, sec: number) =&gt; {
+    const t0 = performance.now();
+    // الـ load balancer بيستسلم بعد 3 ثواني، فده أقصى latency بيشوفها اليوزر
+    await fetch(app.url + path, { signal: AbortSignal.timeout(3000) }).then((r) =&gt; r.text()).catch(() =&gt; {});
+    if (path === "/orders") (orders.get(sec) ?? orders.set(sec, []).get(sec)!).push(performance.now() - t0);
+  };
+
+  // الحمل: open-loop، والـ recommendations بيبطّأ عند t=4s
+  const slowTimer = setTimeout(() =&gt; { slow = true; }, 4000);
+  const pending: Promise&lt;void&gt;[] = [];
+  await Promise.all([
+    openLoop(30, 13_000, (_i, ms) =&gt; { pending.push(hit("/product", Math.floor(ms / 1000))); }),
+    openLoop(20, 13_000, (_i, ms) =&gt; { pending.push(hit("/orders", Math.floor(ms / 1000))); }),
+  ]);
+  clearTimeout(slowTimer);
+  await Promise.race([Promise.all(pending), sleep(3000)]);
+
+  console.log(" t | in-flight | pool busy/idle | waiting | loop p99 | /orders p50  p99  (n)");
+  for (const s of snaps) {
+    const o = orders.get(s.t - 1) ?? [];
+    const fmt = (v: number) =&gt; (o.length ? `${percentile(o, v).toFixed(0)}ms` : "-");
+    console.log(`${String(s.t).padStart(2)} | ${String(s.inflight).padStart(9)} | ${`${s.total - s.idle}/${s.idle}`.padStart(14)} | ${String(s.waiting).padStart(7)} | ${`${s.lagP99.toFixed(1)}ms`.padStart(8)} | ${fmt(50).padStart(11)} ${fmt(99).padStart(7)} (${o.length})`);
+  }
+  const first = (pred: (s: Snapshot) =&gt; boolean) =&gt; snaps.find(pred)?.t ?? "never";
+  console.log(`first crossing: pool waiting&gt;0 at t=${first((s) =&gt; s.waiting &gt; 0)}s, in-flight&gt;50 at t=${first((s) =&gt; s.inflight &gt; 50)}s, loop p99&gt;100ms: ${first((s) =&gt; s.lagP99 &gt; 100)}`);
+
+  await app.stop();
+  await recs.close();
+  await stopAll(cluster);
+}
+
+if (process.argv[2] === "shop") await shop(Number(process.argv[3]), process.argv[4]!);
+else await main();</code></pre>
+<pre><code class="language-plaintext"> t | in-flight | pool busy/idle | waiting | loop p99 | /orders p50  p99  (n)
+ 1 |         1 |            1/2 |       0 |   21.8ms |         1ms    35ms (19)
+ 2 |         2 |            2/1 |       0 |   16.6ms |         1ms     2ms (20)
+ 3 |         1 |            1/2 |       0 |   16.4ms |         1ms     2ms (20)
+ 4 |         1 |            1/2 |       0 |   16.1ms |         1ms     2ms (20)
+ 5 |        46 |           10/0 |      36 |   17.6ms |      3002ms  3006ms (20)
+ 6 |        96 |           10/0 |      86 |   16.1ms |      3001ms  3016ms (20)
+ 7 |       147 |           10/0 |     137 |   16.1ms |      3002ms  3017ms (20)
+ 8 |       195 |           10/0 |     185 |   16.4ms |      3003ms  3016ms (20)
+ 9 |       230 |           10/0 |     220 |   16.5ms |      3008ms  3012ms (20)
+10 |       279 |           10/0 |     269 |   16.3ms |      3013ms  3016ms (20)
+11 |       330 |           10/0 |     320 |   16.3ms |      3014ms  3024ms (20)
+12 |       378 |           10/0 |     368 |   16.4ms |      3012ms  3016ms (20)
+13 |       410 |           10/0 |     400 |   16.2ms |      3010ms  3012ms (20)
+14 |       410 |           10/0 |     400 |   16.2ms |           -       - (0)
+15 |       410 |           10/0 |     400 |   16.2ms |           -       - (0)
+first crossing: pool waiting&gt;0 at t=5s, in-flight&gt;50 at t=6s, loop p99&gt;100ms: never</code></pre>
+  <div class="ar-note">الـ output كل سطر ثانية: أول 4 ثواني سليم (in-flight حوالي 1، pool 1 أو 2 busy، <code>/orders</code> ≈1ms). من t=5: الـ pool كله busy و36 waiters بعد ثانية واحدة، و<code>/orders</code> p50 حوالي 3002ms (يعني الـ client بيستسلم). الـ in-flight بيوصل 410 والـ waiters 400. آخر عمودين <code>/orders</code> في آخر ثانيتين (n=0) لأن مفيش طلبات جديدة اتسجلت. وسطر first crossing بيقول pool waiters عند t=5، و in-flight>50 عند t=6، والـ loop p99>100ms ولا مرة. الأرقام ≈ من Windows تحت حمل.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الانهيار كامل بالـ timeouts والـ retries والـ breaker موجود في <a href="../../04-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html#p5">الجزء 5 من درس 25 في Node</a>، وده الأساس هنا. السؤال الجديد هو التشخيص: <b>أنهي resource شبعت الأول، وكنت هتعرف ده منين من الـ metrics؟</b></p>
+    <p>الـ shop API شغال في process لوحده، بـ Postgres pool فيها 10. الـ <code>/product</code> بيمسك DB connection وهو مستني الـ recommendations (الغلطة الشائعة بتاعة "transaction حوالين الـ handler كله")، و<code>/orders</code> query قصيرة ملهاش علاقة بالـ recommendations. عند t=4 ثواني الـ recommendations بتبقى من 20ms لـ 4 ثواني. الـ traffic open-loop لأن اليوزرز الحقيقيين مش مستنيين بعض، والـ client بيستسلم بعد 3 ثواني زي الـ load balancer.</p>
+    <p>الـ metrics بتدّي الإجابة بترتيب واضح. أول sample بعد البطء (t=5): الـ pool كله 10/0 busy و36 waiters، و<code>/orders</code> راح من median بـ 1ms لحوالي 3 ثواني، وده الـ timeout بتاع الـ client. والـ in-flight بيطلع حوالي 50 في الثانية بشكل خطي. والـ event loop ثابت حوالي 16ms طول الوقت، وده أرضية الـ timer في Windows (<a href="./23-timeouts-retries-storms.html#p1">درس 23</a> قاس <code>setTimeout(5)</code> بـ ≈15.2ms). يعني أول حاجة شبعت هي <b>الـ connection pool</b>، والإشارة كانت <b>الـ pool waiters</b> قبل الـ in-flight بـ sample. ولو كان عندك dashboard CPU أو event-loop lag بس، كان هيقولك كله تمام.</p>
+    <p>ده USE method على process الـ Node: لكل resource تابع الـ Utilization (الـ pool busy)، والـ Saturation (<code>waitingCount</code> فوق صفر يعني queue بيتكون)، والـ Errors. لما latency endpoint مبيستخدمش الـ dependency البطيئة تزيد، ده تقريبًا دايمًا resource مشترك: connection pool أو الـ event loop أو الـ memory أو الـ sockets الخارجة. دور على أول واحد شبع والـ graph هيبان لوحده. وفي الكود الـ node-postgres بيدّيك <code>pool.totalCount</code> و<code>idleCount</code> و<code>waitingCount</code>، فمفيش عذر تعملش ليهم graph.</p>
+    <div class="use"><b>فين هستخدمه في شغلي؟</b>
+      incident: "الـ orders API بقى بطيء". أول سؤال متقوليش "الـ DB؟"، قول: أنهي resource فيها waiters؟ اعمل graph لـ <code>waitingCount</code> بتاع كل pool، وعدد الـ in-flight لكل endpoint، و event loop lag، وعدد الـ sockets الخارجة. لو الـ waiters طلعت قبل أي حاجة، فالمشكلة الـ pool، والحل تفصل مين ماسك الـ connection وليه. الغلطة الشائعة: بتبص على CPU و memory وتلاقيهم نايمين وتفتكر الـ service سليم.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: an endpoint that doesn't call the failing service is slow too. Why?</b>
+    Because something is shared. Look for the first resource with queueing (waiters on a connection pool, outbound sockets, event-loop lag, memory). In my cascade, the pool hit 10/10 with 36 waiters in the first second while the event loop stayed flat, so <code>/orders</code> was waiting for a connection, not for CPU.
+    <div class="ar-note">السؤال: endpoint مبيكلمش الخدمة الواقعة بطيء برضه، ليه؟ الإجابة: لأن فيه حاجة مشتركة. دوّر على أول resource فيها queueing (waiters على connection pool، sockets خارجة، event-loop lag، memory). في الانهيار بتاعي الـ pool وصل 10/10 و36 waiters في أول ثانية والـ event loop ثابت، يعني <code>/orders</code> كان مستني connection مش CPU.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Circuit breaker behaviour <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — تصرف الـ circuit breaker</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The mechanism and <code>opossum</code> are introduced in <a href="../../04-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html#p3">04 Node, lesson 25, Part 3</a>, and writing one by hand is <a href="../../08-Design-Patterns/lessons/23-circuit-breaker-bulkhead-composition.html">08 Design Patterns, lesson 23</a>. Here we watch how it behaves in a running system. <code>opossum</code> 10 (<code>cockatiel</code> 4 has the same model) with a real HTTP upstream that hangs from t=1500 ms to t=5500 ms.</p>
+    <p>The event log shows the lifecycle: CLOSED until about 1.2 s into the outage, then OPEN, then every ≈800 ms HALF-OPEN with one probe, re-OPEN when the probe fails, and finally CLOSED 149 ms after the upstream returned (the last half-open was at 5648 ms, the upstream at 5500). The upstream took 41 hits during the outage instead of 160. Callers failed fast 91 times, and 41 slow failures paid the timeout before the breaker opened or while probing. The <code>stats</code> shown count rejected calls in <code>fires</code> too, which is why the percentage in the last line looks low; a failed probe re-opens the breaker regardless of the percentage.</p>
+    <p>The numbers are knobs, and each has a cost. <code>errorThresholdPercentage</code> and <code>volumeThreshold</code> decide how quickly it trips: the hair-trigger config opened in 392 ms and let 18 calls through to the dead upstream, the balanced config took 2.6 s and leaked 83, and the sluggish config (50 calls needed in a 10 s window) never opened during a 4 s outage. <code>resetTimeout</code> decides how quickly you notice recovery and how much probe traffic you send. The cost of sensitivity is <b>false opens</b>: with 10% random errors on a low-traffic endpoint, the hair-trigger breaker opened twice and rejected 18 healthy calls, while the balanced one never opened. So tune for the failure you expect: <code>volumeThreshold</code> high enough that a blip can't trip it at your real request rate.</p>
+    <p>Two design decisions remain. <b>Scope:</b> one breaker per host means a failing <code>/recs</code> took down a healthy <code>/search</code> (98 of 100 rejected); one breaker per endpoint rejected 0. Scope it to the unit that fails together, which is usually an endpoint or a host + operation. <b>Fleet behaviour:</b> breakers are per process, so N instances each probe independently. Twenty instances sent 100 probes in 6 s to a dead upstream, about 17 per second, against 5 from a single instance. If the upstream is fragile, either raise <code>resetTimeout</code> with the instance count or share breaker state (Redis) and accept the added dependency.</p>
+  </section>
+
+<pre data-file="src/l24-p2-breaker.ts"><code class="language-typescript">import CircuitBreaker from "opossum";
+import { mulberry32, serve, sleep } from "./lab.ts";
+
+const call = (url: string) =&gt; async () =&gt; {
+  const r = await fetch(url, { signal: AbortSignal.timeout(250) });
+  await r.text();
+  if (!r.ok) throw new Error(`status ${r.status}`);
+};
+
+// الـ opossum بيوصف الحالات بـ events، فبنسجّلها بوقتها عشان نشوف الـ lifecycle كله
+function logStates(breaker: CircuitBreaker, start: number): string[] {
+  const log: string[] = [];
+  const stamp = () =&gt; `t=${String(Math.round(performance.now() - start)).padStart(5)} ms`;
+  breaker.on("open", () =&gt; log.push(`${stamp()}  OPEN      (stats: ${breaker.stats.failures + breaker.stats.timeouts} failed of ${breaker.stats.fires})`));
+  breaker.on("halfOpen", () =&gt; log.push(`${stamp()}  HALF-OPEN (next call is a probe)`));
+  breaker.on("close", () =&gt; log.push(`${stamp()}  CLOSED    (probe succeeded)`));
+  return log;
+}
+
+// (1) خط زمني كامل: سليم، outage بيعلّق، وبعدين رجوع
+async function timeline() {
+  let down = false;
+  let upstreamHits = 0;
+  const upstream = await serve((_req, res) =&gt; {
+    upstreamHits++;
+    if (down) return; // بيعلّق من غير رد
+    res.end("ok");
+  });
+  const breaker = new CircuitBreaker(call(upstream.url), {
+    timeout: 300, errorThresholdPercentage: 50, volumeThreshold: 10,
+    rollingCountTimeout: 2000, rollingCountBuckets: 10, resetTimeout: 800,
+  });
+  const start = performance.now();
+  const log = logStates(breaker, start);
+  let ok = 0, rejected = 0, failedSlow = 0;
+  let hitsAtDown = 0, hitsAtUp = 0;
+  setTimeout(() =&gt; { down = true; hitsAtDown = upstreamHits; }, 1500);
+  setTimeout(() =&gt; { down = false; hitsAtUp = upstreamHits; }, 5500);
+
+  const fires: Promise&lt;void&gt;[] = [];
+  for (let i = 0; i &lt; 7500 / 25; i++) {
+    fires.push(
+      breaker.fire().then(() =&gt; { ok++; }).catch((err: NodeJS.ErrnoException) =&gt; {
+        if (err.code === "EOPENBREAKER") rejected++;
+        else failedSlow++;
+      }),
+    );
+    await sleep(25);
+  }
+  await Promise.all(fires);
+  await upstream.close();
+  console.log("(1) event log: outage from t=1500 ms to t=5500 ms");
+  console.log(log.join("\n"));
+  console.log(`requests: ok=${ok} rejected-fast=${rejected} slow failures=${failedSlow}`);
+  console.log(`upstream hits during the outage: ${hitsAtUp - hitsAtDown} (${Math.round((5500 - 1500) / 25)} without a breaker)`);
+  breaker.shutdown();
+}
+
+// (2) مقارنة إعدادات: بنشغّلهم مع بعض على outage و traffic سليم بـ 5% errors
+type Cfg = { name: string; errorThresholdPercentage: number; volumeThreshold: number; rollingCountTimeout: number; resetTimeout: number };
+async function tuning() {
+  const configs: Cfg[] = [
+    { name: "hair-trigger  (20%, vol 3, 1 s, reset 0.5 s)", errorThresholdPercentage: 20, volumeThreshold: 3, rollingCountTimeout: 1000, resetTimeout: 500 },
+    { name: "balanced      (50%, vol 20, 5 s, reset 2 s)", errorThresholdPercentage: 50, volumeThreshold: 20, rollingCountTimeout: 5000, resetTimeout: 2000 },
+    { name: "sluggish      (50%, vol 60, 10 s, reset 5 s)", errorThresholdPercentage: 50, volumeThreshold: 60, rollingCountTimeout: 10000, resetTimeout: 5000 },
+  ];
+  const rows = await Promise.all(configs.map(async (cfg) =&gt; {
+    let mode: "healthy" | "down" = "healthy";
+    let hits = 0, hitsDuringOutage = 0;
+    const upstream = await serve((_req, res) =&gt; {
+      hits++;
+      if (mode === "down") { hitsDuringOutage++; return; }
+      res.end("ok");
+    });
+    const breaker = new CircuitBreaker(call(upstream.url), {
+      timeout: 200, rollingCountBuckets: 10, ...cfg,
+    });
+    let openedAt = -1, closedAt = -1, firstOpenAfterDown = -1;
+    const start = performance.now();
+    breaker.on("open", () =&gt; {
+      if (mode === "down" &amp;&amp; firstOpenAfterDown &lt; 0) firstOpenAfterDown = performance.now() - start;
+    });
+    breaker.on("close", () =&gt; { if (mode === "healthy" &amp;&amp; closedAt &lt; 0) closedAt = performance.now() - start; });
+    // 5 ثواني traffic سليم، وبعدها 4 ثواني outage، وبعدها رجوع
+    const phases: Array&lt;["healthy" | "down", number]&gt; = [["healthy", 5000], ["down", 4000], ["healthy", 4000]];
+    for (const [m, dur] of phases) {
+      if (m === "down") openedAt = performance.now() - start;
+      mode = m;
+      const until = performance.now() + dur;
+      while (performance.now() &lt; until) {
+        void breaker.fire().catch(() =&gt; {});
+        await sleep(20);
+      }
+    }
+    const detect = firstOpenAfterDown &lt; 0 ? "never" : `${Math.round(firstOpenAfterDown - openedAt)} ms`;
+    const closeAfter = closedAt &lt; 0 ? "not within 4 s" : `${Math.round(closedAt - 9000)} ms`;
+    breaker.shutdown();
+    await upstream.close();
+    return `${cfg.name}\n   time to open after outage: ${detect}   calls leaked to the dead upstream: ${hitsDuringOutage}   closed after recovery: ${closeAfter}`;
+  }));
+  console.log("\n(2) tuning: same traffic against each config");
+  console.log(rows.join("\n"));
+}
+
+// الغلطة الغالية (2b): الـ breaker يفتح على خدمة سليمة (traffic قليل ⁦+ errors⁩ عشوائية)
+async function falseOpens() {
+  const cases = [
+    { name: "hair-trigger (20%, vol 3, 1 s)", errorThresholdPercentage: 20, volumeThreshold: 3, rollingCountTimeout: 1000 },
+    { name: "balanced     (50%, vol 20, 5 s)", errorThresholdPercentage: 50, volumeThreshold: 20, rollingCountTimeout: 5000 },
+  ];
+  const rows = await Promise.all(cases.map(async (c, idx) =&gt; {
+    const rng = mulberry32(7 + idx);
+    let failed = 0;
+    const upstream = await serve((_req, res) =&gt; {
+      if (rng() &lt; 0.1) { res.statusCode = 503; failed++; }
+      res.end("ok");
+    });
+    const breaker = new CircuitBreaker(call(upstream.url), { timeout: 200, rollingCountBuckets: 10, resetTimeout: 1500, ...c });
+    let opens = 0, rejected = 0, sent = 0;
+    breaker.on("open", () =&gt; opens++);
+    const until = performance.now() + 12_000;
+    while (performance.now() &lt; until) {
+      sent++;
+      await breaker.fire().catch((e: NodeJS.ErrnoException) =&gt; { if (e.code === "EOPENBREAKER") rejected++; });
+      await sleep(150);
+    }
+    breaker.shutdown();
+    await upstream.close();
+    return `${c.name}  requests=${sent} errors=${failed}  opens=${opens}  healthy calls rejected=${rejected}`;
+  }));
+  console.log("\n(2b) false opens: healthy service, 10% random errors, about 6 requests/s for 12 s");
+  console.log(rows.join("\n"));
+}
+
+// (3) مقارنة: breaker واحد للـ host ضد breaker لكل endpoint، و ⁦/recs⁩ واقع و ⁦/search⁩ سليم
+async function perHost() {
+  const upstream = await serve((req, res) =&gt; {
+    if (req.url === "/recs") { res.statusCode = 503; res.end(); } else res.end("ok");
+  });
+  const opts = { timeout: 200, errorThresholdPercentage: 50, volumeThreshold: 5, rollingCountTimeout: 2000, rollingCountBuckets: 10, resetTimeout: 3000 };
+  const shared = new CircuitBreaker((path: string) =&gt; call(upstream.url + path)(), opts);
+  const recs = new CircuitBreaker(call(upstream.url + "/recs"), opts);
+  const search = new CircuitBreaker(call(upstream.url + "/search"), opts);
+  let sharedSearchRejected = 0, separateSearchRejected = 0;
+  for (let i = 0; i &lt; 100; i++) {
+    // الـ ⁦/recs⁩ عليه traffic أكتر من ⁦/search⁩، زي الواقع
+    for (let k = 0; k &lt; 3; k++) {
+      void shared.fire("/recs").catch(() =&gt; {});
+      void recs.fire().catch(() =&gt; {});
+    }
+    await shared.fire("/search").catch((e: NodeJS.ErrnoException) =&gt; { if (e.code === "EOPENBREAKER") sharedSearchRejected++; });
+    await search.fire().catch((e: NodeJS.ErrnoException) =&gt; { if (e.code === "EOPENBREAKER") separateSearchRejected++; });
+    await sleep(10);
+  }
+  shared.shutdown(); recs.shutdown(); search.shutdown();
+  await upstream.close();
+  console.log(`\n(3) healthy /search calls rejected: one breaker per host=${sharedSearchRejected}/100, one breaker per endpoint=${separateSearchRejected}/100`);
+}
+
+// (4) كل instance عنده breaker لوحده: الـ probes بتتجمع على السيرفر الواقع
+async function instances() {
+  for (const n of [1, 5, 20]) {
+    let hits = 0, counting = false;
+    const upstream = await serve((_req, res) =&gt; { if (counting) hits++; res.statusCode = 503; res.end(); });
+    const breakers = Array.from({ length: n }, () =&gt; new CircuitBreaker(call(upstream.url), {
+      timeout: 200, errorThresholdPercentage: 50, volumeThreshold: 3, rollingCountTimeout: 2000, rollingCountBuckets: 10, resetTimeout: 1000,
+    }));
+    breakers.forEach((b) =&gt; b.on("open", () =&gt; {}));
+    // كل الـ breakers بتتفتح الأول، وبعدين نعدّ الـ probes لمدة 6 ثواني
+    for (let i = 0; i &lt; 6; i++) { await Promise.all(breakers.map((b) =&gt; b.fire().catch(() =&gt; {}))); await sleep(10); }
+    counting = true;
+    const until = performance.now() + 6000;
+    while (performance.now() &lt; until) { await Promise.all(breakers.map((b) =&gt; b.fire().catch(() =&gt; {}))); await sleep(20); }
+    counting = false;
+    breakers.forEach((b) =&gt; b.shutdown());
+    await upstream.close();
+    console.log(`(4) instances=${String(n).padStart(2)}  probes reaching the dead upstream in 6 s: ${hits}  (≈${(hits / 6).toFixed(1)}/s)`);
+  }
+}
+
+await timeline();
+await tuning();
+await falseOpens();
+await perHost();
+await instances();</code></pre>
+<pre><code class="language-plaintext">(1) event log: outage from t=1500 ms to t=5500 ms
+t= 2705 ms  OPEN      (stats: 31 failed of 61)
+t= 3521 ms  HALF-OPEN (next call is a probe)
+t= 3772 ms  OPEN      (stats: 38 failed of 62)
+t= 4587 ms  HALF-OPEN (next call is a probe)
+t= 4838 ms  OPEN      (stats: 6 failed of 64)
+t= 5648 ms  HALF-OPEN (next call is a probe)
+t= 5649 ms  CLOSED    (probe succeeded)
+requests: ok=168 rejected-fast=91 slow failures=41
+upstream hits during the outage: 41 (160 without a breaker)
+
+(2) tuning: same traffic against each config
+hair-trigger  (20%, vol 3, 1 s, reset 0.5 s)
+   time to open after outage: 392 ms   calls leaked to the dead upstream: 18   closed after recovery: 509 ms
+balanced      (50%, vol 20, 5 s, reset 2 s)
+   time to open after outage: 2590 ms   calls leaked to the dead upstream: 83   closed after recovery: 632 ms
+sluggish      (50%, vol 60, 10 s, reset 5 s)
+   time to open after outage: never   calls leaked to the dead upstream: 128   closed after recovery: not within 4 s
+
+(2b) false opens: healthy service, 10% random errors, about 6 requests/s for 12 s
+hair-trigger (20%, vol 3, 1 s)  requests=77 errors=6  opens=2  healthy calls rejected=18
+balanced     (50%, vol 20, 5 s)  requests=77 errors=10  opens=0  healthy calls rejected=0
+
+(3) healthy /search calls rejected: one breaker per host=98/100, one breaker per endpoint=0/100
+(4) instances= 1  probes reaching the dead upstream in 6 s: 5  (≈0.8/s)
+(4) instances= 5  probes reaching the dead upstream in 6 s: 25  (≈4.2/s)
+(4) instances=20  probes reaching the dead upstream in 6 s: 100  (≈16.7/s)</code></pre>
+  <div class="ar-note">الـ output بالترتيب. (1) الـ event log: الـ outage من t=1500 لـ 5500، و OPEN عند 2705، وكل حوالي 800ms HALF-OPEN والـ probe بيفشل فبيرجع OPEN، وعند 5649 CLOSED. الـ ok=168 والـ rejected-fast=91 والـ slow failures=41، والـ upstream أخد 41 call بدل 160. (2) الـ tuning: hair-trigger فتح في 392ms وعدّى 18 call، و balanced في 2590ms و83 call، و sluggish مفتحش خالص في 4 ثواني outage و128 call. (2b) الـ false opens: hair-trigger فتح مرتين على خدمة سليمة ورفض 18 call سليمة، و balanced صفر. (3) الـ per-host رفض 98 من 100 طلب /search سليم، والـ per-endpoint صفر. (4) instances: واحد 5 probes في 6 ثواني، و5 instances 25، و20 instance مية probe (حوالي 17 في الثانية).</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الميكانيزم والـ <code>opossum</code> مشروحين في <a href="../../04-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html#p3">الجزء 3 من درس 25 في Node</a>، وكتابة واحد بإيدك في <a href="../../08-Design-Patterns/lessons/23-circuit-breaker-bulkhead-composition.html">درس 23 في الـ Design Patterns</a>. هنا هنشوف بيتصرف إزاي في system شغال. <code>opossum</code> 10 (و<code>cockatiel</code> 4 نفس الـ model) قدام upstream حقيقي على HTTP بيعلّق من t=1500ms لـ t=5500ms.</p>
+    <p>الـ event log بيوريك دورة الحياة: CLOSED لحد حوالي 1.2 ثانية جوه الـ outage، وبعدين OPEN، وبعدين كل حوالي 800ms HALF-OPEN بـ probe واحد، ويرجع OPEN لو الـ probe فشل، وفي الآخر CLOSED بعد ما الـ upstream رجع بـ 149ms (آخر half-open عند 5648ms والـ upstream عند 5500). الـ upstream أخد 41 call طول الـ outage بدل 160. والـ callers فشلوا بسرعة 91 مرة، و41 فشل بطيء هم اللي دفعوا الـ timeout قبل ما يفتح أو وقت الـ probing. والـ <code>stats</code> اللي في الـ log بتحسب الـ rejected جوه <code>fires</code> كمان، وعشان كده النسبة في آخر سطر بتبان قليلة، وفشل الـ probe بيرجع الـ breaker OPEN مهما كانت النسبة.</p>
+    <p>الأرقام دي knobs وكل واحدة ليها ثمن. <code>errorThresholdPercentage</code> و<code>volumeThreshold</code> بيحددوا سرعة الفتح: الـ hair-trigger فتح في 392ms وعدّى 18 call للـ upstream الميت، والـ balanced خد 2.6 ثانية وعدّى 83، والـ sluggish (محتاج 50 call في نافذة 10 ثواني) مفتحش خالص في outage 4 ثواني. والـ <code>resetTimeout</code> بيحدد بتعرف الرجوع بسرعة قد إيه وبتبعت probes قد إيه. وثمن الحساسية هو <b>false opens</b>: مع 10% errors عشوائية على endpoint قليل الـ traffic، الـ hair-trigger فتح مرتين ورفض 18 call سليمة، والـ balanced مفتحش. فاضبط على الفشل اللي متوقعه: <code>volumeThreshold</code> كبير كفاية إن blip صغير ميفتحهوش عند معدل الطلبات الحقيقي بتاعك.</p>
+    <p>فاضل قرارين في التصميم. <b>النطاق:</b> breaker واحد للـ host معناه <code>/recs</code> الواقع وقّع <code>/search</code> السليم (98 من 100 اترفض)، و breaker لكل endpoint رفض صفر. حطه على الوحدة اللي بتفشل مع بعض، غالبًا endpoint أو host + operation. <b>تصرف الـ fleet:</b> الـ breakers per process، فـ N instances كل واحد بيعمل probe لوحده. 20 instance بعتوا 100 probe في 6 ثواني لـ upstream ميت، حوالي 17 في الثانية، مقابل 5 من instance واحد. لو الـ upstream هش، زوّد الـ <code>resetTimeout</code> مع عدد الـ instances، أو شارك الحالة (Redis) واقبل الـ dependency الزيادة.</p>
+    <div class="use"><b>فين هستخدمه في شغلي؟</b>
+      لف call الـ PSP أو API خارجي بـ breaker لكل operation (<code>payments.authorize</code> لوحدها و<code>payments.refund</code> لوحدها). الـ error handler بتاعك يميّز <code>EOPENBREAKER</code> ويرجّع 503 بـ <code>Retry-After</code> أو fallback على طول من غير retry. ومتنساش تبعت حالة الـ breaker كـ metric. الغلطة الشائعة: breaker واحد على client الـ API كله، فـ endpoint واحد بايظ يقفل الكل، أو threshold 50% على traffic قليل بيفتح لوحده بالليل.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: per-process state vs shared state</b>
+    Per-process breakers need no extra infrastructure, react independently, and fail safe. The cost is detection time and probe traffic that scale with the instance count. Shared state in Redis gives one opinion for the whole fleet, but adds a dependency to a code path whose whole job is to survive dependencies failing, so it needs its own fallback to local state.
+    <div class="ar-note">الاختيار بين الحالة per-process والحالة المشتركة: الـ per-process مش محتاج infrastructure، وكل instance بيتصرف لوحده، وفاشل بأمان. ثمنه وقت الاكتشاف والـ probes اللي بتكبر مع عدد الـ instances. والحالة المشتركة في Redis بتدّيك رأي واحد للـ fleet كله، بس بتضيف dependency في مسار شغلته أصلًا يعيش لما الـ dependencies تقع، فلازم يكون له fallback محلي.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Bulkhead <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ Bulkhead</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A bulkhead partitions resources so one workload can't sink the others. In Node there are no per-dependency thread pools to partition, so the bulkhead takes other forms: a separate connection pool, a concurrency limit (semaphore) per dependency, or a separate process.</p>
+    <p>The experiment: <code>/orders</code> at 50 rps next to <code>/reports</code> at 50 rps, where each report holds a connection for 300 ms through <code>pg_sleep</code>. With one shared pool of 10, reports consume every connection, <code>/orders</code> goes to a 949 ms median, 69 of 250 fail, and p99 reaches 1955 ms. Split the pools (6 for orders, 4 for reports) and <code>/orders</code> is back to 2 ms with a 13 ms p99. A semaphore that caps reports at 4 concurrent, in front of the same shared pool, gives almost the same result (p99 34 ms). The semaphore is lighter when you can't change the pool layout, and it also limits calls that don't use the pool at all, such as outbound HTTP.</p>
+    <p>But pools only isolate connections. When the report is <b>CPU</b> work on the event loop (40 ms at 20 rps, 80% of the loop), the split pools don't help: <code>/orders</code> median becomes 26 ms because every request queues behind a burning loop. Moving that CPU work to a separate process brings the median back to 1 ms (p99 43 ms on this loaded machine). That is the separate-process bulkhead: for critical traffic that must not share an event loop with anything else, a process boundary or a separate deployment is the real isolation. Shuffle sharding extends the idea across tenants so one bad tenant only affects a small share of capacity; it's previewed here and designed in <a href="./62-case-multi-tenant-saas.html">lesson 62</a>.</p>
+  </section>
+
+<pre data-file="src/l24-p3-bulkhead.ts"><code class="language-typescript">import { fork } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import pg from "pg";
+import { burn, forkService, openLoop, percentile, privatePort, serve, sleep } from "./lab.ts";
+import { createPrimary, stopAll } from "./pg-cluster.mjs";
+
+type Mode = "shared" | "split" | "semaphore" | "cpu-inproc" | "cpu-process";
+
+// سيمافور بسيط: أقصى عدد اللي يدخل في نفس الوقت
+function semaphore(limit: number) {
+  let active = 0;
+  const waiters: Array&lt;() =&gt; void&gt; = [];
+  return {
+    async run&lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;): Promise&lt;T&gt; {
+      if (active &gt;= limit) await new Promise&lt;void&gt;((r) =&gt; waiters.push(r));
+      active++;
+      try { return await fn(); }
+      finally { active--; waiters.shift()?.(); }
+    },
+  };
+}
+
+async function api(mode: Mode, pgPort: number) {
+  const make = (max: number) =&gt; new pg.Pool({ host: "127.0.0.1", port: privatePort(pgPort), user: "app", database: "postgres", max, connectionTimeoutMillis: 3000 });
+  const splitPools = mode === "split" || mode === "cpu-inproc" || mode === "cpu-process";
+  const ordersPool = make(splitPools ? 6 : 10);
+  const reportsPool = splitPools ? make(4) : ordersPool;
+  const reportsGate = semaphore(4);
+
+  // عملية منفصلة (process) لحسابات الـ CPU بتاعة التقارير: event loop تاني خالص
+  const cruncher = mode === "cpu-process" ? fork(fileURLToPath(import.meta.url), ["cruncher"]) : null;
+  const pendingCrunch: Array&lt;() =&gt; void&gt; = [];
+  cruncher?.on("message", () =&gt; pendingCrunch.shift()?.());
+
+  const server = await serve(async (req, res) =&gt; {
+    try {
+      if (req.url === "/orders") {
+        await ordersPool.query("select id, status from (values (1, 'paid')) t(id, status)");
+      } else if (mode === "cpu-inproc") {
+        burn(40);
+      } else if (mode === "cpu-process") {
+        await new Promise&lt;void&gt;((r) =&gt; { pendingCrunch.push(r); cruncher!.send("go"); });
+      } else if (mode === "semaphore") {
+        await reportsGate.run(() =&gt; reportsPool.query("select pg_sleep(0.3)"));
+      } else {
+        await reportsPool.query("select pg_sleep(0.3)");
+      }
+      res.end("ok");
+    } catch {
+      res.statusCode = 503;
+      res.end();
+    }
+  });
+  process.send!({ port: Number(new URL(server.url).port) });
+}
+
+async function runMode(mode: Mode, pgPort: number) {
+  const app = await forkService(fileURLToPath(import.meta.url), ["api", mode, String(pgPort)]);
+  const lat: number[] = [];
+  let failed = 0;
+  const hit = async (path: string) =&gt; {
+    const t0 = performance.now();
+    const r = await fetch(app.url + path, { signal: AbortSignal.timeout(2000) }).catch(() =&gt; null);
+    await r?.text();
+    if (path === "/orders") {
+      if (r?.ok) lat.push(performance.now() - t0);
+      else failed++;
+    }
+  };
+  const pending: Promise&lt;void&gt;[] = [];
+  const cpuFlood = mode.startsWith("cpu");
+  await Promise.all([
+    openLoop(50, 5000, () =&gt; { pending.push(hit("/orders")); }),
+    openLoop(cpuFlood ? 20 : 50, 5000, () =&gt; { pending.push(hit("/reports")); }),
+  ]);
+  await Promise.race([Promise.all(pending), sleep(2500)]);
+  await app.stop();
+  const f = (p: number) =&gt; (lat.length ? `${percentile(lat, p).toFixed(0)}ms` : "-");
+  console.log(`${mode.padEnd(12)} /orders ok=${String(lat.length).padStart(3)}/250 failed=${String(failed).padStart(3)}  p50=${f(50).padStart(7)}  p99=${f(99).padStart(7)}  max=${f(100).padStart(7)}`);
+}
+
+if (process.argv[2] === "cruncher") {
+  process.on("message", () =&gt; { burn(40); process.send!("done"); });
+} else if (process.argv[2] === "api") {
+  await api(process.argv[3] as Mode, Number(process.argv[4]));
+} else {
+  const cluster = await createPrimary({});
+  const pgPort = privatePort(cluster.port);
+  console.log("/reports = select pg_sleep(0.3) at 50 rps (or 40 ms of CPU at 20 rps in the cpu-* runs); /orders 50 rps");
+  for (const m of ["shared", "split", "semaphore", "cpu-inproc", "cpu-process"] as Mode[]) await runMode(m, pgPort);
+  await stopAll(cluster);
+}</code></pre>
+<pre><code class="language-plaintext">/reports = select pg_sleep(0.3) at 50 rps (or 40 ms of CPU at 20 rps in the cpu-* runs); /orders 50 rps
+shared       /orders ok=180/250 failed= 69  p50=  949ms  p99= 1955ms  max= 1999ms
+split        /orders ok=249/250 failed=  0  p50=    2ms  p99=   13ms  max=   58ms
+semaphore    /orders ok=249/250 failed=  0  p50=    2ms  p99=   34ms  max=   53ms
+cpu-inproc   /orders ok=249/250 failed=  0  p50=   26ms  p99=   67ms  max=  107ms
+cpu-process  /orders ok=249/250 failed=  0  p50=    1ms  p99=   43ms  max=   55ms</code></pre>
+  <div class="ar-note">الجدول: <code>shared</code> (pool واحد 10): 180 ok من 250، و69 فشلوا، و p50=949ms و p99=1955ms. <code>split</code>: p50=2ms و p99=13ms. <code>semaphore</code> بنفس الـ pool: p99=34ms. <code>cpu-inproc</code> (تقارير CPU في نفس الـ event loop مع pools منفصلة): p50=26ms، يعني الـ pool مش كفاية. <code>cpu-process</code> (نفس الشغل في process تانية): p50=1ms. الأرقام ≈ من Windows تحت حمل.</div>
+
+  <table>
+    <tr><th>Setup</th><th>/orders p50</th><th>/orders p99</th><th>Isolates</th></tr>
+    <tr><td>One shared pool (10)</td><td>≈949 ms</td><td>≈1955 ms</td><td>Nothing</td></tr>
+    <tr><td>Split pools (6 + 4)</td><td>≈2 ms</td><td>≈13 ms</td><td>DB connections</td></tr>
+    <tr><td>Semaphore caps reports at 4</td><td>≈2 ms</td><td>≈34 ms</td><td>Concurrency (no new pool needed)</td></tr>
+    <tr><td>Split pools, reports burn CPU in process</td><td>≈26 ms</td><td>≈67 ms</td><td>Connections, not CPU</td></tr>
+    <tr><td>Reports burn CPU in another process</td><td>≈1 ms</td><td>≈43 ms</td><td>Connections and the event loop</td></tr>
+  </table>
+  <div class="ar-note">صف صف: pool واحد مشترك مبيعزلش حاجة، و p50 حوالي 949ms. الـ pools المنفصلة بتعزل connections الـ DB، و p50 حوالي 2ms. السيمافور بيعزل الـ concurrency من غير pool جديدة، و p99 حوالي 34ms. الـ CPU في نفس الـ process: الـ connections معزولة بس الـ CPU لأ، و p50 حوالي 26ms. والـ CPU في process تانية: الـ connections والـ event loop الاتنين معزولين، و p50 حوالي 1ms.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ bulkhead بيقسم الـ resources عشان workload واحد ميغرقش الباقي. في Node مفيش thread pools لكل dependency عشان تقسمها، فالـ bulkhead بييجي في أشكال تانية: connection pool منفصلة، أو concurrency limit (semaphore) لكل dependency، أو process منفصلة.</p>
+    <p>التجربة: <code>/orders</code> بـ 50 rps جنب <code>/reports</code> بـ 50 rps، وكل تقرير ماسك connection 300ms عن طريق <code>pg_sleep</code>. بـ pool واحد مشترك فيه 10، التقارير بتاكل كل الـ connections، و<code>/orders</code> بيبقى median بـ 949ms، و69 من 250 بيفشلوا، و p99 بيوصل 1955ms. افصل الـ pools (6 للـ orders و4 للتقارير) و<code>/orders</code> بيرجع 2ms و p99 بـ 13ms. وسيمافور بيحدد التقارير بـ 4 في نفس الوقت قدام نفس الـ pool بيدّي نتيجة قريبة جدًا (p99 بـ 34ms). السيمافور أخف لما مش قادر تغيّر الـ pool، وكمان بيحدد calls ملهاش علاقة بالـ pool زي الـ HTTP الخارج.</p>
+    <p>بس الـ pools بتعزل connections بس. لما التقرير يبقى شغل <b>CPU</b> على الـ event loop (40ms عند 20 rps، يعني 80% من الـ loop)، الـ pools المنفصلة مش بتفيد: median <code>/orders</code> بقى 26ms لأن كل request واقف ورا loop مشغول. نقل شغل الـ CPU ده لـ process منفصلة رجّع الـ median لـ 1ms (و p99 بـ 43ms على الجهاز ده اللي عليه ضغط). ده الـ bulkhead بالـ process: الـ traffic المهم اللي مينفعش يشارك event loop مع حد، الـ process boundary أو deployment منفصل هو العزل الحقيقي. والـ shuffle sharding بيوسّع الفكرة عبر الـ tenants عشان tenant بايظ يأثر على جزء صغير من السعة، وده هتشوف تصميمه في <a href="./62-case-multi-tenant-saas.html">درس 62</a>.</p>
+    <div class="use"><b>فين هستخدمه في شغلي؟</b>
+      عندك صفحة admin بتشغّل تقرير تقيل على نفس الـ API بتاعة الـ checkout. افصل pool للتقارير أو سيمافور عليها، ولو التقرير CPU تقيل (Excel export، PDF) ابعته لـ worker أو خدمة تانية. وعندك خدمة عليها tenants: حط semaphore لكل tenant مهم عشان tenant واحد ميشغلش كل الـ connections. الغلطة الشائعة: تقول "عندي pool واحد 100 connection فمفيش مشكلة"، وطلب بطيء واحد متكرر هياكل الـ 100.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What's not a bulkhead in Node</b>
+    A separate pool for each dependency does nothing for CPU. If a report blocks the event loop, every other request on that process waits, whatever pools exist. Only a separate process or worker separates CPU, and a <code>worker_threads</code> worker still shares one process's memory limit and fate.
+    <div class="ar-note">اللي مش bulkhead في Node: pool لكل dependency مش بتعمل حاجة للـ CPU. لو تقرير سد الـ event loop، كل request في الـ process ده هيستنى مهما كان عندك pools. الـ process أو الـ worker المنفصل بس هو اللي بيعزل الـ CPU، و<code>worker_threads</code> لسه بيشارك process واحد في حد الـ memory والمصير.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Fallback &amp; degradation <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ Fallback والـ Graceful degradation</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A fallback is what you return when a dependency fails. Whether you should have one is a product decision, and it depends on how critical the dependency is. For recommendations, popular items are a fine answer. For search, cached results are good enough. For tax, you cannot guess: charging the wrong amount is worse than failing, so the decision is either to block the order and say so, or to accept it and hold the invoice until tax can be computed, which needs legal and finance on board. Make that decision per dependency, and write it down.</p>
+    <p>The code should make degradation visible. The function below calls the live service with a strict budget, falls back to popular items from Redis, and falls back again to a static list compiled into the code, and every response says <code>degraded</code> and why. The UI reads that flag and changes its wording, so it doesn't claim "Recommended for you" over a popularity list. A <b>kill switch</b> (a flag in Redis) skips the dependency entirely: in the run <code>recsCalls</code> stayed at 0, because the flag is read before the call, which is what you want during an incident so you can stop sending traffic to a struggling service.</p>
+    <p>The run's most important tests are the ones that <em>kill</em> things. Untested fallbacks fail, usually at the first real outage. Six real tests against live Redis and Postgres: healthy returns live data; a 503 from recommendations falls back to Redis; a hanging recommendations service falls back within about 164 ms (150 ms budget plus Redis); the kill switch doesn't call the service; recommendations and Redis both down still return the static list. The sixth is the bad design on purpose: the "fallback" reads the same Postgres as the main query, and when Postgres goes down, both fail. A fallback must not share the failure it covers.</p>
+  </section>
+
+  <table>
+    <tr><th>Dependency</th><th>Criticality for checkout</th><th>When it fails</th></tr>
+    <tr><td>Payment provider</td><td>Critical</td><td>Fail the order clearly; retry only with an idempotency key</td></tr>
+    <tr><td>Inventory</td><td>Critical</td><td>Reject or reserve optimistically, with a compensation plan</td></tr>
+    <tr><td>Tax service</td><td>Critical, cannot guess</td><td>Block, or accept and hold the invoice (a business decision)</td></tr>
+    <tr><td>Search</td><td>Important, not critical</td><td>Cached results, marked <code>degraded: true</code></td></tr>
+    <tr><td>Recommendations</td><td>Optional</td><td>Popular items from Redis, then a static list</td></tr>
+    <tr><td>Notifications (email/SMS)</td><td>Optional at checkout</td><td>Queue it; the order doesn't wait for it</td></tr>
+  </table>
+  <div class="ar-note">صف صف: الـ payment provider critical، الفشل يبقى واضح، والـ retry بس بـ idempotency key. الـ inventory critical، يا ترفض يا تحجز optimistically بخطة تعويض. الـ tax critical ومينفعش تخمن: يا تقف، يا تقبل وتأجل الفاتورة، وده قرار بيزنس. الـ search مهم مش critical: cached results بـ <code>degraded: true</code>. الـ recommendations اختياري: popular items من Redis وبعدين قايمة ثابتة. الـ notifications: طابور، والـ order مش مستنيها.</div>
+
+<pre data-file="src/l24-p4-fallback.ts"><code class="language-typescript">import type { Redis } from "ioredis";
+
+export type RecsResponse = {
+  items: string[];
+  degraded: boolean;
+  source: "live" | "popular-cache" | "static" | "none";
+  reason?: string;
+};
+
+export interface RecsDeps {
+  recsUrl: string;
+  redis: Redis;
+  budgetMs: number;
+}
+
+// آخر اختيار: قايمة ثابتة جوه الكود، مفيهاش أي dependency تقدر تقع
+const STATIC_ITEMS = ["sku-gift-card", "sku-best-seller"];
+
+export async function getRecommendations(userId: string, deps: RecsDeps): Promise&lt;RecsResponse&gt; {
+  // زرار الطوارئ: لو الـ flag شغال منحاولش نتصل بالخدمة خالص
+  const killed = await deps.redis.get("flags:recs_disabled").catch(() =&gt; null);
+  if (killed === "1") return { items: await popular(deps), degraded: true, source: "popular-cache", reason: "kill-switch" };
+
+  try {
+    const r = await fetch(`${deps.recsUrl}/recs/${userId}`, { signal: AbortSignal.timeout(deps.budgetMs) });
+    if (!r.ok) throw new Error(`recs ${r.status}`);
+    return { items: (await r.json()) as string[], degraded: false, source: "live" };
+  } catch (err) {
+    const reason = (err as Error).name === "TimeoutError" ? "timeout" : "unavailable";
+    const items = await popular(deps).catch(() =&gt; null);
+    if (items &amp;&amp; items.length &gt; 0) return { items, degraded: true, source: "popular-cache", reason };
+    return { items: STATIC_ITEMS, degraded: true, source: "static", reason };
+  }
+}
+
+async function popular(deps: RecsDeps): Promise&lt;string[]&gt; {
+  return deps.redis.zrevrange("popular:products", 0, 4);
+}</code></pre>
+<pre data-file="src/l24-p4-fallback.test.ts"><code class="language-typescript">import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { after, before, test } from "node:test";
+import { Redis } from "ioredis";
+import pg from "pg";
+import { privatePort, serve, sleep, type Served } from "./lab.ts";
+import { createPrimary, stopAll, stopNode } from "./pg-cluster.mjs";
+import { getRecommendations, type RecsDeps } from "./l24-p4-fallback.ts";
+
+// القاعدة: الـ port بيتقرا من ملف الـ helper وبيتفحص قبل أي connection
+const redisPort = privatePort(readFileSync("redis.port", "utf8").trim());
+const redis = new Redis({ host: "127.0.0.1", port: redisPort, maxRetriesPerRequest: 1 });
+
+let recs: Served;
+let recsMode: "ok" | "down" | "hang" = "ok";
+let recsCalls = 0;
+let cluster: Awaited&lt;ReturnType&lt;typeof createPrimary&gt;&gt;;
+let pool: pg.Pool;
+
+before(async () =&gt; {
+  recs = await serve(async (_req, res) =&gt; {
+    recsCalls++;
+    if (recsMode === "down") { res.statusCode = 503; res.end(); return; }
+    if (recsMode === "hang") { await sleep(2000); }
+    if (!res.destroyed) res.end(JSON.stringify(["sku-for-you-1", "sku-for-you-2"]));
+  });
+  await redis.del("flags:recs_disabled", "popular:products");
+  await redis.zadd("popular:products", 90, "sku-popular-1", 70, "sku-popular-2");
+  cluster = await createPrimary({});
+  pool = new pg.Pool({ host: "127.0.0.1", port: privatePort(cluster.port), user: "app", database: "postgres", max: 2, connectionTimeoutMillis: 1000 });
+  await pool.query("create table if not exists product_stats(sku text primary key, sold int)");
+  await pool.query("insert into product_stats values ('sku-a', 5) on conflict do nothing");
+});
+
+after(async () =&gt; {
+  await recs.close();
+  await redis.quit();
+  await pool.end().catch(() =&gt; {});
+  await stopAll(cluster);
+});
+
+const deps = (): RecsDeps =&gt; ({ recsUrl: recs.url, redis, budgetMs: 150 });
+
+test("healthy: live recommendations, not degraded", async () =&gt; {
+  recsMode = "ok";
+  const r = await getRecommendations("u1", deps());
+  assert.deepEqual(r, { items: ["sku-for-you-1", "sku-for-you-2"], degraded: false, source: "live" });
+});
+
+test("recs returns 503: popular items from Redis, degraded true", async () =&gt; {
+  recsMode = "down";
+  const r = await getRecommendations("u1", deps());
+  assert.equal(r.degraded, true);
+  assert.equal(r.source, "popular-cache");
+  assert.deepEqual(r.items, ["sku-popular-1", "sku-popular-2"]);
+});
+
+test("recs hangs: fallback answers within the budget", async () =&gt; {
+  recsMode = "hang";
+  const t0 = performance.now();
+  const r = await getRecommendations("u1", deps());
+  const ms = performance.now() - t0;
+  assert.equal(r.reason, "timeout");
+  assert.ok(ms &lt; 300, `took ${ms} ms`);
+  console.log(`  fallback after a hang took ≈${ms.toFixed(0)} ms (budget 150 ms + Redis)`);
+});
+
+test("kill switch: recs is not called at all", async () =&gt; {
+  recsMode = "ok";
+  await redis.set("flags:recs_disabled", "1");
+  recsCalls = 0;
+  const r = await getRecommendations("u1", deps());
+  assert.equal(recsCalls, 0);
+  assert.equal(r.reason, "kill-switch");
+  await redis.del("flags:recs_disabled");
+});
+
+test("recs and Redis both down: static list, never a 500", async () =&gt; {
+  recsMode = "down";
+  const dead = new Redis({ host: "127.0.0.1", port: redisPort, lazyConnect: true, enableOfflineQueue: false, maxRetriesPerRequest: 0 });
+  const r = await getRecommendations("u1", { recsUrl: recs.url, redis: dead, budgetMs: 150 });
+  dead.disconnect();
+  assert.equal(r.source, "static");
+  assert.equal(r.degraded, true);
+});
+
+test("bad design: the fallback reads the same failed Postgres", async () =&gt; {
+  const live = () =&gt; pool.query("select sku from product_stats order by sold desc limit 5");
+  const fallback = () =&gt; pool.query("select sku from product_stats limit 5");
+  assert.equal((await live()).rowCount, 1);
+  stopNode(cluster, "primary", "immediate");
+  await assert.rejects(live());
+  await assert.rejects(fallback());
+  console.log("  both the query and its fallback failed: the fallback shares the failure");
+});</code></pre>
+<pre><code class="language-plaintext">✔ healthy: live recommendations, not degraded (5171.039ms)
+✔ recs returns 503: popular items from Redis, degraded true (3.4509ms)
+  fallback after a hang took ≈164 ms (budget 150 ms + Redis)
+✔ recs hangs: fallback answers within the budget (164.1509ms)
+✔ kill switch: recs is not called at all (1.593ms)
+✔ recs and Redis both down: static list, never a 500 (3.0121ms)
+  both the query and its fallback failed: the fallback shares the failure
+✔ bad design: the fallback reads the same failed Postgres (135.4444ms)
+ℹ tests 6
+ℹ pass 6
+ℹ fail 0</code></pre>
+  <div class="ar-note">الـ output من <code>node --test</code> على Redis حقيقي و Postgres حقيقي: 6 tests عدّوا. <code>healthy</code> بيجيب live. <code>recs returns 503</code> بيرجع popular من Redis و degraded. <code>recs hangs</code> خلص في حوالي 164ms (ميزانية 150ms + Redis). <code>kill switch</code> الـ recsCalls فضل صفر. <code>both down</code> رجع الـ static list. <code>bad design</code>: الاتنين فشلوا مع بعض لأن الـ fallback بيقرا من نفس الـ Postgres الواقع.</div>
+
+<pre data-file="src/l24-p4-ui.tsx"><code class="language-tsx">import { renderToStaticMarkup } from "react-dom/server";
+
+type Recs = { items: string[]; degraded: boolean; source: string };
+
+// الـ UI بيقرا الـ degraded: بيغيّر العنوان بدل ما يدّعي إنها مخصوصة ليك
+function RecsRail({ recs }: { recs: Recs }) {
+  return (
+    &lt;section&gt;
+      &lt;h3&gt;{recs.degraded ? "Popular right now" : "Recommended for you"}&lt;/h3&gt;
+      &lt;ul&gt;{recs.items.map((sku) =&gt; &lt;li key={sku}&gt;{sku}&lt;/li&gt;)}&lt;/ul&gt;
+      {recs.degraded &amp;&amp; &lt;small data-degraded="true"&gt;Personalised picks are temporarily unavailable.&lt;/small&gt;}
+    &lt;/section&gt;
+  );
+}
+
+const live: Recs = { items: ["sku-for-you-1"], degraded: false, source: "live" };
+const fallback: Recs = { items: ["sku-popular-1"], degraded: true, source: "popular-cache" };
+console.log(renderToStaticMarkup(&lt;RecsRail recs={live} /&gt;));
+console.log(renderToStaticMarkup(&lt;RecsRail recs={fallback} /&gt;));</code></pre>
+<pre><code class="language-plaintext">&lt;section&gt;&lt;h3&gt;Recommended for you&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;sku-for-you-1&lt;/li&gt;&lt;/ul&gt;&lt;/section&gt;
+&lt;section&gt;&lt;h3&gt;Popular right now&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;sku-popular-1&lt;/li&gt;&lt;/ul&gt;&lt;small data-degraded="true"&gt;Personalised picks are temporarily unavailable.&lt;/small&gt;&lt;/section&gt;</code></pre>
+  <div class="ar-note">الـ UI بيقرا <code>degraded</code>: نفس الـ component، السطر الأول عنوانه "Recommended for you"، والتاني "Popular right now" وتحته ملاحظة صغيرة. يعني الـ UI صادق مع اليوزر بدل ما يقول مخصوص ليك وهو popular.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ fallback هو اللي بترجعه لما dependency تقع. وهل تعمله ولا لأ ده قرار product، وبيعتمد على أهمية الـ dependency. للـ recommendations، الـ popular items إجابة كويسة. للـ search، الـ cached results كفاية. للـ tax مينفعش تخمن: تحصيل مبلغ غلط أسوأ من الفشل، فالقرار إما توقف الـ order وتقول كده، أو تقبله وتمسك الفاتورة لحد ما الضريبة تتحسب، وده محتاج legal و finance. خد القرار ده لكل dependency واكتبه.</p>
+    <p>الكود لازم يبيّن الـ degradation. الـ function فوق بتنادي الـ service الحقيقي بميزانية ضيقة، ولو فشل بتاخد popular items من Redis، ولو فشل بتاخد قايمة ثابتة جوه الكود، وكل response بيقول <code>degraded</code> وليه. والـ UI بيقرا الـ flag ده ويغيّر الكلام، عشان ميقولش "Recommended for you" فوق قايمة popularity. والـ <b>kill switch</b> (flag في Redis) بيتخطى الـ dependency خالص: في الـ run الـ <code>recsCalls</code> فضل صفر، لأن الـ flag بيتقرا قبل الـ call، وده اللي عايزه وقت الـ incident عشان توقف الـ traffic عن خدمة تعبانة.</p>
+    <p>أهم tests في الـ run هي اللي بتقتل حاجات. الـ fallbacks اللي ماتجربتش بتفشل، وغالبًا أول outage حقيقي. 6 tests حقيقية على Redis و Postgres شغالين: السليم بيرجع data حية؛ 503 من الـ recommendations بيرجع لـ Redis؛ recommendations معلقة بترجع fallback في حوالي 164ms (ميزانية 150ms + Redis)؛ الـ kill switch مبيناديش الـ service؛ وrecommendations و Redis الاتنين واقعين لسه بيرجعوا القايمة الثابتة. والسادس هو التصميم الغلط عن قصد: الـ "fallback" بيقرا من نفس الـ Postgres بتاع الـ query الأساسية، ولما Postgres يقع الاتنين بيفشلوا. الـ fallback لازم ميشاركش الفشل اللي بيغطيه.</p>
+    <div class="use"><b>فين هستخدمه في شغلي؟</b>
+      في صفحة product في Next.js: الـ Server Component بتنادي <code>getRecommendations</code> وتبعت <code>degraded</code> للـ client عشان يغير العنوان. وعلى الـ API: اعمل feature flag لكل dependency اختيارية عشان وقت الـ incident تضغط زرار واحد بدل deploy. وفي CI اعمل test بيوقف Redis فعلًا ويتأكد من الـ static list. الغلطة الشائعة: <code>catch { return [] }</code> من غير flag، فالصفحة بتظهر فاضية والمنتج مش عارف إن فيه degradation.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: a stale answer vs no answer</b>
+    Fallback data is stale by design. Recommendations from yesterday hurt nobody; cached prices or stock during checkout can cost you real money. Decide for each field how stale it may be, and mark it: <code>degraded</code>, <code>source</code>, age. Then a fallback that's becoming too old can return an error instead of pretending.
+    <div class="ar-note">الاختيار بين إجابة قديمة ومفيش إجابة: الـ fallback قديم بطبيعته. recommendations بتاعة امبارح ماتضرش حد، لكن الأسعار أو الـ stock الـ cached وقت الـ checkout ممكن تكلفك فلوس بجد. قرر لكل field قد إيه ينفع يبقى قديم وعلّم عليه: <code>degraded</code> و<code>source</code> وعمره. وساعتها الـ fallback اللي بقى قديم أوي يرجّع error بدل ما يتصنع.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Load shedding <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ Load shedding</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Load shedding is rejecting work you can't finish in time, on purpose, so the work you do accept stays fast. A real server (3 ms of CPU per request plus a small wait, its own process, capacity measured at about 340 requests/s) is driven open-loop from 50% to 200% of capacity for 6 seconds at each step, with a 1 s client timeout. Three modes: accept everything, reject when in-flight requests reach a limit, and reject when the event-loop delay p99 (<code>monitorEventLoopDelay</code>) goes over 100 ms.</p>
+    <p>The key metric is <b>goodput</b>, responses that came back successful within the deadline, not throughput. At 150% of capacity, accepting everything gave 215 good responses per second (42% of traffic) with 31% timing out and 26% refused at the connection level. The in-flight limit gave 321 per second (63%) with no timeouts at all: the 37% it turned away got a 503 in about 16 ms instead of waiting a full second. At 200%, accept-everything varied a lot between runs (208 and 303 good responses per second across two runs) and got its "failures" from <code>ECONNREFUSED</code> when the listen backlog overflowed on this Windows machine, while the in-flight limit stayed at 324. On Linux the backlog behaviour differs, so the exact mix isn't a promise, but the shape is.</p>
+    <p>The numbers show why a fast 503 beats a slow timeout from the caller's side too. At 150%, failed requests with no shedding waited about 1000 ms (the full client timeout), holding the caller's socket and its own timeout budget; shed requests were told in about 20 ms and carried <code>Retry-After: 1</code>, so a well-behaved client knows to wait instead of retrying now. The in-flight limit is the simplest admission check and reacts first. Event-loop delay catches CPU saturation that in-flight misses, but it reacts later (rejections took about 250 ms at 150%, because a rejection is also a turn of the delayed loop). A sensible server uses both: in-flight limit from Little's Law (limit ≈ capacity × target latency; 340/s × 150 ms ≈ 50), with loop delay as a backstop. Pick the limit so you don't reject healthy traffic at exactly 100% (here 40 rejected 10% at 100% load, a real cost). See the <a href="../../04-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html#p5">event-loop-delay shedding in 04 Node, lesson 25</a> and don't confuse loop lag with latency.</p>
+  </section>
+
+<pre data-file="src/l24-p5-goodput.ts"><code class="language-typescript">import { monitorEventLoopDelay } from "node:perf_hooks";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { burn, forkService, openLoop, percentile, serve, sleep } from "./lab.ts";
+
+export type Mode = "none" | "inflight" | "eventloop" | "priority";
+const LIMIT = 40;
+
+// الأولويات: كل نوع traffic ليه سقف من عدد الـ in-flight بيترفض بعده
+const PRIORITY_SHARE: Record&lt;string, number&gt; = { checkout: 1, browse: 0.7, bots: 0.4 };
+
+async function api(mode: Mode) {
+  let inflight = 0;
+  let lagP99 = 0;
+  const lag = monitorEventLoopDelay({ resolution: 5 });
+  lag.enable();
+  setInterval(() =&gt; { lagP99 = lag.percentile(99) / 1e6; lag.reset(); }, 100);
+
+  const server = await serve(async (req, res) =&gt; {
+    const kind = String(req.headers["x-priority"] ?? "browse");
+    const shed =
+      (mode === "inflight" &amp;&amp; inflight &gt;= LIMIT) ||
+      (mode === "eventloop" &amp;&amp; lagP99 &gt; 100) ||
+      (mode === "priority" &amp;&amp; inflight &gt;= LIMIT * (PRIORITY_SHARE[kind] ?? 0.4));
+    if (shed) {
+      // الرفض لازم يبقى أرخص بكتير من الشغل نفسه
+      res.statusCode = 503;
+      res.setHeader("Retry-After", "1");
+      res.end();
+      return;
+    }
+    inflight++;
+    await sleep(2); // استنى بسيطة زي DB round trip
+    burn(3); // شغل CPU حقيقي لكل request
+    inflight--;
+    if (!res.destroyed) res.end("ok");
+  });
+  process.send!({ port: Number(new URL(server.url).port) });
+}
+
+export interface StepResult { good: number; rejected: number; timedOut: number; connErrors: number; offered: number; goodMs: number[]; failMs: number[]; firstConnError?: string }
+
+export async function drive(url: string, rps: number, durationMs: number, priorityOf?: (i: number) =&gt; string): Promise&lt;StepResult&gt; {
+  const result: StepResult = { good: 0, rejected: 0, timedOut: 0, connErrors: 0, offered: 0, goodMs: [], failMs: [] };
+  const pending: Promise&lt;void&gt;[] = [];
+  await openLoop(rps, durationMs, (i) =&gt; {
+    result.offered++;
+    pending.push((async () =&gt; {
+      const t0 = performance.now();
+      try {
+        const headers = priorityOf ? { "x-priority": priorityOf(i) } : undefined;
+        const r = await fetch(url, { signal: AbortSignal.timeout(1000), headers });
+        await r.text();
+        const ms = performance.now() - t0;
+        if (r.ok) { result.good++; result.goodMs.push(ms); } else { result.rejected++; result.failMs.push(ms); }
+      } catch (err) {
+        // نميّز بين ⁦timeout (⁩استنينا ورجعنا فاضيين) و ⁦connection error (⁩السيرفر مقبلش أصلًا)
+        const e = err as Error &amp; { cause?: { code?: string } };
+        if (e.name === "TimeoutError") result.timedOut++;
+        else { result.connErrors++; result.firstConnError ??= e.cause?.code ?? e.name; }
+        result.failMs.push(performance.now() - t0);
+      }
+    })());
+  });
+  await Promise.all(pending);
+  return result;
+}
+
+async function measureCapacity(url: string) {
+  // المعايرة: closed-loop بـ 64 connection لمدة ثانيتين، ده أقصى اللي السيرفر بيقدر عليه هنا
+  let done = 0;
+  const until = performance.now() + 2000;
+  await Promise.all(Array.from({ length: 64 }, async () =&gt; {
+    while (performance.now() &lt; until) { await (await fetch(url)).text(); done++; }
+  }));
+  return Math.round(done / 2);
+}
+
+async function main() {
+  const probe = await forkService(fileURLToPath(import.meta.url), ["api", "none"]);
+  const capacity = await measureCapacity(probe.url);
+  await probe.stop();
+  console.log(`measured capacity ≈ ${capacity} requests/s (3 ms CPU + a small await per request, client timeout 1 s)\n`);
+
+  for (const mode of ["none", "inflight", "eventloop"] as Mode[]) {
+    const app = await forkService(fileURLToPath(import.meta.url), ["api", mode]);
+    console.log(`mode: ${mode}`);
+    for (const factor of [0.5, 1, 1.5, 2]) {
+      const seconds = 6;
+      const r = await drive(app.url, Math.round(capacity * factor), seconds * 1000);
+      const pct = (n: number) =&gt; ((n / r.offered) * 100).toFixed(0).padStart(3);
+      const fmt = (a: number[]) =&gt; (a.length ? `${percentile(a, 50).toFixed(0)} ms` : "-");
+      console.log(`  ${String(factor * 100).padStart(3)}%  goodput=${String(Math.round(r.good / seconds)).padStart(4)}/s  ok=${pct(r.good)}%  rejected=${pct(r.rejected)}%  timed out=${pct(r.timedOut)}%  conn errors=${pct(r.connErrors)}%${r.firstConnError ? ` (${r.firstConnError})` : ""}   ok p50=${fmt(r.goodMs).padStart(8)}  failure p50=${fmt(r.failMs).padStart(8)}`);
+      await sleep(1500);
+    }
+    await app.stop();
+  }
+}
+
+const isMain = process.argv[1] &amp;&amp; import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  if (process.argv[2] === "api") await api(process.argv[3] as Mode);
+  else await main();
+}</code></pre>
+<pre><code class="language-plaintext">measured capacity ≈ 340 requests/s (3 ms CPU + a small await per request, client timeout 1 s)
+
+mode: none
+   50%  goodput= 170/s  ok=100%  rejected=  0%  timed out=  0%  conn errors=  0%   ok p50=   19 ms  failure p50=       -
+  100%  goodput= 339/s  ok=100%  rejected=  0%  timed out=  0%  conn errors=  0%   ok p50=  406 ms  failure p50= 1002 ms
+  150%  goodput= 215/s  ok= 42%  rejected=  0%  timed out= 31%  conn errors= 26% (ECONNREFUSED)   ok p50=  496 ms  failure p50= 1000 ms
+  200%  goodput= 303/s  ok= 45%  rejected=  0%  timed out= 13%  conn errors= 42% (ECONNREFUSED)   ok p50=  789 ms  failure p50=    1 ms
+mode: inflight
+   50%  goodput= 170/s  ok=100%  rejected=  0%  timed out=  0%  conn errors=  0%   ok p50=   19 ms  failure p50=       -
+  100%  goodput= 305/s  ok= 90%  rejected= 10%  timed out=  0%  conn errors=  0%   ok p50=  140 ms  failure p50=    7 ms
+  150%  goodput= 321/s  ok= 63%  rejected= 37%  timed out=  0%  conn errors=  0%   ok p50=  142 ms  failure p50=   16 ms
+  200%  goodput= 324/s  ok= 48%  rejected= 52%  timed out=  0%  conn errors=  0%   ok p50=  148 ms  failure p50=   22 ms
+mode: eventloop
+   50%  goodput= 170/s  ok=100%  rejected=  0%  timed out=  0%  conn errors=  0%   ok p50=   19 ms  failure p50=       -
+  100%  goodput= 297/s  ok= 87%  rejected= 13%  timed out=  0%  conn errors=  0%   ok p50=  125 ms  failure p50=   76 ms
+  150%  goodput= 317/s  ok= 62%  rejected= 29%  timed out=  9%  conn errors=  0%   ok p50=  346 ms  failure p50=  263 ms
+  200%  goodput= 290/s  ok= 43%  rejected= 57%  timed out=  0%  conn errors=  0%   ok p50=  186 ms  failure p50=  138 ms</code></pre>
+  <div class="ar-note">كل بلوك mode، وكل سطر مستوى حمل من السعة (حوالي 340 في الثانية). في <code>none</code>: عند 150% الـ goodput بقى 215 في الثانية، 42% ok و31% timeouts و26% connection errors. عند 200%: 303، و45% ok و42% ECONNREFUSED. في <code>inflight</code>: عند 150% الـ goodput 321 و63% ok و0% timeouts و37% rejected. عند 200%: 324. في <code>eventloop</code>: قريب، بس الرفض بطيء (failure p50 ≈263ms). آخر عمودين: p50 للنجاحات و p50 للفشل، وفي <code>none</code> عند 150% الفشل بياخد حوالي 1000ms، وفي <code>inflight</code> بياخد حوالي 16 لـ 22ms. الأرقام ≈ على Windows تحت ضغط، وعند 200% الـ <code>none</code> اتغير بين run وتاني (208 و303 في الثانية).</div>
+
+  <table>
+    <tr><th>Load</th><th>Accept everything</th><th>In-flight limit</th></tr>
+    <tr><td>50%</td><td>170/s, 100% ok, p50 19 ms</td><td>170/s, 100% ok, p50 19 ms</td></tr>
+    <tr><td>100%</td><td>339/s, 100% ok, p50 406 ms</td><td>305/s, 90% ok, 10% rejected fast, p50 140 ms</td></tr>
+    <tr><td>150%</td><td>215/s, 42% ok, 31% timed out, 26% refused</td><td>321/s, 63% ok, 0% timeouts, rejected in ≈16 ms</td></tr>
+    <tr><td>200%</td><td>208–303/s across runs, 32–45% ok</td><td>324/s, 48% ok, 0% timeouts, rejected in ≈22 ms</td></tr>
+  </table>
+  <div class="ar-note">صف صف: عند 50% الاتنين زي بعض. عند 100% قبول الكل نجّح 100% بس p50 حوالي 406ms، والـ in-flight limit 90% ok و10% رفض بسرعة و p50 حوالي 140ms: ده ثمن الـ limit المحافظ (40). عند 150% قبول الكل نجّح 42% بس (31% timeouts و26% connection refused)، والـ limit 63% من غير timeouts ورفض في حوالي 16ms. عند 200% قبول الكل اتراوح بين 208 و303 في الثانية بنسبة نجاح 32 لـ 45%، والـ limit 324 ونسبة 48% ورفض في حوالي 22ms.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ load shedding هو إنك ترفض شغل مش هتلحق تخلصه في وقته، بقصد، عشان الشغل اللي بتقبله يفضل سريع. سيرفر حقيقي (3ms CPU لكل request وانتظار صغير، process لوحده، والسعة اتقاست حوالي 340 request في الثانية) بنحمّله open-loop من 50% لـ 200% من السعة، 6 ثواني لكل خطوة، بـ timeout للـ client ثانية. تلات modes: تقبل كله، ترفض لما الـ in-flight يوصل حد، وترفض لما event-loop delay p99 (<code>monitorEventLoopDelay</code>) يعدي 100ms.</p>
+    <p>المقياس المهم <b>goodput</b>: responses رجعت ناجحة جوه الـ deadline، مش الـ throughput. عند 150% من السعة، قبول الكل إدّى 215 نجاح في الثانية (42% من الـ traffic)، و31% timeouts و26% اترفضت على مستوى الـ connection. والـ in-flight limit إدّى 321 في الثانية (63%) من غير ولا timeout، والـ 37% اللي اترفضوا خدوا 503 في حوالي 16ms بدل ما يستنوا ثانية كاملة. عند 200% قبول الكل اتغير كتير بين الـ runs (208 و303 نجاح في الثانية في run-ين) وفشله جه من <code>ECONNREFUSED</code> لما الـ listen backlog اتملى على Windows، والـ in-flight limit فضل عند 324. وفي Linux تصرف الـ backlog مختلف، فالتفاصيل مش وعد، بس الشكل هو هو.</p>
+    <p>الأرقام بتوضح ليه 503 سريع أحسن من timeout بطيء من ناحية الـ caller كمان. عند 150% الطلبات الفاشلة من غير shedding استنت حوالي 1000ms (كل الـ client timeout)، وهي ماسكة socket الـ caller والميزانية بتاعته. وطلبات الـ shed اتقال لها في حوالي 20ms ومعاها <code>Retry-After: 1</code>، فالـ client المحترم يعرف يستنى بدل ما يعيد دلوقتي. والـ in-flight limit هو أبسط فحص دخول وبيتحرك الأول. والـ event-loop delay بيمسك شبع الـ CPU اللي الـ in-flight مش بيشوفه، بس بيتحرك متأخر (الرفض أخد حوالي 250ms عند 150%، لأن الرفض نفسه دورة في الـ loop المتأخر). السيرفر الكويس بيستخدم الاتنين: in-flight limit من قانون Little (الحد ≈ السعة × الـ latency المستهدفة؛ 340/s × 150ms ≈ 50)، والـ loop delay كـ backstop. واختار الحد عشان مترفضش traffic سليم عند 100% بالظبط (هنا 40 رفض 10% عند 100%، وده ثمن حقيقي). وشوف <a href="../../04-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html#p5">shedding بـ event-loop delay في درس 25 في Node</a>، ومتخلطش بين الـ loop lag والـ latency.</p>
+    <div class="use"><b>فين هستخدمه في شغلي؟</b>
+      Middleware في أول الـ API: <code>if (inflight &gt;= LIMIT) return 503</code> مع <code>Retry-After</code>، قبل أي DB call. والـ LIMIT من p99 المستهدف × السعة بعد load test. وعلى الـ Next.js BFF نفس الفكرة على الـ route handlers. والـ client عندك (mobile أو frontend) يحترم <code>Retry-After</code> ومتعملش retry فوري. الغلطة الشائعة: الـ handler اللي شغله كله sync مبيبانش في الـ in-flight (كل request بيدخل ويخرج قبل اللي بعده)، فالـ counter بيفضل 1 والـ event loop مقفول، وعشان كده الـ event-loop delay لازم يبقى backstop.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question (section exit test Q5): explain circuit breaker, bulkhead and load shedding, and when each one applies.</b>
+    A circuit breaker stops calling a dependency that is failing, so it fails fast and the dependency recovers: use it per dependency. A bulkhead gives each workload its own pool or concurrency limit so one can't starve the others: use it when workloads share a resource. Load shedding rejects excess requests at the server's own door with a fast 503, so the accepted ones still finish in time: use it when your own service is the one out of capacity.
+    <div class="ar-note">سؤال اختبار الخروج: اشرح circuit breaker و bulkhead و load shedding وإمتى كل واحد. الإجابة: الـ circuit breaker بيبطل ينادي dependency بتفشل، فبيفشل بسرعة والـ dependency تتعافى: استخدمه لكل dependency. الـ bulkhead بيدّي كل workload pool أو concurrency limit لوحده عشان واحد ميخنقش الباقي: استخدمه لما workloads بتشارك resource. والـ load shedding بيرفض الطلبات الزيادة على باب السيرفر بـ 503 سريع عشان اللي اتقبل يخلص في وقته: استخدمه لما الخدمة بتاعتك هي اللي ناقصها سعة.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Priority shedding <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ Shedding بالأولوية</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Not all requests are worth the same. A plain in-flight limit sheds everyone equally: at 150% load, checkout, browse and bots each succeeded about 63%. Give each class its own threshold (bots shed at 40% of the limit, browse at 70%, checkout up to 100%) and at the same 150% load checkout stays at 100%, browse gets 73.4% and bots 25.6%. The revenue path survives because the system drops the least valuable work first.</p>
+    <p>Priority is assigned at the gateway, from the route and the user agent, and it overwrites anything the client sent. The moment clients can set <code>x-priority: checkout</code>, they will.</p>
+    <p>Queue discipline matters as much as admission. With a queue in front of workers, plain FIFO under overload serves the oldest requests first, which are exactly the ones whose clients have already timed out: in the run below only 24% of requests got a good response (72 per second) and 1119 of 1558 served requests were dead work. A queue with a <b>deadline check</b> (skip anything that can't finish before its client gives up) got 247 per second, 82%. <b>Adaptive LIFO</b>, popularised by Facebook's "Fail at Scale" article, stays FIFO in normal conditions and flips to newest-first once requests have been queuing longer than a threshold. It got 256 per second, 85%, with an ok-median of 49 ms against 294 ms for the deadline queue, because the newest request is the one most likely still being waited for. The cost is that old requests starve (the 15% that timed out), which is the right trade when they'd time out anyway. Keep the FIFO + deadline variant if per-request fairness matters more.</p>
+  </section>
+
+<pre data-file="src/l24-p6-priority.ts"><code class="language-typescript">import { strict as assert } from "node:assert";
+import { fileURLToPath } from "node:url";
+import { forkService, sleep } from "./lab.ts";
+
+// الـ gateway هو اللي بيحدد الأولوية من الـ route، ومبيصدقش الـ header اللي جاي من برّه
+export function assignPriority(path: string, userAgent: string): "checkout" | "browse" | "bots" {
+  if (/bot|crawler|spider/i.test(userAgent)) return "bots";
+  if (path.startsWith("/api/checkout") || path.startsWith("/api/payments")) return "checkout";
+  return "browse";
+}
+
+assert.equal(assignPriority("/api/checkout/submit", "Mozilla/5.0"), "checkout");
+assert.equal(assignPriority("/api/products/42", "Mozilla/5.0"), "browse");
+assert.equal(assignPriority("/api/checkout/submit", "GoodBot/1.0"), "bots");
+console.log("gateway rules: route decides the priority, a spoofed client header cannot raise it");
+
+const server = fileURLToPath(new URL("./l24-p5-goodput.ts", import.meta.url));
+
+async function capacity(url: string): Promise&lt;number&gt; {
+  let done = 0;
+  const until = performance.now() + 2000;
+  await Promise.all(Array.from({ length: 64 }, async () =&gt; {
+    while (performance.now() &lt; until) { await (await fetch(url)).text(); done++; }
+  }));
+  return Math.round(done / 2);
+}
+
+const probe = await forkService(server, ["api", "none"]);
+const cap = await capacity(probe.url);
+await probe.stop();
+console.log(`measured capacity ≈ ${cap} requests/s\n`);
+
+// الخلطة: 10% checkout، 60% browse، 30% bots، بنفس الـ seed
+const kinds = ["checkout", "browse", "browse", "browse", "browse", "browse", "browse", "bots", "bots", "bots"];
+const priorityOf = (i: number) =&gt; kinds[i % kinds.length]!;
+
+async function byClass(mode: "inflight" | "priority") {
+  const app = await forkService(server, ["api", mode]);
+  const stats = new Map&lt;string, { ok: number; total: number }&gt;();
+  const seconds = 8;
+  const rps = Math.round(cap * 1.5);
+  const url = app.url;
+  const pending: Promise&lt;void&gt;[] = [];
+  const started = performance.now();
+  let sent = 0;
+  await (async () =&gt; {
+    for (;;) {
+      const elapsed = performance.now() - started;
+      if (elapsed &gt;= seconds * 1000) return;
+      const due = Math.floor((elapsed * rps) / 1000);
+      while (sent &lt; due) {
+        const kind = priorityOf(sent++);
+        pending.push((async () =&gt; {
+          const s = stats.get(kind) ?? { ok: 0, total: 0 };
+          stats.set(kind, s);
+          s.total++;
+          const r = await fetch(url, { headers: { "x-priority": kind }, signal: AbortSignal.timeout(1000) }).catch(() =&gt; null);
+          await r?.text();
+          if (r?.ok) s.ok++;
+        })());
+      }
+      await sleep(4);
+    }
+  })();
+  await Promise.all(pending);
+  await app.stop();
+  console.log(`mode: ${mode}, offered ${rps} rps (150% of capacity)`);
+  for (const kind of ["checkout", "browse", "bots"]) {
+    const s = stats.get(kind)!;
+    console.log(`  ${kind.padEnd(9)} ok=${((s.ok / s.total) * 100).toFixed(1).padStart(5)}%  (${s.ok}/${s.total})`);
+  }
+}
+
+await byClass("inflight");
+await byClass("priority");</code></pre>
+<pre><code class="language-plaintext">gateway rules: route decides the priority, a spoofed client header cannot raise it
+measured capacity ≈ 335 requests/s
+
+mode: inflight, offered 503 rps (150% of capacity)
+  checkout  ok= 63.0%  (254/403)
+  browse    ok= 62.9%  (1519/2414)
+  bots      ok= 62.7%  (756/1206)
+mode: priority, offered 503 rps (150% of capacity)
+  checkout  ok=100.0%  (403/403)
+  browse    ok= 73.4%  (1772/2413)
+  bots      ok= 25.6%  (309/1206)</code></pre>
+  <div class="ar-note">السطر الأول: قواعد الـ gateway بتتأكد إن الأولوية من الـ route، والـ client ميقدرش يعليها. وبعدين <code>inflight</code> عند 150%: checkout و browse و bots كلهم حوالي 63%. و<code>priority</code>: checkout 100% (403/403)، browse 73.4%، bots 25.6%.</div>
+
+<pre data-file="src/l24-p6-queue.ts"><code class="language-typescript">import type { ServerResponse } from "node:http";
+import { openLoop, percentile, serve, sleep } from "./lab.ts";
+
+const SLOTS = 8, SERVICE_MS = 30, CLIENT_TIMEOUT_MS = 300, RPS = 300, SECONDS = 6;
+type Discipline = "FIFO" | "FIFO + deadline" | "adaptive LIFO";
+type Job = { res: ServerResponse; arrived: number };
+
+async function run(discipline: Discipline) {
+  const queue: Job[] = [];
+  let busy = 0, served = 0, deadWork = 0, dropped = 0;
+  const now = () =&gt; performance.now();
+
+  // بياخد job حسب الـ discipline، و LIFO بيتفعل بس لما الـ queue يبدأ يتكدس
+  const take = (): Job | undefined =&gt; {
+    if (discipline === "adaptive LIFO" &amp;&amp; queue[0] &amp;&amp; now() - queue[0].arrived &gt; 100) return queue.pop();
+    return queue.shift();
+  };
+
+  const pump = () =&gt; {
+    while (busy &lt; SLOTS &amp;&amp; queue.length &gt; 0) {
+      const job = take()!;
+      const age = now() - job.arrived;
+      // الـ deadline: لو الـ job مش هيلحق يخلص قبل ما الـ client يستسلم، منشتغلش عليه
+      if (discipline === "FIFO + deadline" &amp;&amp; age + SERVICE_MS &gt; CLIENT_TIMEOUT_MS) {
+        dropped++;
+        job.res.statusCode = 503;
+        job.res.end();
+        continue;
+      }
+      busy++;
+      void sleep(SERVICE_MS).then(() =&gt; {
+        busy--; served++;
+        if (job.res.destroyed) deadWork++;
+        else job.res.end("ok");
+        pump();
+      });
+    }
+  };
+
+  const orders = await serve((_req, res) =&gt; {
+    queue.push({ res, arrived: now() });
+    pump();
+  });
+
+  const okMs: number[] = [];
+  let ok = 0, rejected = 0, timedOut = 0;
+  const pending: Promise&lt;void&gt;[] = [];
+  await openLoop(RPS, SECONDS * 1000, () =&gt; {
+    pending.push((async () =&gt; {
+      const t0 = now();
+      try {
+        const r = await fetch(orders.url, { signal: AbortSignal.timeout(CLIENT_TIMEOUT_MS) });
+        await r.text();
+        if (r.ok) { ok++; okMs.push(now() - t0); } else rejected++;
+      } catch { timedOut++; }
+    })());
+  });
+  await Promise.all(pending);
+  await orders.close();
+  const total = ok + rejected + timedOut;
+  const p50 = okMs.length ? `${percentile(okMs, 50).toFixed(0)} ms` : "-";
+  console.log(`${discipline.padEnd(16)} goodput=${String(Math.round(ok / SECONDS)).padStart(4)}/s  ok=${((ok / total) * 100).toFixed(0).padStart(3)}%  timed out=${((timedOut / total) * 100).toFixed(0).padStart(3)}%  rejected=${((rejected / total) * 100).toFixed(0).padStart(3)}%  ok p50=${p50.padStart(7)}  dead work=${deadWork} of ${served} served (${Math.round(served / SECONDS)}/s), dropped=${dropped}`);
+}
+
+console.log(`offered ${RPS} rps to 8 workers of ${SERVICE_MS} ms, client timeout ${CLIENT_TIMEOUT_MS} ms (capacity = served per second below)`);
+for (const d of ["FIFO", "FIFO + deadline", "adaptive LIFO"] as Discipline[]) await run(d);</code></pre>
+<pre><code class="language-plaintext">offered 300 rps to 8 workers of 30 ms, client timeout 300 ms (capacity = served per second below)
+FIFO             goodput=  72/s  ok= 24%  timed out= 76%  rejected=  0%  ok p50= 175 ms  dead work=1119 of 1558 served (260/s), dropped=0
+FIFO + deadline  goodput= 247/s  ok= 82%  timed out=  4%  rejected= 13%  ok p50= 294 ms  dead work=3 of 1558 served (260/s), dropped=241
+adaptive LIFO    goodput= 256/s  ok= 85%  timed out= 15%  rejected=  0%  ok p50=  49 ms  dead work=2 of 1539 served (257/s), dropped=0</code></pre>
+  <div class="ar-note">الـ <code>FIFO</code>: الـ goodput 72 في الثانية و24% بس ok، و1119 من 1558 شغل ميت (الـ clients مشيوا). الـ <code>FIFO + deadline</code>: 247 في الثانية و82% ok، و13% rejected، و p50 للنجاحات 294ms (قريب من الـ deadline). الـ <code>adaptive LIFO</code>: 256 في الثانية و85% ok و p50 بـ 49ms، و15% timeouts (الطلبات القديمة اللي اتسابت).</div>
+
+  <pre class="diagram">
+FIFO under overload                    Adaptive LIFO (flips when queue age > 100 ms)
+
+  queue:  [old]---[old]---[new]          queue:  [old]---[old]---[new]
+            ^                                                      ^
+            served first, client           served first, client
+            already gave up                still waiting
+  </pre>
+  <div class="ar-note">في الـ FIFO وقت الـ overload، السيرفر بيشتغل على أقدم طلب، وصاحبه استسلم خلاص. في الـ adaptive LIFO، لما الطلبات تقعد في الطابور أكتر من 100ms، السيرفر بيقلب ويشتغل على الأحدث، وصاحبه لسه مستني. والقديم يفضل مستني أو يـ timeout، وده أحسن ما يتشغل عليه وهو ميت.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>مش كل الطلبات قيمتها واحدة. الـ in-flight limit العادي بيرمي الكل بالتساوي: عند 150% الـ checkout والـ browse والـ bots كلهم حوالي 63%. لما تدّي كل نوع حد لوحده (الـ bots بيترفضوا عند 40% من الحد، والـ browse عند 70%، والـ checkout لحد 100%)، عند نفس الـ 150% الـ checkout بيفضل 100%، والـ browse 73.4%، والـ bots 25.6%. مسار الفلوس بيعيش لأن النظام بيرمي الأقل قيمة الأول.</p>
+    <p>الأولوية بتتحدد على الـ gateway، من الـ route والـ user agent، وبتكتب فوق أي حاجة الـ client بعتها. لحظة ما الـ clients يقدروا يبعتوا <code>x-priority: checkout</code>، هيبعتوها.</p>
+    <p>وترتيب الطابور مهم زي القبول. لو عندك queue قدام workers، الـ FIFO وقت الـ overload بيخدم أقدم طلبات، وهي بالظبط اللي أصحابها استسلموا: في الـ run 24% بس من الطلبات خدوا رد سليم (72 في الثانية) و1119 من 1558 كانوا شغل ميت. الـ queue بـ <b>deadline check</b> (اتخطى أي حاجة مش هتخلص قبل ما صاحبها يستسلم) جاب 247 في الثانية و82%. والـ <b>adaptive LIFO</b> (من مقال Fail at Scale بتاع فيسبوك) بيفضل FIFO في الوضع العادي، ويقلب للأحدث أولًا لما الطلبات تقعد في الطابور أكتر من حد معين: جاب 256 في الثانية و85%، و median للنجاحات بـ 49ms مقابل 294ms للـ deadline queue، لأن أحدث طلب هو الأقرب إن صاحبه لسه مستني. وثمن ده إن الطلبات القديمة بتتساب (الـ 15% اللي عملوا timeout)، وده اختيار سليم لأنهم كانوا هيـ timeout على أي حال. استخدم الـ FIFO + deadline لو العدالة بين الطلبات أهم.</p>
+    <div class="use"><b>فين هستخدمه في شغلي؟</b>
+      على الـ API gateway (Kong أو NGINX أو Next.js middleware) حدد priority من الـ route: <code>/checkout</code> و<code>/payments</code> عالي، <code>/products</code> متوسط، الـ crawlers والـ exports واطي، وابعتها كـ header داخلي بعد ما تمسح اللي جاي من برّه. وفي الـ queue بتاعة الـ jobs: حط <code>deadline</code> و drop أو LIFO للـ jobs اللي اليوزر لسه مستنيها. الغلطة الشائعة: تصدق <code>x-priority</code> اللي جاي من الـ mobile app، أو queue بلا deadline وقت الضغط.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: during overload, your queue is FIFO. What goes wrong, and what would you change?</b>
+    FIFO spends the server's time on the oldest requests, whose clients have probably timed out, so capacity is used but nobody benefits (in my run, 72 good responses per second and 72% dead work). Add a deadline so expired work is dropped before it runs, or adaptive LIFO so the freshest requests get served first; both restored about 250 good responses per second.
+    <div class="ar-note">السؤال: وقت الـ overload والـ queue بتاعك FIFO، إيه اللي بيبوظ وهتغير إيه؟ الإجابة: الـ FIFO بيصرف وقت السيرفر على أقدم طلبات وأصحابها غالبًا عملوا timeout، فالسعة بتتصرف ومحدش بيستفيد (في الـ run عندي 72 رد سليم في الثانية و72% شغل ميت). ضيف deadline بحيث الشغل المنتهي يتشال قبل ما يتشغل، أو adaptive LIFO بحيث الأحدث يتخدم الأول، والاتنين رجّعوا حوالي 250 رد سليم في الثانية.</div>
+  </div>
+
+  <!-- ===================== PART 7 ===================== -->
+  <h2 id="p7">Part 7 — Which when <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 7 — إيه إمتى</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>These patterns overlap, and the fastest way to tell them apart is by asking what each one protects and from whom. A real run below puts them all in one request path (300 rps for 10 s, a downstream that hangs for 4 s) and counts which layer dealt with what: the rate limiter handled the noisy tenant (681), the shedder protected the process (133), the bulkhead capped concurrency on the dependency (99), the breaker stopped calls during the outage (770), one retry was tried 93 times, and 75 timed out. They are complementary: no single one would have stopped all of that. The wrapping order of breaker, retry and timeout is covered with code in <a href="../../08-Design-Patterns/lessons/23-circuit-breaker-bulkhead-composition.html">08 Design Patterns, lesson 23</a>; here the order is shown as the request path.</p>
+  </section>
+
+  <table>
+    <tr><th>Pattern</th><th>Protects against</th><th>Who it protects</th><th>Where it sits</th></tr>
+    <tr><td>Timeout</td><td>One call hanging forever</td><td>The caller's sockets and slots</td><td>Every outbound call, one budget across hops</td></tr>
+    <tr><td>Retry</td><td>Transient failures</td><td>The end user's success rate</td><td>One layer only, under a budget</td></tr>
+    <tr><td>Circuit breaker</td><td>A dependency that keeps failing</td><td>Both caller (fails fast) and dependency (recovers)</td><td>In the client, per dependency or endpoint</td></tr>
+    <tr><td>Bulkhead</td><td>One workload exhausting a shared resource</td><td>Unrelated traffic in the same service</td><td>A pool, semaphore or process per workload</td></tr>
+    <tr><td>Fallback</td><td>A dependency being down at all</td><td>The user experience</td><td>At the call site, after the failure</td></tr>
+    <tr><td>Load shedding</td><td>Total traffic above the server's capacity</td><td>The server and the requests it accepted</td><td>At the server's own door, before any work</td></tr>
+    <tr><td>Rate limiting</td><td>One client or tenant taking too much</td><td>Other clients (fairness)</td><td>At the gateway, per key (<a href="./25-rate-limiting-algorithms-distributed.html">lesson 25</a>)</td></tr>
+  </table>
+  <div class="ar-note">صف صف: الـ timeout بيحمي الـ caller من call معلقة، على كل call خارج بميزانية عبر الـ hops. الـ retry للفشل العابر، في طبقة واحدة بـ budget. الـ circuit breaker بيحمي الـ caller والـ dependency من الفشل المتكرر، في الـ client لكل dependency أو endpoint. الـ bulkhead بيحمي الـ traffic التاني من workload بياكل resource مشتركة، بـ pool أو semaphore أو process لكل workload. الـ fallback بيحمي تجربة اليوزر لما الـ dependency واقعة، عند مكان الـ call. الـ load shedding بيحمي السيرفر لما إجمالي الـ traffic يعدي السعة، على باب السيرفر قبل أي شغل. والـ rate limiting بيحمي الـ clients التانيين من client واحد واخد أكتر من حقه، على الـ gateway لكل key.</div>
+
+  <pre class="diagram">
+user request
+    |
+    v
+[ rate limit ]   per tenant/key at the gateway       --> 429 + Retry-After
+    |
+    v
+[ load shed ]    in-flight / event-loop delay         --> 503 + Retry-After (fast)
+    |
+    v
+[ route handler ]
+    |
+    +---> [ bulkhead ]  concurrency limit per dependency  --> reject, or fallback
+              |
+              v
+          [ circuit breaker ]  per dependency             --> fail fast / fallback
+              |
+              v
+          [ retry ]  one extra attempt, only if retryable (lesson 23)
+              |
+              v
+          [ timeout ]  from the remaining budget
+              |
+              v
+         downstream call
+  </pre>
+  <div class="ar-note">المسار من فوق لتحت: الـ rate limit أول حاجة على الـ gateway لكل tenant وبيرد 429. بعده الـ load shedding على باب السيرفر، 503 بسرعة. بعدها الـ handler، وكل call لـ dependency بيعدي على bulkhead ثم circuit breaker (يفشل بسرعة أو fallback) ثم retry (محاولة واحدة بس لو الخطأ retryable) ثم الـ timeout من الميزانية الباقية، وبعدها الـ call نفسه.</div>
+
+<pre data-file="src/l24-p7-path.ts"><code class="language-typescript">import CircuitBreaker from "opossum";
+import { openLoop, serve, sleep } from "./lab.ts";
+
+// الـ downstream: سليم 3 ثواني، بعدين بيعلّق 4 ثواني، وبعدين يرجع
+let hanging = false;
+const recs = await serve((_req, res) =&gt; { if (hanging) return; res.end("[]"); });
+
+const counts = { offered: 0, rateLimited: 0, shed: 0, bulkheadFull: 0, breakerRejected: 0, retried: 0, timedOut: 0, otherFail: 0, ok: 0 };
+
+// (1) طبقة الـ rate limit: حد لكل tenant، بيتشغّل أول حاجة قبل أي شغل
+const quota = new Map&lt;string, { tokens: number; last: number }&gt;();
+function allowTenant(tenant: string, perSec: number): boolean {
+  const now = performance.now();
+  const b = quota.get(tenant) ?? { tokens: perSec, last: now };
+  b.tokens = Math.min(perSec, b.tokens + ((now - b.last) / 1000) * perSec);
+  b.last = now;
+  quota.set(tenant, b);
+  if (b.tokens &lt; 1) return false;
+  b.tokens -= 1;
+  return true;
+}
+
+// (2) الـ load shedding: حد عام للـ in-flight على الـ process كله
+let inflight = 0;
+const SHED_AT = 30;
+
+// (3) الـ bulkhead: حد concurrency لكل dependency
+let recsActive = 0;
+const RECS_LIMIT = 25;
+
+// (4) الـ ⁦breaker (5)⁩ الـ timeout: الـ opossum بيلف الـ call، والـ timeout جوه الـ fetch
+const call = async () =&gt; {
+  const r = await fetch(recs.url, { signal: AbortSignal.timeout(200) });
+  await r.text();
+  if (!r.ok) throw new Error(String(r.status));
+};
+const breaker = new CircuitBreaker(call, { timeout: 250, errorThresholdPercentage: 50, volumeThreshold: 20, rollingCountTimeout: 2000, rollingCountBuckets: 10, resetTimeout: 1000 });
+
+async function handle(tenant: string, perSec: number) {
+  counts.offered++;
+  if (!allowTenant(tenant, perSec)) { counts.rateLimited++; return; }
+  if (inflight &gt;= SHED_AT) { counts.shed++; return; }
+  inflight++;
+  try {
+    // شغل قبل الـ dependency، زي DB read: بيخلي الـ in-flight يكبر قبل الـ bulkhead
+    await sleep(30);
+    if (recsActive &gt;= RECS_LIMIT) { counts.bulkheadFull++; return; }
+    recsActive++;
+    try {
+      // (6) الـ retry: محاولة واحدة زيادة بس، والرفض من الـ breaker ميتعملوش retry
+      for (let attempt = 1; attempt &lt;= 2; attempt++) {
+        try {
+          await breaker.fire();
+          counts.ok++;
+          return;
+        } catch (err) {
+          const e = err as NodeJS.ErrnoException;
+          if (e.code === "EOPENBREAKER") { counts.breakerRejected++; return; }
+          if (attempt === 2) { (e.name === "TimeoutError" || e.code === "ETIMEDOUT") ? counts.timedOut++ : counts.otherFail++; return; }
+          counts.retried++;
+          await sleep(Math.random() * 50);
+        }
+      }
+    } finally {
+      recsActive--;
+    }
+  } finally {
+    inflight--;
+  }
+}
+
+setTimeout(() =&gt; { hanging = true; }, 3000);
+setTimeout(() =&gt; { hanging = false; }, 7000);
+
+const pending: Promise&lt;void&gt;[] = [];
+await openLoop(300, 10_000, (i) =&gt; {
+  // فيه tenant واحد مزعج بيبعت أكتر من نص الطلبات وحصته محدودة
+  const noisy = i % 3 !== 0;
+  pending.push(handle(noisy ? "tenant-noisy" : "tenant-steady", noisy ? 120 : 200));
+});
+await Promise.all(pending);
+breaker.shutdown();
+await recs.close();
+
+console.log("real run: 300 rps for 10 s, downstream hangs from t=3 s to t=7 s");
+for (const [k, v] of Object.entries(counts)) console.log(`  ${k.padEnd(16)} ${v}`);</code></pre>
+<pre><code class="language-plaintext">real run: 300 rps for 10 s, downstream hangs from t=3 s to t=7 s
+  offered          2999
+  rateLimited      681
+  shed             133
+  bulkheadFull     99
+  breakerRejected  770
+  retried          93
+  timedOut         75
+  otherFail        0
+  ok               1241</code></pre>
+  <div class="ar-note">الـ output: من حوالي 3000 طلب: 681 الـ rate limiter رفضهم (الـ tenant المزعج)، 133 الـ shedding رفضهم، 99 الـ bulkhead رفضهم، 770 الـ breaker رفضهم وقت الـ outage، 93 retry، و75 timeouts، و1241 نجحوا. كل طبقة اتعاملت مع مشكلة مختلفة.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ patterns دي متداخلة، وأسرع طريقة تفرّق بينها إنك تسأل كل واحد بيحمي إيه ومن مين. الـ run الحقيقي فوق حاطط الكل في مسار request واحد (300 rps لمدة 10 ثواني، و downstream بيعلّق 4 ثواني) وبيعد كل طبقة اتعاملت مع إيه: الـ rate limiter مع الـ tenant المزعج (681)، والـ shedder حمى الـ process (133)، والـ bulkhead حدد الـ concurrency على الـ dependency (99)، والـ breaker وقف الـ calls وقت الـ outage (770)، وretry واحد اتجرب 93 مرة، و75 عملوا timeout. ودول مكملين لبعض: مفيش واحد لوحده كان هيوقف كل ده. ترتيب تغليف الـ breaker والـ retry والـ timeout مشروح بالكود في <a href="../../08-Design-Patterns/lessons/23-circuit-breaker-bulkhead-composition.html">درس 23 في الـ Design Patterns</a>، وهنا الترتيب موضح كمسار للـ request.</p>
+    <div class="use"><b>فين هستخدمه في شغلي؟</b>
+      وإنت بتراجع PR لـ service جديدة، امشي بالمسار ده زي checklist: فيه rate limit على الـ gateway؟ فيه shedding قبل أول await تقيل؟ الـ pool والـ semaphore لكل dependency اتحسبوا؟ الـ breaker لكل dependency ومقاس؟ الـ retry في طبقة واحدة؟ الـ timeout من ميزانية؟ والـ fallback متجرب؟ الغلطة الشائعة: تضيف retry و breaker و timeout من غير ما تحدد مين بيعمل إيه، فبيتعاركوا مع بعض (زي الـ retry جوه الـ breaker).
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: compare circuit breaker, bulkhead and load shedding in three sentences.</b>
+    A circuit breaker protects a caller from a dependency that keeps failing, by rejecting calls fast until a probe succeeds. A bulkhead partitions resources (pools or concurrency) so one dependency or workload can't starve the others. Load shedding protects the server from too much total traffic, by rejecting excess at the door so what it accepts still meets its deadline.
+    <div class="ar-note">السؤال: قارن الـ circuit breaker و bulkhead و load shedding في 3 جمل. الإجابة: الـ circuit breaker بيحمي caller من dependency بتفشل، بيرفض بسرعة لحد ما probe ينجح. الـ bulkhead بيقسم الـ resources (pools أو concurrency) عشان dependency أو workload واحد ميخنقش الباقي. الـ load shedding بيحمي السيرفر من traffic كتير أوي، بيرفض الزيادة على الباب عشان اللي اتقبل يكمل في وقته.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+  <div class="compare">
+    <div class="bad"><b>❌ One breaker for the whole client</b>
+<pre><code class="language-typescript">// الـ ⁦/recs⁩ الواقع هيقفل الـ ⁦/search⁩ السليم
+const breaker = new CircuitBreaker(callPartner, opts);
+await breaker.fire("/search");</code></pre></div>
+    <div class="good"><b>✅ One breaker per operation</b>
+<pre><code class="language-typescript">// كل operation ليها breaker لوحدها
+const search = new CircuitBreaker(callSearch, opts);
+const recs = new CircuitBreaker(callRecs, opts);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ breaker واحد على الـ client كله: في الـ run 98 من 100 طلب <code>/search</code> سليم اترفضوا عشان <code>/recs</code> واقع. ✅ breaker لكل operation: صفر رفض، وكل واحد بيتحكم في حالته.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A fallback on the failed dependency</b>
+<pre><code class="language-typescript">try {
+  return await db.query(recsSql);
+} catch {
+  // الـ DB واقع، فالـ fallback ده هيقع هو كمان
+  return await db.query(popularSql);
+}</code></pre></div>
+    <div class="good"><b>✅ A fallback on something else</b>
+<pre><code class="language-typescript">try {
+  return await db.query(recsSql);
+} catch {
+  // مصدر تاني: Redis، وبعده قايمة ثابتة في الكود
+  return (await popularFromRedis()) ?? STATIC_ITEMS;
+}</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ fallback بيقرا من نفس الـ Postgres الواقع، وفي الـ test الاتنين فشلوا مع بعض. ✅ الـ fallback على مصدر مختلف (Redis) وبعده قايمة ثابتة في الكود مفيهاش أي dependency.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Unbounded FIFO under overload</b>
+<pre><code class="language-typescript">// كل طلب بيخش الطابور ومحدش بيشيك الـ deadline
+queue.push(job);
+const next = queue.shift();
+await work(next);</code></pre></div>
+    <div class="good"><b>✅ Bounded, with a deadline check</b>
+<pre><code class="language-typescript">if (queue.length &gt;= MAX) return reply503(job);
+queue.push(job);
+const next = queue.shift()!;
+// لو مش هيلحق، بلاش تشتغل عليه
+if (Date.now() + EST_MS &gt; next.deadline) return reply503(next);
+await work(next);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الطابور من غير حد ولا deadline: في الـ run الـ goodput 72 في الثانية و72% شغل ميت. ✅ حد للطابور وفحص deadline قبل الشغل: رجعنا لحوالي 250 في الثانية، وأي طلب مش هيلحق بياخد 503 بسرعة بدل شغل على الفاضي.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Retrying a rejected call</b>
+<pre><code class="language-typescript">// بيعمل retry على EOPENBREAKER، وده بيحوّل الرفض السريع لـ loop
+for (let i = 0; i &lt; 3; i++) {
+  await breaker.fire().catch(() =&gt; {});
+}</code></pre></div>
+    <div class="good"><b>✅ An open breaker ends the attempt</b>
+<pre><code class="language-typescript">await breaker.fire().catch((err) =&gt; {
+  // الرفض من الـ breaker معناه الـ dependency تعبانة، فمفيش retry
+  if (err.code === "EOPENBREAKER") throw new Degraded();
+  throw err;
+});</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ retry على <code>EOPENBREAKER</code> بيعيد المحاولة على حاجة بتقولك "متحاولش"، فبيضيع الوقت والـ budget. ✅ رفض الـ breaker يوقف المحاولات ويرجع fallback أو 503، والـ retry يتعمل بس على الأخطاء الـ retryable.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Probe traffic <span class="lvl lvl-1">🟢 easy</span></b>
+    You run 50 instances, each with its own breaker and <code>resetTimeout</code> of 1 s, and the upstream is down. Estimate the probes per second. What <code>resetTimeout</code> keeps total probes at or below 5 per second?
+    <div class="ar-note">عندك 50 instance، كل واحد ليه breaker و<code>resetTimeout</code> ثانية، والـ upstream واقع. كام probe في الثانية تقريبًا؟ وأنهي <code>resetTimeout</code> يخلي الإجمالي 5 في الثانية بالكتير؟</div>
+    <details><summary>Solution · الحل</summary>
+<pre><code class="language-typescript">// كل breaker بيعمل probe مرة كل resetTimeout، زي ما اتعد في الجزء 2
+const probesPerSec = (instances: number, resetSec: number) =&gt; instances / resetSec;
+console.log(probesPerSec(50, 1), 50 / 5);
+// → 50 10</code></pre>
+      <div class="ar-note">عند ثانية واحدة: حوالي 50 probe في الثانية على upstream ميت. عشان 5 في الثانية بس، خلي <code>resetTimeout</code> حوالي 10 ثواني. ده من غير الوقت بتاع الـ probe نفسه، وفي الـ run الجزء 2 طلع الرقم حوالي 17 في الثانية لـ 20 instance (0.83 لكل واحد).</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. Pick an in-flight limit <span class="lvl lvl-2">🟡 medium</span></b>
+    Your API handles 400 rps at peak, and you want the shedder to admit a 200 ms target latency. Compute the limit with Little's Law, set it in a copy of <code>l24-p5-goodput.ts</code>, and check that shedding starts above 100% load, not below it.
+    <div class="ar-note">الـ API بتاعك بيخدم 400 rps في الـ peak، وعايز الـ shedder يقبل latency مستهدفة 200ms. احسب الحد بقانون Little، وحطه في نسخة من <code>l24-p5-goodput.ts</code>، وشيك إن الـ shedding بيبدأ فوق 100% مش تحتها.</div>
+    <details><summary>Solution · الحل</summary>
+<pre><code class="language-typescript">const limit = (rps: number, targetMs: number) =&gt; Math.ceil((rps * targetMs) / 1000);
+console.log(limit(400, 200));
+// → 80</code></pre>
+      <div class="ar-note">الحد 80 in-flight. جرّبه: عند 100% من الحمل المفروض الرفض يبقى قريب من صفر، ولو لقيت رفض تحت 100% ارفع الحد أو قلل الـ target.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. Change the LIFO threshold <span class="lvl lvl-3">🔴 hard</span></b>
+    In <code>l24-p6-queue.ts</code>, try adaptive LIFO thresholds of 20 ms and 300 ms instead of 100 ms. What happens to the ok-median and the share of requests that time out, and why?
+    <div class="ar-note">في <code>l24-p6-queue.ts</code>، جرب حد الـ adaptive LIFO بـ 20ms و300ms بدل 100ms. بيحصل إيه للـ median بتاع النجاح ولنسبة الـ timeouts، وليه؟</div>
+    <details><summary>Hint · تلميح</summary>
+      A low threshold flips to LIFO almost immediately, so fresh requests are served quickly but old ones never are. A high threshold behaves like FIFO for longer and wastes more work on requests that are about to expire.
+      <div class="ar-note">الحد الصغير بيقلب لـ LIFO بدري، فالطلبات الجديدة بتتخدم بسرعة والقديمة مبتتخدمش. والحد الكبير بيفضل زي الـ FIFO لفترة أطول ويهدر شغل على طلبات قربت تنتهي.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project: a circuit breaker on one external call <span class="lvl lvl-3">🔴 project</span></b>
+    The README's artifact for this topic. In your side project, wrap one external call (email, payments, recommendations) in an <code>opossum</code> breaker, return a fallback response marked <code>degraded: true</code>, and write a test that really stops the dependency and asserts the fallback and the kill switch. Graph the breaker's state in your logs.
+    <div class="ar-note">دي الـ artifact المطلوبة في الـ README. في مشروعك الجانبي، لف call خارجي واحد (email أو payments أو recommendations) بـ <code>opossum</code> breaker، ورجّع fallback مكتوب عليه <code>degraded: true</code>، واكتب test بيوقف الـ dependency فعلًا ويتأكد من الـ fallback والـ kill switch. وسجّل حالة الـ breaker في الـ logs.</div>
+    <details><summary>Hint · تلميح</summary>
+      Start from <code>l24-p4-fallback.ts</code> and its test. Keep the kill switch outside the failing dependency, and choose <code>volumeThreshold</code> from your real traffic so a single 3 a.m. error can't open it.
+      <div class="ar-note">ابدأ من <code>l24-p4-fallback.ts</code> وملف الـ test بتاعه. خلي الـ kill switch بره الـ dependency اللي بتقع، واختار <code>volumeThreshold</code> من الـ traffic الحقيقي عشان خطأ واحد الساعة 3 الفجر مايفتحهوش.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Cascade: an unrelated endpoint slowing down means a shared resource saturated. Find the first one (USE: pool waiters before event-loop lag).</li>
+    <li>Circuit breaker: tune threshold, volume and reset for your traffic. Cost of sensitivity is false opens.</li>
+    <li>Scope the breaker per endpoint/operation. N instances each probe: total = N / reset.</li>
+    <li>Bulkhead in Node = connection pools, semaphores, process boundaries. Pools don't isolate CPU.</li>
+    <li>Fallback is a per-dependency decision (popular items yes, tax no). Mark <code>degraded: true</code>, test it by really stopping the dependency, and never let it share the failure it covers.</li>
+    <li>Load shedding: goodput, not throughput. Reject fast with 503 + <code>Retry-After</code>; in-flight limit ≈ capacity × target latency.</li>
+    <li>Priority shedding: thresholds per class, assigned at the gateway. Queue discipline matters: FIFO serves the dead, a deadline check or adaptive LIFO doesn't.</li>
+    <li>Which when: breaker for a dependency failing, bulkhead for shared resources, shedding for your own capacity, rate limit for one client taking too much.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الانهيار: endpoint ملوش علاقة بقى بطيء يعني resource مشتركة شبعت. دور على أول واحدة (USE: الـ pool waiters قبل event-loop lag).</li>
+      <li>الـ circuit breaker: اضبط threshold و volume و reset حسب الـ traffic بتاعك، وثمن الحساسية هو false opens.</li>
+      <li>الـ breaker لكل endpoint أو operation. و N instances كل واحد بيعمل probe: الإجمالي = N / reset.</li>
+      <li>الـ bulkhead في Node = connection pools و semaphores و process boundaries. والـ pools مش بتعزل الـ CPU.</li>
+      <li>الـ fallback قرار لكل dependency (popular items آه، الـ tax لأ). علّم <code>degraded: true</code>، وجرّبه بإيقاف الـ dependency فعلًا، ومتخليهوش يشارك الفشل اللي بيغطيه.</li>
+      <li>الـ load shedding: الـ goodput مش الـ throughput. ارفض بسرعة بـ 503 + <code>Retry-After</code>، والـ in-flight limit ≈ السعة × الـ latency المستهدفة.</li>
+      <li>الـ priority shedding: حدود لكل نوع، بتتحدد على الـ gateway. وترتيب الطابور مهم: الـ FIFO بيخدم الميتين، والـ deadline check أو adaptive LIFO لأ.</li>
+      <li>إيه إمتى: breaker لما dependency بتفشل، bulkhead لما resources مشتركة، shedding لما السعة بتاعتك خلصت، rate limit لما client واحد بياخد أكتر من حقه.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 10 · 2.5 — <b>Circuit breaker</b>: closed → open (بعد N failures) → half-open (تجرب) — بيحمي الـ downstream وبيفشل بسرعة</label>
+    <label><input type="checkbox" data-key="r2"> 10 · 2.5 — <b>Bulkhead</b>: عزل الـ resources (thread pools، connection pools) لكل dependency عشان واحد بيقع ميوقّعش الباقي</label>
+    <label><input type="checkbox" data-key="r3"> 10 · 2.5 — <b>Fallback</b> و <b>graceful degradation</b>: الـ recommendations وقعت → اعرض popular items؛ الـ search وقع → اعرض cached results</label>
+    <label><input type="checkbox" data-key="r4"> 10 · 2.5 — <b>Load shedding</b>: ارفض requests لما الـ load يعدّي الحد (503 بسرعة أحسن من timeout بطيء)، priority-based shedding</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://sre.google/sre-book/addressing-cascading-failures/">Google SRE Book: Addressing Cascading Failures</a></li>
+    <li><a href="https://aws.amazon.com/builders-library/using-load-shedding-to-avoid-overload/">AWS Builders' Library: Using load shedding to avoid overload</a></li>
+    <li><a href="https://aws.amazon.com/builders-library/workload-isolation-using-shuffle-sharding/">AWS Builders' Library: Workload isolation using shuffle-sharding</a></li>
+    <li><a href="https://nodeshift.dev/opossum/">opossum documentation</a> and <a href="https://github.com/nodeshift/opossum">repository</a></li>
+    <li><a href="https://nodejs.org/api/perf_hooks.html">Node.js docs: perf_hooks (monitorEventLoopDelay)</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./23-timeouts-retries-storms.html"><small>← Previous</small>23 · Timeouts &amp; Retries</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./25-rate-limiting-algorithms-distributed.html"><small>Next →</small>25 · Rate Limiting</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

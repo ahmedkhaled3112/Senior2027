@@ -1,0 +1,1653 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Cache Invalidation &amp; the DB/Cache Race — 10 System Design</title>
+<meta name="section" content="10-System-Design">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">10 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 17 / 63</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <header>
+    <h1>Cache Invalidation &amp; the DB/Cache Race</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 17 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">Redis 8.10 · Postgres 18 · TypeScript 7</span>
+      <span class="chip">Prereq: 16 Caching Foundations</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>10 · 2.3 — Invalidation strategies: TTL، event-driven، versioned keys، tag-based</li>
+        <li>10 · 2.3 — Cache consistency problems: stale reads، الـ race بين الـ DB write والـ cache invalidation (delete-then-write vs write-then-delete)</li>
+        <li>10 · 2.3 — What not to cache (user-specific data بـ low hit ratio، data بيتغير كل ثانية)، cache sizing (working set estimation)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — TTL vs events</a></li>
+      <li><a href="#p2">Part 2 — Versioned keys &amp; tags</a></li>
+      <li><a href="#p3">Part 3 — The race, a thousand times</a></li>
+      <li><a href="#p4">Part 4 — Replicas poison caches</a></li>
+      <li><a href="#p5">Part 5 — What not to cache</a></li>
+      <li><a href="#p6">Part 6 — Sizing from an access log</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A cache is a second copy of your data with no shared transaction with the first copy, so the two will disagree. The only design question is how long they disagree and who can see it. Most "the price is wrong on the site" incidents come from one of the failures in this lesson: a missed event, a delete in the wrong order, a refill from a lagging replica, or a value that should never have been cached. In a system design interview, "and how do you keep the cache consistent?" is the follow-up that separates people who have drawn a Redis box from people who have run one.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ cache نسخة تانية من الـ data، ومفيش transaction مشترك بينها وبين الـ DB، فالاتنين هيختلفوا أكيد. السؤال الوحيد في التصميم: هيختلفوا قد إيه ومين هيشوف الاختلاف؟ أغلب حوادث "السعر غلط على الموقع" جاية من حاجة من اللي في الدرس ده: event ضاع، delete في الترتيب الغلط، refill من replica متأخرة، أو قيمة مكانش المفروض تتعمل لها cache أصلًا. وفي الـ system design interview، سؤال "وهتخلي الـ cache consistent إزاي؟" هو اللي بيفرّق بين اللي رسم مربع Redis وبين اللي شغّله بجد.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — TTL vs events <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الـ TTL قصاد الـ events</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>TTL only.</b> A product price changes in Postgres and nobody tells the cache. Each key stays wrong for whatever TTL it has left, so across keys filled at different times the staleness is spread between 0 and the TTL: mean about TTL/2, worst case the full TTL. Below, 40 real keys with a 3 s TTL (scaled so the run takes seconds, not minutes) measured a mean of ≈1.42 s and a max of ≈2.94 s. At a 60 s TTL those same ratios mean ≈28 s on average and ≈59 s at worst. You can state that number to the product team, and that is TTL's strength.</p>
+    <p><b>Events.</b> When one shared Redis is the only cache, the writer can just <code>DEL</code> the key. Events matter once there are copies you can't reach with one <code>DEL</code>: an in-process L1 in every app instance, or a cache owned by another service. <b>Redis Pub/Sub is fire-and-forget</b>: messages go only to subscribers connected at that moment, with no replay and no error for anyone who missed one. Below, instance B's connection blips, <code>PUBLISH</code> reaches 1 subscriber of 2, B reconnects, and B keeps serving the old price with no signal that anything happened.</p>
+    <p><b>The reliable path is a log.</b> Put the change in a durable stream and let every instance track its own position. With Redis Streams each instance needs <b>its own consumer group</b>, because a group delivers each entry to only one of its consumers. Below, instance B is offline, comes back and reads the entry it missed. The same run shows the trap: with one shared group, A gets the entry and B gets nothing, so B stays stale. The event must also come from the database's commit, not from application code that can crash just after it: that is the outbox or CDC, taught in <a href="../../07-Databases/lessons/41-outbox-cdc-idempotency.html">section 07 · 3.4</a>. The Redis side of event-based deletes is in <a href="../../07-Databases/lessons/37-cache-failure-modes.html">section 07 · 3.5, part 5</a>.</p>
+    <p><b>Keep the TTL anyway, always.</b> Streams get trimmed (<code>MAXLEN</code>), consumers have bugs, a deploy can skip a range. Events make staleness short in the normal case, and the TTL is the upper bound for every abnormal case. An event-driven cache with no TTL turns one lost message into a permanently wrong price.</p>
+  </section>
+
+<pre class="diagram">
+ Pub/Sub (fire and forget)              Stream, one group per instance
+ ─────────────────────────              ──────────────────────────────
+ writer ── PUBLISH ──▶ Redis            writer ── XADD ──▶ stream (kept)
+                        │                                   │
+              ┌─────────┴────────┐               ┌──────────┴──────────┐
+              ▼                  ▼               ▼                     ▼
+          instance A       instance B        group app-A           group app-B
+          gets it          OFFLINE:          reads now             reads when it
+                           message gone                            comes back
+</pre>
+  <div class="ar-note">على الشمال الـ Pub/Sub: الكاتب بيعمل <code>PUBLISH</code> والرسالة بتروح للي متوصل دلوقتي بس، فالـ instance B اللي كان فاصل الرسالة راحت عليه خالص. على اليمين الـ stream: الكاتب بيعمل <code>XADD</code> والـ entry بيفضل محفوظ، وكل instance ليه consumer group لوحده، فالـ B لما يرجع بيقرا اللي فاته.</div>
+
+  <p>Shared helpers for every script in this lesson (ports always come from the environment and default ports are refused):</p>
+  <div class="ar-note">دي الـ helpers المشتركة لكل سكريبتات الدرس. البورتات لازم تيجي من الـ environment والبورتات الافتراضية مرفوضة، عشان التجربة متلمسش DB حقيقية عندك. لو هتشغّلها، استخدم container على بورت تاني.</div>
+<pre data-file="src/lib.ts"><code class="language-typescript">import pg from "pg";
+import { Redis } from "ioredis";
+
+// حماية: بورت فاضي معناه البورت الافتراضي، يعني الـ DB الحقيقية بتاعتك. ارفضه
+export function requirePort(name: string): number {
+  const raw = process.env[name] ?? "";
+  const n = Number(raw);
+  if (!/^\d+$/.test(raw) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) {
+    throw new Error(`refusing ${name}='${raw}'`);
+  }
+  return n;
+}
+
+export const newPool = (max: number, env = "PG_PORT") =&gt;
+  new pg.Pool({ host: "127.0.0.1", port: requirePort(env), user: "app", database: "postgres", max });
+
+export const newRedis = (env = "REDIS_PORT") =&gt;
+  new Redis({ host: "127.0.0.1", port: requirePort(env), maxRetriesPerRequest: 1 });
+
+export const sleep = (ms: number) =&gt; new Promise&lt;void&gt;((r) =&gt; setTimeout(r, ms));
+
+// مولّد عشوائي بـ seed: نفس الأرقام كل مرة، فالـ output يتكرر
+export function mulberry32(seed: number): () =&gt; number {
+  let a = seed &gt;&gt;&gt; 0;
+  return () =&gt; {
+    a = (a + 0x6d2b79f5) &gt;&gt;&gt; 0;
+    let t = a;
+    t = Math.imul(t ^ (t &gt;&gt;&gt; 15), t | 1);
+    t ^= t + Math.imul(t ^ (t &gt;&gt;&gt; 7), t | 61);
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+export const percentile = (xs: number[], p: number): number =&gt; {
+  const s = [...xs].sort((a, b) =&gt; a - b);
+  return s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))] ?? 0;
+};
+
+export const mean = (xs: number[]): number =&gt; xs.reduce((a, b) =&gt; a + b, 0) / (xs.length || 1);</code></pre>
+
+<pre data-file="src/ttl-window.ts"><code class="language-typescript">import { mean, newPool, newRedis, percentile, sleep } from "./lib.ts";
+
+const db = newPool(5);
+const redis = newRedis();
+
+// ملحوظة: الـ TTL هنا 3 ثواني بدل 60 عشان التجربة متاخدش دقايق، والنتيجة بتتضرب في 20
+const TTL_MS = 3000;
+const SCALE = 60_000 / TTL_MS;
+
+await db.query(`DROP TABLE IF EXISTS products;
+  CREATE TABLE products (id int PRIMARY KEY, price int NOT NULL, version int NOT NULL DEFAULT 1);
+  INSERT INTO products (id, price) SELECT g, 100 FROM generate_series(1, 40) g;`);
+await redis.flushall();
+
+async function readPrice(id: number): Promise&lt;number&gt; {
+  const key = `product:${id}:price`;
+  const hit = await redis.get(key);
+  if (hit !== null) return Number(hit);
+  const { rows } = await db.query&lt;{ price: number }&gt;("SELECT price FROM products WHERE id = $1", [id]);
+  await redis.set(key, String(rows[0]!.price), "PX", TTL_MS);
+  return rows[0]!.price;
+}
+
+// املا الـ cache على مدار الـ TTL، فكل key ليه وقت انتهاء مختلف زي الواقع
+for (let id = 1; id &lt;= 40; id++) {
+  await readPrice(id);
+  await sleep(TTL_MS / 45);
+}
+
+// تغيير السعر في الـ DB من غير أي invalidation: الـ TTL لوحده هو اللي هيصلّح
+const updatedAt = Date.now();
+await db.query("UPDATE products SET price = 150, version = version + 1");
+
+const stale: number[] = await Promise.all(
+  Array.from({ length: 40 }, async (_, i) =&gt; {
+    while ((await readPrice(i + 1)) !== 150) await sleep(20);
+    return Date.now() - updatedAt;
+  }),
+);
+
+const f = (ms: number) =&gt; `${(ms / 1000).toFixed(2)} s`;
+console.log(`keys=${stale.length} TTL=${TTL_MS} ms (scaled, 1/${SCALE} of 60 s)`);
+console.log(`measured staleness: mean=${f(mean(stale))} p50=${f(percentile(stale, 50))} max=${f(Math.max(...stale))}`);
+console.log(`same ratios at TTL 60 s: mean=${f(mean(stale) * SCALE)} max=${f(Math.max(...stale) * SCALE)}`);
+await db.end();
+redis.disconnect();</code></pre>
+<pre><code class="language-plaintext">keys=40 TTL=3000 ms (scaled, 1/20 of 60 s)
+measured staleness: mean=1.42 s p50=1.46 s max=2.94 s
+same ratios at TTL 60 s: mean=28.38 s max=58.72 s</code></pre>
+  <div class="ar-note">40 key بـ TTL قصير 3 ثواني، والسعر اتغيّر في الـ DB من غير أي invalidation. المتوسط ≈1.42 ثانية والأقصى ≈2.94، يعني قريب من TTL/2 والـ TTL نفسه. لو ضربت في 20 عشان توصل لـ TTL 60 ثانية: المتوسط ≈28 ثانية والأقصى ≈59. الأرقام تقريبية لأن الجهاز عليه حمل.</div>
+
+<pre data-file="src/pubsub-vs-stream.ts"><code class="language-typescript">import { newRedis, sleep } from "./lib.ts";
+
+const redis = newRedis();
+await redis.flushall();
+
+type Entries = [string, [string, string[]][]][] | null;
+
+// كل app instance عنده L1 في الـ memory، والـ Map دي بتتمسح لما يوصله event
+class AppInstance {
+  readonly l1 = new Map&lt;string, number&gt;();
+  readonly name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  drop(key: string) {
+    this.l1.delete(key);
+  }
+}
+
+// (1) الـ pub/sub: instance عنده انقطاع لحظي بيفوّت الرسالة ومفيش طريقة يعرف
+const a = new AppInstance("A");
+const b = new AppInstance("B");
+const subA = newRedis();
+let subB = newRedis();
+const wire = async (sub: typeof subA, app: AppInstance) =&gt; {
+  sub.on("message", (_ch: string, key: string) =&gt; app.drop(key));
+  await sub.subscribe("invalidate");
+};
+await wire(subA, a);
+await wire(subB, b);
+a.l1.set("product:1", 100);
+b.l1.set("product:1", 100);
+
+// الـ instance B فاصل: deploy أو network blip لمدة لحظات
+subB.disconnect();
+await sleep(100);
+const receivers = await redis.publish("invalidate", "product:1");
+await sleep(50);
+subB = newRedis();
+await wire(subB, b);
+console.log(`PUBLISH reached ${receivers} subscriber(s) out of 2`);
+console.log(`after reconnect: A.l1=${a.l1.get("product:1") ?? "empty"}  B.l1=${b.l1.get("product:1") ?? "empty"}`);
+
+// (2) الـ stream: كل instance ليه consumer group، فالرسالة بتستناه لحد ما يرجع
+const stream = "product-events";
+await redis.xgroup("CREATE", stream, "app-A", "$", "MKSTREAM");
+await redis.xgroup("CREATE", stream, "app-B", "$", "MKSTREAM");
+a.l1.set("product:2", 100);
+b.l1.set("product:2", 100);
+await redis.xadd(stream, "MAXLEN", "~", 10_000, "*", "key", "product:2");
+
+async function drain(app: AppInstance, group: string): Promise&lt;number&gt; {
+  const res = (await redis.xreadgroup("GROUP", group, app.name, "COUNT", 100, "STREAMS", stream, "&gt;")) as Entries;
+  const entries = res?.[0]?.[1] ?? [];
+  for (const [id, fields] of entries) {
+    app.drop(fields[1]!);
+    await redis.xack(stream, group, id);
+  }
+  return entries.length;
+}
+
+// الـ A بيقرا دلوقتي، والـ B كان واقع ولما رجع بدأ يقرا
+const gotA = await drain(a, "app-A");
+console.log(`stream: A read ${gotA}, B offline, B.l1=${b.l1.get("product:2")}`);
+const gotB = await drain(b, "app-B");
+console.log(`stream: B came back, read ${gotB}, B.l1=${b.l1.get("product:2") ?? "empty"}`);
+
+// الغلطة: group واحد للكل. الرسالة بتروح لـ consumer واحد بس، والتاني بيفضل stale
+await redis.xgroup("CREATE", stream, "shared", "$");
+a.l1.set("product:3", 100);
+b.l1.set("product:3", 100);
+await redis.xadd(stream, "*", "key", "product:3");
+const oneA = (await redis.xreadgroup("GROUP", "shared", "A", "COUNT", 10, "STREAMS", stream, "&gt;")) as Entries;
+if (oneA) a.drop("product:3");
+const oneB = (await redis.xreadgroup("GROUP", "shared", "B", "COUNT", 10, "STREAMS", stream, "&gt;")) as Entries;
+console.log(`one shared group: A got ${oneA?.[0]?.[1].length ?? 0}, B got ${oneB?.[0]?.[1].length ?? 0}, B.l1=${b.l1.get("product:3")}`);
+
+subA.disconnect();
+subB.disconnect();
+redis.disconnect();</code></pre>
+<pre><code class="language-plaintext">PUBLISH reached 1 subscriber(s) out of 2
+after reconnect: A.l1=empty  B.l1=100
+stream: A read 1, B offline, B.l1=100
+stream: B came back, read 1, B.l1=empty
+one shared group: A got 1, B got 0, B.l1=100</code></pre>
+  <div class="ar-note">السطرين الأولانيين: الـ <code>PUBLISH</code> وصل لـ subscriber واحد من اتنين، فالـ A اتمسح عنده والـ B لسه شايف 100 بعد ما رجع. السطرين اللي بعدهم: الـ stream، الـ B كان فاصل ولما رجع قرا الـ entry اللي فاته وبقى فاضي. آخر سطر: group واحد مشترك، فالـ A خد الرسالة والـ B مخدش حاجة وفضل على 100.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ TTL لوحده.</b> السعر اتغيّر في Postgres ومحدش قال للـ cache. كل key هيفضل غلط على قد الـ TTL اللي فاضل له، ولأن الـ keys اتملت في أوقات مختلفة، الـ staleness بتتوزع من صفر للـ TTL كله: المتوسط حوالي TTL/2 والأسوأ TTL كامل. فوق، 40 key حقيقيين بـ TTL 3 ثواني (مصغّر عشان التجربة تخلص في ثواني مش دقايق) طلّعوا متوسط ≈1.42 ثانية وأقصى ≈2.94. عند TTL 60 ثانية نفس النسب معناها متوسط ≈28 ثانية وأسوأ حالة ≈59. الرقم ده تقدر تقوله للـ product team، ودي قوة الـ TTL.</p>
+    <p><b>الـ events.</b> لو عندك Redis واحد مشترك وهو الـ cache الوحيد، الكاتب يعمل <code>DEL</code> وخلاص. الـ events بتفرق لما يبقى فيه نسخ <code>DEL</code> واحد مش هيوصلها: L1 جوه الـ memory في كل app instance، أو cache بتاع service تانية. <b>الـ Redis Pub/Sub بتاع fire-and-forget</b>: الرسالة بتروح للي متوصل في اللحظة دي بس، مفيش replay ومفيش error للي فاته. فوق، الـ connection بتاع B قطع لحظة، الـ <code>PUBLISH</code> وصل لواحد من اتنين، B رجع، وفضل يرجّع السعر القديم من غير أي إشارة إن حاجة حصلت.</p>
+    <p><b>الطريق المضمون هو log.</b> حط التغيير في stream محفوظ وخلي كل instance يتابع مكانه هو. في Redis Streams كل instance لازم يبقى له <b>consumer group لوحده</b>، لأن الـ group بيدي كل entry لـ consumer واحد بس من جواه. فوق الـ B كان offline، رجع وقرا اللي فاته. ونفس التجربة بتوريك الفخ: group واحد مشترك، الـ A خد الـ entry والـ B مخدش حاجة، فالـ B فضل stale. والـ event كمان لازم يطلع من الـ commit بتاع الـ DB، مش من كود ممكن يقع بعده بلحظة: ده الـ outbox أو CDC في <a href="../../07-Databases/lessons/41-outbox-cdc-idempotency.html">section 07 · 3.4</a>. وزاوية Redis بتاعة الـ delete بالـ events في <a href="../../07-Databases/lessons/37-cache-failure-modes.html">section 07 · 3.5، الجزء 5</a>.</p>
+    <p><b>سيب الـ TTL دايمًا.</b> الـ streams بتتقص (<code>MAXLEN</code>)، والـ consumers فيهم bugs، والـ deploy ممكن يفوّت حتة. الـ events بتخلي الـ staleness قصيرة في الحالة العادية، والـ TTL هو السقف لأي حالة مش عادية. وcache بالـ events من غير TTL بيحوّل رسالة واحدة ضايعة لسعر غلط على طول.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      API بتاع products عليه L1 بـ <code>lru-cache</code> في 8 instances وRedis وراهم. لما الـ admin يغيّر سعر: الـ write يكتب في Postgres وoutbox في نفس الـ transaction، relay ينزّل الـ event في stream، وكل instance عنده consumer group باسمه (<code>app-${hostname}</code>) يمسح الـ key من الـ L1. وتسيب TTL 60 ثانية على الـ L1 و10 دقايق على Redis، عشان لو event ضاع، الغلط يبقى له آخر. وخد بالك: مفيش حد يستخدم group واحد لكل الـ instances، دي الغلطة الشائعة هنا.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: how long should the TTL be?</b>
+    A short TTL lowers the worst-case staleness but raises the DB load: halving the TTL roughly doubles the refills for keys that stay popular. Pick the TTL from the business cost of being wrong (a banner: minutes; a price: under a minute; stock at checkout: don't cache the decision, see part 5), then let events bring the common case down to milliseconds.
+    <div class="ar-note">الـ TTL القصير بيقلل أسوأ staleness بس بيزوّد الحمل على الـ DB: لو قسمت الـ TTL على 2 الـ refills بتتضاعف تقريبًا للـ keys المشهورة. اختار الـ TTL من تمن الغلط في البيزنس (banner: دقايق، سعر: أقل من دقيقة، الـ stock وقت الـ checkout: متعملش cache للقرار نفسه، شوف الجزء 5)، وسيب الـ events تنزّل الحالة العادية لـ milliseconds.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Versioned keys &amp; tags <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ versioned keys والـ tags</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Versioned keys</b> move invalidation from "find and delete" to "change the name". A key like <code>product:123:v5</code> embeds the row's version, so after an update readers build <code>v6</code> and never see the old entry. At group level, a <b>namespace version</b> does the same for a whole tenant: <code>tenant:7:v3:product:123</code>, where <code>v3</code> comes from one counter. <code>INCR tenant:7:ver</code> invalidates everything for that tenant in O(1), however many keys exist.</p>
+    <p>Measured on real Redis with 200,000 keys, 10,000 of them for tenant 7: <code>SCAN</code> + <code>UNLINK</code> took 200 round trips and ≈149 ms, because <code>SCAN</code> has to walk the whole keyspace to find the 10,000 that match. The version bump was 1 round trip and ≈0.14 ms. Purge time depends on total keys for <code>SCAN</code> and on nothing for the bump.</p>
+    <p><b>The two costs.</b> First, an extra read to get the current version on every request: measured ≈0.083 ms for a direct <code>GET</code> against ≈0.162 ms for version + <code>GET</code>, one more round trip, which on a real network is a full RTT. Caching the version in process for a second or so removes most of it and brings back a second of staleness. Second, memory: the bump freed nothing (59.8 MB before and after), because the old keys are only unreachable. They leave by TTL or eviction, so every versioned key needs a TTL and the instance needs room for the overlap.</p>
+    <p><b>Tags</b> answer a different question: "purge everything that used product 123", when a page depends on many products and a product appears on many pages. Each cached page registers itself in a set <code>tag:product:123</code>; a purge reads the set and unlinks its members. One version counter can't express that many-to-many relation. Below, a tag purge removed 3 pages plus the tag itself (4 keys). The tag set is a cache entry too: give it a TTL, and remember members of expired keys pile up in it. <a href="../../07-Databases/lessons/37-cache-failure-modes.html">Section 07 · 3.5, part 5</a> showed the non-atomic purge race; exercise 2 here fixes it with Lua.</p>
+  </section>
+
+<pre data-file="src/versioned-keys.ts"><code class="language-typescript">import { mean, newRedis } from "./lib.ts";
+
+const redis = newRedis();
+await redis.flushall();
+const VALUE = "x".repeat(200);
+const TTL_S = 3600;
+const usedMemory = async () =&gt; Number(/used_memory:(\d+)/.exec(await redis.info("memory"))![1]);
+
+async function load(keyOf: (i: number) =&gt; string, n: number) {
+  for (let i = 0; i &lt; n; i += 2000) {
+    const p = redis.pipeline();
+    for (let j = i; j &lt; Math.min(i + 2000, n); j++) p.set(keyOf(j), VALUE, "EX", TTL_S);
+    await p.exec();
+  }
+}
+
+// الـ tenant 7 عنده 10 آلاف key وسط 190 ألف key بتوع tenants تانيين
+await load((i) =&gt; `tenant:7:product:${i}`, 10_000);
+await load((i) =&gt; `tenant:${(i % 90) + 100}:product:${i}`, 190_000);
+
+// (1) المسح بالـ SCAN: لازم تعدّي على الـ keyspace كله عشان تلاقي الـ 10 آلاف
+let t0 = performance.now();
+let cursor = "0";
+let rounds = 0;
+let deleted = 0;
+do {
+  const [next, keys] = await redis.scan(cursor, "MATCH", "tenant:7:*", "COUNT", 1000);
+  cursor = next;
+  rounds++;
+  if (keys.length) deleted += await redis.unlink(...keys);
+} while (cursor !== "0");
+console.log(`SCAN+UNLINK: deleted=${deleted} SCAN_round_trips=${rounds} time≈${(performance.now() - t0).toFixed(0)} ms`);
+
+// (2) الـ namespace version: الـ key بقى فيه رقم الجيل، والـ bump بيبطّل الكل مرة واحدة
+const verKey = "tenant:7:ver";
+await redis.set(verKey, "1");
+const nsKey = (ver: string | number, id: number) =&gt; `tenant:7:v${ver}:product:${id}`;
+await load((i) =&gt; nsKey(1, i), 10_000);
+const memBefore = await usedMemory();
+
+t0 = performance.now();
+const newVer = await redis.incr(verKey);
+console.log(`version bump: to v${newVer}, 1 round trip, time≈${(performance.now() - t0).toFixed(2)} ms`);
+
+const reachable = await redis.exists(nsKey(newVer, 1));
+const oldStillThere = await redis.exists(nsKey(1, 1));
+console.log(`new version sees old entry: ${reachable}; old key still in memory: ${oldStillThere}; used_memory before bump=${(memBefore / 1048576).toFixed(1)} MB, after=${((await usedMemory()) / 1048576).toFixed(1)} MB`);
+
+// (3) التكلفة: كل قراءة بقت محتاجة round trip زيادة تجيب الـ version
+await redis.set(nsKey(newVer, 1), VALUE, "EX", TTL_S);
+const SAMPLES = 3000;
+const direct: number[] = [];
+const twoStep: number[] = [];
+for (let i = 0; i &lt; SAMPLES; i++) {
+  let s = performance.now();
+  await redis.get(nsKey(newVer, 1));
+  direct.push(performance.now() - s);
+  s = performance.now();
+  const v = await redis.get(verKey);
+  await redis.get(nsKey(v!, 1));
+  twoStep.push(performance.now() - s);
+}
+console.log(`read cost, mean of ${SAMPLES}: direct GET≈${mean(direct).toFixed(3)} ms, version+GET≈${mean(twoStep).toFixed(3)} ms`);
+
+// (4) الـ tags: كل صفحة بتسجّل نفسها في set بتاع المنتج
+const pages = ["page:home", "page:category:9", "page:search:phones"];
+for (const page of pages) {
+  await redis.set(page, "&lt;html&gt;...", "EX", TTL_S);
+  await redis.sadd("tag:product:123", page);
+}
+await redis.expire("tag:product:123", TTL_S);
+const members = await redis.smembers("tag:product:123");
+const removed = await redis.unlink(...members, "tag:product:123");
+console.log(`tag purge: tag had ${members.length} pages, UNLINK removed ${removed} keys, page:home exists=${await redis.exists("page:home")}`);
+redis.disconnect();</code></pre>
+<pre><code class="language-plaintext">SCAN+UNLINK: deleted=10000 SCAN_round_trips=200 time≈149 ms
+version bump: to v2, 1 round trip, time≈0.14 ms
+new version sees old entry: 0; old key still in memory: 1; used_memory before bump=59.8 MB, after=59.8 MB
+read cost, mean of 3000: direct GET≈0.083 ms, version+GET≈0.162 ms
+tag purge: tag had 3 pages, UNLINK removed 4 keys, page:home exists=0</code></pre>
+  <div class="ar-note">الـ <code>SCAN</code> لقى الـ 10 آلاف key ومسحهم في 200 round trip و≈149 ms. الـ version bump عملها في round trip واحد و≈0.14 ms. السطر التالت: الـ version الجديد مش شايف القديم، بس القديم لسه في الـ memory (59.8 MB قبل وبعد). السطر الرابع: قراءة مباشرة ≈0.083 ms وقراءة بالـ version ≈0.162 ms، يعني الضعف على localhost. آخر سطر: الـ tag مسح 3 صفحات + الـ tag نفسه.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ versioned keys</b> بتغيّر الـ invalidation من "دور وامسح" لـ "غيّر الاسم". key زي <code>product:123:v5</code> فيه version الصف، فبعد الـ update القرّاء بيبنوا <code>v6</code> ومش هيشوفوا القديم تاني. وعلى مستوى المجموعة، الـ <b>namespace version</b> بيعمل نفس الحكاية لـ tenant كامل: <code>tenant:7:v3:product:123</code>، والـ <code>v3</code> جاي من counter واحد. <code>INCR tenant:7:ver</code> بيبطّل كل حاجة بتاعة الـ tenant ده في O(1) مهما كان عدد الـ keys.</p>
+    <p>على Redis حقيقي فيه 200 ألف key، منهم 10 آلاف للـ tenant 7: الـ <code>SCAN</code> + <code>UNLINK</code> خدوا 200 round trip و≈149 ms، لأن الـ <code>SCAN</code> لازم يمشي على الـ keyspace كله عشان يلاقي الـ 10 آلاف. والـ version bump كان round trip واحد و≈0.14 ms. وقت الـ purge بالـ <code>SCAN</code> بيعتمد على عدد الـ keys الكلي، والـ bump مش بيعتمد على حاجة.</p>
+    <p><b>التكلفتين.</b> الأولى قراءة زيادة في كل request عشان تجيب الـ version: ≈0.083 ms لـ <code>GET</code> مباشر قصاد ≈0.162 ms لـ version + <code>GET</code>، يعني round trip زيادة، وعلى شبكة حقيقية ده RTT كامل. لو خزّنت الـ version في الـ process لثانية هتشيل أغلبها وترجّع ثانية staleness. التانية الـ memory: الـ bump مفضّاش حاجة (59.8 MB قبل وبعد)، لأن الـ keys القديمة بقت بس محدش يوصلها. هتخرج بالـ TTL أو بالـ eviction، فكل versioned key لازم له TTL والـ instance لازم فيها مكان للفترة دي.</p>
+    <p><b>الـ tags</b> بتجاوب سؤال تاني: "امسح كل حاجة استخدمت المنتج 123"، لما الصفحة بتعتمد على منتجات كتير والمنتج بيظهر في صفحات كتير. كل صفحة متخزنة بتسجّل نفسها في set اسمه <code>tag:product:123</code>، والـ purge بيقرا الـ set ويعمل unlink لأعضاؤه. counter واحد ميعرفش يعبّر عن علاقة many-to-many زي دي. فوق، الـ tag مسح 3 صفحات + الـ tag نفسه (4 keys). والـ tag set نفسه cache entry: اديله TTL، وخد بالك إن أعضاء الـ keys اللي انتهت بيتراكموا جواه. <a href="../../07-Databases/lessons/37-cache-failure-modes.html">Section 07 · 3.5، الجزء 5</a> ورّى الـ race بتاع الـ purge اللي مش atomic، والتمرين 2 هنا بيصلّحه بـ Lua.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      SaaS فيه tenants، والـ admin بيعمل import لـ catalog كامل فتتغير 50 ألف منتج مرة واحدة: بدل ما تعمل <code>SCAN</code> على Redis فيه ملايين الـ keys وتزحمه، اعمل <code>INCR tenant:7:ver</code> في آخر الـ import، والصفحات الجديدة تتبني على الجيل الجديد. وفي Next.js ده نفس فكرة <code>revalidateTag</code> بالظبط، بس الـ tag set متخزن عندك. الغلطة الشائعة: تنسى الـ TTL على الـ keys بتاعة الجيل القديم فتكبر الـ memory لحد الـ eviction.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: "How do you invalidate 2 million cached pages for one tenant?"</b>
+    Not with <code>KEYS</code> or a blocking delete. Put a namespace version in the key and bump one counter: O(1), and the old entries age out by TTL. The cost is one more read per request for the version and memory until the old entries expire. If only some pages depend on the changed entity, use tag sets instead.
+    <div class="ar-note">السؤال: "هتعمل invalidate لـ 2 مليون صفحة cached لـ tenant واحد إزاي؟" الإجابة: مش بـ <code>KEYS</code> ولا delete بيعطّل Redis. حط namespace version جوه الـ key وزوّد counter واحد: O(1)، والـ entries القديمة تخرج بالـ TTL. التمن: قراءة زيادة في كل request عشان الـ version، وmemory لحد ما القديم ينتهي. ولو صفحات معينة بس بتعتمد على اللي اتغير، استخدم tag sets.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — The race, a thousand times <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ race، ألف مرة</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The writer has two steps, the database and the cache, and they can't be one transaction. A reader doing cache-aside has steps too: <code>GET</code> miss, <code>SELECT</code>, <code>SET</code>. Between any two steps something else can run. The experiment below uses real Postgres and real Redis, with 1000 iterations per strategy, one writer and one racing reader per product, and <b>injected delays</b>: 5–25 ms between the writer's two steps, and 20% of readers paused between <code>SELECT</code> and <code>SET</code> (15% for 60 ms, 5% for 250 ms, standing in for GC or a slow network). 30% of keys start cold. These rates show the mechanism and the relative order of the strategies, not your production rate, which depends on how often a reader lands in the window.</p>
+    <p><b>Delete-then-write</b> (the wrong order): the writer deletes, then updates. A reader in that gap misses, reads the <em>old</em> committed row, and refills it. Then the write commits and the cache holds the old value for a full TTL. Stale in 471 of 1000.</p>
+    <p><b>Write-then-delete</b> (the right order) closes that window, and only a narrower one remains: a reader that read <em>before</em> the commit and sets <em>after</em> the delete. It needs a cold key (a warm key is a hit, so the reader never goes to the DB) and a pause longer than the commit plus delete. 15 of 1000 here: rarer, not gone.</p>
+    <p><b>Three fixes, each run.</b> A <b>delayed second delete</b> (120 ms later) catches readers slower than that gap but not the 250 ms ones: 6 stale, at the cost of a second delete and extra misses. <b>Set-if-newer</b> stores the row version in the value and uses a Lua compare-and-set, with the writer writing the new versioned value instead of deleting it: 0 stale, and DB reads drop to 281 because the writer warms the cache. It needs the writer to have the whole value, and a <b>delete breaks it</b>: the "set-if-newer + DEL" row shows 15 stale, the same as write-then-delete, because once the key is gone there's nothing to compare against. <b>Leases</b>, from Facebook's memcache paper: a miss takes a token, the fill is accepted only while the token is still valid, and the writer's delete also removes the token. 0 stale, at more Redis work per read.</p>
+    <p>Whatever you pick, a crash between commit and the cache step still leaves the key stale until TTL. That window is the reason for the outbox or CDC (<a href="../../07-Databases/lessons/41-outbox-cdc-idempotency.html">section 07 · 3.4</a>) and for keeping a TTL.</p>
+  </section>
+
+<pre class="diagram">
+ delete-then-write                     write-then-delete (cold key, slow reader)
+ ─────────────────                     ─────────────────────────────────────────
+ writer       reader                   writer            reader
+ DEL key                                                 GET -> miss
+              GET -> miss                                SELECT -> old row
+              SELECT -> old row        UPDATE (commit)
+ UPDATE (commit)                       DEL key
+              SET key = old  &lt;-- stale                   ...paused...
+                                                         SET key = old  &lt;-- stale
+</pre>
+  <div class="ar-note">على الشمال delete-then-write: الكاتب مسح، والقارئ جه في النص خد miss وقرا الصف القديم وحطه، وبعدين الـ commit حصل، فالـ cache فضل على القديم. على اليمين write-then-delete: القارئ قرا القديم قبل الـ commit، ووقف شوية، والكاتب خلّص الـ commit والـ DEL، وبعدين القارئ عمل <code>SET</code> بالقديم. الحالة اليمين محتاجة key فاضي وreader بطيء، فبتحصل أقل بكتير.</div>
+
+<pre data-file="src/race.ts"><code class="language-typescript">import { mean, mulberry32, newPool, newRedis, sleep } from "./lib.ts";
+
+// تجربة بـ delays مزروعة: الأرقام بتوضّح الآلية، مش معدل الـ production
+const ITERATIONS = 1000;
+const PARALLEL = 40;
+const TTL_MS = 600_000;
+const KEY = (id: number) =&gt; `product:${id}`;
+const LEASE = (id: number) =&gt; `lease:product:${id}`;
+
+const db = newPool(10);
+const redis = newRedis();
+
+// السكريبت ده بيكتب لو الـ version الجديد أكبر بس
+const SET_IF_NEWER = `
+local cur = redis.call('GET', KEYS[1])
+if cur then
+  local v = tonumber(string.match(cur, '^(%d+)|'))
+  if v &gt;= tonumber(ARGV[1]) then return 0 end
+end
+redis.call('SET', KEYS[1], ARGV[1] .. '|' .. ARGV[2], 'PX', ARGV[3])
+return 1`;
+
+// الـ fill بينجح بس لو الـ lease لسه بتاعي، والـ DEL بتاع الكاتب بيبطّله
+const FILL_IF_LEASED = `
+if redis.call('GET', KEYS[2]) ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+redis.call('DEL', KEYS[2])
+return 1`;
+
+type Name =
+  | "delete-then-write"
+  | "write-then-delete"
+  | "delayed-double-delete"
+  | "set-if-newer"
+  | "set-if-newer + DEL (bug)"
+  | "lease";
+
+interface Stats {
+  stale: number;
+  dbReads: number;
+  redisOps: number;
+  readerWait: number[];
+}
+
+async function run(name: Name): Promise&lt;Stats&gt; {
+  const stats: Stats = { stale: 0, dbReads: 0, redisOps: 0, readerWait: [] };
+  const rand = mulberry32(42);
+  await redis.flushall();
+  await db.query("UPDATE products SET price = 100, version = 1");
+
+  const usesLua = name === "set-if-newer" || name === "set-if-newer + DEL (bug)";
+  const readRow = async (id: number) =&gt; {
+    stats.dbReads++;
+    const { rows } = await db.query&lt;{ price: number; version: number }&gt;(
+      "SELECT price, version FROM products WHERE id = $1", [id]);
+    return rows[0]!;
+  };
+
+  // الـ reader: GET، لو miss يقرا من الـ DB ويستنى (GC أو network بطيء) وبعدين يملا
+  async function reader(id: number, pause: number, leased: boolean): Promise&lt;void&gt; {
+    stats.redisOps++;
+    if ((await redis.get(KEY(id))) !== null) return;
+    let token: string | null = null;
+    if (leased) {
+      token = `${id}-${pause}-${Math.random()}`;
+      stats.redisOps++;
+      const got = await redis.set(LEASE(id), token, "PX", 5000, "NX");
+      if (got !== "OK") token = null;
+    }
+    const row = await readRow(id);
+    if (pause &gt; 0) await sleep(pause);
+    stats.redisOps++;
+    if (usesLua) {
+      await redis.eval(SET_IF_NEWER, 1, KEY(id), row.version, row.price, TTL_MS);
+    } else if (leased) {
+      if (token) await redis.eval(FILL_IF_LEASED, 2, KEY(id), LEASE(id), token, `${row.version}|${row.price}`, TTL_MS);
+    } else {
+      await redis.set(KEY(id), `${row.version}|${row.price}`, "PX", TTL_MS);
+    }
+  }
+
+  async function writer(id: number, gap: number): Promise&lt;void&gt; {
+    const update = () =&gt;
+      db.query&lt;{ version: number }&gt;(
+        "UPDATE products SET price = 200, version = version + 1 WHERE id = $1 RETURNING version", [id]);
+    if (name === "delete-then-write") {
+      stats.redisOps++;
+      await redis.del(KEY(id));
+      await sleep(gap);
+      await update();
+      return;
+    }
+    const { rows } = await update();
+    await sleep(gap);
+    if (name === "set-if-newer") {
+      stats.redisOps++;
+      await redis.eval(SET_IF_NEWER, 1, KEY(id), rows[0]!.version, 200, TTL_MS);
+      return;
+    }
+    if (name === "lease") {
+      stats.redisOps++;
+      await redis.del(KEY(id), LEASE(id));
+      return;
+    }
+    stats.redisOps++;
+    await redis.del(KEY(id));
+    if (name === "delayed-double-delete") {
+      await sleep(120);
+      stats.redisOps++;
+      await redis.del(KEY(id));
+    }
+  }
+
+  const leased = name === "lease";
+  const iterate = async (id: number) =&gt; {
+    const cold = rand() &lt; 0.3;
+    if (!cold) {
+      stats.redisOps++;
+      await redis.set(KEY(id), `1|100`, "PX", TTL_MS);
+    }
+    // الاتنين بيبدأوا في لحظات عشوائية جوه نفس الـ 30 ms
+    const readerAt = rand() * 30;
+    const writerAt = rand() * 30;
+    // نسب الـ pause: حوالي 80% من غير تأخير و15% متوسط و5% أطول من الـ delete التاني
+    const p = rand();
+    const pause = p &lt; 0.8 ? 0 : p &lt; 0.95 ? 60 : 250;
+    const gap = 5 + rand() * 20;
+    await Promise.all([
+      (async () =&gt; { await sleep(writerAt); await writer(id, gap); })(),
+      (async () =&gt; { await sleep(readerAt); await reader(id, pause, leased); })(),
+    ]);
+    // بعد ما كله يهدى: قارن اللي في الـ cache باللي في الـ DB
+    stats.redisOps++;
+    const cached = await redis.get(KEY(id));
+    if (cached !== null) {
+      const { rows } = await db.query&lt;{ price: number }&gt;("SELECT price FROM products WHERE id = $1", [id]);
+      if (Number(cached.split("|")[1]) !== rows[0]!.price) stats.stale++;
+    } else {
+      // الـ follow-up reader بيعمل miss ويملا: ده الحمل الزيادة بعد الـ delete
+      await reader(id, 0, leased);
+    }
+  };
+
+  for (let i = 1; i &lt;= ITERATIONS; i += PARALLEL) {
+    await Promise.all(Array.from({ length: Math.min(PARALLEL, ITERATIONS - i + 1) }, (_, j) =&gt; iterate(i + j)));
+  }
+  return stats;
+}
+
+await db.query(`DROP TABLE IF EXISTS products;
+  CREATE TABLE products (id int PRIMARY KEY, price int NOT NULL, version int NOT NULL DEFAULT 1);
+  INSERT INTO products (id, price) SELECT g, 100 FROM generate_series(1, ${ITERATIONS}) g;`);
+
+// قيس الـ sleep الحقيقي على Windows: الـ timers بتتقرّب لفوق
+const samples: number[] = [];
+for (let i = 0; i &lt; 30; i++) { const s = performance.now(); await sleep(10); samples.push(performance.now() - s); }
+console.log(`sleep(10) really sleeps≈${mean(samples).toFixed(1)} ms on this machine`);
+console.log(`injected-delay experiment, ${ITERATIONS} iterations each, 1 writer + 1 racing reader per product`);
+
+const names: Name[] = ["delete-then-write", "write-then-delete", "delayed-double-delete", "set-if-newer + DEL (bug)", "set-if-newer", "lease"];
+console.log("strategy".padEnd(28) + "stale".padStart(7) + "db reads".padStart(10) + "redis ops".padStart(11));
+for (const n of names) {
+  const s = await run(n);
+  console.log(n.padEnd(28) + String(s.stale).padStart(7) + String(s.dbReads).padStart(10) + String(s.redisOps).padStart(11));
+}
+await db.end();
+redis.disconnect();</code></pre>
+<pre><code class="language-plaintext">sleep(10) really sleeps≈15.8 ms on this machine
+injected-delay experiment, 1000 iterations each, 1 writer + 1 racing reader per product
+strategy                      stale  db reads  redis ops
+delete-then-write               471      1071       5185
+write-then-delete                15      1204       5782
+delayed-double-delete             6      1292       6976
+set-if-newer + DEL (bug)         15      1208       5793
+set-if-newer                      0       281       3985
+lease                             0      1255       7138</code></pre>
+  <div class="ar-note">كل سطر هو تجربة من 1000 iteration على Postgres وRedis حقيقيين، بـ delays مزروعة. أول سطر: الـ <code>sleep(10)</code> بينام فعلًا ≈15.8 ms على الـ Windows ده. الأرقام بتتغير شوية من run للتاني، بس الترتيب ثابت.</div>
+
+  <table>
+    <tr><th>Strategy</th><th>Stale / 1000</th><th>DB reads</th><th>Redis ops</th><th>Complexity</th></tr>
+    <tr><td>delete-then-write</td><td>471</td><td>1071</td><td>5185</td><td>Low, and wrong</td></tr>
+    <tr><td>write-then-delete</td><td>15</td><td>1204</td><td>5782</td><td>Low</td></tr>
+    <tr><td>+ delayed second delete</td><td>6</td><td>1292</td><td>6976</td><td>Low, needs a timer that survives restarts</td></tr>
+    <tr><td>set-if-newer + DEL (bug)</td><td>15</td><td>1208</td><td>5793</td><td>Medium, no benefit</td></tr>
+    <tr><td>set-if-newer, writer writes the value</td><td>0</td><td>281</td><td>3985</td><td>Medium, writer needs the full value</td></tr>
+    <tr><td>lease</td><td>0</td><td>1255</td><td>7138</td><td>High</td></tr>
+  </table>
+  <div class="ar-note">صف بصف: delete-then-write وسهل بس بيبوّظ حوالي نص الحالات هنا. write-then-delete وسهل وبيسيب 15 حالة. الـ delayed second delete نزّلها لـ 6 بتمن delete زيادة وmisses أكتر، ومحتاج timer ميضيعش مع الـ restart. الـ set-if-newer مع DEL: زي write-then-delete بالظبط، يعني تعب من غير فايدة. الـ set-if-newer والكاتب بيكتب القيمة: 0 stale والـ DB reads نزلت لـ 281 لأن الكاتب بيسخّن الـ cache، بس الكاتب لازم معاه القيمة كاملة. الـ lease: 0 stale بس أغلى في عدد أوامر Redis وأعقد.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الكاتب عنده خطوتين، الـ DB والـ cache، ومينفعوش يبقوا transaction واحد. والقارئ بتاع cache-aside عنده خطوات برضه: <code>GET</code> بـ miss، <code>SELECT</code>، <code>SET</code>. بين أي خطوتين ممكن حاجة تانية تشتغل. التجربة فوق على Postgres وRedis حقيقيين، 1000 iteration لكل strategy، كاتب واحد وقارئ واحد بيسابقه لكل منتج، و<b>delays مزروعة</b>: من 5 لـ 25 ms بين خطوتين الكاتب، و20% من القرّاء بيقفوا بين الـ <code>SELECT</code> والـ <code>SET</code> (15% لمدة 60 ms و5% لمدة 250 ms، بدل GC أو شبكة بطيئة). و30% من الـ keys بتبدأ فاضية. النسب دي بتوريك الآلية والترتيب بين الحلول، مش معدل الـ production بتاعك، اللي بيعتمد على قد إيه reader بيقع في الـ window.</p>
+    <p><b>Delete-then-write</b> (الترتيب الغلط): الكاتب يمسح وبعدين يعمل update. القارئ اللي يجي في النص يعمل miss، يقرا الصف <em>القديم</em> اللي متعمله commit، ويملا بيه. وبعدين الـ commit يحصل والـ cache يفضل على القديم لمدة TTL كامل. stale في 471 من 1000.</p>
+    <p><b>Write-then-delete</b> (الترتيب الصح) بيقفل الـ window دي، وبيفضل واحدة أضيق: قارئ قرا <em>قبل</em> الـ commit وعمل set <em>بعد</em> الـ delete. ده محتاج key فاضي (لو الـ key موجود يبقى hit والقارئ مش هيروح للـ DB) وpause أطول من الـ commit + الـ delete. 15 من 1000 هنا: أقل، بس مش صفر.</p>
+    <p><b>تلات حلول، كل واحد اتجرّب.</b> الـ <b>delayed second delete</b> (بعد 120 ms) بيلحق القرّاء الأبطأ من الفرق ده بس مش بتوع الـ 250 ms: 6 stale بتمن delete تاني وmisses زيادة. الـ <b>set-if-newer</b> بيخزن version الصف جوه القيمة ويستخدم compare-and-set في Lua، والكاتب بيكتب القيمة الجديدة بالـ version بدل ما يمسح: 0 stale، والـ DB reads نزلت لـ 281 لأن الكاتب بيسخّن الـ cache. بس الكاتب لازم يكون معاه القيمة كاملة، والـ <b>delete بيبوّظها</b>: سطر "set-if-newer + DEL" طلع 15 stale زي write-then-delete بالظبط، لأن بعد ما الـ key يتمسح مفيش حاجة نقارن بيها. الـ <b>leases</b> من ورقة Facebook عن memcache: الـ miss بياخد token، والـ fill بيتقبل طول ما الـ token لسه صالح، والـ delete بتاع الكاتب بيشيل الـ token كمان. 0 stale بتمن شغل أكتر على Redis في كل قراءة.</p>
+    <p>وأيًّا كان اختيارك، crash بين الـ commit وخطوة الـ cache لسه بيسيب الـ key stale لحد الـ TTL. والـ window دي هي السبب في الـ outbox أو CDC (<a href="../../07-Databases/lessons/41-outbox-cdc-idempotency.html">section 07 · 3.4</a>) وفي إننا نسيب TTL.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في code review لقيت service فيها <code>await cache.del(key); await repo.update(...)</code>: دي بالظبط أول سطر في الجدول. اقلب الترتيب، وخلي الـ delete بعد الـ commit بره الـ transaction callback. لو الصفحة دي مهمة (سعر في checkout) والكاتب معاه الصف كله، خليه يكتب القيمة بالـ version بـ Lua set-if-newer بدل الـ delete، وخد فرق الـ DB reads ببلاش. والغلطة الشائعة: تضيف Lua compare-and-set وتسيب الكاتب بيعمل <code>DEL</code>، فتتعب ومفيش فايدة.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: "Is write-then-delete enough?"</b>
+    It closes the common race, but a slow reader that read before the commit can still set after the delete, which needs a cold key and a long pause. If that matters, the writer sets a versioned value with compare-and-set, or use leases as Facebook did. A crash between commit and delete still needs a TTL and ideally CDC or an outbox.
+    <div class="ar-note">السؤال: "هل write-then-delete كفاية؟" الإجابة: بيقفل الـ race الشائع، بس reader بطيء قرا قبل الـ commit لسه ممكن يعمل set بعد الـ delete، وده محتاج key فاضي وpause طويل. لو ده يفرق معاك، خلي الكاتب يكتب قيمة بـ version بـ compare-and-set، أو استخدم leases زي Facebook. وcrash بين الـ commit والـ delete لسه محتاج TTL، والأفضل CDC أو outbox.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Replicas poison caches <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ replicas بتسمّم الـ cache</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>You read from a replica to spare the primary. The writer does everything correctly, commit then delete, and the next reader misses and refills from a replica that hasn't replayed the update yet. Now the old value is back in the cache with a brand-new TTL. Replica lag was milliseconds, and the wrong value lives for minutes. Below, with real streaming replication and replay paused: primary 150, replica 100, the reader cached 100, the replica caught up, and the cache still says 100 with 60 s left. Replication lag and its failure modes are in <a href="./12-replication-failover-split-brain.html">lesson 12</a>.</p>
+    <p><b>Fix 1: read from the primary when repopulating right after a write.</b> The writer sets a short marker (<code>recent-write:product:2</code>, a few seconds, longer than your lag) and a miss that sees the marker reads the primary. <b>Fix 2: carry a version.</b> The writer records the minimum version the cache may hold, and the reader rejects a replica row that's older and goes to the primary. Fix 1 is simpler and adds some primary reads after every write; fix 2 only touches the primary when the replica is actually behind, at the cost of another key per entity. Both cost nothing when there's no replica lag to speak of.</p>
+  </section>
+
+<pre data-file="src/replica-poison.ts"><code class="language-typescript">import { newPool, newRedis, sleep } from "./lib.ts";
+
+const primary = newPool(3);
+const replica = newPool(3, "STANDBY_PORT");
+const redis = newRedis();
+const TTL_S = 60;
+
+await primary.query(`DROP TABLE IF EXISTS products;
+  CREATE TABLE products (id int PRIMARY KEY, price int NOT NULL, version int NOT NULL DEFAULT 1);
+  INSERT INTO products (id, price) SELECT g, 100 FROM generate_series(1, 3) g;`);
+await redis.flushall();
+
+// استنى الـ standby يلحق الـ table قبل ما نوقف الـ replay
+for (;;) {
+  const { rows } = await replica.query("SELECT to_regclass('products') AS t");
+  if (rows[0].t) {
+    const { rows: n } = await replica.query("SELECT count(*)::int AS c FROM products");
+    if (n[0].c === 3) break;
+  }
+  await sleep(50);
+}
+
+const priceOn = async (p: typeof primary, id: number): Promise&lt;number&gt; =&gt;
+  (await p.query("SELECT price FROM products WHERE id = $1", [id])).rows[0].price;
+
+// قراءة الـ cache-aside العادية: الـ miss بيتملي من الـ replica عشان نخفف على الـ primary
+async function read(id: number): Promise&lt;number&gt; {
+  const key = `product:${id}`;
+  const hit = await redis.get(key);
+  if (hit !== null) return Number(hit);
+  const price = await priceOn(replica, id);
+  await redis.set(key, String(price), "EX", TTL_S);
+  return price;
+}
+
+// (1) الكاتب بيعمل كل حاجة صح: commit وبعدين DEL. والـ replica متأخرة
+await replica.query("SELECT pg_wal_replay_pause()");
+await primary.query("UPDATE products SET price = 150, version = version + 1 WHERE id = 1");
+await redis.del("product:1");
+console.log(`primary=${await priceOn(primary, 1)} replica=${await priceOn(replica, 1)} (replay paused)`);
+
+const served = await read(1);
+console.log(`next reader cached ${served}, TTL=${await redis.ttl("product:1")} s`);
+
+await replica.query("SELECT pg_wal_replay_resume()");
+while ((await priceOn(replica, 1)) !== 150) await sleep(20);
+console.log(`replica caught up: replica=${await priceOn(replica, 1)}, cache=${await redis.get("product:1")}, TTL left=${await redis.ttl("product:1")} s  &lt;-- poisoned until TTL`);
+
+// (2) الحل الأول: علامة "لسه مكتوب" بتجبر الـ miss يقرا من الـ primary لفترة أكبر من الـ lag
+async function readSticky(id: number): Promise&lt;number&gt; {
+  const key = `product:${id}`;
+  const hit = await redis.get(key);
+  if (hit !== null) return Number(hit);
+  const recentWrite = await redis.exists(`recent-write:${key}`);
+  const price = await priceOn(recentWrite ? primary : replica, id);
+  await redis.set(key, String(price), "EX", TTL_S);
+  return price;
+}
+await replica.query("SELECT pg_wal_replay_pause()");
+await primary.query("UPDATE products SET price = 150, version = version + 1 WHERE id = 2");
+await redis.set("recent-write:product:2", "1", "PX", 5000);
+await redis.del("product:2");
+console.log(`fix 1 (read primary after write): reader cached ${await readSticky(2)}`);
+await replica.query("SELECT pg_wal_replay_resume()");
+
+// (3) الحل التاني: الـ reader بيرفض صف الـ replica لو الـ version أقدم من اللي الكاتب سجّله
+async function readVersioned(id: number): Promise&lt;number&gt; {
+  const key = `product:${id}`;
+  const hit = await redis.get(key);
+  if (hit !== null) return Number(hit);
+  const minVersion = Number((await redis.get(`min-version:${key}`)) ?? 0);
+  const fromReplica = (await replica.query("SELECT price, version FROM products WHERE id = $1", [id])).rows[0];
+  let row = fromReplica;
+  if (fromReplica.version &lt; minVersion) {
+    row = (await primary.query("SELECT price, version FROM products WHERE id = $1", [id])).rows[0];
+    console.log(`  replica version ${fromReplica.version} &lt; required ${minVersion}: used primary`);
+  }
+  await redis.set(key, String(row.price), "EX", TTL_S);
+  return row.price;
+}
+await replica.query("SELECT pg_wal_replay_pause()");
+const { rows } = await primary.query("UPDATE products SET price = 150, version = version + 1 WHERE id = 3 RETURNING version");
+await redis.set("min-version:product:3", String(rows[0].version), "EX", TTL_S);
+await redis.del("product:3");
+console.log(`fix 2 (version check): reader cached ${await readVersioned(3)}`);
+await replica.query("SELECT pg_wal_replay_resume()");
+
+await primary.end();
+await replica.end();
+redis.disconnect();</code></pre>
+<pre><code class="language-plaintext">primary=150 replica=100 (replay paused)
+next reader cached 100, TTL=60 s
+replica caught up: replica=150, cache=100, TTL left=60 s  &lt;-- poisoned until TTL
+fix 1 (read primary after write): reader cached 150
+  replica version 1 &lt; required 2: used primary
+fix 2 (version check): reader cached 150</code></pre>
+  <div class="ar-note">أول تلات سطور هي المشكلة: الـ primary عنده 150 والـ replica لسه 100، القارئ خزّن 100 بـ TTL جديد، والـ replica لحقت بس الـ cache لسه 100 و60 ثانية فاضلين. آخر السطور هي الحلين: القراءة من الـ primary بعد الكتابة، والتحقق بالـ version اللي حوّل القراءة للـ primary لما لقى الـ replica أقدم. الاتنين خزّنوا 150.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>بتقرا من replica عشان تخفف على الـ primary. الكاتب عمل كل حاجة صح، commit وبعدين delete، والقارئ الجاي عمل miss وملا من replica لسه معملتش replay للـ update. كده القيمة القديمة رجعت في الـ cache بـ TTL جديد خالص. الـ replication lag كان milliseconds، والقيمة الغلط هتعيش دقايق. فوق، بـ streaming replication حقيقي والـ replay واقف: الـ primary 150، الـ replica 100، القارئ خزّن 100، الـ replica لحقت، والـ cache لسه بيقول 100 و60 ثانية فاضلين. الـ replication lag ومشاكله في <a href="./12-replication-failover-split-brain.html">الدرس 12</a>.</p>
+    <p><b>الحل الأول: اقرا من الـ primary وإنت بتملا بعد كتابة.</b> الكاتب يحط علامة قصيرة (<code>recent-write:product:2</code>، كام ثانية، أطول من الـ lag بتاعك)، والـ miss اللي يشوف العلامة يقرا من الـ primary. <b>الحل التاني: خلي معاك version.</b> الكاتب يسجّل أقل version مسموح في الـ cache، والقارئ يرفض صف الـ replica لو أقدم ويروح للـ primary. الحل الأول أبسط وبيزود شوية قراءات على الـ primary بعد كل كتابة، والتاني بيلمس الـ primary بس لما الـ replica تكون متأخرة فعلًا، بتمن key زيادة لكل entity. والاتنين مفيش تمن لو مفيش lag أصلًا.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عندك endpoint بتاع profile: الـ user غيّر اسمه والـ cache اتمسح صح، بس الـ read pool رايح على replica، فالـ user شاف اسمه القديم 5 دقايق وفتح ticket. الحل: بعد الـ update حط <code>recent-write:user:${id}</code> بـ PX 5000، والـ cache-aside في الـ miss يختار الـ primary لو العلامة موجودة. وراجع الـ <code>Prisma</code> أو الـ <code>pg</code> routing بتاعك: اللي بيملا الـ cache مش لازم يبقى نفس الـ pool بتاع القراءات العادية.
+    </div>
+  </section>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — What not to cache <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — إيه اللي متعملوش cache</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A cache hit is cheaper than the database, but a miss pays for both trips plus the write back. So there's a break-even hit ratio: mean latency with cache = <code>tGet + (1 − h)(tDb + tSet)</code>, which equals <code>tDb</code> at <code>h = (tGet + tSet) / (tDb + tSet)</code>. Below that, the cache makes reads slower while using memory and adding a failure path.</p>
+    <p>Measured here on loopback: a primary-key lookup costs ≈0.27 ms against ≈0.18 ms for <code>GET</code> and <code>SET</code>, so the formula gives ≈81%, and the sweep (mean latency at each hit ratio, against plain database reads in the same rounds) crossed between 90% and 99%. In other words, on this machine a PK lookup is about as cheap as a Redis round trip and a cache barely pays. Add a 0.5 ms network RTT to each call and the break-even is ≈94%. An aggregate over 200,000 rows costing ≈7.2 ms breaks even at ≈5.4%. <b>Cache expensive queries, not cheap ones</b>, unless the goal is protecting the database from load, which is a different reason with its own numbers.</p>
+    <p><b>The usual suspects.</b> Per-user dashboards: 3 views a day with a 5-minute TTL gives a hit ratio of about 1.1% (seeded calculator), far under any break-even, and you keep 100,000 keys in memory to get it. Data that changes every second, like live counts: the TTL would have to be shorter than the change rate, so you're just running a slower database. Cheap queries, as above. Permissions: a revoked admin keeps access until the TTL, so cache only with a very short TTL and an event that really is delivered, and never let the cached value be the final authorization on a sensitive action.</p>
+    <p><b>Never make a money decision from a cached value.</b> Three concurrent checkouts of 400 against a cached balance of 1000 all passed, leaving −200. The same three against <code>UPDATE ... WHERE balance &gt;= $1</code> approved 2 of 3 and left 200. Show the cached balance on the page if you like; the decision belongs in the transaction that changes it.</p>
+  </section>
+
+<pre data-file="src/break-even.ts"><code class="language-typescript">import { mean, mulberry32, newPool, newRedis } from "./lib.ts";
+
+const db = newPool(2);
+const redis = newRedis();
+await redis.flushall();
+await db.query(`DROP TABLE IF EXISTS products, orders;
+  CREATE TABLE products (id int PRIMARY KEY, price int NOT NULL, name text NOT NULL);
+  INSERT INTO products (id, price, name) SELECT g, 100 + g % 50, 'product-' || g FROM generate_series(1, 50000) g;
+  CREATE TABLE orders (id int PRIMARY KEY, user_id int NOT NULL, total int NOT NULL);
+  INSERT INTO orders (id, user_id, total) SELECT g, g % 5000, g % 900 FROM generate_series(1, 200000) g;
+  ANALYZE products; ANALYZE orders;`);
+
+// الـ query الرخيصة: primary key. الغالية: aggregate على 200 ألف صف من غير index
+const CHEAP = "SELECT id, price, name FROM products WHERE id = $1";
+const HEAVY = "SELECT count(*)::int AS n, sum(total)::int AS spent FROM orders WHERE user_id = $1";
+
+const time = async &lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;) =&gt; {
+  const s = performance.now();
+  await fn();
+  return performance.now() - s;
+};
+
+async function measure(sql: string, n: number) {
+  const db_ms: number[] = [];
+  const get_ms: number[] = [];
+  const set_ms: number[] = [];
+  const rand = mulberry32(7);
+  for (let i = 0; i &lt; n; i++) {
+    const id = 1 + Math.floor(rand() * 5000);
+    db_ms.push(await time(() =&gt; db.query(sql, [id])));
+    get_ms.push(await time(() =&gt; redis.get(`m:${id}`)));
+    set_ms.push(await time(() =&gt; redis.set(`m:${id}`, "x".repeat(200), "EX", 60)));
+  }
+  return { tDb: mean(db_ms), tGet: mean(get_ms), tSet: mean(set_ms) };
+}
+
+const cheap = await measure(CHEAP, 2000);
+const heavy = await measure(HEAVY, 40);
+const breakEven = (m: { tDb: number; tGet: number; tSet: number }) =&gt; (m.tGet + m.tSet) / (m.tDb + m.tSet);
+
+const ms = (x: number) =&gt; x.toFixed(3);
+console.log(`cheap PK query  ≈ db=${ms(cheap.tDb)} ms  GET=${ms(cheap.tGet)} ms  SET=${ms(cheap.tSet)} ms -&gt; break-even hit ratio ${(breakEven(cheap) * 100).toFixed(0)}%`);
+console.log(`heavy aggregate ≈ db=${ms(heavy.tDb)} ms  GET=${ms(heavy.tGet)} ms  SET=${ms(heavy.tSet)} ms -&gt; break-even hit ratio ${(breakEven(heavy) * 100).toFixed(1)}%`);
+
+// الـ قياس الحقيقي: جرّب الـ cache-aside عند كل hit ratio وقارنه بالـ DB لوحدها
+const rand = mulberry32(99);
+const key = (id: number) =&gt; `p:${id}`;
+await redis.set(key(1), "x".repeat(200), "EX", 300);
+
+// الجهاز عليه حمل: نقص أعلى وأقل 10% عشان الـ pauses متبوّظش المتوسط
+const trimmedMean = (xs: number[]) =&gt; {
+  const s = [...xs].sort((a, b) =&gt; a - b);
+  const cut = Math.floor(s.length * 0.1);
+  return mean(s.slice(cut, s.length - cut));
+};
+
+let nextMissId = 1000;
+async function batch(hitRatio: number, n: number): Promise&lt;number&gt; {
+  const total: number[] = [];
+  for (let i = 0; i &lt; n; i++) {
+    const isHit = rand() &lt; hitRatio;
+    // الـ miss لازم يبقى على key جديد، وإلا هيتحوّل لـ hit في المرة الجاية
+    const id = isHit ? 1 : nextMissId++;
+    total.push(
+      await time(async () =&gt; {
+        const hit = await redis.get(key(id));
+        if (hit !== null) return;
+        await db.query(CHEAP, [1 + (id % 50000)]);
+        await redis.set(key(id), "x".repeat(200), "EX", 300);
+      }),
+    );
+  }
+  return trimmedMean(total);
+}
+
+async function noCacheBatch(n: number): Promise&lt;number&gt; {
+  const total: number[] = [];
+  for (let i = 0; i &lt; n; i++) total.push(await time(() =&gt; db.query(CHEAP, [1 + (i % 50000)])));
+  return trimmedMean(total);
+}
+
+// كل مستوى بيتقاس في جولات متداخلة مع الـ no-cache، عشان الاتنين يشوفوا نفس حالة الجهاز
+const LEVELS = [0, 0.25, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99];
+const ROUNDS = 7;
+const withCache = new Map&lt;number, number[]&gt;(LEVELS.map((h) =&gt; [h, []]));
+const without: number[] = [];
+for (let round = 0; round &lt; ROUNDS; round++) {
+  without.push(await noCacheBatch(500));
+  for (const h of LEVELS) withCache.get(h)!.push(await batch(h, 500));
+}
+const median = (xs: number[]) =&gt; [...xs].sort((a, b) =&gt; a - b)[Math.floor(xs.length / 2)]!;
+const noCache = median(without);
+console.log(`\nno cache at all: ≈${ms(noCache)} ms (median of ${ROUNDS} trimmed-mean rounds)`);
+console.log("hit ratio   cache-aside ≈      vs no cache");
+for (const h of LEVELS) {
+  const m = median(withCache.get(h)!);
+  console.log(`${(h * 100).toFixed(0).padStart(6)}%     ${ms(m).padStart(10)} ms     ${m &gt; noCache ? "slower" : "faster"}`);
+}
+
+// الأرقام فوق على localhost. في production كل call بيدفع network round trip
+const RTT = 0.5;
+const net = { tDb: cheap.tDb + RTT, tGet: cheap.tGet + RTT, tSet: cheap.tSet + RTT };
+console.log(`with ${RTT} ms RTT per call, cheap PK query: break-even hit ratio ${(breakEven(net) * 100).toFixed(0)}%`);
+
+// (2) حساب هيت ريشيو الـ dashboard لكل user: زيارات قليلة وعلى فترات متباعدة
+const sim = mulberry32(5);
+const USERS = 100_000;
+const VIEWS_PER_DAY = 3;
+const DAY_MIN = 16 * 60;
+const TTL_MIN = 5;
+let views = 0;
+let hits = 0;
+for (let u = 0; u &lt; USERS; u++) {
+  const times = Array.from({ length: VIEWS_PER_DAY }, () =&gt; sim() * DAY_MIN).sort((a, b) =&gt; a - b);
+  times.forEach((t, i) =&gt; {
+    views++;
+    if (i &gt; 0 &amp;&amp; t - times[i - 1]! &lt;= TTL_MIN) hits++;
+  });
+}
+console.log(`\nper-user dashboard, ${VIEWS_PER_DAY} views/day, TTL ${TTL_MIN} min (seeded calculator): hit ratio=${((hits / views) * 100).toFixed(1)}%`);
+
+await db.end();
+redis.disconnect();</code></pre>
+<pre><code class="language-plaintext">cheap PK query  ≈ db=0.271 ms  GET=0.183 ms  SET=0.183 ms -&gt; break-even hit ratio 81%
+heavy aggregate ≈ db=7.197 ms  GET=0.237 ms  SET=0.160 ms -&gt; break-even hit ratio 5.4%
+
+no cache at all: ≈0.136 ms (median of 7 trimmed-mean rounds)
+hit ratio   cache-aside ≈      vs no cache
+     0%          0.424 ms     slower
+    25%          0.319 ms     slower
+    50%          0.237 ms     slower
+    60%          0.210 ms     slower
+    70%          0.200 ms     slower
+    80%          0.157 ms     slower
+    90%          0.137 ms     slower
+    99%          0.107 ms     faster
+with 0.5 ms RTT per call, cheap PK query: break-even hit ratio 94%
+
+per-user dashboard, 3 views/day, TTL 5 min (seeded calculator): hit ratio=1.1%</code></pre>
+  <div class="ar-note">أول سطرين: الـ PK query بيتعادل عند ≈81% والـ aggregate الغالي عند ≈5.4%. الجدول اللي بعدهم قياس حقيقي لكل hit ratio قصاد الـ DB لوحدها في نفس الجولات: الـ cache فضل أبطأ لحد 90% وبقى أسرع عند 99%، يعني نقطة التقاطع فوق الـ 90% على الجهاز ده. سطر الـ RTT: لو كل call فيه 0.5 ms شبكة، التعادل بيبقى ≈94%. آخر سطر: dashboard لكل user، الـ hit ratio ≈1.1%.</div>
+
+<pre data-file="src/balance-cache.ts"><code class="language-typescript">import { newPool, newRedis } from "./lib.ts";
+
+const db = newPool(5);
+const redis = newRedis();
+
+await db.query(`DROP TABLE IF EXISTS accounts;
+  CREATE TABLE accounts (id int PRIMARY KEY, balance int NOT NULL);
+  INSERT INTO accounts VALUES (1, 1000), (2, 1000);`);
+await redis.set("balance:1", "1000", "EX", 30);
+
+// ❌ القرار مبني على رقم من الـ cache: 3 checkouts شايفين نفس الـ 1000
+async function checkoutFromCache(amount: number): Promise&lt;boolean&gt; {
+  const cached = Number(await redis.get("balance:1"));
+  if (cached &lt; amount) return false;
+  await db.query("UPDATE accounts SET balance = balance - $1 WHERE id = 1", [amount]);
+  return true;
+}
+
+// ✅ القرار جوه الـ DB: شرط وخصم في statement واحد
+async function checkoutAtomic(amount: number): Promise&lt;boolean&gt; {
+  const { rowCount } = await db.query(
+    "UPDATE accounts SET balance = balance - $1 WHERE id = 2 AND balance &gt;= $1",
+    [amount],
+  );
+  return rowCount === 1;
+}
+
+const results = await Promise.all([checkoutFromCache(400), checkoutFromCache(400), checkoutFromCache(400)]);
+const { rows: bad } = await db.query("SELECT balance FROM accounts WHERE id = 1");
+console.log(`from cache:  approved=${results.filter(Boolean).length}/3  final balance=${bad[0].balance}`);
+
+const atomic = await Promise.all([checkoutAtomic(400), checkoutAtomic(400), checkoutAtomic(400)]);
+const { rows: good } = await db.query("SELECT balance FROM accounts WHERE id = 2");
+console.log(`atomic:      approved=${atomic.filter(Boolean).length}/3  final balance=${good[0].balance}`);
+
+await db.end();
+redis.disconnect();</code></pre>
+<pre><code class="language-plaintext">from cache:  approved=3/3  final balance=-200
+atomic:      approved=2/3  final balance=200</code></pre>
+  <div class="ar-note">3 checkouts كل واحد 400 على رصيد 1000. لما القرار جاي من الـ cache الـ 3 نجحوا والرصيد بقى −200. لما القرار جوه الـ <code>UPDATE ... WHERE balance &gt;= $1</code>، نجح 2 بس والرصيد 200.</div>
+
+  <table>
+    <tr><th>Candidate</th><th>Why it's a bad cache</th><th>Instead</th></tr>
+    <tr><td>Per-user dashboard, few views/day</td><td>Hit ratio ≈1%, memory for nothing</td><td>Good indexes, a read model, or a very short in-request memo</td></tr>
+    <tr><td>Per-second data (live viewers, stock tick)</td><td>TTL shorter than the update rate</td><td>Counter in Redis as the source for that number, or push updates</td></tr>
+    <tr><td>Cheap PK lookup</td><td>Break-even above 80–90%</td><td>Query directly; cache only to shield the DB from load</td></tr>
+    <tr><td>Permissions, roles</td><td>Revocation delayed until TTL</td><td>Short TTL + reliable invalidation, recheck on sensitive actions</td></tr>
+    <tr><td>Balance, stock for a decision</td><td>Decision on stale data loses money</td><td>Atomic check in the DB transaction</td></tr>
+  </table>
+  <div class="ar-note">صف بصف: dashboard لكل user بزيارات قليلة: hit ratio حوالي 1% وmemory على الفاضي، فالأحسن indexes كويسة أو read model. الـ data اللي بتتغير كل ثانية: الـ TTL هيبقى أقصر من التغيير، فخلي Redis نفسه مصدر الرقم ده أو ابعت updates بالـ push. الـ PK lookup الرخيص: التعادل فوق 80–90%، فاقرا مباشرة، والـ cache يبقى بس لحماية الـ DB من الحمل. الصلاحيات: الـ revoke بيتأخر للـ TTL، فـ TTL قصير وinvalidation مضمون وتأكد تاني في العمليات الحساسة. الرصيد أو الـ stock وقت القرار: القرار على data قديمة بيخسّر فلوس، فلازم فحص atomic جوه transaction الـ DB.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ cache hit أرخص من الـ DB، بس الـ miss بيدفع المشوارين + الكتابة في الـ cache. يبقى فيه hit ratio للتعادل: متوسط الوقت مع الـ cache = <code>tGet + (1 − h)(tDb + tSet)</code>، وده بيساوي <code>tDb</code> عند <code>h = (tGet + tSet) / (tDb + tSet)</code>. تحت النسبة دي الـ cache بيبطّأ القراءة وكمان بياكل memory ويزوّد نقطة فشل.</p>
+    <p>القياس هنا على loopback: الـ PK lookup بياخد ≈0.27 ms قصاد ≈0.18 ms للـ <code>GET</code> و<code>SET</code>، فالمعادلة بتدي ≈81%، والـ sweep الحقيقي (متوسط الوقت عند كل hit ratio قصاد القراءة من الـ DB بس في نفس الجولات) اتقاطع ما بين 90% و99%. يعني على الجهاز ده الـ PK lookup تكلفته قريبة من round trip بتاع Redis، والـ cache بالكاد بيفيد. زوّد 0.5 ms network RTT لكل call والتعادل يبقى ≈94%. أما aggregate على 200 ألف صف بياخد ≈7.2 ms بيتعادل عند ≈5.4%. <b>اعمل cache للـ queries الغالية مش الرخيصة</b>، إلا لو الهدف حماية الـ DB من الحمل، ودي حاجة تانية ليها حساباتها.</p>
+    <p><b>المشتبه فيهم المعتادين.</b> Dashboards لكل user: 3 زيارات في اليوم بـ TTL 5 دقايق يدوك hit ratio حوالي 1.1% (calculator بـ seed)، أقل بكتير من أي تعادل، وإنت شايل 100 ألف key في الـ memory عشانه. الـ data اللي بتتغير كل ثانية زي العدادات اللايف: الـ TTL لازم يبقى أقصر من معدل التغيير، فإنت كده بتشغّل DB أبطأ بس. الـ queries الرخيصة زي ما شوفنا. الصلاحيات: admin اتشال منه الـ access هيفضل معاه لحد الـ TTL، فلو هتعمل cache يبقى TTL قصير جدًا وevent بيوصل بجد، ومتخليش القيمة الـ cached هي القرار النهائي في عملية حساسة.</p>
+    <p><b>متاخدش قرار فلوس من قيمة cached.</b> 3 checkouts متزامنين كل واحد 400 على رصيد cached 1000 كلهم عدّوا والرصيد بقى −200. ونفس التلاتة على <code>UPDATE ... WHERE balance &gt;= $1</code> وافق على 2 من 3 والرصيد 200. اعرض الرصيد الـ cached في الصفحة براحتك، بس القرار مكانه الـ transaction اللي بيغيّره.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      قبل ما تضيف <code>@Cacheable</code> على endpoint: افتح APM واعرف زمن الـ query وعدد الـ reads بالـ key. لو الـ query 2 ms بـ PK والـ hit ratio المتوقع 40% (data متفرقة لكل user)، الأحسن index وخلاص. ولو تقرير بياخد 800 ms بيتطلب من 500 user بنفس الفلاتر، الـ cache بيكسب من أول 1%. والغلطة الشائعة: تعمل cache للـ <code>balance</code> وتقرر منها في الـ checkout.
+    </div>
+  </section>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Sizing from an access log <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ sizing من access log</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A cache size is a decision about hit ratio, so measure it from your own traffic instead of guessing. Take one hour of keys from your access log and replay them through a simulated LRU at many capacities. That gives a <b>miss ratio curve</b>. Below, a seeded log of 3 million requests over a catalog of 1M keys with Zipf skew 0.9 (a simulation, labelled in its output; it doesn't model varying value sizes, TTL expiry or Redis's sampled eviction).</p>
+    <p><b>Working set first.</b> Distinct keys requested: 29,124 in a minute, 188,198 in 10 minutes, 584,925 in the hour. <b>The cold-miss floor</b> is 19.5%: every key's first request must miss, so no cache size beats 80.5% in this hour. Then the curve: hit ratio climbs steeply and flattens as it nears the floor. Read the column "gain per extra 100k keys": 15.7 points from 50k to 100k, 2.8 at 400k, 0.2 past 500k. The <b>knee</b> here is 400,000 keys (≈78.7% hit ratio): beyond it more memory barely helps.</p>
+    <p><b>Convert to bytes with the real overhead.</b> A 796-byte product JSON costs 843 bytes in <code>MEMORY USAGE</code>; a batch of 20,000 keys grew <code>used_memory</code> by 913 bytes per key once the hash table is counted. So 400,000 keys ≈ 0.34 GB, or 0.48 GB with 1.4× headroom for fragmentation and growth.</p>
+    <p><b>Compare with the estimation rule.</b> The 80/20 rule from <a href="./02-back-of-the-envelope-estimation.html">lesson 02</a> caches 20% of daily reads: 14.4M objects, ≈12.2 GB. It's a sound first number on a whiteboard, but it counts requests, and repeated requests for the same key take no extra memory. Here the access-log method gives a size about 25× smaller for a similar hit ratio. Use the rule to set the order of magnitude in an interview, then use the curve for the actual purchase.</p>
+  </section>
+
+<pre data-file="src/sizing.ts"><code class="language-typescript">import { mulberry32, newRedis } from "./lib.ts";
+
+console.log("[simulation] seeded access log, LRU simulated in memory. Not captured: value sizes that vary, TTL expiry, eviction sampling inside Redis.");
+
+// (1) نولّد log لمدة ساعة بتوزيع Zipf زي أغلب الـ catalogs
+const CATALOG = 1_000_000;
+const REQUESTS = 3_000_000;
+const S = 0.9;
+const rand = mulberry32(2026);
+
+// حساب الـ CDF مرة واحدة، وبعدين binary search لكل request
+const cdf = new Float64Array(CATALOG);
+let sum = 0;
+for (let i = 0; i &lt; CATALOG; i++) {
+  sum += 1 / Math.pow(i + 1, S);
+  cdf[i] = sum;
+}
+for (let i = 0; i &lt; CATALOG; i++) cdf[i]! /= sum;
+
+function pick(): number {
+  const u = rand();
+  let lo = 0;
+  let hi = CATALOG - 1;
+  while (lo &lt; hi) {
+    const mid = (lo + hi) &gt;&gt; 1;
+    if (cdf[mid]! &lt; u) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+const log = new Int32Array(REQUESTS);
+for (let i = 0; i &lt; REQUESTS; i++) log[i] = pick();
+
+// (2) الـ distinct keys: كام key اتطلب فعلاً في الساعة، وفي دقيقة، وفي 10 دقايق
+const distinct = (from: number, to: number) =&gt; {
+  const seen = new Set&lt;number&gt;();
+  for (let i = from; i &lt; to; i++) seen.add(log[i]!);
+  return seen.size;
+};
+const perMin = Math.floor(REQUESTS / 60);
+console.log(`requests/hour=${REQUESTS.toLocaleString("en-US")} (${Math.round(REQUESTS / 3600)} rps)`);
+console.log(`distinct keys: 1 min=${distinct(0, perMin).toLocaleString("en-US")}  10 min=${distinct(0, perMin * 10).toLocaleString("en-US")}  1 hour=${distinct(0, REQUESTS).toLocaleString("en-US")}`);
+
+// (3) الـ miss ratio curve: LRU بأحجام مختلفة على نفس الـ log
+// ملحوظة: Linked list في typed arrays، لأن ⁦map.keys().next()⁩ بعد deletes كتير بقى بطيء جدًا هنا
+function simulateLru(capacity: number): number {
+  const prev = new Int32Array(CATALOG).fill(-1);
+  const next = new Int32Array(CATALOG).fill(-1);
+  const inCache = new Uint8Array(CATALOG);
+  let head = -1;
+  let tail = -1;
+  let size = 0;
+  let misses = 0;
+  const unlink = (k: number) =&gt; {
+    const p = prev[k]!;
+    const n = next[k]!;
+    if (p !== -1) next[p] = n;
+    else head = n;
+    if (n !== -1) prev[n] = p;
+    else tail = p;
+  };
+  const pushFront = (k: number) =&gt; {
+    prev[k] = -1;
+    next[k] = head;
+    if (head !== -1) prev[head] = k;
+    head = k;
+    if (tail === -1) tail = k;
+  };
+  for (let i = 0; i &lt; REQUESTS; i++) {
+    const k = log[i]!;
+    if (inCache[k]) {
+      unlink(k);
+      pushFront(k);
+      continue;
+    }
+    misses++;
+    inCache[k] = 1;
+    pushFront(k);
+    if (++size &gt; capacity) {
+      const victim = tail;
+      unlink(victim);
+      inCache[victim] = 0;
+      size--;
+    }
+  }
+  return misses / REQUESTS;
+}
+
+const sizes = [1_000, 5_000, 20_000, 50_000, 100_000, 200_000, 300_000, 400_000, 500_000, 700_000];
+const curve = sizes.map((c) =&gt; ({ capacity: c, miss: simulateLru(c) }));
+
+// الـ cold misses: أول مرة كل key يتطلب. ده الحد الأدنى مهما كبّرت الـ cache
+const coldFloor = distinct(0, REQUESTS) / REQUESTS;
+console.log(`\ncold-miss floor (first touch of each key) = ${(coldFloor * 100).toFixed(1)}%`);
+console.log("LRU capacity (keys)  miss ratio  hit ratio  gain per extra 100k keys");
+curve.forEach(({ capacity, miss }, i) =&gt; {
+  const before = curve[i - 1];
+  const gain = before ? ((before.miss - miss) * 100) / ((capacity - before.capacity) / 100_000) : NaN;
+  console.log(`${capacity.toLocaleString("en-US").padStart(18)}    ${(miss * 100).toFixed(1).padStart(6)}%    ${((1 - miss) * 100).toFixed(1).padStart(6)}%    ${Number.isNaN(gain) ? "" : gain.toFixed(1).padStart(6) + " pts"}`);
+});
+
+// (4) حوّل عدد الـ keys لبايتات بـ MEMORY USAGE الحقيقي على Redis
+const redis = newRedis();
+await redis.flushall();
+const product = JSON.stringify({ id: 123456, name: "Wireless headphones", price: 129900, currency: "EGP", stock: 42, attrs: "x".repeat(700) });
+await redis.set("product:123456", product, "EX", 3600);
+const oneKey = Number(await redis.call("MEMORY", "USAGE", "product:123456"));
+console.log(`\nvalue=${product.length} bytes, real MEMORY USAGE of one key=${oneKey} bytes`);
+
+const before = Number(/used_memory:(\d+)/.exec(await redis.info("memory"))![1]);
+for (let i = 0; i &lt; 20000; i += 1000) {
+  const p = redis.pipeline();
+  for (let j = i; j &lt; i + 1000; j++) p.set(`product:${j}`, product, "EX", 3600);
+  await p.exec();
+}
+const after = Number(/used_memory:(\d+)/.exec(await redis.info("memory"))![1]);
+const perKey = (after - before) / 20000;
+console.log(`20,000 keys: used_memory grew ${(((after - before) / 1048576)).toFixed(1)} MB -&gt; ${perKey.toFixed(0)} bytes/key, real`);
+
+// (5) الـ knee: أول حجم بعده الزيادة بتجيب أقل من نقطتين لكل 100 ألف key
+const knee = curve.find((c, i) =&gt; {
+  const after = curve[i + 1];
+  return after !== undefined &amp;&amp; ((c.miss - after.miss) * 100) / ((after.capacity - c.capacity) / 100_000) &lt; 2;
+})!;
+const gb = (n: number, bytes: number, headroom: number) =&gt; (n * bytes * headroom) / 1024 ** 3;
+console.log(`\nknee at ${knee.capacity.toLocaleString("en-US")} keys -&gt; hit ratio ${((1 - knee.miss) * 100).toFixed(1)}% -&gt; ${gb(knee.capacity, perKey, 1.0).toFixed(2)} GB raw, ${gb(knee.capacity, perKey, 1.4).toFixed(2)} GB with 1.4x headroom`);
+
+// (6) قارن بقاعدة الـ 80/20 اللي بتحسب على عدد الـ requests في اليوم
+const dailyReads = (REQUESTS / 3600) * 86400;
+const rule8020 = 0.2 * dailyReads;
+console.log(`80/20 rule: 20% of ${dailyReads.toLocaleString("en-US")} daily reads = ${rule8020.toLocaleString("en-US")} objects -&gt; ${gb(rule8020, perKey, 1).toFixed(1)} GB`);
+redis.disconnect();</code></pre>
+<pre><code class="language-plaintext">[simulation] seeded access log, LRU simulated in memory. Not captured: value sizes that vary, TTL expiry, eviction sampling inside Redis.
+requests/hour=3,000,000 (833 rps)
+distinct keys: 1 min=29,124  10 min=188,198  1 hour=584,925
+
+cold-miss floor (first touch of each key) = 19.5%
+LRU capacity (keys)  miss ratio  hit ratio  gain per extra 100k keys
+             1,000      77.6%      22.4%    
+             5,000      66.3%      33.7%     284.3 pts
+            20,000      54.2%      45.8%      80.4 pts
+            50,000      44.8%      55.2%      31.2 pts
+           100,000      37.0%      63.0%      15.7 pts
+           200,000      28.7%      71.3%       8.3 pts
+           300,000      24.1%      75.9%       4.6 pts
+           400,000      21.3%      78.7%       2.8 pts
+           500,000      19.9%      80.1%       1.5 pts
+           700,000      19.5%      80.5%       0.2 pts
+
+value=796 bytes, real MEMORY USAGE of one key=843 bytes
+20,000 keys: used_memory grew 17.4 MB -&gt; 913 bytes/key, real
+
+knee at 400,000 keys -&gt; hit ratio 78.7% -&gt; 0.34 GB raw, 0.48 GB with 1.4x headroom
+80/20 rule: 20% of 72,000,000 daily reads = 14,400,000 objects -&gt; 12.2 GB</code></pre>
+  <div class="ar-note">أول سطر بيقول إن ده simulation وإيه اللي مش بيغطيه. الـ distinct keys: حوالي 29 ألف في دقيقة و585 ألف في الساعة. الـ cold-miss floor هو 19.5% (أول طلب لكل key لازم يبقى miss). الجدول هو الـ miss ratio curve: الـ hit ratio بيطلع بسرعة ويهدى لما يقرب من الـ floor، والعمود الأخير كسب كل 100 ألف key زيادة. بعدها <code>MEMORY USAGE</code> الحقيقي: 843 bytes للـ key الواحد، و≈913 bytes مع الـ hash table. آخر سطرين: الـ knee عند 400 ألف key ≈0.34 GB (≈0.48 GB مع الـ headroom)، وقاعدة الـ 80/20 كانت هتقول 12.2 GB.</div>
+
+<pre class="diagram">
+ hit ratio
+ 80% |                                  . . . .   &lt;- cold-miss floor reached
+ 70% |                       .
+ 60% |                .
+ 50% |           .
+ 40% |        .
+ 30% |    .
+ 20% | .
+     +--------------------------------------------- capacity (keys)
+       1k   20k   100k  200k     400k        700k
+                                  ^ knee: more memory barely helps
+</pre>
+  <div class="ar-note">الرسمة دي شكل الـ curve: الـ hit ratio بيطلع بسرعة مع أول الزيادات في الـ capacity، وبعد كده بيهدى لحد ما يوصل للـ cold-miss floor، والـ knee عند 400 ألف key هو المكان اللي بعده الـ memory الزيادة مش بتجيب حاجة تذكر.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>حجم الـ cache هو قرار على الـ hit ratio، فقيسه من الـ traffic بتاعك بدل التخمين. خد ساعة keys من الـ access log وعدّيهم على LRU متشبّه بأحجام كتير. ده بيطلّع <b>miss ratio curve</b>. فوق، log بـ seed فيه 3 مليون request على catalog مليون key بتوزيع Zipf 0.9 (simulation ومكتوب كده في الـ output، ومش بيغطي الأحجام المختلفة للقيم ولا الـ TTL ولا الـ sampled eviction بتاع Redis).</p>
+    <p><b>الـ working set الأول.</b> الـ distinct keys المطلوبة: 29,124 في دقيقة، 188,198 في 10 دقايق، 584,925 في الساعة. و<b>الـ cold-miss floor</b> هو 19.5%: أول request لكل key لازم يبقى miss، فمفيش حجم cache يعدّي 80.5% في الساعة دي. وبعدين الـ curve: الـ hit ratio بيطلع بسرعة وبيهدى لما يقرب من الـ floor. بص على عمود "gain per extra 100k keys": 15.7 نقطة من 50k لـ 100k، 2.8 عند 400k، 0.2 بعد 500k. الـ <b>knee</b> هنا عند 400 ألف key (hit ratio ≈78.7%): بعد كده الـ memory الزيادة مش بتفرق.</p>
+    <p><b>حوّل لـ bytes بالـ overhead الحقيقي.</b> JSON منتج 796 byte بياخد 843 byte في <code>MEMORY USAGE</code>، ودفعة 20 ألف key زوّدت <code>used_memory</code> بـ 913 byte لكل key لما تحسب الـ hash table. يبقى 400 ألف key ≈ 0.34 GB، أو 0.48 GB بـ 1.4× headroom للـ fragmentation والنمو.</p>
+    <p><b>قارنها بقاعدة التقدير.</b> قاعدة 80/20 من <a href="./02-back-of-the-envelope-estimation.html">الدرس 02</a> بتعمل cache لـ 20% من قراءات اليوم: 14.4 مليون object، ≈12.2 GB. دي بداية كويسة على السبورة، بس بتحسب requests، والطلبات المكررة لنفس الـ key مش بتاخد memory زيادة. هنا طريقة الـ access log طلّعت حجم أصغر بحوالي 25 مرة لـ hit ratio قريب. استخدم القاعدة في الـ interview عشان الـ order of magnitude، والـ curve لما تيجي تدفع فلوس.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      المدير سأل "Redis محتاج 16 GB ولا 4؟". خد سطور access log ساعة ذروة من الـ API gateway، طلّع الـ key بتاع كل GET (مثلًا <code>product:${id}</code>)، وشغّل الـ LRU simulation ده على الملف. ارسم الـ curve واختار الـ knee، وحوّله بـ <code>MEMORY USAGE</code> على عينة حقيقية من الـ values بتاعتك. الغلطة الشائعة: تحسب عدد الـ keys × متوسط حجم القيمة وتنسى الـ overhead (أكتر من 100 byte للـ key الصغير).
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks at scale</b>
+    Sizing to the knee assumes tomorrow looks like today. A flash sale widens the working set, and a nightly scan pushes the hot set out of LRU. Re-measure after traffic changes and leave the headroom; with <code>noeviction</code>, a full instance returns errors instead of evicting (<a href="../../07-Databases/lessons/38-running-redis.html">section 07 · 3.5</a>).
+    <div class="ar-note">الـ sizing عند الـ knee بيفترض إن بكرة زي النهارده. الـ flash sale بيوسّع الـ working set، والـ scan الليلي بيطرد الـ hot set من الـ LRU. قيس تاني لما الـ traffic يتغير وسيب headroom. ولو سايب <code>noeviction</code>، الـ instance لما يتملي بيرد errors بدل ما يعمل evict (<a href="../../07-Databases/lessons/38-running-redis.html">section 07 · 3.5</a>).</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Delete before the write</b>
+<pre><code class="language-typescript">await redis.del(key);
+// القارئ ممكن يملا القديم في اللحظة دي
+await db.query(updateSql, params);</code></pre></div>
+    <div class="good"><b>✅ Commit first, then delete</b>
+<pre><code class="language-typescript">await db.query(updateSql, params);
+// بعد الـ commit: القارئ الجديد هيشوف الجديد
+await redis.del(key);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ المسح قبل الكتابة بيفتح window واسعة: 471 من 1000 في التجربة. ✅ الـ commit الأول وبعدين الـ delete نزّلها لـ 15، وخلي الـ delete بره الـ transaction callback عشان تضمن إن الـ commit حصل فعلًا.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Event-driven, no TTL</b>
+<pre><code class="language-typescript">// لو الـ event ضاع، القيمة غلط على طول
+await redis.set(key, value);</code></pre></div>
+    <div class="good"><b>✅ Event + TTL as the upper bound</b>
+<pre><code class="language-typescript">// الـ TTL هو السقف لأي event ضاع
+await redis.set(key, value, "EX", 600);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ events من غير TTL معناها إن رسالة واحدة ضاعت (consumer وقع، stream اتقص، deploy) هتسيب السعر غلط لحد ما حد يلاحظ. ✅ سيب TTL دايمًا، والـ events تقلل الوقت في الحالة العادية بس.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Compare-and-set, but the writer still deletes</b>
+<pre><code class="language-typescript">await update(row);
+// مفيش قيمة تتقارن بيها بعد المسح
+await redis.del(KEY);</code></pre></div>
+    <div class="good"><b>✅ The writer writes the versioned value</b>
+<pre><code class="language-typescript">const { version } = await update(row);
+await redis.eval(SET_IF_NEWER, 1, KEY, version, json, TTL_MS);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ reader البطيء بيلاقي الـ key ممسوح فالـ compare-and-set بينجح، وده اللي طلّع 15 stale زي write-then-delete بالظبط. ✅ خلي الكاتب يكتب القيمة الجديدة بالـ version، والقارئ البطيء بـ version أقدم هيترفض.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Decide from a cached balance</b>
+<pre><code class="language-typescript">const balance = Number(await redis.get(key));
+if (balance &gt;= amount) await debit(amount);</code></pre></div>
+    <div class="good"><b>✅ Check and change in one statement</b>
+<pre><code class="language-typescript">const r = await db.query(
+  "UPDATE accounts SET balance = balance - $1 WHERE id = $2 AND balance &gt;= $1",
+  [amount, id]);
+const approved = r.rowCount === 1;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ 3 checkouts شافوا 1000 في الـ cache وكلهم عدّوا والرصيد بقى −200. ✅ الشرط والخصم في statement واحد: الـ DB هي اللي بتقرر تحت الـ row lock، فـ 2 بس عدّوا والرصيد 200.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ One consumer group for all instances</b>
+<pre><code class="language-typescript">// الرسالة بتروح لـ instance واحد بس
+await redis.xreadgroup("GROUP", "app", hostname(), "STREAMS", stream, "&gt;");</code></pre></div>
+    <div class="good"><b>✅ One group per instance</b>
+<pre><code class="language-typescript">// كل instance لازم يشوف كل invalidation
+await redis.xreadgroup("GROUP", `app-${hostname()}`, "c", "STREAMS", stream, "&gt;");</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ consumer group بيوزّع الرسايل على أعضاؤه، وده مناسب للـ jobs، بس الـ invalidation لازم توصل لكل instance. في التجربة A خد الرسالة وB مخدش حاجة وفضل على 100. ✅ اعمل group لكل instance، وامسح الـ groups القديمة بتاعة الـ instances اللي اتشالت عشان الـ stream ميكبرش.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Compute the break-even <span class="lvl lvl-1">🟢 easy</span></b>
+    In production a Redis round trip is 0.6 ms for both <code>GET</code> and <code>SET</code>. A PK lookup is 1.1 ms and a reporting query is 80 ms. Compute the break-even hit ratio for each. Which one should you never cache for latency reasons alone?
+    <div class="ar-note">في الـ production الـ round trip لـ Redis بياخد 0.6 ms لكل <code>GET</code> و<code>SET</code>. الـ PK lookup بياخد 1.1 ms وreport بياخد 80 ms. احسب الـ break-even hit ratio لكل واحد. إيه اللي مش المفروض تعمله cache عشان الـ latency بس؟</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-break-even.ts"><code class="language-typescript">// الحل: الـ hit ratio اللي عنده الـ cache بيساوي الـ DB لوحدها
+const breakEven = (tGet: number, tSet: number, tDb: number) =&gt; (tGet + tSet) / (tDb + tSet);
+
+console.log(`primary-key lookup: ${(breakEven(0.6, 0.6, 1.1) * 100).toFixed(0)}%`);
+console.log(`reporting query:    ${(breakEven(0.6, 0.6, 80) * 100).toFixed(1)}%`);</code></pre>
+<pre><code class="language-plaintext">primary-key lookup: 71%
+reporting query:    1.5%</code></pre>
+      <div class="ar-note">الـ PK lookup محتاج hit ratio ≈71% قبل ما يكسب أي latency، فغالبًا متعملوش cache عشان الـ latency. الـ report بيكسب من ≈1.5%.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Atomic tag purge <span class="lvl lvl-2">🟡 medium</span></b>
+    The tag purge in part 2 reads the set and then unlinks, so a page registered between those two steps is left alive with its tag deleted. Write it as one Lua script and test it on real Redis.
+    <div class="ar-note">الـ tag purge في الجزء 2 بيقرا الـ set وبعدين يعمل unlink، فصفحة تتسجل بين الخطوتين هتفضل عايشة والـ tag بتاعها اتمسح. اكتبها كـ Lua script واحد وجرّبها على Redis حقيقي.</div>
+    <details><summary>Hint · تلميح</summary>
+      <code>SMEMBERS</code>, a loop of <code>UNLINK</code>, then <code>DEL</code> of the tag, all in one <code>EVAL</code>. In Redis Cluster this breaks unless all keys share a hash tag, because the script must declare them.
+      <div class="ar-note"><code>SMEMBERS</code> وloop من <code>UNLINK</code> وبعدين <code>DEL</code> للـ tag، كله في <code>EVAL</code> واحد. وفي Redis Cluster ده مش هيشتغل إلا لو كل الـ keys معاهم نفس الـ hash tag، لأن الـ script لازم يعلن عن الـ keys بتاعته.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-tag-purge.ts"><code class="language-typescript">import { newRedis } from "./lib.ts";
+
+const redis = newRedis();
+await redis.flushall();
+
+// الحل: الـ SMEMBERS والـ UNLINK جوه script واحد، فمفيش key يتسجّل بينهم ويهرب
+const PURGE_TAG = `
+local members = redis.call('SMEMBERS', KEYS[1])
+for i = 1, #members do redis.call('UNLINK', members[i]) end
+redis.call('DEL', KEYS[1])
+return #members`;
+
+for (const page of ["page:home", "page:category:9"]) {
+  await redis.set(page, "&lt;html&gt;", "EX", 600);
+  await redis.sadd("tag:product:123", page);
+}
+
+const purged = await redis.eval(PURGE_TAG, 1, "tag:product:123");
+console.log(`purged=${purged} home=${await redis.exists("page:home")} tag=${await redis.exists("tag:product:123")}`);
+redis.disconnect();</code></pre>
+<pre><code class="language-plaintext">purged=2 home=0 tag=0</code></pre>
+      <div class="ar-note">الـ script مسح صفحتين والـ tag، وبعدها <code>page:home</code> بقت مش موجودة والـ tag كمان. الـ Lua في Redis single-threaded، فمفيش set تاني يدخل بين الخطوات.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Close the race with a version in the key <span class="lvl lvl-3">🔴 hard</span></b>
+    Change the slow-reader race so that the reader first reads a per-product generation counter, and writes to <code>product:ID:vN</code>; the writer commits and then increments the counter. Show that 300 slow readers leave no stale value visible.
+    <div class="ar-note">غيّر الـ slow-reader race بحيث القارئ يقرا counter الجيل بتاع المنتج الأول ويكتب في <code>product:ID:vN</code>، والكاتب يعمل commit وبعدين يزوّد الـ counter. وريني إن 300 قارئ بطيء مش بيسيبوا قيمة stale ظاهرة.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-versioned-race.ts"><code class="language-typescript">import { newPool, newRedis, sleep } from "./lib.ts";
+
+const db = newPool(10);
+const redis = newRedis();
+await redis.flushall();
+await db.query(`DROP TABLE IF EXISTS products;
+  CREATE TABLE products (id int PRIMARY KEY, price int NOT NULL);
+  INSERT INTO products SELECT g, 100 FROM generate_series(1, 300) g;`);
+
+const verKey = (id: number) =&gt; `product:${id}:ver`;
+const dataKey = (id: number, v: string) =&gt; `product:${id}:v${v}`;
+
+// الحل: الـ reader بياخد رقم الجيل الأول، فالكتابة المتأخرة بتروح لجيل محدش هيقراه
+async function slowFill(id: number) {
+  const v = (await redis.get(verKey(id))) ?? "0";
+  const { rows } = await db.query("SELECT price FROM products WHERE id = $1", [id]);
+  await sleep(60);
+  await redis.set(dataKey(id, v), String(rows[0].price), "EX", 600);
+}
+
+async function write(id: number) {
+  await db.query("UPDATE products SET price = 200 WHERE id = $1", [id]);
+  await redis.incr(verKey(id));
+}
+
+let stale = 0;
+for (let id = 1; id &lt;= 300; id += 30) {
+  await Promise.all(
+    Array.from({ length: 30 }, async (_, j) =&gt; {
+      const pid = id + j;
+      await Promise.all([slowFill(pid), sleep(10).then(() =&gt; write(pid))]);
+      const v = (await redis.get(verKey(pid))) ?? "0";
+      const cached = await redis.get(dataKey(pid, v));
+      if (cached !== null &amp;&amp; cached !== "200") stale++;
+    }),
+  );
+}
+console.log(`300 slow readers racing a writer: stale=${stale}`);
+await db.end();
+redis.disconnect();</code></pre>
+<pre><code class="language-plaintext">300 slow readers racing a writer: stale=0</code></pre>
+      <div class="ar-note">القارئ البطيء بيكتب في جيل قديم محدش هيقراه بعد الـ <code>INCR</code>، فمفيش stale. وده نفس فكرة الـ versioned keys من الجزء 2، والتمن قراءة زيادة وmemory للجيل القديم لحد الـ TTL.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project / at work <span class="lvl lvl-3">🔴 project</span></b>
+    Pick one cached read in your side project. Write the invalidation path in order (DB commit, event, delete), add a TTL as the bound, and add a metric for how long the value was wrong after a write. Then take one hour of keys from your logs and draw the miss ratio curve with <code>sizing.ts</code>.
+    <div class="ar-note">اختار قراءة cached في مشروعك الجانبي. اكتب مسار الـ invalidation بالترتيب (commit في الـ DB، event، delete)، حط TTL كسقف، وضيف metric بتقيس القيمة فضلت غلط قد إيه بعد الـ write. وبعدين خد ساعة keys من الـ logs بتاعتك وارسم الـ miss ratio curve بـ <code>sizing.ts</code>.</div>
+    <details><summary>Hint · تلميح</summary>
+      Log the write time with the event, and on the first read after it compare the cached version to the DB version. In section 11 this becomes a real metric; for now a log line is fine.
+      <div class="ar-note">سجّل وقت الـ write مع الـ event، وأول قراءة بعدها قارن الـ version الـ cached بتاع الـ DB. لحد ما ندخل الـ observability، سطر log كفاية.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>TTL only: staleness ≈ TTL/2 on average, TTL at worst (measured ≈1.4 s / ≈2.9 s for 3 s).</li>
+    <li>Pub/Sub loses messages while a subscriber is offline; a stream with one consumer group per instance doesn't.</li>
+    <li>Always keep a TTL: it bounds every failure you didn't think of.</li>
+    <li>Namespace version = O(1) purge (≈0.14 ms vs ≈149 ms for SCAN + UNLINK of 10k keys), but one more round trip and memory until old keys expire.</li>
+    <li>Tags: many-to-many "everything that used product X"; TTL on the tag set too.</li>
+    <li>Delete-then-write is wrong (471/1000). Write-then-delete is the right order, but a slow reader on a cold key remains (15/1000).</li>
+    <li>Set-if-newer with the writer writing the value: 0 stale; with a DEL it's useless. Leases: 0 stale, more Redis work.</li>
+    <li>Filling from a lagging replica re-poisons the cache: read the primary right after a write, or check a version.</li>
+    <li>Break-even hit ratio = (tGet + tSet) / (tDb + tSet): cheap queries ≈80–90%+, expensive ones a few percent.</li>
+    <li>Never decide money or stock from a cached value; put the check in the transaction.</li>
+    <li>Size from an access log: distinct keys, cold-miss floor, miss ratio curve, knee, then real <code>MEMORY USAGE</code> + headroom.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ TTL لوحده: الـ staleness حوالي TTL/2 متوسط والـ TTL كله في الأسوأ (قست ≈1.4 ثانية و≈2.9 ثانية لـ TTL 3 ثواني).</li>
+      <li>الـ Pub/Sub بيضيّع الرسايل لما الـ subscriber يكون فاصل، والـ stream بـ consumer group لكل instance مش بيضيّعها.</li>
+      <li>سيب TTL دايمًا: هو السقف لكل مشكلة محسبتش حسابها.</li>
+      <li>الـ namespace version معناه purge في O(1) (≈0.14 ms قصاد ≈149 ms لـ SCAN + UNLINK لـ 10 آلاف key)، بتمن round trip زيادة وmemory لحد ما القديم ينتهي.</li>
+      <li>الـ tags لعلاقة many-to-many "كل حاجة استخدمت المنتج X"، وحط TTL على الـ tag set كمان.</li>
+      <li>الـ delete-then-write غلط (471 من 1000). الـ write-then-delete هو الترتيب الصح، بس reader بطيء على key فاضي لسه ممكن (15 من 1000).</li>
+      <li>الـ set-if-newer والكاتب بيكتب القيمة: 0 stale، ومع DEL ملوش فايدة. الـ leases: 0 stale بشغل أكتر على Redis.</li>
+      <li>الملا من replica متأخرة بيسمّم الـ cache تاني: اقرا من الـ primary بعد الكتابة أو اتأكد من الـ version.</li>
+      <li>الـ break-even hit ratio = (tGet + tSet) / (tDb + tSet): الـ queries الرخيصة ≈80–90% فأكتر، والغالية كام في المية.</li>
+      <li>متاخدش قرار فلوس أو stock من قيمة cached، خلي الفحص جوه الـ transaction.</li>
+      <li>الحجم من access log: distinct keys، الـ cold-miss floor، الـ miss ratio curve، الـ knee، وبعدين <code>MEMORY USAGE</code> الحقيقي + headroom.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 10 · 2.3 — Invalidation strategies: TTL، event-driven، versioned keys، tag-based</label>
+    <label><input type="checkbox" data-key="r2"> 10 · 2.3 — Cache consistency problems: stale reads، الـ race بين الـ DB write والـ cache invalidation (delete-then-write vs write-then-delete)</label>
+    <label><input type="checkbox" data-key="r3"> 10 · 2.3 — What not to cache (user-specific data بـ low hit ratio، data بيتغير كل ثانية)، cache sizing (working set estimation)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.usenix.org/conference/nsdi13/technical-sessions/presentation/nishtala">Scaling Memcache at Facebook (NSDI 2013): leases</a></li>
+    <li><a href="https://redis.io/docs/latest/develop/pubsub/">Redis docs — Pub/Sub delivery semantics</a></li>
+    <li><a href="https://redis.io/docs/latest/commands/xreadgroup/">Redis docs — XREADGROUP</a></li>
+    <li><a href="https://redis.io/docs/latest/commands/memory-usage/">Redis docs — MEMORY USAGE</a></li>
+    <li><a href="https://www.postgresql.org/docs/18/functions-admin.html">PostgreSQL 18 docs — recovery control functions (pg_wal_replay_pause)</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./16-caching-foundations-strategies.html"><small>← Previous</small>16 · Caching Foundations</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./18-cache-stampede-hot-keys-topology.html"><small>Next →</small>18 · Stampede &amp; Hot Keys</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

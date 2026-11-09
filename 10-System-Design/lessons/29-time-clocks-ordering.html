@@ -1,0 +1,1485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Time &amp; Clocks: Skew, Lamport, Vector &amp; Hybrid Clocks — 10 System Design</title>
+<meta name="section" content="10-System-Design">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">10 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 29 / 63</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <header>
+    <h1>Time &amp; Clocks: Skew, Lamport, Vector &amp; Hybrid Clocks</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 29 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">Node 22 · TypeScript · Postgres 18</span>
+      <span class="chip">Prereq: 28 Fallacies &amp; Detection</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>10 · 2.6 — Time و clocks: clock skew (الساعات مش متطابقة)، NTP، ليه <code>timestamp</code> مش كفاية للـ ordering، logical clocks (Lamport — happens-before)، vector clocks (concurrent detection)، hybrid logical clocks كمفهوم</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Clock skew</a></li>
+      <li><a href="#p2">Part 2 — Last-write-wins loses data</a></li>
+      <li><a href="#p3">Part 3 — Lamport clocks</a></li>
+      <li><a href="#p4">Part 4 — Vector clocks</a></li>
+      <li><a href="#p5">Part 5 — Hybrid logical clocks and TrueTime</a></li>
+      <li><a href="#p6">Part 6 — Ordering in practice</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>"Sort by <code>created_at</code>" is the most common ordering bug in distributed backends. It shows up as an order timeline that says "cancelled, then paid", a stitched log that reads backwards, a replica that throws away the newer write, and an outbox relay that silently skips an event forever. Interviewers use this topic to separate people who have run systems from people who have only drawn them: the expected answer names what a timestamp can and cannot prove, then picks the cheapest tool that actually gives the order you need.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>"رتّب بـ <code>created_at</code>" هي أشهر bug في الـ ordering في أي backend موزّع. بتظهر كـ timeline لـ order مكتوب فيه "اتلغى وبعدين اتدفع"، أو log متجمّع من كذا service بيتقري بالمقلوب، أو replica بترمي الكتابة الأحدث، أو outbox relay بيعدّي event وعمره ما بيرجعله. الـ interviewers بيستخدموا الموضوع ده عشان يفرّقوا بين اللي شغّل systems بجد واللي رسمها بس: الإجابة المطلوبة إنك تقول الـ timestamp يقدر يثبت إيه وميقدرش يثبت إيه، وبعدين تختار أرخص أداة بتديك الترتيب اللي محتاجه فعلًا.</p>
+  </section>
+
+  <h2 id="p1">Part 1 — Clock skew: why wall clocks lie <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الـ clock skew: ليه الساعات بتكدب</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Every server keeps time with its own quartz oscillator, and no two oscillators tick at exactly the same rate. The gap between two clocks at one instant is <b>clock skew</b>; the rate at which it grows is <b>drift</b>. NTP keeps the gap small, not zero. <a href="https://en.wikipedia.org/wiki/Network_Time_Protocol">Wikipedia's NTP article</a> puts typical accuracy at "tens of milliseconds over the public Internet" and "better than one millisecond" on a LAN under ideal conditions, and warns that asymmetric routes and congestion "can cause errors of 100 ms or more".</p>
+    <p>What NTP does not give you: a bound you can rely on at a given moment, a guarantee the daemon is running at all, or a guarantee that time only moves forward. A client can <em>slew</em> (run slightly fast or slow) or <em>step</em> (jump). chrony's <code>makestep</code> "forces chronyd to step the system clock if the adjustment is larger than a threshold value", and its docs advise stepping only at boot, "before starting programs that rely on time advancing monotonically forwards". Leap seconds are the other source of weirdness: Google <a href="https://developers.google.com/time/smear">recommends a 24-hour linear smear from noon to noon UTC</a>, about 11.6 ppm, so no clock ever shows a repeated second.</p>
+    <p>A process therefore has two clocks with different jobs. The <b>wall clock</b> (<code>Date.now()</code>) tells you the time of day and can jump. The <b>monotonic clock</b> (<code>performance.now()</code>, <code>process.hrtime()</code>) never decreases: the <a href="https://www.w3.org/TR/hr-time-3/">High Resolution Time spec</a> says it "can't be changed by system clock adjustments", and Node's docs say hrtime is "relative to an arbitrary time in the past". That arbitrary origin means a monotonic value is meaningless on another machine.</p>
+    <p><b>The rule:</b> monotonic clock for durations and timeouts inside one process; wall clock only for showing time to humans; never compare wall clocks from different machines to decide what happened first.</p>
+  </section>
+
+<pre class="diagram">
+ real time ──────────────────────────────────────────────▶
+              placed        paid          cancelled
+              t=1000        t=1120        t=1250
+                │             │              │
+ worker-c (+0)  ▼             │              │     stamp 1000
+ worker-a (+200)              ▼              │     stamp 1320
+ worker-b (-200)                             ▼     stamp 1050
+
+ sorted by stamp:  placed(1000)  cancelled(1050)  paid(1320)
+</pre>
+  <div class="ar-note">الخط اللي فوق هو الوقت الحقيقي: الـ order اتعمل عند 1000، اتدفع عند 1120، اتلغى عند 1250. كل event اتكتب على worker ساعته مختلفة: worker-c مظبوط، worker-a قدام 200ms، worker-b ورا 200ms. لما نرتب بالـ stamp اللي كل worker كتبه، الـ <code>cancelled</code> بييجي قبل الـ <code>paid</code>، مع إن الإلغاء حصل بعد الدفع في الواقع.</div>
+
+<pre data-file="src/skew-events.ts"><code class="language-typescript">// محاكاة: وقت افتراضي و PRNG بـ seed ثابت عشان الـ output يتكرر بالظبط
+function mulberry32(seed: number) {
+  return () =&gt; {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed &gt;&gt;&gt; 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+type OrderEvent = { type: "placed" | "paid" | "cancelled"; realMs: number; worker: string; wallMs: number };
+
+console.log("SIMULATION (virtual time, seed 42). Not captured: network delay, drift over time, NTP corrections.\n");
+
+// الأول: order واحد، كل event على worker ساعته مختلفة
+const offsets: Record&lt;string, number&gt; = { "worker-a": +200, "worker-b": -200, "worker-c": 0 };
+const stamp = (type: OrderEvent["type"], realMs: number, worker: string): OrderEvent =&gt; ({
+  type, realMs, worker, wallMs: realMs + offsets[worker]!,
+});
+const events = [stamp("placed", 1000, "worker-c"), stamp("paid", 1120, "worker-a"), stamp("cancelled", 1250, "worker-b")];
+
+console.log("true order  :", events.map((e) =&gt; `${e.type}@${e.realMs}`).join(" -&gt; "));
+const byWall = [...events].sort((a, b) =&gt; a.wallMs - b.wallMs);
+console.log("by wallclock:", byWall.map((e) =&gt; `${e.type}@${e.wallMs}`).join(" -&gt; "));
+
+// بعدين: 10,000 order و skew مختلف، بنعد كام order اترتب غلط
+function misordered(skewMs: number, orders = 10_000): number {
+  const rand = mulberry32(42);
+  let bad = 0;
+  for (let o = 0; o &lt; orders; o++) {
+    let real = 0;
+    const walls: number[] = [];
+    for (let step = 0; step &lt; 3; step++) {
+      // الفرق بين كل event واللي بعده من 20 لـ 400ms
+      real += 20 + rand() * 380;
+      const offset = -skewMs + rand() * 2 * skewMs;
+      walls.push(real + offset);
+    }
+    if (walls[0]! &gt; walls[1]! || walls[1]! &gt; walls[2]!) bad++;
+  }
+  return bad;
+}
+
+console.log("\nskew(+-ms)  misordered orders / 10000");
+for (const skew of [0, 10, 50, 200, 500]) {
+  const n = misordered(skew);
+  console.log(String(skew).padStart(9), String(n).padStart(8), `(${(n / 100).toFixed(1)}%)`);
+}</code></pre>
+<pre><code class="language-plaintext">SIMULATION (virtual time, seed 42). Not captured: network delay, drift over time, NTP corrections.
+
+true order  : placed@1000 -&gt; paid@1120 -&gt; cancelled@1250
+by wallclock: placed@1000 -&gt; cancelled@1050 -&gt; paid@1320
+
+skew(+-ms)  misordered orders / 10000
+        0        0 (0.0%)
+       10        0 (0.0%)
+       50      426 (4.3%)
+      200     2903 (29.0%)
+      500     5916 (59.2%)</code></pre>
+  <div class="ar-note">دي محاكاة بوقت افتراضي، والسطر الأول بيقول كده وبيقول اللي مش بتغطيه (تأخير الشبكة، الـ drift، تصحيحات NTP). أول سطرين: الترتيب الحقيقي مقابل الترتيب بالـ wall clock، والـ <code>cancelled</code> نط قبل الـ <code>paid</code>. الجدول: عند skew ±10ms مفيش ولا order اترتب غلط لأن أقل فرق بين الـ events هنا 20ms. عند ±50ms طلعوا 4.3%، عند ±200ms طلعوا 29%، وعند ±500ms أكتر من نص الـ orders.</div>
+
+<pre data-file="src/monotonic.ts"><code class="language-typescript">import { setTimeout as sleep } from "node:timers/promises";
+
+// محاكاة: بنزق Date.now بإيدنا زي ما NTP بيعمل step، والـ sleeps حقيقية
+const realDateNow = Date.now.bind(Date);
+let stepMs = 0;
+Date.now = () =&gt; realDateNow() + stepMs;
+
+async function chargeCard(): Promise&lt;void&gt; {
+  await sleep(100);
+  // هنا الساعة بترجع لورا ثانيتين في نص الـ request
+  stepMs = -2000;
+  await sleep(50);
+}
+
+const wallStart = Date.now();
+const monoStart = performance.now();
+const leaseUntil = Date.now() + 1000;
+
+await chargeCard();
+
+console.log("SIMULATED clock step of -2000 ms during a real 150 ms wait");
+console.log("Date.now() duration       :", Date.now() - wallStart, "ms");
+console.log("performance.now() duration:", Math.round(performance.now() - monoStart), "ms");
+console.log("lease 'remaining' by wall :", leaseUntil - Date.now(), "ms (real remaining is about 850)");</code></pre>
+<pre><code class="language-plaintext">SIMULATED clock step of -2000 ms during a real 150 ms wait
+Date.now() duration       : -1824 ms
+performance.now() duration: 175 ms
+lease 'remaining' by wall : 2825 ms (real remaining is about 850)</code></pre>
+  <div class="ar-note">الـ <code>sleep</code> هنا حقيقي، والقفزة بتاعة الساعة محاكاة (بنغيّر <code>Date.now</code> بإيدنا، لأن تغيير ساعة الجهاز نفسها مش حاجة نعملها). الأرقام تقريبية على جهاز Windows عليه حمل، فاعتبر 175 يعني ≈150ms. الـ <code>Date.now()</code> طلّع مدة سالبة ≈-1824ms، والـ <code>performance.now()</code> طلّع المدة الصح. السطر الأخير أخطر: lease المفروض فاضل فيها ≈850ms، بس بالـ wall clock شايفها ≈2825ms، يعني اللي ماسك الـ lease هيفضل فاكر إنه ماسكها بعد ما تخلص بكتير.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>كل server عنده كريستالة quartz بتعد الوقت، ومفيش اتنين بيعدوا بنفس السرعة بالظبط. الفرق بين ساعتين في نفس اللحظة اسمه <b>clock skew</b>، والمعدل اللي الفرق بيكبر بيه اسمه <b>drift</b>. الـ NTP بيصغّر الفرق، بس مش بيصفّره: مقالة Wikipedia بتقول إنه عادةً "عشرات الـ milliseconds" على الـ internet العام، وأقل من 1ms على LAN في أحسن الظروف، وإن الـ routes غير المتماثلة والزحمة ممكن يعملوا غلط 100ms أو أكتر.</p>
+    <p>الـ NTP مش بيديك: حد أقصى تعتمد عليه في لحظة معينة، ولا ضمان إن الـ daemon شغال أصلًا، ولا ضمان إن الوقت بيمشي لقدام بس. الـ client يقدر يعمل <em>slew</em> (يسرّع أو يبطّأ الساعة شوية) أو <em>step</em> (يقفز). الـ <code>makestep</code> بتاع chrony بيعمل step لو التصحيح أكبر من threshold، والـ docs بتاعته بتنصح إن الـ step يحصل وقت الـ boot بس، قبل ما تشغّل برامج معتمدة إن الوقت بيمشي لقدام. وفيه كمان الـ leap seconds: Google بتنصح بـ smear خطي 24 ساعة من الضهر للضهر UTC، بمعدل ≈11.6 ppm، عشان مفيش ساعة تعرض نفس الثانية مرتين.</p>
+    <p>يعني جوه الـ process فيه ساعتين ليهم شغل مختلف. الـ <b>wall clock</b> (<code>Date.now()</code>) بيقولك الوقت كام وممكن يقفز. الـ <b>monotonic clock</b> (<code>performance.now()</code> و<code>process.hrtime()</code>) عمره ما بينزل: الـ spec بيقول إن تعديلات ساعة النظام مبتغيّرهوش، والـ docs بتاعة Node بتقول إنه محسوب من نقطة عشوائية في الماضي. والنقطة العشوائية دي معناها إن الرقم ملوش أي معنى على جهاز تاني.</p>
+    <p><b>القاعدة:</b> monotonic للمدد والـ timeouts جوه process واحد، wall clock لعرض الوقت للناس بس، وعمرك ما تقارن wall clocks من أجهزة مختلفة عشان تعرف مين حصل الأول.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      صفحة الـ admin بتعرض تاريخ الـ order بـ <code>ORDER BY created_at</code> والـ events جاية من 3 workers: هتلاقي "cancelled" فوق "paid" والـ support يفتحلك ticket. وبرضه الـ middleware اللي بيقيس latency بـ <code>Date.now()</code>: أول ما NTP يعمل step هتلاقي أرقام سالبة في الـ histogram وpercentiles مالهاش معنى. استخدم <code>performance.now()</code> للقياس، ورتّب بـ version جاي من الـ data زي ما هنشوف في الجزء 6.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Two services write events with <code>created_at</code>. Can you sort by it to get the true order?" → No. Each timestamp comes from a different clock with unknown skew, so any two events closer together than that skew can appear in either order. Timestamps are fine for display and rough ranges. For order, use something the writers coordinate on: a version per entity, a log offset, or a logical clock.
+    <div class="ar-note">"اتنين services بيكتبوا events بـ <code>created_at</code>، ينفع نرتب بيها ونعرف الترتيب الحقيقي؟" ← لأ. كل timestamp جاي من ساعة مختلفة والـ skew مش معروف، فأي اتنين events أقرب من الـ skew ممكن يظهروا بأي ترتيب. الـ timestamps كويسة للعرض وللنطاقات التقريبية. أما الترتيب فمحتاج حاجة الـ writers متفقين عليها: version لكل entity، أو log offset، أو logical clock.</div>
+  </div>
+
+  <h2 id="p2">Part 2 — Last-write-wins loses data <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ last-write-wins بيضيّع data</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Last-write-wins (LWW) resolves a conflict between two versions of a value by keeping the one with the larger timestamp. It is simple and always converges, but "last" means "largest number on a clock", not "happened last". If replica B's clock runs 500 ms ahead, a write on B at real time 1000 outranks a write on A at real time 1200. The newer write disappears with no error anywhere.</p>
+    <p>This is a default, not an exotic mode. <a href="https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html">Cassandra's docs</a> say "every mutation is timestamped" and that columns resolve concurrent mutations by last-write-wins, using a client or coordinator timestamp, and they tell operators that "Cassandra's correctness does depend on these clocks". <a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/V2globaltables_HowItWorks.html">DynamoDB global tables</a> in their default MREC mode resolve same-item writes across Regions with "the latest internal timestamp", which AWS calls "last writer wins".</p>
+    <p>The fix is to derive the version from the data instead of from a clock: one authority per key hands out an increasing version, and replicas keep the highest version. That needs a single writer per key. With several writers you need concurrency detection (Part 4) or a merge-friendly type such as a CRDT, which <a href="./36-geo-distribution-crdts-residency.html">lesson 36</a> covers.</p>
+  </section>
+
+<pre data-file="src/lww.ts"><code class="language-typescript">function mulberry32(seed: number) {
+  return () =&gt; {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed &gt;&gt;&gt; 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+type Versioned = { value: string; ts: number };
+// قاعدة LWW: الـ timestamp الأكبر بيكسب، من غير ما يبص الكتابة دي حصلت إمتى فعلًا
+const lww = (a: Versioned, b: Versioned) =&gt; (a.ts &gt;= b.ts ? a : b);
+
+console.log("SIMULATION (virtual time, seed 7). Not captured: replication delay, reads between writes, more than 2 replicas.\n");
+
+const skewB = 500;
+const first: Versioned = { value: "address=Nasr City", ts: 1000 + skewB };
+const second: Versioned = { value: "address=Maadi", ts: 1200 };
+console.log("real order: B writes 'Nasr City' at t=1000, then A writes 'Maadi' at t=1200");
+console.log("winner    :", lww(first, second).value, "(the later real write was discarded)\n");
+
+// كام كتابة بتضيع: زوج كتابات ورا بعض على نفس الـ key، كل واحدة على replica عشوائي
+function lostWrites(skewMs: number, pairs = 100_000): number {
+  const rand = mulberry32(7);
+  let lost = 0;
+  for (let i = 0; i &lt; pairs; i++) {
+    // الفجوة بين الكتابتين exponential بمتوسط 2 ثانية
+    const gap = -Math.log(1 - rand()) * 2000;
+    const onB = () =&gt; rand() &lt; 0.5;
+    const tFirst = 0 + (onB() ? skewMs : 0);
+    const tSecond = gap + (onB() ? skewMs : 0);
+    if (tSecond &lt; tFirst) lost++;
+  }
+  return lost;
+}
+
+console.log("skew(ms)  lost/100000   analytic");
+for (const skew of [0, 10, 50, 100, 200, 500, 1000]) {
+  const analytic = 0.25 * (1 - Math.exp(-skew / 2000)) * 100_000;
+  console.log(String(skew).padStart(8), String(lostWrites(skew)).padStart(10), String(Math.round(analytic)).padStart(10));
+}
+
+// الحل: رقم version طالع من الـ data نفسها، بيديه authority واحد لكل key
+type Row = { value: string; version: number };
+const fromData = (a: Row, b: Row) =&gt; (a.version &gt;= b.version ? a : b);
+const v1: Row = { value: "address=Nasr City", version: 1 };
+const v2: Row = { value: "address=Maadi", version: 2 };
+console.log("\nwith data versions, any skew:", fromData(v1, v2).value);</code></pre>
+<pre><code class="language-plaintext">SIMULATION (virtual time, seed 7). Not captured: replication delay, reads between writes, more than 2 replicas.
+
+real order: B writes 'Nasr City' at t=1000, then A writes 'Maadi' at t=1200
+winner    : address=Nasr City (the later real write was discarded)
+
+skew(ms)  lost/100000   analytic
+       0          0          0
+      10        141        125
+      50        646        617
+     100       1223       1219
+     200       2348       2379
+     500       5580       5530
+    1000       9864       9837
+
+with data versions, any skew: address=Maadi</code></pre>
+  <div class="ar-note">محاكاة بـ seed ثابت، والسطر الأول بيقول إنها مش بتغطي تأخير الـ replication ولا القراءات ولا أكتر من replica اتنين. الكتابة الأحدث (<code>Maadi</code>) ضاعت لأن ساعة B قدام بنص ثانية. الجدول بيعد من 100,000 زوج كتابات ورا بعض: عند 500ms ضاعت 5,580 كتابة (≈5.6%)، وعند 1000ms ≈9.9%. العمود الأخير المعادلة <code>0.25 × (1 − e^(−skew/2000))</code>: احتمال إن الكتابتين على replicas مختلفة والأحدث على الأبطأ، مضروب في احتمال إن الفجوة أقل من الـ skew. الرقم قريب من الـ simulation فده بيأكد إن الـ simulation صح. آخر سطر: بالـ version الجاي من الـ data، <code>Maadi</code> بتكسب مهما كان الـ skew.</div>
+
+  <table>
+    <tr><th>Store</th><th>Conflict rule</th><th>Where the timestamp comes from</th></tr>
+    <tr><td>Cassandra</td><td>LWW per column</td><td>Client, otherwise the coordinator's clock</td></tr>
+    <tr><td>DynamoDB global tables (MREC, the default)</td><td>"Last writer wins" per item</td><td>"Latest internal timestamp": the docs don't describe the clock</td></tr>
+    <tr><td>DynamoDB global tables (MRSC)</td><td>Rejects with <code>ReplicatedWriteConflictException</code></td><td>Not LWW</td></tr>
+  </table>
+  <div class="ar-note">صف Cassandra: الـ LWW على مستوى الـ column، والـ timestamp من الـ client أو من ساعة الـ coordinator. صف DynamoDB MREC (الوضع الافتراضي): "آخر كاتب يكسب" على مستوى الـ item بـ "internal timestamp" والـ docs مش بتقول جاي منين. صف MRSC: مفيش LWW أصلًا، الكتابة المتعارضة بترجع error اسمه <code>ReplicatedWriteConflictException</code> وتقدر تعيدها.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ last-write-wins (LWW) بيحل التعارض بين نسختين بإنه ياخد اللي الـ timestamp بتاعها أكبر. بسيط وكل الـ replicas بتوصل لنفس القيمة، بس "آخر" هنا معناها "أكبر رقم على ساعة"، مش "حصل آخر حاجة". لو ساعة B قدام 500ms، كتابة على B عند الوقت الحقيقي 1000 هتغلب كتابة على A عند 1200. الكتابة الأحدث بتختفي ومفيش error في أي مكان.</p>
+    <p>وده default مش وضع غريب. الـ docs بتاعة Cassandra بتقول إن كل mutation ليها timestamp وإن الـ columns بتحل التعارض بالـ LWW، بـ timestamp من الـ client أو الـ coordinator، وبتقول صراحةً إن صحة Cassandra معتمدة على الساعات. والـ DynamoDB global tables في وضع MREC الافتراضي بتحل كتابات نفس الـ item بين الـ Regions بـ "آخر internal timestamp" وAWS بتسميها "last writer wins".</p>
+    <p>الحل إن الـ version ييجي من الـ data مش من الساعة: authority واحد لكل key يدّي version بيزيد، والـ replicas تحتفظ بأعلى version. ده محتاج writer واحد لكل key. لو عندك كذا writer، محتاج تكتشف التزامن (الجزء 4) أو نوع data بيتدمج زي CRDT، وده في <a href="./36-geo-distribution-crdts-residency.html">الدرس 36</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عندك جدول <code>users</code> على Cassandra والـ profile بيتحدث من الموبايل والـ web: اليوزر غيّر عنوانه مرتين ورا بعض وشاف القديم بعد الحفظ. الـ support هيقولك "بيحصل مرة كل فين وفين"، وده بالظبط شكل الـ LWW مع skew. لو عندك Postgres واحد ومفيش multi-leader فأنت في أمان من ده، بس لازم تاخد بالك أول ما تفكر في active-active.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off</b>
+    LWW is acceptable when losing one of two near-simultaneous writes is harmless: a "last seen" time, a cache value, a view counter sample. It is not acceptable for money, stock, or anything a user typed and expects to keep.
+    <div class="ar-note">الـ LWW مقبول لما ضياع واحدة من كتابتين قريبين من بعض مش مشكلة: "آخر ظهور"، قيمة cache، عينة من عداد مشاهدات. ومش مقبول في الفلوس أو المخزون أو أي حاجة اليوزر كتبها ومنتظر تفضل موجودة.</div>
+  </div>
+
+  <h2 id="p3">Part 3 — Lamport clocks: happens-before <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ Lamport clocks: مين حصل قبل مين</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><a href="https://lamport.azurewebsites.net/pubs/time-clocks.pdf">Lamport's 1978 paper</a> replaces "what time was it" with "what could have influenced what". Event <code>a</code> <b>happens before</b> <code>b</code> if they are on the same process in that order, or <code>a</code> sends a message that <code>b</code> receives, or there is a chain of those. If neither direction holds, the events are <b>concurrent</b>.</p>
+    <p>A Lamport clock is one counter per process. Tick it on every local event and send, attach it to messages, and on receive take <code>max(local, message) + 1</code>. That guarantees: if <code>a</code> happens before <code>b</code> then <code>L(a) &lt; L(b)</code>. Breaking ties with the node name turns that into a <b>total order</b> every process agrees on, which is what you need for things like a replicated log.</p>
+    <p>The implication only goes one way. <code>L(a) &lt; L(b)</code> does <em>not</em> mean <code>a</code> happened before <code>b</code>. In the run below all 27 causal pairs are ordered correctly, and 21 pairs that are actually concurrent still get an order, so a Lamport timestamp alone can't tell you two events conflicted.</p>
+  </section>
+
+<pre class="diagram">
+ orders    (1)created ──(2)charge.requested──┐      (3)email.sent
+                                             ▼
+ payments  (1)fraud.checked ──────(3)charge.received (4)captured (5)reserve──┐
+                                                                             ▼
+ shipping  (1)stock (2)label (3)pinged ─────────────────────(6)reserve.received
+</pre>
+  <div class="ar-note">كل سطر service، والرقم بين القوسين هو الـ Lamport counter. السهم الأول: <code>charge.requested</code> طلع بـ 2، فالـ <code>charge.received</code> بقى <code>max(1, 2) + 1 = 3</code>. السهم التاني: <code>reserve</code> طلع بـ 5، فالـ <code>reserve.received</code> بقى <code>max(3, 5) + 1 = 6</code>. لاحظ إن <code>pinged</code> عنده 3 و<code>captured</code> عنده 4، بس مفيش بينهم أي رسالة، يعني متزامنين رغم إن الأرقام بتقول غير كده.</div>
+
+<pre data-file="src/lamport.ts"><code class="language-typescript">class LamportClock {
+  private t = 0;
+  tick(): number { return ++this.t; }
+  // لما توصل رسالة: خد الأكبر بين ساعتك وساعة الرسالة وزوّد 1
+  receive(remote: number): number { this.t = Math.max(this.t, remote) + 1; return this.t; }
+}
+
+type Ev = { id: string; node: string; l: number; past: Set&lt;string&gt; };
+const log: Ev[] = [];
+
+class Service {
+  clock = new LamportClock();
+  past = new Set&lt;string&gt;();
+  name: string;
+  constructor(name: string) { this.name = name; }
+  private record(id: string, l: number): Ev {
+    const ev = { id, node: this.name, l, past: new Set(this.past) };
+    this.past.add(id);
+    log.push(ev);
+    return ev;
+  }
+  local(id: string): Ev { return this.record(id, this.clock.tick()); }
+  send(id: string): Ev { return this.record(id, this.clock.tick()); }
+  receive(id: string, m: Ev): Ev {
+    // الـ past هنا ground truth للـ happens-before، الـ clock نفسه مش بيعرفه
+    for (const p of m.past) this.past.add(p);
+    this.past.add(m.id);
+    return this.record(id, this.clock.receive(m.l));
+  }
+}
+
+const orders = new Service("orders");
+const payments = new Service("payments");
+const shipping = new Service("shipping");
+
+orders.local("order.created");
+const charge = orders.send("charge.requested");
+payments.local("fraud.checked");
+payments.receive("charge.received", charge);
+payments.local("payment.captured");
+const reserve = payments.send("reserve.requested");
+shipping.local("stock.counted");
+shipping.local("label.printed");
+shipping.local("carrier.pinged");
+shipping.receive("reserve.received", reserve);
+orders.local("email.sent");
+
+// ترتيب كلي: الـ counter الأول وبعدين اسم الـ node عشان نفك التعادل
+const total = [...log].sort((a, b) =&gt; a.l - b.l || a.node.localeCompare(b.node));
+for (const e of total) console.log(String(e.l).padStart(2), e.node.padEnd(9), e.id);
+
+const happensBefore = (a: Ev, b: Ev) =&gt; b.past.has(a.id);
+let causal = 0, ok = 0, falseOrder = 0;
+let example = "";
+for (const a of log) for (const b of log) {
+  if (a === b) continue;
+  if (happensBefore(a, b)) { causal++; if (a.l &lt; b.l) ok++; }
+  if (!happensBefore(a, b) &amp;&amp; !happensBefore(b, a) &amp;&amp; a.l &lt; b.l) {
+    falseOrder++;
+    if (a.id === "carrier.pinged" &amp;&amp; b.id === "payment.captured") example = `${a.id}(L=${a.l}) vs ${b.id}(L=${b.l})`;
+  }
+}
+console.log(`\ncausal pairs: ${causal}, with L(a) &lt; L(b): ${ok}`);
+console.log(`concurrent pairs that Lamport still orders: ${falseOrder}`);
+console.log(`example: ${example}: L says 'before', reality says 'concurrent'`);</code></pre>
+<pre><code class="language-plaintext"> 1 orders    order.created
+ 1 payments  fraud.checked
+ 1 shipping  stock.counted
+ 2 orders    charge.requested
+ 2 shipping  label.printed
+ 3 orders    email.sent
+ 3 payments  charge.received
+ 3 shipping  carrier.pinged
+ 4 payments  payment.captured
+ 5 payments  reserve.requested
+ 6 shipping  reserve.received
+
+causal pairs: 27, with L(a) &lt; L(b): 27
+concurrent pairs that Lamport still orders: 21
+example: carrier.pinged(L=3) vs payment.captured(L=4): L says 'before', reality says 'concurrent'</code></pre>
+  <div class="ar-note">كل سطر: الـ counter، اسم الـ service، الـ event. عند الـ counter 3 فيه 3 events على 3 services، والتعادل اتفك باسم الـ service فبقى فيه ترتيب كلي. بعد كده: 27 زوج بينهم علاقة سببية فعلًا وكلهم <code>L(a) &lt; L(b)</code>، فالضمان اتحقق. بس فيه 21 زوج متزامنين والـ Lamport برضه رتبهم، زي <code>carrier.pinged</code> و<code>payment.captured</code>. الـ <code>past</code> في الكود ده ground truth بنحسبها عشان نقدر نحكم، الـ clock الحقيقي مش بيعرفها.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>ورقة Lamport سنة 1978 غيّرت السؤال من "الساعة كام" لـ "إيه اللي كان ممكن يأثر على إيه". الـ event <code>a</code> <b>happens before</b> <code>b</code> لو الاتنين على نفس الـ process بالترتيب ده، أو <code>a</code> بعت رسالة و<code>b</code> استلمها، أو فيه سلسلة من دول. لو مفيش ولا اتجاه يبقوا <b>concurrent</b>.</p>
+    <p>الـ Lamport clock عداد واحد لكل process. بتزوّده مع كل event محلي وكل إرسال، بتبعته مع الرسالة، وعند الاستلام بتاخد <code>max(local, message) + 1</code>. الضمان: لو <code>a</code> حصل قبل <code>b</code> يبقى <code>L(a) &lt; L(b)</code>. ولو فكّيت التعادل باسم الـ node، بيبقى عندك <b>ترتيب كلي</b> كل الـ processes متفقين عليه، وده اللي محتاجه في حاجة زي replicated log.</p>
+    <p>بس الاتجاه التاني مش صحيح: <code>L(a) &lt; L(b)</code> <em>مش</em> معناها إن <code>a</code> حصل قبل <code>b</code>. في الـ run اللي فوق، الـ 27 زوج السببيين اترتبوا صح، وفيه 21 زوج متزامنين فعلًا خدوا ترتيب برضه، يعني الـ Lamport timestamp لوحده ميقدرش يقولك إن اتنين events اتعارضوا.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو بتربط events بين services (order ثم payment ثم shipping) ومحتاج ترتيب ثابت في الـ audit log بتاعك من غير ما تعتمد على ساعات الـ containers، تبعت counter في الـ message headers وتعمل <code>max + 1</code> عند الاستلام. لو الـ broker عندك بيدي ترتيب جوه الـ partition (زي Kafka)، استخدم الـ offset بدل ما تبني Lamport لنفسك.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Does a smaller Lamport timestamp mean the event happened first?" → No. <code>a → b</code> implies <code>L(a) &lt; L(b)</code>, but the reverse doesn't hold. It gives a consistent total order, not causality. To detect concurrency you need vector clocks.
+    <div class="ar-note">"هل Lamport timestamp أصغر معناه إن الـ event حصل الأول؟" ← لأ. لو <code>a → b</code> يبقى <code>L(a) &lt; L(b)</code>، بس العكس مش صحيح. هو بيديك ترتيب كلي ثابت، مش سببية. عشان تكتشف التزامن محتاج vector clocks.</div>
+  </div>
+
+  <h2 id="p4">Part 4 — Vector clocks: detecting concurrency <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ vector clocks: اكتشاف التزامن</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A vector clock keeps one counter per node instead of one per process. Compare two vectors entry by entry: if every entry of <code>a</code> is ≤ the matching entry of <code>b</code> and at least one is smaller, <code>a</code> is before <code>b</code>; if each side has an entry larger than the other, they are <b>concurrent</b>. That is exactly what Lamport can't say.</p>
+    <p>The idea reached production through <a href="https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf">Amazon's Dynamo paper</a>, where it powers the shopping cart: when two versions are concurrent the store keeps both as <b>siblings</b> and the application merges them. The paper is candid that "an 'add to cart' operation is never lost. However, deleted items can resurface", which the run reproduces. It also measured how rare this is: over 24 hours, 99.94% of requests saw exactly one version.</p>
+    <p>The cost is size: one entry per node that ever wrote the key, on every value. Dynamo caps this by truncating: when pairs reach a threshold ("say 10"), the oldest pair is dropped, and the paper admits descendant relationships then "cannot be derived accurately". The run shows the two failure modes: a false conflict, which is only annoying, and two concurrent writes that now look ordered, which silently drops one. The full key-value store design is in <a href="./48-case-key-value-store.html">lesson 48</a>.</p>
+  </section>
+
+<pre data-file="src/vector.ts"><code class="language-typescript">type VClock = Record&lt;string, number&gt;;
+type Order = "before" | "after" | "equal" | "concurrent";
+
+function compare(a: VClock, b: VClock): Order {
+  let aLess = false, bLess = false;
+  for (const node of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    const x = a[node] ?? 0, y = b[node] ?? 0;
+    if (x &lt; y) aLess = true;
+    if (y &lt; x) bLess = true;
+  }
+  if (aLess &amp;&amp; bLess) return "concurrent";
+  if (aLess) return "before";
+  if (bLess) return "after";
+  return "equal";
+}
+const bump = (c: VClock, node: string): VClock =&gt; ({ ...c, [node]: (c[node] ?? 0) + 1 });
+const mergeClocks = (a: VClock, b: VClock): VClock =&gt; {
+  const out: VClock = { ...a };
+  for (const [n, v] of Object.entries(b)) out[n] = Math.max(out[n] ?? 0, v);
+  return out;
+};
+
+type Sibling = { items: string[]; clock: VClock };
+
+// كل replica بيحتفظ بكل نسخة محدش غطّى عليها، زي Dynamo
+class Replica {
+  siblings: Sibling[] = [];
+  put(next: Sibling): void {
+    const kept = this.siblings.filter((s) =&gt; compare(s.clock, next.clock) === "concurrent" || compare(s.clock, next.clock) === "after");
+    const covered = kept.some((s) =&gt; compare(s.clock, next.clock) === "after");
+    this.siblings = covered ? kept : [...kept, next];
+  }
+}
+
+const r1 = new Replica();
+const r2 = new Replica();
+
+// الكارت بدأ بـ mug واتكرر على الـ replicas الاتنين
+const base: Sibling = { items: ["mug"], clock: { r1: 1 } };
+r1.put(base);
+r2.put(base);
+
+// الموبايل شال الـ mug وضاف pen، على r1
+const phone: Sibling = { items: ["pen"], clock: bump(base.clock, "r1") };
+// اللابتوب ضاف bag، على r2، من غير ما يشوف الموبايل
+const laptop: Sibling = { items: ["mug", "bag"], clock: bump(base.clock, "r2") };
+r1.put(phone);
+r2.put(laptop);
+
+console.log("phone  vs laptop :", compare(phone.clock, laptop.clock));
+console.log("base   vs phone  :", compare(base.clock, phone.clock));
+
+// التكرار بين الـ replicas: r1 استلم نسخة r2، والاتنين اتحفظوا كـ siblings
+r1.put(laptop);
+console.log("siblings on r1   :", JSON.stringify(r1.siblings.map((s) =&gt; s.items)));
+
+// الدمج بتاع Dynamo cart: union للـ items، وclock جديد يغطي الاتنين
+const merged: Sibling = {
+  items: [...new Set(r1.siblings.flatMap((s) =&gt; s.items))].sort(),
+  clock: bump(r1.siblings.map((s) =&gt; s.clock).reduce(mergeClocks), "r1"),
+};
+r1.put(merged);
+console.log("after merge      :", JSON.stringify(r1.siblings.map((s) =&gt; s.items)), JSON.stringify(merged.clock));
+console.log("note: 'mug' came back, the phone's delete was lost (Dynamo paper: deleted items can resurface)");
+
+// حجم الـ clock مع زيادة الـ nodes
+console.log("\nnodes   bytes(JSON)");
+for (const n of [3, 30, 300]) {
+  const c: VClock = {};
+  for (let i = 0; i &lt; n; i++) c[`node-${String(i).padStart(3, "0")}`] = 1000 + i;
+  console.log(String(n).padStart(5), String(Buffer.byteLength(JSON.stringify(c))).padStart(10));
+}
+
+// خطر الـ pruning: لو شلت node من الـ clock
+const without = (c: VClock, node: string): VClock =&gt; {
+  const { [node]: _gone, ...rest } = c;
+  return rest;
+};
+const newer: VClock = { a: 1, b: 2 };
+const older: VClock = { a: 1, b: 1 };
+console.log("\nreal relation           :", compare(older, newer));
+console.log("prune a from newer only :", compare(older, without(newer, "a")), "(false conflict, annoying but safe)");
+
+const left: VClock = { a: 1, b: 2 };
+const right: VClock = { a: 2, b: 1 };
+console.log("real relation           :", compare(left, right));
+console.log("prune a from both       :", compare(without(left, "a"), without(right, "a")), "(looks ordered, one write gets dropped)");</code></pre>
+<pre><code class="language-plaintext">phone  vs laptop : concurrent
+base   vs phone  : before
+siblings on r1   : [["pen"],["mug","bag"]]
+after merge      : [["bag","mug","pen"]] {"r1":3,"r2":1}
+note: 'mug' came back, the phone's delete was lost (Dynamo paper: deleted items can resurface)
+
+nodes   bytes(JSON)
+    3         49
+   30        481
+  300       4801
+
+real relation           : before
+prune a from newer only : concurrent (false conflict, annoying but safe)
+real relation           : concurrent
+prune a from both       : after (looks ordered, one write gets dropped)</code></pre>
+  <div class="ar-note">أول سطرين: الموبايل واللابتوب <code>concurrent</code>، والنسخة الأصلية <code>before</code> الموبايل. بعد التكرار r1 شايل نسختين كـ siblings. الدمج عمل union، فالـ <code>mug</code> اللي الموبايل شاله رجع تاني، وده بالظبط تحذير ورقة Dynamo. جدول الحجم: 49 byte عند 3 nodes، و481 عند 30، و4801 عند 300، يعني ≈16 byte لكل node على كل value. آخر 4 سطور خطر الـ pruning: شيل <code>a</code> من النسخة الأحدث بس بيعمل conflict كاذب (مزعج بس آمن). لكن شيل <code>a</code> من الناحيتين خلّى نسختين متزامنتين يبانوا مترتبين، فواحدة منهم هتترمي.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ vector clock بيشيل عداد لكل node بدل عداد واحد. بتقارن الاتنين خانة خانة: لو كل خانات <code>a</code> أقل من أو تساوي <code>b</code> وفيه خانة أقل فعلًا، يبقى <code>a</code> قبل <code>b</code>. ولو كل واحد فيهم عنده خانة أكبر من التاني، يبقوا <b>concurrent</b>. وده بالظبط اللي Lamport ميقدرش يقوله.</p>
+    <p>الفكرة وصلت الـ production عن طريق ورقة Dynamo بتاعة Amazon، واستخدموها في الـ shopping cart: لما نسختين يبقوا concurrent، الـ store بيحتفظ بالاتنين كـ <b>siblings</b> والـ application هو اللي يدمجهم. الورقة صريحة: "add to cart" عمره ما بيضيع، بس الحاجات المتشالة ممكن ترجع تاني، والـ run اللي فوق بيعمل ده بالظبط. وقاسوا الموضوع نادر قد إيه: في 24 ساعة، 99.94% من الـ requests شافت نسخة واحدة بس.</p>
+    <p>الثمن هو الحجم: خانة لكل node كتب على الـ key، على كل value. Dynamo بيحدد الحجم بالـ truncation: لما العدد يوصل threshold (قالوا "حوالي 10") بيشيلوا أقدم خانة، والورقة معترفة إن علاقة الأب والابن بعدها مش هتتحسب بدقة. الـ run بيوريك الحالتين: conflict كاذب وده مزعج بس، واتنين كتابات متزامنين يبانوا مترتبين وده بيرمي واحدة منهم من غير ما حد يحس. تصميم الـ key-value store كامل في <a href="./48-case-key-value-store.html">الدرس 48</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو بتبني offline-first (موبايل بيعدّل وهو من غير نت) أو sync بين أجهزة، كل جهاز node والـ cart أو الـ draft بيتبعت معاه vector. لما السيرفر يلاقي <code>concurrent</code> ميرميش حاجة: يخزن الاتنين ويدمجهم بقاعدة الـ domain. بس لو الـ writers عندك آلاف الأجهزة، الـ vector هيكبر جامد، وساعتها تفكر في CRDT من <a href="./36-geo-distribution-crdts-residency.html">الدرس 36</a>.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks at scale</b>
+    Vector size grows with the number of writers, not the number of keys, so client-as-node designs explode. Prefer one entry per server replica, and treat any pruning as a data-loss decision that must be written down.
+    <div class="ar-note">حجم الـ vector بيكبر مع عدد الـ writers مش عدد الـ keys، فلو كل client هو node الموضوع بيفرقع. الأحسن خانة لكل server replica، وأي pruning اعتبره قرار ممكن يضيّع data ولازم يتوثق.</div>
+  </div>
+
+  <h2 id="p5">Part 5 — Hybrid logical clocks and TrueTime <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ hybrid logical clocks و TrueTime</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Lamport numbers are unrelated to real time, so you can't query "as of 14:02". Physical timestamps relate to real time but break causality. <a href="https://cse.buffalo.edu/tech-reports/2014-04.pdf">Hybrid logical clocks (Kulkarni et al.)</a> combine them: a timestamp is <code>(l, c)</code>, where <code>l</code> tracks the largest physical time this node has heard of and <code>c</code> breaks ties when <code>l</code> didn't move. The paper's algorithm (its Figure 5) is what the code implements, and it fits in 64 bits: 48 for <code>l</code> and 16 for <code>c</code>.</p>
+    <p>Two properties matter. If <code>e</code> happens before <code>f</code> then <code>hlc(e) &lt; hlc(f)</code>, like Lamport. And <code>|l − physical|</code> stays bounded by the clock skew, unlike Lamport, so a timestamp still means roughly "that time". What HLC does not do is detect concurrency: two concurrent events still get an arbitrary order, and it inherits the need for bounded skew.</p>
+    <p>Who uses it, from their own docs: <a href="https://docs.cockroachlabs.com/docs/stable/architecture/transaction-layer">CockroachDB</a> uses HLCs "composed of a physical component (always close to local wall time) and a logical component", and a node "crashes immediately" if it finds its clock out of sync with at least half the cluster. <a href="https://www.mongodb.com/company/blog/engineering/casual-guarantees-anything-casual">MongoDB's engineering blog</a> describes "a hybrid logical clock based on the Lamport logical clock" for causal ordering across replica sets and shards.</p>
+    <p><b>TrueTime</b> takes the opposite path. <a href="https://research.google/pubs/spanner-googles-globally-distributed-database-2/">Spanner</a> uses GPS and atomic clocks so <code>TT.now()</code> returns an interval <code>[earliest, latest]</code> guaranteed to contain the true time. The OSDI 2012 paper reports ε as a sawtooth of about 1 to 7 ms, 4 ms most of the time. A commit picks <code>s = TT.now().latest</code> and waits until <code>TT.now().earliest &gt; s</code> before releasing locks and answering, so the expected wait is at least 2ε, "typically overlapped with Paxos communication". The price of that wait is the point: uncertainty turns directly into latency, and smaller ε is what makes it affordable.</p>
+  </section>
+
+<pre data-file="src/hlc.ts"><code class="language-typescript">// تطبيق HLC زي Figure 5 في ورقة Kulkarni: الـ l أقرب حاجة للوقت الفيزيائي والـ c بيفك التعادل
+export type Hlc = { l: number; c: number };
+
+export class HybridClock {
+  private l = 0;
+  private c = 0;
+  private pt: () =&gt; number;
+  constructor(pt: () =&gt; number) { this.pt = pt; }
+
+  now(): Hlc {
+    const old = this.l;
+    this.l = Math.max(old, this.pt());
+    this.c = this.l === old ? this.c + 1 : 0;
+    return { l: this.l, c: this.c };
+  }
+
+  receive(m: Hlc): Hlc {
+    const old = this.l;
+    this.l = Math.max(old, m.l, this.pt());
+    if (this.l === old &amp;&amp; this.l === m.l) this.c = Math.max(this.c, m.c) + 1;
+    else if (this.l === old) this.c += 1;
+    else if (this.l === m.l) this.c = m.c + 1;
+    else this.c = 0;
+    return { l: this.l, c: this.c };
+  }
+}
+
+// تغليف في 64 bit: أول 48 للـ milliseconds وآخر 16 للـ counter
+export const pack = (h: Hlc): bigint =&gt; (BigInt(h.l) &lt;&lt; 16n) | BigInt(h.c);
+export const unpack = (v: bigint): Hlc =&gt; ({ l: Number(v &gt;&gt; 16n), c: Number(v &amp; 0xffffn) });
+export const less = (a: Hlc, b: Hlc) =&gt; a.l &lt; b.l || (a.l === b.l &amp;&amp; a.c &lt; b.c);</code></pre>
+<pre data-file="src/hlc-run.ts"><code class="language-typescript">import { HybridClock, less, pack, unpack, type Hlc } from "./hlc.ts";
+
+function mulberry32(seed: number) {
+  return () =&gt; {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed &gt;&gt;&gt; 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+console.log("SIMULATION (virtual time, seed 11). Not captured: drift, clock steps, message loss.\n");
+
+const rand = mulberry32(11);
+let realNow = 1_730_000_000_000;
+const offsets = [0, +300, -250];
+const clocks = offsets.map((o) =&gt; new HybridClock(() =&gt; realNow + o));
+
+type Msg = { hlc: Hlc; wall: number; deliverAt: number; to: number };
+const inFlight: Msg[] = [];
+let hlcViolations = 0, wallViolations = 0, messages = 0, maxDrift = 0, maxC = 0, packedOk = 0;
+let prevPacked = -1n;
+
+for (let step = 0; step &lt; 50_000; step++) {
+  realNow += 1 + Math.floor(rand() * 4);
+  for (let i = inFlight.length - 1; i &gt;= 0; i--) {
+    const m = inFlight[i]!;
+    if (m.deliverAt &gt; realNow) continue;
+    inFlight.splice(i, 1);
+    const wallAtReceiver = realNow + offsets[m.to]!;
+    const h = clocks[m.to]!.receive(m.hlc);
+    messages++;
+    if (!less(m.hlc, h)) hlcViolations++;
+    // لو رتبنا بالـ wall clock: الاستلام لازم ييجي بعد الإرسال، وده بيتكسر مع الـ skew
+    if (wallAtReceiver &lt;= m.wall) wallViolations++;
+    maxDrift = Math.max(maxDrift, Math.abs(h.l - wallAtReceiver));
+    maxC = Math.max(maxC, h.c);
+  }
+  const from = Math.floor(rand() * 3);
+  const send = clocks[from]!.now();
+  const packed = pack(send);
+  // الـ bigint المغلّف لازم يحافظ على نفس الترتيب، جوه نفس الـ node
+  if (from === 0) { if (packed &gt; prevPacked) packedOk++; prevPacked = packed; }
+  const to = (from + 1 + Math.floor(rand() * 2)) % 3;
+  inFlight.push({ hlc: send, wall: realNow + offsets[from]!, deliverAt: realNow + 1 + Math.floor(rand() * 20), to });
+}
+
+console.log("messages delivered            :", messages);
+console.log("send &gt;= receive by HLC        :", hlcViolations);
+console.log("send &gt;= receive by wall clock :", wallViolations);
+console.log("max |l - physical| (ms)       :", maxDrift, "(largest clock gap is 550)");
+console.log("max logical counter c         :", maxC);
+
+const sample: Hlc = { l: 1_730_000_000_123, c: 7 };
+console.log("\npacked:", pack(sample).toString(), "unpacked:", JSON.stringify(unpack(pack(sample))));
+console.log("48-bit ms lasts until year   :", Math.floor(1970 + 2 ** 48 / 1000 / 86400 / 365.25));
+void packedOk;
+
+// محاكاة TrueTime: الانتظار لازم يغطي عدم التأكد عشان ترتيب الـ timestamps يطابق الواقع
+console.log("\nSIMULATION of TrueTime commit wait (seed 3). Not captured: Paxos, overlapped wait, real epsilon spikes.");
+function trueTime(epsilon: number, wait: boolean, trials = 20_000): number {
+  const r = mulberry32(3);
+  let inversions = 0;
+  for (let i = 0; i &lt; trials; i++) {
+    let t = 1000;
+    // كل node ساعتها غلط بقيمة جوه ⁦±epsilon⁩
+    const err1 = (r() * 2 - 1) * epsilon;
+    const s1 = t + err1 + epsilon;
+    if (wait) t = Math.max(t, s1 + epsilon - err1);
+    // الترانزاكشن التاني بدأ بعد ما الأول رجع للـ client
+    t += 0.1;
+    const err2 = (r() * 2 - 1) * epsilon;
+    const s2 = t + err2 + epsilon;
+    if (s2 &lt;= s1) inversions++;
+  }
+  return inversions;
+}
+console.log("eps(ms)  wait(ms)=2eps  max commits/s on one hot key  inversions(no wait)  inversions(wait)");
+for (const eps of [1, 4, 7, 50, 250]) {
+  console.log(String(eps).padStart(7), String(2 * eps).padStart(13), String(Math.round(1000 / (2 * eps))).padStart(29),
+    String(trueTime(eps, false)).padStart(20), String(trueTime(eps, true)).padStart(17));
+}</code></pre>
+<pre><code class="language-plaintext">SIMULATION (virtual time, seed 11). Not captured: drift, clock steps, message loss.
+
+messages delivered            : 49996
+send &gt;= receive by HLC        : 0
+send &gt;= receive by wall clock : 25010
+max |l - physical| (ms)       : 549 (largest clock gap is 550)
+max logical counter c         : 24
+
+packed: 113377280008060935 unpacked: {"l":1730000000123,"c":7}
+48-bit ms lasts until year   : 10889
+
+SIMULATION of TrueTime commit wait (seed 3). Not captured: Paxos, overlapped wait, real epsilon spikes.
+eps(ms)  wait(ms)=2eps  max commits/s on one hot key  inversions(no wait)  inversions(wait)
+      1             2                           500                 9018                 0
+      4             8                           125                 9796                 0
+      7            14                            71                 9890                 0
+     50           100                            10                 9982                 0
+    250           500                             2                10002                 0</code></pre>
+  <div class="ar-note">محاكاتين، وكل واحدة بتقول إنها محاكاة وبتقول اللي مش بتغطيه. الأولى: 3 nodes بـ skew لحد 550ms، و49,996 رسالة: صفر مخالفات بالـ HLC، و25,010 رسالة (≈50%) الاستلام فيها طلع قبل الإرسال لو رتبت بالـ wall clock. أقصى بعد عن الوقت الفيزيائي 549ms وده أقل من الـ 550 (أكبر فرق بين الساعات)، يعني الـ bound اتحقق، والـ <code>c</code> ماوصلش غير 24. الـ 64 bit: <code>pack</code> و<code>unpack</code> رجّعوا نفس القيمة، و48 bit milliseconds تكفي لسنة 10889.<br>الجدول: محاكاة TrueTime. <code>wait=2ε</code>، وعمود الـ commits/s هو <code>1000 / wait</code> لو الـ wait مش متداخل مع Paxos، وده حد أعلى تقديري لـ hot key واحد مش قياس حقيقي. من غير wait نص المحاولات ترتيبها اتعكس (≈9,000 من 20,000)، ومع الـ wait صفر.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>أرقام Lamport ملهاش علاقة بالوقت الحقيقي، فمتقدرش تقول "هات البيانات زي ما كانت الساعة 14:02". والـ timestamps الفيزيائية ليها علاقة بالوقت بس بتكسر السببية. الـ HLC بتاع Kulkarni وزمايله بيجمع الاتنين: الـ timestamp هو <code>(l, c)</code>، و<code>l</code> أكبر وقت فيزيائي الـ node سمع عنه، و<code>c</code> بيفك التعادل لما <code>l</code> ميتحركش. الكود بينفذ الـ algorithm بتاع Figure 5 في الورقة، والحجم 64 bit: 48 لـ <code>l</code> و16 لـ <code>c</code>.</p>
+    <p>فيه خاصيتين مهمين. لو <code>e</code> حصل قبل <code>f</code> يبقى <code>hlc(e) &lt; hlc(f)</code> زي Lamport. و<code>|l − physical|</code> بيفضل محدود بالـ clock skew، بعكس Lamport، فالـ timestamp لسه معناه "تقريبًا الوقت ده". اللي الـ HLC ميقدرش يعمله: يكتشف التزامن (اتنين متزامنين بياخدوا ترتيب اعتباطي)، وبرضه محتاج الـ skew يكون محدود.</p>
+    <p>مين بيستخدمه من الـ docs بتاعتهم: CockroachDB بيستخدم HLC من جزء فيزيائي قريب من ساعة الجهاز وجزء logical، والـ node بيعمل crash فورًا لو لقى ساعته خارجة عن تزامن نص الـ cluster على الأقل. وMongoDB في الـ engineering blog بتاعها بتوصف "hybrid logical clock مبني على Lamport" عشان الترتيب السببي بين الـ replica sets والـ shards.</p>
+    <p><b>TrueTime</b> ماشي في الاتجاه العكسي. Spanner بيستخدم GPS وساعات ذرية عشان <code>TT.now()</code> يرجّع فترة <code>[earliest, latest]</code> مضمون إن الوقت الحقيقي جواها. ورقة OSDI 2012 بتقول إن ε شكلها sawtooth من 1 لـ 7ms تقريبًا، و4ms أغلب الوقت. الـ commit بيختار <code>s = TT.now().latest</code> ويستنى لحد ما <code>TT.now().earliest &gt; s</code> قبل ما يفك الـ locks ويرد، فالانتظار المتوقع 2ε على الأقل، وغالبًا بيتداخل مع Paxos. الفكرة كلها هنا: عدم التأكد بيتحول لـ latency مباشرة، والـ ε الصغير هو اللي بيخلي ده مقبول.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما تختار DB موزّعة وتقرا إن CockroachDB لازم الساعات تبقى متزامنة، إنت دلوقتي فاهم ليه: لو الـ skew عدى الحد، الـ node بيقفل نفسه بدل ما يبوّظ الترتيب. ولو بتولّد IDs مترتبة بالوقت بين services زي UUID v7 (الدرس 31)، خد بالك إن فيها ساعة بس مفيهاش سببية، وHLC هو اللي بيضيف السببية من غير ما يبعد عن الوقت الحقيقي.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Why does Spanner wait before acknowledging a commit?" → So its timestamp is guaranteed to be in the past for every observer. It picks the latest possible current time, then waits out the uncertainty, about 2ε. Any transaction that starts afterwards gets a larger timestamp, which gives external consistency without a global sequencer.
+    <div class="ar-note">"ليه Spanner بيستنى قبل ما يأكد الـ commit؟" ← عشان الـ timestamp بتاعه يبقى مضمون إنه في الماضي بالنسبة لأي حد. بيختار أكبر وقت حالي ممكن، وبعدين يستنى فترة عدم التأكد، حوالي 2ε. أي transaction تبدأ بعد كده هتاخد timestamp أكبر، وده بيدي external consistency من غير sequencer مركزي.</div>
+  </div>
+
+  <h2 id="p6">Part 6 — Ordering in practice: the sequence trap <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الترتيب في الواقع: فخ الـ sequence</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Most of the time you are not building a clock, you are using Postgres, and the classic trap is thinking a sequence gives commit order. It gives <b>allocation order</b>. Tx1 takes id 1, tx2 takes id 2, tx2 commits first, and a poller reading <code>id &gt; last</code> sees 2, advances, and never sees 1. This is real on Postgres 18 below, and it bites outbox relays built on a cursor: see the <a href="../../07-Databases/lessons/41-outbox-cdc-idempotency.html">outbox and CDC lesson</a> and <a href="../../08-Design-Patterns/lessons/27-outbox-as-code.html">outbox as code</a>.</p>
+    <p>Three practical fixes, each with a different cost:</p>
+    <ul>
+      <li><b>xmin horizon guard.</b> Store <code>pg_current_xact_id()</code> on each row and only read rows whose transaction id is below <code>pg_snapshot_xmin(pg_current_snapshot())</code>, so nothing older can still commit. Delivery order is transaction id order, not commit order. The cost: one long write transaction stalls the relay, including one on an unrelated table.</li>
+      <li><b>Single writer per aggregate with a version column.</b> <code>UPDATE ... SET version = version + 1 ... RETURNING version</code> takes a row lock, so transactions on one order line up and versions are gap-free. Consumers apply <code>version = last + 1</code> and park anything early.</li>
+      <li><b>Per-conversation sequence.</b> The same pattern with a counter row: gap-free within the conversation, contention only inside it. A global <code>sequence</code> can't promise that, because <code>nextval</code> is not rolled back.</li>
+    </ul>
+  </section>
+
+<pre class="diagram">
+ tx1  BEGIN  id=1 ───────────────────────────── COMMIT
+ tx2       BEGIN  id=2 ── COMMIT
+ poll                            read id>0 -> [2]      read id>2 -> []
+                                 lastSeen=2            id 1 is skipped forever
+</pre>
+  <div class="ar-note">tx1 خدت id 1 وفضلت مفتوحة. tx2 خدت id 2 وعملت commit الأول. الـ poller قرا <code>id&gt;0</code> لقى 2 بس (الـ 1 لسه مش مرئي)، فخزن <code>lastSeen=2</code>. بعد كده tx1 عملت commit، والقراءة الجاية <code>id&gt;2</code> رجعت فاضية. الـ id 1 موجود في الجدول ومش هيتبعت أبدًا.</div>
+
+<pre data-file="src/lab.ts"><code class="language-typescript">import { Pool, Client } from "pg";
+
+// حارس: بورت فاضي معناه الـ default بتاع الـ DB الحقيقية عندك، فبنرفض قبل ما نوصل
+export function safePort(raw: string | undefined): number {
+  const n = Number(raw);
+  if (!/^\d+$/.test(String(raw)) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) {
+    throw new Error(`refusing port '${raw}'`);
+  }
+  return n;
+}
+
+const conn = (database: string) =&gt; ({ host: "127.0.0.1", port: safePort(process.env.LAB_PG_PORT), user: "app", database });
+
+export const labPool = (max = 60) =&gt; new Pool({ ...conn("postgres"), max });
+export const labClient = async (database = "postgres") =&gt; {
+  const c = new Client(conn(database));
+  await c.connect();
+  return c;
+};</code></pre>
+<pre data-file="src/seq-trap.ts"><code class="language-typescript">import { labClient } from "./lab.ts";
+
+const tx1 = await labClient();
+const tx2 = await labClient();
+const relay = await labClient();
+
+await relay.query("DROP TABLE IF EXISTS outbox");
+await relay.query("CREATE TABLE outbox (id bigserial PRIMARY KEY, order_id text NOT NULL)");
+
+let lastSeen = 0;
+const delivered: number[] = [];
+
+// الـ relay الساذج: هات كل حاجة بعد آخر id شفته
+async function poll(): Promise&lt;number[]&gt; {
+  const { rows } = await relay.query("SELECT id FROM outbox WHERE id &gt; $1 ORDER BY id", [lastSeen]);
+  const ids = rows.map((r) =&gt; Number(r.id));
+  for (const id of ids) { delivered.push(id); lastSeen = id; }
+  return ids;
+}
+
+await tx1.query("BEGIN");
+const a = await tx1.query("INSERT INTO outbox (order_id) VALUES ('ord_A') RETURNING id");
+console.log("tx1 got id", a.rows[0].id, "(not committed yet)");
+
+await tx2.query("BEGIN");
+const b = await tx2.query("INSERT INTO outbox (order_id) VALUES ('ord_B') RETURNING id");
+console.log("tx2 got id", b.rows[0].id);
+await tx2.query("COMMIT");
+console.log("tx2 committed first");
+
+console.log("poll 1 -&gt;", await poll(), "lastSeen =", lastSeen);
+await tx1.query("COMMIT");
+console.log("tx1 committed");
+console.log("poll 2 -&gt;", await poll(), "lastSeen =", lastSeen);
+
+const { rows } = await relay.query("SELECT count(*)::int AS n FROM outbox");
+console.log(`rows in outbox: ${rows[0].n}, delivered: ${delivered.length}, missing forever: id 1`);
+
+await Promise.all([tx1.end(), tx2.end(), relay.end()]);</code></pre>
+<pre><code class="language-plaintext">tx1 got id 1 (not committed yet)
+tx2 got id 2
+tx2 committed first
+poll 1 -&gt; [ 2 ] lastSeen = 2
+tx1 committed
+poll 2 -&gt; [] lastSeen = 2
+rows in outbox: 2, delivered: 1, missing forever: id 1</code></pre>
+  <div class="ar-note">run حقيقي على Postgres 18. الـ poll الأول رجّع <code>[2]</code> بس، والتاني رجّع فاضي بعد ما tx1 عملت commit. في الجدول صفين، واتبعت واحد، والـ id 1 ضاع. وملف <code>lab.ts</code> فيه حارس: لو <code>LAB_PG_PORT</code> فاضي بيرفض يوصل، عشان البورت الفاضي معناه الـ default بتاع الـ DB الحقيقية عندك.</div>
+
+<pre data-file="src/xmin-horizon.ts"><code class="language-typescript">import { labClient } from "./lab.ts";
+
+const tx1 = await labClient();
+const tx2 = await labClient();
+const relay = await labClient();
+const other = await labClient();
+
+await relay.query("DROP TABLE IF EXISTS outbox");
+await relay.query(`CREATE TABLE outbox (
+  id bigserial PRIMARY KEY,
+  order_id text NOT NULL,
+  txid xid8 NOT NULL DEFAULT pg_current_xact_id())`);
+await relay.query("DROP TABLE IF EXISTS audit_log");
+await relay.query("CREATE TABLE audit_log (msg text)");
+
+let lastTx = "0", lastId = 0;
+const delivered: number[] = [];
+
+// السور: مش بنقرا أي صف الـ txid بتاعه لسه ممكن يكون قبله transaction مفتوحة
+async function poll(): Promise&lt;number[]&gt; {
+  const { rows } = await relay.query(
+    `SELECT id, txid::text FROM outbox
+      WHERE (txid, id) &gt; ($1::xid8, $2::bigint)
+        AND txid &lt; pg_snapshot_xmin(pg_current_snapshot())
+      ORDER BY txid, id`,
+    [lastTx, lastId],
+  );
+  const ids = rows.map((r) =&gt; Number(r.id));
+  for (const r of rows) { delivered.push(Number(r.id)); lastTx = r.txid; lastId = Number(r.id); }
+  return ids;
+}
+
+await tx1.query("BEGIN");
+await tx1.query("INSERT INTO outbox (order_id) VALUES ('ord_A')");
+await tx2.query("BEGIN");
+await tx2.query("INSERT INTO outbox (order_id) VALUES ('ord_B')");
+await tx2.query("COMMIT");
+console.log("tx2 committed, tx1 still open");
+console.log("poll 1 -&gt;", await poll(), "(id 2 held back, not lost)");
+
+await tx1.query("COMMIT");
+console.log("tx1 committed");
+console.log("poll 2 -&gt;", await poll(), "delivered:", delivered);
+
+// الثمن: transaction تانية خالص شايلة xid بتوقف الـ relay كله
+await other.query("BEGIN");
+await other.query("INSERT INTO audit_log VALUES ('unrelated long job')");
+await tx2.query("INSERT INTO outbox (order_id) VALUES ('ord_C')");
+console.log("\nunrelated write tx open, ord_C committed");
+console.log("poll 3 -&gt;", await poll(), "(relay stalls behind the oldest open write tx)");
+await other.query("COMMIT");
+console.log("poll 4 -&gt;", await poll());
+
+await Promise.all([tx1.end(), tx2.end(), relay.end(), other.end()]);</code></pre>
+<pre><code class="language-plaintext">tx2 committed, tx1 still open
+poll 1 -&gt; [] (id 2 held back, not lost)
+tx1 committed
+poll 2 -&gt; [ 1, 2 ] delivered: [ 1, 2 ]
+
+unrelated write tx open, ord_C committed
+poll 3 -&gt; [] (relay stalls behind the oldest open write tx)
+poll 4 -&gt; [ 3 ]</code></pre>
+  <div class="ar-note">نفس السيناريو بالسور: الـ poll الأول فاضي لأن tx1 لسه مفتوحة، فالـ id 2 اتأجل بدل ما يضيع. بعد الـ commit وصل <code>[1, 2]</code>. الجزء التاني هو الثمن: transaction مفتوحة على جدول تاني خالص (<code>audit_log</code>) وقّفت الـ relay، والـ <code>ord_C</code> موصلش غير لما اتقفلت.</div>
+
+<pre data-file="src/per-aggregate.ts"><code class="language-typescript">import { labPool } from "./lab.ts";
+
+const db = labPool(30);
+
+await db.query("DROP TABLE IF EXISTS order_events, orders, conversations, messages");
+await db.query("CREATE TABLE orders (id text PRIMARY KEY, version int NOT NULL DEFAULT 0, status text)");
+await db.query("CREATE TABLE order_events (order_id text, version int, type text, PRIMARY KEY (order_id, version))");
+await db.query("INSERT INTO orders (id, status) VALUES ('ord_1', 'pending')");
+
+// الـ UPDATE بياخد row lock، فالـ transactions على نفس الـ order بتتصف واحدة ورا التانية
+async function applyEvent(orderId: string, type: string): Promise&lt;number&gt; {
+  const c = await db.connect();
+  try {
+    await c.query("BEGIN");
+    const { rows } = await c.query(
+      "UPDATE orders SET version = version + 1, status = $2 WHERE id = $1 RETURNING version",
+      [orderId, type],
+    );
+    const version: number = rows[0].version;
+    await c.query("INSERT INTO order_events (order_id, version, type) VALUES ($1, $2, $3)", [orderId, version, type]);
+    await c.query("COMMIT");
+    return version;
+  } finally {
+    c.release();
+  }
+}
+
+const versions = await Promise.all(Array.from({ length: 20 }, (_, i) =&gt; applyEvent("ord_1", `step_${i}`)));
+const sorted = [...versions].sort((a, b) =&gt; a - b);
+console.log("20 parallel updates, versions:", sorted.join(","));
+console.log("gap-free and unique:", sorted.every((v, i) =&gt; v === i + 1));
+
+// الـ consumer بيطبّق بالترتيب: version أكبر من المتوقع معناه فيه event لسه موصلش
+let applied = 0;
+const parked: number[] = [];
+for (const v of [1, 2, 4, 3, 5]) {
+  if (v === applied + 1) { applied = v; console.log("apply", v); }
+  else { parked.push(v); console.log("park ", v, `(expected ${applied + 1})`); }
+  while (parked.includes(applied + 1)) {
+    applied++;
+    parked.splice(parked.indexOf(applied), 1);
+    console.log("apply", applied, "(from parked)");
+  }
+}
+
+// عداد لكل محادثة بنفس الفكرة، صف counter بدل sequence عامة
+await db.query("CREATE TABLE conversations (id text PRIMARY KEY, last_seq int NOT NULL DEFAULT 0)");
+await db.query("CREATE TABLE messages (conversation_id text, seq int, body text, PRIMARY KEY (conversation_id, seq))");
+await db.query("INSERT INTO conversations (id) VALUES ('support_77'), ('support_78')");
+
+async function postMessage(conversationId: string, body: string): Promise&lt;number&gt; {
+  const { rows } = await db.query(
+    `WITH next AS (UPDATE conversations SET last_seq = last_seq + 1 WHERE id = $1 RETURNING last_seq)
+     INSERT INTO messages (conversation_id, seq, body) SELECT $1, last_seq, $2 FROM next RETURNING seq`,
+    [conversationId, body],
+  );
+  return rows[0].seq;
+}
+const posts = await Promise.all(Array.from({ length: 40 }, (_, i) =&gt; postMessage(i % 2 ? "support_77" : "support_78", `m${i}`)));
+console.log("\n40 parallel messages in 2 conversations, max seq:", Math.max(...posts));
+const { rows: perConv } = await db.query("SELECT conversation_id, count(*)::int n, max(seq) max_seq FROM messages GROUP BY 1 ORDER BY 1");
+console.log(perConv);
+
+// الـ sequence العامة بتسيب فجوات لو الـ transaction عملت rollback
+await db.query("DROP SEQUENCE IF EXISTS invoice_seq");
+await db.query("CREATE SEQUENCE invoice_seq");
+const c = await db.connect();
+await c.query("BEGIN");
+const first = await c.query("SELECT nextval('invoice_seq') AS v");
+await c.query("ROLLBACK");
+c.release();
+const second = await db.query("SELECT nextval('invoice_seq') AS v");
+console.log("\nsequence after ROLLBACK:", first.rows[0].v, "then", second.rows[0].v, "(id 1 is a permanent gap)");
+
+await db.end();</code></pre>
+<pre><code class="language-plaintext">20 parallel updates, versions: 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20
+gap-free and unique: true
+apply 1
+apply 2
+park  4 (expected 3)
+apply 3
+apply 4 (from parked)
+apply 5
+
+40 parallel messages in 2 conversations, max seq: 20
+[
+  { conversation_id: 'support_77', n: 20, max_seq: 20 },
+  { conversation_id: 'support_78', n: 20, max_seq: 20 }
+]
+
+sequence after ROLLBACK: 1 then 2 (id 1 is a permanent gap)</code></pre>
+  <div class="ar-note">20 update متوازي على نفس الـ order طلّعوا versions من 1 لـ 20 من غير فجوات ولا تكرار، لأن الـ row lock صفّهم. بعدين الـ consumer: الـ 4 وصلت قبل الـ 3 فاتركنت، ولما الـ 3 وصلت اتطبقت الـ 4 من الـ parked. الـ 40 رسالة في محادثتين: كل محادثة أقصى <code>seq</code> فيها 20 بالظبط. آخر سطر: الـ sequence العامة بعد <code>ROLLBACK</code> عدّت الـ 1 وادت 2، يعني فجوة دايمة.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>أغلب الوقت إنت مش بتبني clock، إنت بتستخدم Postgres، والفخ المشهور إنك تفتكر إن الـ sequence بيديك ترتيب الـ commit. هو بيديك <b>ترتيب الحجز</b> بس. tx1 خدت id 1، وtx2 خدت id 2، وtx2 عملت commit الأول، والـ poller اللي بيقرا <code>id &gt; last</code> شاف 2 وكمّل وعمره ما هيشوف 1. ده حقيقي على Postgres 18 في الـ run اللي فوق، وبيضرب أي outbox relay مبني على cursor: شوف <a href="../../07-Databases/lessons/41-outbox-cdc-idempotency.html">درس الـ outbox والـ CDC</a> و<a href="../../08-Design-Patterns/lessons/27-outbox-as-code.html">الـ outbox ككود</a>.</p>
+    <p>عندك 3 حلول عملية، وكل واحد تمنه مختلف:</p>
+    <ul>
+      <li><b>xmin horizon guard.</b> بتخزن <code>pg_current_xact_id()</code> على كل صف، ومش بتقرا غير الصفوف اللي الـ transaction id بتاعها أقل من <code>pg_snapshot_xmin(pg_current_snapshot())</code>، فمفيش حاجة أقدم لسه ممكن تعمل commit. الترتيب هنا ترتيب الـ transaction ids مش ترتيب الـ commit. الثمن: أي write transaction طويلة بتوقف الـ relay، حتى لو على جدول مالوش علاقة.</li>
+      <li><b>Writer واحد لكل aggregate مع version column.</b> الـ <code>UPDATE ... SET version = version + 1 ... RETURNING version</code> بياخد row lock، فالـ transactions على نفس الـ order بتتصف والـ versions من غير فجوات. الـ consumer بيطبّق <code>version = last + 1</code> ويركن أي حاجة جات بدري.</li>
+      <li><b>Sequence لكل محادثة.</b> نفس الفكرة بصف فيه عداد: من غير فجوات جوه المحادثة، والـ contention جوه المحادثة بس. الـ <code>sequence</code> العامة متقدرش تضمن ده لأن <code>nextval</code> مش بيرجع مع الـ rollback.</li>
+    </ul>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عندك relay بيقرا من <code>outbox</code> بـ <code>WHERE id &gt; $last</code> كل ثانية، وكل كام ألف event فيه واحد بيضيع ومحدش فاهم ليه: ده الفخ ده بالظبط، وبيظهر أكتر وقت الضغط لما الـ transactions بتتداخل. الحل السريع السور بالـ xmin أو الانتقال لـ CDC. وفي الـ chat أو الـ comments، استخدم <code>seq</code> لكل conversation بدل <code>id</code> عام أو <code>created_at</code>.
+    </div>
+  </section>
+
+  <table>
+    <tr><th>What you need</th><th>Use</th><th>Cost</th></tr>
+    <tr><td>Duration or timeout in one process</td><td><code>performance.now()</code></td><td>None. Meaningless on another machine</td></tr>
+    <tr><td>Time shown to a person</td><td>Wall clock in UTC</td><td>Never use it to decide order</td></tr>
+    <tr><td>Order of events on one entity</td><td>Version column, single writer per aggregate</td><td>Row lock serializes writes to that entity</td></tr>
+    <tr><td>Gap-free numbering per conversation or tenant</td><td>Counter row per scope</td><td>Contention inside the scope</td></tr>
+    <tr><td>Poll a table without skipping rows</td><td>xmin horizon guard, or CDC</td><td>Stalls behind the oldest write tx; CDC adds infrastructure</td></tr>
+    <tr><td>Total order across a stream</td><td>Log offset (Kafka partition, WAL LSN)</td><td>Only within that log</td></tr>
+    <tr><td>Consistent order with no coordination</td><td>Lamport, or HLC if timestamps must look like time</td><td>Can't detect concurrency</td></tr>
+    <tr><td>Detect concurrent writes and merge</td><td>Vector clocks or CRDTs</td><td>Size grows with writers</td></tr>
+    <tr><td>External consistency across regions</td><td>A database that provides it (Spanner-style, CockroachDB)</td><td>Commit latency, clock requirements</td></tr>
+  </table>
+  <div class="ar-note">
+    <ul>
+      <li>مدة أو timeout جوه process واحد: <code>performance.now()</code>، وملوش معنى على جهاز تاني.</li>
+      <li>وقت بيتعرض لليوزر: wall clock بالـ UTC، بس عمره ما يقرر الترتيب.</li>
+      <li>ترتيب events على entity واحد: version column وwriter واحد لكل aggregate، والثمن row lock بيصف الكتابات.</li>
+      <li>ترقيم من غير فجوات لكل محادثة أو tenant: صف عداد لكل scope، والـ contention جوه الـ scope.</li>
+      <li>قراءة جدول من غير ما تعدّي صفوف: xmin horizon أو CDC، والأول بيقف ورا أقدم write transaction والتاني محتاج infrastructure.</li>
+      <li>ترتيب كلي على stream: الـ log offset (Kafka partition أو WAL LSN)، جوه الـ log ده بس.</li>
+      <li>ترتيب ثابت من غير تنسيق: Lamport، أو HLC لو الـ timestamps لازم تشبه الوقت، والاتنين ميكشفوش التزامن.</li>
+      <li>اكتشاف الكتابات المتزامنة ودمجها: vector clocks أو CRDTs، والحجم بيكبر مع الـ writers.</li>
+      <li>external consistency بين regions: DB بتقدمها (زي Spanner أو CockroachDB)، والثمن commit latency وشروط على الساعات.</li>
+    </ul>
+  </div>
+
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Sort across services by timestamp</b>
+<pre><code class="language-sql">-- ترتيب بـ created_at من 3 workers ساعاتهم مختلفة
+SELECT type FROM order_events
+ WHERE order_id = $1
+ ORDER BY created_at;</code></pre></div>
+    <div class="good"><b>✅ Sort by a version from the data</b>
+<pre><code class="language-sql">-- الـ version بيتحدد في نفس transaction الكتابة
+SELECT type FROM order_events
+ WHERE order_id = $1
+ ORDER BY version;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>created_at</code> جاي من ساعات مختلفة، فأي events أقرب من الـ skew ممكن تتعكس، وزي ما شفت، عند ±200ms طلعوا 29% من الـ orders مترتبين غلط. ✅ الـ version بييجي من نفس الـ transaction اللي بتكتب، فالترتيب متضمن جوه الـ data ومالوش علاقة بأي ساعة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Duration with the wall clock</b>
+<pre><code class="language-typescript">const start = Date.now();
+await callPsp();
+// ممكن تطلع سالبة لو الساعة قفزت
+metrics.observe(Date.now() - start);</code></pre></div>
+    <div class="good"><b>✅ Duration with the monotonic clock</b>
+<pre><code class="language-typescript">const start = performance.now();
+await callPsp();
+// مش بتتأثر بأي تعديل في ساعة النظام
+metrics.observe(performance.now() - start);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>Date.now()</code> بيتغير مع NTP، فالمدة ممكن تطلع سالبة أو أكبر بكتير من الحقيقة، وفي الـ run طلعت ≈-1824ms. ✅ <code>performance.now()</code> عمره ما بينزل، فالمدة صح حتى لو الساعة قفزت.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Cursor on a sequence</b>
+<pre><code class="language-sql">-- بيعدّي أي صف id بتاعه أصغر وعمل commit متأخر
+SELECT * FROM outbox
+ WHERE id &gt; $1 ORDER BY id;</code></pre></div>
+    <div class="good"><b>✅ Horizon guard before advancing</b>
+<pre><code class="language-sql">-- مش بنقرا صف ممكن يكون قبله transaction مفتوحة
+SELECT * FROM outbox
+ WHERE (txid, id) &gt; ($1::xid8, $2)
+   AND txid &lt; pg_snapshot_xmin(pg_current_snapshot())
+ ORDER BY txid, id;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ cursor على sequence بيعدّي أي صف اتحجز رقمه بدري وعمل commit متأخر، وفي الـ run الـ id 1 ضاع للأبد. ✅ السور بيأجل القراءة لحد ما مفيش transaction أقدم ممكن تعمل commit، فبيتأخر بس ميضيّعش.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Lamport to detect conflicts</b>
+<pre><code class="language-typescript">// ده مش معناه إن مفيش تعارض
+if (incoming.lamport &gt; current.lamport) {
+  overwrite(incoming);
+}</code></pre></div>
+    <div class="good"><b>✅ Vector clock for concurrency</b>
+<pre><code class="language-typescript">const rel = compare(current.vc, incoming.vc);
+// التزامن بيتخزن كـ siblings مش بيتكتب فوقه
+if (rel === "concurrent") keepBoth(current, incoming);
+else if (rel === "before") overwrite(incoming);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ Lamport بيرتب أي اتنين events حتى لو متزامنين، فالكود ده بيكتب فوق تعديل متزامن ويضيّعه (في الـ run كان فيه 21 زوج متزامنين اترتبوا). ✅ الـ vector clock بيقول <code>concurrent</code> صراحةً فتحتفظ بالاتنين وتدمجهم.</p>
+  </section>
+
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. A stopwatch that survives a clock step <span class="lvl lvl-1">🟢 easy</span></b>
+    Write <code>stopwatch()</code> using only <code>performance.now()</code>, patch <code>Date.now</code> to jump 5 seconds back mid-way, and prove the elapsed time stays positive and close to the real wait.
+    <div class="ar-note">اكتب <code>stopwatch()</code> بـ <code>performance.now()</code> بس، وغيّر <code>Date.now</code> إنه يرجع 5 ثواني في النص، وأثبت إن المدة فضلت موجبة وقريبة من الانتظار الحقيقي.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-stopwatch.ts"><code class="language-typescript">import { setTimeout as sleep } from "node:timers/promises";
+
+// ساعة مدة بتعتمد على performance.now بس، فمش بتتأثر بأي step في الوقت
+function stopwatch() {
+  const start = performance.now();
+  return () =&gt; performance.now() - start;
+}
+
+const real = Date.now.bind(Date);
+const elapsed = stopwatch();
+await sleep(40);
+Date.now = () =&gt; real() - 5000;
+await sleep(40);
+const ms = elapsed();
+Date.now = real;
+
+console.log("elapsed is positive:", ms &gt; 0, "| close to 80 ms:", ms &gt;= 70 &amp;&amp; ms &lt; 400);</code></pre>
+<pre><code class="language-plaintext">elapsed is positive: true | close to 80 ms: true</code></pre>
+      <div class="ar-note">الـ stopwatch مش بيلمس <code>Date.now</code> خالص، فالقفزة ملهاش أثر عليه. الـ output بيقول إن المدة موجبة وقريبة من 80ms.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Prove what Lamport couldn't <span class="lvl lvl-2">🟡 medium</span></b>
+    Rewrite the orders/payments/shipping run with a vector clock instead of a Lamport counter and show that <code>payment.captured</code> and <code>carrier.pinged</code> are concurrent, while <code>reserve</code> and its receipt aren't.
+    <div class="ar-note">أعد كتابة سيناريو orders/payments/shipping بـ vector clock بدل عداد Lamport، وأثبت إن <code>payment.captured</code> و<code>carrier.pinged</code> متزامنين، وإن <code>reserve</code> واستلامها مش متزامنين.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-vector-services.ts"><code class="language-typescript">type VC = Record&lt;string, number&gt;;
+
+const concurrent = (a: VC, b: VC): boolean =&gt; {
+  const nodes = new Set([...Object.keys(a), ...Object.keys(b)]);
+  let less = false, more = false;
+  for (const n of nodes) {
+    if ((a[n] ?? 0) &lt; (b[n] ?? 0)) less = true;
+    if ((a[n] ?? 0) &gt; (b[n] ?? 0)) more = true;
+  }
+  return less &amp;&amp; more;
+};
+
+class Node {
+  clock: VC = {};
+  name: string;
+  constructor(name: string) { this.name = name; }
+  tick(): VC {
+    this.clock = { ...this.clock, [this.name]: (this.clock[this.name] ?? 0) + 1 };
+    return this.clock;
+  }
+  receive(m: VC): VC {
+    // دمج الأكبر من كل خانة، وبعدين tick عادي
+    this.clock = { ...this.clock };
+    for (const [n, v] of Object.entries(m)) this.clock[n] = Math.max(this.clock[n] ?? 0, v);
+    return this.tick();
+  }
+}
+
+const orders = new Node("orders");
+const payments = new Node("payments");
+const shipping = new Node("shipping");
+
+orders.tick();
+const charge = orders.tick();
+payments.tick();
+payments.receive(charge);
+const captured = payments.tick();
+const reserve = payments.tick();
+shipping.tick();
+shipping.tick();
+const pinged = shipping.tick();
+const received = shipping.receive(reserve);
+
+console.log("payment.captured:", JSON.stringify(captured));
+console.log("carrier.pinged  :", JSON.stringify(pinged));
+console.log("concurrent:", concurrent(captured, pinged));
+console.log("reserve -&gt; received concurrent:", concurrent(reserve, received));</code></pre>
+<pre><code class="language-plaintext">payment.captured: {"payments":3,"orders":2}
+carrier.pinged  : {"shipping":3}
+concurrent: true
+reserve -&gt; received concurrent: false</code></pre>
+      <div class="ar-note">خد بالك من سطر <code>this.clock = { ...this.clock }</code>: من غيره الـ <code>receive</code> بيعدّل نفس الـ object اللي رجع من <code>tick</code> قبل كده، فالـ clock القديم بيتغير والنتيجة بتطلع غلط. الـ snapshots لازم تبقى immutable.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Poison a hybrid clock <span class="lvl lvl-3">🔴 hard</span></b>
+    Give one node a clock 5 seconds ahead and let it send a single message to a healthy node. How far ahead does the healthy node's <code>l</code> go, and when does it recover? Explain why CockroachDB refuses to run with too much clock offset.
+    <div class="ar-note">خلّي node ساعته قدام 5 ثواني يبعت رسالة واحدة لـ node سليم. الـ <code>l</code> بتاع السليم هيبقى قدام قد إيه، وهيرجع إمتى؟ واشرح ليه CockroachDB بيرفض يشتغل لو الـ clock offset كبير.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-hlc-poison.ts"><code class="language-typescript">import { HybridClock } from "./hlc.ts";
+
+// سيناريو: node ساعته قدّام 5 ثواني بيبعت رسالة واحدة لـ node سليم
+let real = 1_000_000;
+const healthy = new HybridClock(() =&gt; real);
+const broken = new HybridClock(() =&gt; real + 5000);
+
+console.log("healthy l - physical before:", healthy.now().l - real);
+healthy.receive(broken.now());
+console.log("healthy l - physical after one message:", healthy.now().l - real);
+
+// حتى بعد ما الـ node البايظ يتصلح، الساعة السليمة فاضلة قدام لحد ما الوقت يلحقها
+real += 3000;
+console.log("3 s later:", healthy.now().l - real);
+real += 2500;
+console.log("5.5 s later:", healthy.now().l - real);</code></pre>
+<pre><code class="language-plaintext">healthy l - physical before: 0
+healthy l - physical after one message: 5000
+3 s later: 2000
+5.5 s later: 0</code></pre>
+      <div class="ar-note">رسالة واحدة نقلت الغلط للـ node السليم: الـ <code>l</code> بتاعه بقى قدام 5 ثواني، وفضل كده لحد ما الوقت الفيزيائي لحقه بعد 5 ثواني. يعني node واحد بايظ بينشر الغلط لأي حد بيكلمه، وعشان كده CockroachDB بيقفل الـ node اللي ساعته خرجت عن التزامن بدل ما يسيبه يعدي المشكلة.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    In the side project, add a <code>version</code> column on <code>orders</code>, write it into the outbox in the same transaction, and make the relay use a horizon guard or CDC. Add a test that opens two overlapping transactions and asserts that no event is skipped.
+    <div class="ar-note">في المشروع الجانبي، ضيف عمود <code>version</code> على <code>orders</code>، واكتبه في الـ outbox في نفس الـ transaction، وخلّي الـ relay يستخدم horizon guard أو CDC. واكتب test بيفتح اتنين transactions متداخلين ويتأكد إن مفيش event اتعدّى.</div>
+    <details><summary>Hint · تلميح</summary>
+      Copy the shape of <code>seq-trap.ts</code> into a Vitest test: two clients, the first keeps its transaction open, assert on what the relay returns before and after it commits.
+      <div class="ar-note">انقل شكل <code>seq-trap.ts</code> لـ Vitest test: اتنين clients، الأول سايب الـ transaction مفتوحة، وتأكد من اللي الـ relay بيرجعه قبل وبعد الـ commit.</div>
+    </details>
+  </div>
+
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Skew = gap between clocks; drift = how fast it grows. NTP: tens of ms on the internet, under 1 ms on a good LAN, 100 ms or worse under asymmetry.</li>
+    <li>Monotonic for durations; wall clock for display; never compare wall clocks across machines to decide order.</li>
+    <li>LWW keeps the larger timestamp, so a fast clock silently discards newer writes (5.6% of sequential pairs at 500 ms skew in the simulation).</li>
+    <li>Cassandra and DynamoDB global tables (MREC) use last-write-wins by default.</li>
+    <li>Lamport: <code>max(local, msg) + 1</code>. <code>a → b</code> implies <code>L(a) &lt; L(b)</code>, not the reverse. Node name breaks ties for a total order.</li>
+    <li>Vector clocks detect concurrency; size grows with writers (≈16 bytes per node here); pruning can drop a concurrent write.</li>
+    <li>HLC: <code>(l, c)</code> in 64 bits, keeps causality, stays within the skew of physical time, can't detect concurrency.</li>
+    <li>TrueTime: interval from <code>TT.now()</code>, commit wait about 2ε, ε about 1–7 ms in the paper.</li>
+    <li>A sequence is allocation order, not commit order: <code>id &gt; last</code> can skip rows forever.</li>
+    <li>Fixes: xmin horizon, version column per aggregate, counter row per conversation, or CDC.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ skew هو الفرق بين الساعات، والـ drift سرعة كبره. الـ NTP: عشرات الـ ms على الـ internet، وأقل من 1ms على LAN كويس، و100ms أو أكتر مع عدم التماثل.</li>
+      <li>monotonic للمدد، وwall clock للعرض، وعمرك ما تقارن wall clocks بين أجهزة عشان تقرر الترتيب.</li>
+      <li>الـ LWW بياخد الـ timestamp الأكبر، فالساعة السريعة بترمي كتابات أحدث من غير ما حد يحس (5.6% من الأزواج المتتالية عند 500ms في الـ simulation).</li>
+      <li>Cassandra و DynamoDB global tables (MREC) بيستخدموا last-write-wins افتراضيًا.</li>
+      <li>Lamport: <code>max(local, msg) + 1</code>. لو <code>a → b</code> يبقى <code>L(a) &lt; L(b)</code>، والعكس مش صحيح. واسم الـ node بيفك التعادل عشان ترتيب كلي.</li>
+      <li>الـ vector clocks بتكشف التزامن، وحجمها بيكبر مع الـ writers (≈16 byte لكل node هنا)، والـ pruning ممكن يرمي كتابة متزامنة.</li>
+      <li>الـ HLC هو <code>(l, c)</code> في 64 bit: بيحافظ على السببية، وبيفضل قريب من الوقت الفيزيائي في حدود الـ skew، وميكشفش التزامن.</li>
+      <li>الـ TrueTime: فترة من <code>TT.now()</code>، والـ commit wait حوالي 2ε، والـ ε حوالي 1–7ms في الورقة.</li>
+      <li>الـ sequence ترتيب حجز مش ترتيب commit: <code>id &gt; last</code> ممكن يعدّي صفوف للأبد.</li>
+      <li>الحلول: xmin horizon، أو version column لكل aggregate، أو صف عداد لكل محادثة، أو CDC.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 10 · 2.6 — Time و clocks: clock skew (الساعات مش متطابقة)، NTP، ليه <code>timestamp</code> مش كفاية للـ ordering، logical clocks (Lamport — happens-before)، vector clocks (concurrent detection)، hybrid logical clocks كمفهوم</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://lamport.azurewebsites.net/pubs/time-clocks.pdf">Lamport — Time, Clocks, and the Ordering of Events in a Distributed System</a></li>
+    <li><a href="https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf">DeCandia et al. — Dynamo: Amazon's Highly Available Key-value Store</a></li>
+    <li><a href="https://cse.buffalo.edu/tech-reports/2014-04.pdf">Kulkarni et al. — Logical Physical Clocks and Consistent Snapshots</a></li>
+    <li><a href="https://research.google/pubs/spanner-googles-globally-distributed-database-2/">Corbett et al. — Spanner: Google's Globally-Distributed Database</a></li>
+    <li><a href="https://docs.cockroachlabs.com/docs/stable/architecture/transaction-layer">CockroachDB docs — Transaction layer</a> · <a href="https://www.mongodb.com/company/blog/engineering/casual-guarantees-anything-casual">MongoDB — Causal guarantees</a></li>
+    <li><a href="https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html">Cassandra docs — Dynamo</a> · <a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/V2globaltables_HowItWorks.html">DynamoDB global tables</a> · <a href="https://developers.google.com/time/smear">Google leap smear</a> · <a href="https://www.postgresql.org/docs/current/functions-info.html">Postgres snapshot functions</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./28-fallacies-failure-detection-partitions.html"><small>← Previous</small>28 · Fallacies &amp; Detection</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./30-idempotency-keys-in-depth.html"><small>Next →</small>30 · Idempotency</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

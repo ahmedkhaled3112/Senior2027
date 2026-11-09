@@ -1,0 +1,1642 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Choosing a Data Store: Access Patterns, Indexes &amp; Denormalization — 10 System Design</title>
+<meta name="section" content="10-System-Design">
+<meta name="level" content="🟢 → 🟡">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">10 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 11 / 63</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Choosing a Data Store: Access Patterns, Indexes &amp; Denormalization</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 11 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🟢 → 🟡</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">Postgres 18 · MongoDB 8 · TypeScript</span>
+      <span class="chip">Prereq: 02 Estimation</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>10 · 1.5 — SQL vs NoSQL: الفرق الأساسي ومتى كل واحد (access patterns أولًا)</li>
+        <li>10 · 1.5 — Indexing في الـ design: الـ queries بتحدد الـ indexes</li>
+        <li>10 · 2.2 — SQL vs NoSQL decision framework: access patterns أولًا → consistency needs → scale pattern (read/write heavy) → schema flexibility → team familiarity — مش "NoSQL للـ scale"</li>
+        <li>10 · 2.2 — Indexing على scale، denormalization المقصودة، materialized views للـ read-heavy</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Access patterns first</a></li>
+      <li><a href="#p2">Part 2 — A decision framework you can test</a></li>
+      <li><a href="#p3">Part 3 — Queries decide indexes</a></li>
+      <li><a href="#p4">Part 4 — Indexes at scale</a></li>
+      <li><a href="#p5">Part 5 — Denormalization on purpose</a></li>
+      <li><a href="#p6">Part 6 — Materialized views</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>"Which database?" is usually the first question in a design discussion and usually asked too early. The answer is a consequence of something you can write down: the exact queries the product runs, how often, and which of them need transactions. Interviewers listen for that order. So do production incidents: most data-layer pain comes from a missing index, a wrong column order, or a denormalized copy nobody owns, and very little of it from the brand of the store.</p>
+    <p>This lesson runs the same order system on real Postgres and real MongoDB, tests a decision framework with unit tests, then measures what each index and each copied column costs on one million rows.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>سؤال "نستخدم أنهي database؟" بييجي غالبًا أول حاجة في الـ design، وبييجي بدري قوي. الإجابة نتيجة لحاجة تقدر تكتبها: الـ queries اللي الـ product بيعملها بالظبط، بتتكرر قد إيه، وأنهي منها محتاج transaction. الـ interviewer بيسمع الترتيب ده بالذات. والـ incidents كمان: معظم وجع الـ data layer جاي من index ناقص، أو ترتيب أعمدة غلط، أو نسخة denormalized محدش مسؤول عنها، وقليل جدًا منه جاي من اسم الـ store.</p>
+    <p>الدرس ده بيشغّل نفس نظام الـ orders على Postgres و MongoDB حقيقيين، بيختبر decision framework بـ unit tests، وبعدين بيقيس كل index وكل عمود متنسخ بيتكلف قد إيه على مليون صف.</p>
+  </section>
+
+  <div class="callout warn">
+    <b>How to read the numbers</b>
+    Everything below ran on one Windows machine with 20 cores and a local SSD, Postgres 18.4 and MongoDB 8.0 on loopback, while other jobs were loading it. Latencies are marked ≈ and are medians. Trust ratios, buffer counts and plan shapes more than the absolute milliseconds, and never read them as a Postgres vs MongoDB benchmark: the drivers, protocols and configuration all differ.
+    <div class="ar-note"><b>إزاي تقرا الأرقام:</b> كل حاجة تحت اتشغلت على جهاز Windows واحد فيه 20 core و SSD محلي، و Postgres 18.4 و MongoDB 8.0 على loopback، والجهاز عليه شغل تاني في نفس الوقت. الـ latencies متعلّمة بـ ≈ وهي medians. ثق في النسب وعدد الـ buffers وشكل الـ plan أكتر من الـ milliseconds نفسها، ومتعتبرهاش benchmark بين Postgres و MongoDB أبدًا: الـ drivers والـ protocols والـ configuration كلها مختلفة.</div>
+  </div>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Access patterns first <span class="lvl lvl-1">🟢 Basic</span><span class="ar-sub">الجزء 1 — الـ access patterns الأول</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>An <strong>access pattern</strong> is one concrete question the application asks of its data: the filter, the sort, the columns it needs, how often it runs and how fast it must be. Write the list before naming a store. For an orders system there are four obvious ones: fetch one order with its lines by id, a user's latest 20 orders, a tenant's orders in a date range, and monthly revenue per tenant. A fifth is the one that catches people out: revenue per SKU, which cuts across every order's lines.</p>
+    <p>The two natural shapes are a relational pair of tables (<code>orders</code> and <code>order_lines</code>, joined at read time) and a document with the lines embedded inside the order. The script below loads the same 200,000 orders and 600,000 lines into both, adds one index per pattern on each side, and runs each pattern in the way that is natural for that store.</p>
+    <p>Three things are visible in the output. First, the point reads and lists are under a millisecond on both sides and even the aggregates are single-digit milliseconds, because every pattern has an index built for it; that is the index doing the work, not the store. Second, the shapes differ: the embedded read touched exactly one key and one document, while the join walked two indexes and 13 buffers. On a cold cache that shape is the difference between one random read and several. Third, the embedded model still answers the cross-cutting SKU question, but only by unwinding every array; a pattern like "which orders contain SKU-42" or "fix a typo in a product name inside old orders" now means touching many documents. Modelling details are in <a href="../../07-Databases/lessons/31-nosql-map-mongodb-modeling.html">section 07 · NoSQL map &amp; MongoDB modeling</a>.</p>
+    <p>The conclusion is not that one store won. It is that <em>the pattern list</em> decides. Embedded lines fit when an order is nearly always read and written as a whole and no invariant spans orders. Separate tables fit when you also need ad-hoc reporting and invariants across rows, such as stock or balances.</p>
+  </section>
+
+<pre data-file="setup.sh"><code class="language-bash"># نسخة Postgres مؤقتة على port صريح، وكل حاجة جوه الفولدر ده
+initdb -D ./pgdata -U app -A trust -E UTF8 --no-locale
+pg_ctl -D ./pgdata -o "-p 55432 -c listen_addresses=127.0.0.1" -l pg.log -w start
+export LAB_PG_PORT=55432
+
+# نسخة Mongo مؤقتة برضه، على port صريح مش 27017
+mkdir -p mongo-data
+mongod --dbpath ./mongo-data --port 57017 --bind_ip 127.0.0.1 --logpath mongo.log
+export LAB_MONGO_PORT=57017
+
+npm i pg mongodb @types/pg
+node src/seed.ts
+node src/access-patterns.ts
+</code></pre>
+  <div class="ar-note">الأوامر دي بتعمل database مؤقتة على port إنت محدده، عشان أي غلطة متوصلش للـ Postgres أو الـ Mongo الحقيقيين بتوعك. شغّل <code>mongod</code> في terminal لوحده لأنه بيفضل شغال. السكريبت <code>db.ts</code> تحت بيرفض يشتغل لو الـ port فاضي أو 0 أو الـ port الافتراضي: الـ driver لوحده كان هيروح على 5432 ساكت.</div>
+
+<pre data-file="src/db.ts"><code class="language-typescript">import pg from "pg";
+
+// الـ port لازم يبقى صريح: لو فاضي أو 0 الـ driver بيروح لوحده على 5432، يعني الـ DB الحقيقية بتاعتك
+export function labPort(name = "LAB_PG_PORT"): number {
+  const raw = process.env[name] ?? "";
+  const n = Number(raw);
+  if (!/^\d+$/.test(raw) || n &lt; 1024 || n &gt; 65535 || [5432, 27017, 6379].includes(n)) {
+    throw new Error(`refusing port '${raw}'`);
+  }
+  return n;
+}
+
+export async function client(): Promise&lt;pg.Client&gt; {
+  const c = new pg.Client({ host: "127.0.0.1", port: labPort(), user: "app", database: "postgres" });
+  await c.connect();
+  return c;
+}
+
+// الـ median أثبت من الـ average على جهاز عليه حمل تاني
+export function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) =&gt; a - b);
+  return s[Math.floor(s.length / 2)];
+}
+
+export async function medianMs(runs: number, fn: (i: number) =&gt; Promise&lt;unknown&gt;): Promise&lt;number&gt; {
+  const xs: number[] = [];
+  for (let i = 0; i &lt; runs; i++) {
+    const t0 = performance.now();
+    await fn(i);
+    xs.push(performance.now() - t0);
+  }
+  return +median(xs).toFixed(2);
+}
+
+// مولّد أرقام بـ ⁦seed (mulberry32)⁩ عشان نفس الـ ids تتكرر في كل run
+export function prng(seed: number): () =&gt; number {
+  let a = seed;
+  return () =&gt; {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a &gt;&gt;&gt; 15), 1 | a);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}</code></pre>
+
+<pre data-file="src/seed.ts"><code class="language-typescript">import { client } from "./db.ts";
+
+// الـ data الأساسية لكل الدرس: 50 tenant و 20 ألف customer ومليون order
+const db = await client();
+await db.query(`select setseed(0.42)`);
+await db.query(`
+  create table customers (
+    id bigint primary key,
+    tenant_id int not null,
+    name text not null,
+    orders_count int not null default 0
+  );
+  insert into customers (id, tenant_id, name)
+  select g, 1 + g % 50, initcap(substr(md5(g::text), 1, 8)) from generate_series(1, 20000) g;
+
+  create table orders (
+    id bigint primary key,
+    tenant_id int not null,
+    customer_id bigint not null,
+    status text not null,
+    total_cents int not null,
+    created_at timestamptz not null
+  );
+  insert into orders
+  select x.g, c.tenant_id, c.id,
+         case when x.r &lt; 0.01 then 'pending' when x.r &lt; 0.10 then 'cancelled' else 'delivered' end,
+         (500 + random() * 50000)::int,
+         now() - random() * interval '730 days'
+  from (
+    -- واحد من كل 20 order بيروح لـ customer كبير (whale) والباقي عشوائي
+    select g, random() as r,
+           case when g % 20 = 0 then 1 else 2 + (random() * 19998)::bigint end as cid
+    from generate_series(1, 1000000) g
+  ) x join customers c on c.id = x.cid;
+  update customers c set orders_count = o.n
+  from (select customer_id, count(*)::int n from orders group by 1) o where o.customer_id = c.id;
+  analyze customers; analyze orders;
+`);
+const { rows } = await db.query(`select count(*)::int orders, pg_size_pretty(pg_relation_size('orders')) heap,
+  (select orders_count from customers where id = 1) whale from orders`);
+console.log(rows[0]);
+await db.end();</code></pre>
+
+<pre data-file="src/access-patterns.ts"><code class="language-typescript">import { MongoClient } from "mongodb";
+import { client, labPort, medianMs, prng } from "./db.ts";
+
+// نفس الـ data بالظبط في الاتنين: Postgres بجدولين و Mongo بـ lines جوه الـ document
+const pgc = await client();
+const mongo = new MongoClient(`mongodb://127.0.0.1:${labPort("LAB_MONGO_PORT")}`);
+await mongo.connect();
+const col = mongo.db("shop").collection&lt;any&gt;("orders");
+
+await pgc.query(`
+  drop schema if exists p1 cascade; create schema p1;
+  create table p1.orders as select * from orders where id &lt;= 200000;
+  alter table p1.orders add primary key (id);
+  create table p1.order_lines as
+    select o.id order_id, n line_no, 'SKU-' || (random() * 500)::int sku,
+           1 + (random() * 4)::int qty, (100 + random() * 9000)::int unit_cents
+    from p1.orders o, generate_series(1, 3) n;
+  alter table p1.order_lines add primary key (order_id, line_no);
+  create index on p1.orders (customer_id, created_at desc);
+  create index on p1.orders (tenant_id, created_at);
+  analyze p1.orders; analyze p1.order_lines;
+`);
+
+// نسخ نفس الصفوف لـ Mongo بالـ batches، والـ lines بتتحط جوه الـ order
+await col.drop().catch(() =&gt; {});
+const { rows } = await pgc.query(`
+  select o.id, o.tenant_id, o.customer_id, o.status, o.total_cents, o.created_at,
+         json_agg(json_build_object('sku', l.sku, 'qty', l.qty, 'unitCents', l.unit_cents)) as lines
+  from p1.orders o join p1.order_lines l on l.order_id = o.id group by o.id`);
+for (let i = 0; i &lt; rows.length; i += 2000) {
+  await col.insertMany(rows.slice(i, i + 2000).map((r) =&gt; ({
+    _id: Number(r.id), tenantId: r.tenant_id, customerId: Number(r.customer_id), status: r.status,
+    totalCents: r.total_cents, createdAt: r.created_at, lines: r.lines,
+  })));
+}
+await col.createIndex({ customerId: 1, createdAt: -1 });
+await col.createIndex({ tenantId: 1, createdAt: 1 });
+
+const rnd = prng(7);
+const id = () =&gt; 1 + Math.floor(rnd() * 200000);
+const cust = () =&gt; 2 + Math.floor(rnd() * 19998);
+const since = new Date(Date.now() - 30 * 86400_000);
+
+// الخمس patterns: كل واحد متنفذ بالطريقة الطبيعية في كل store
+const patterns = [
+  { name: "order by id + lines", runs: 400,
+    pg: () =&gt; pgc.query(`select o.*, l.* from p1.orders o join p1.order_lines l on l.order_id = o.id where o.id = $1`, [id()]),
+    mg: () =&gt; col.findOne({ _id: id() }) },
+  { name: "user's latest 20", runs: 400,
+    pg: () =&gt; pgc.query(`select id, status, total_cents, created_at from p1.orders where customer_id = $1 order by created_at desc limit 20`, [cust()]),
+    mg: () =&gt; col.find({ customerId: cust() }, { projection: { lines: 0 } }).sort({ createdAt: -1 }).limit(20).toArray() },
+  { name: "tenant date range", runs: 100,
+    pg: () =&gt; pgc.query(`select id, total_cents from p1.orders where tenant_id = 7 and created_at &gt;= $1 order by created_at limit 100`, [since]),
+    mg: () =&gt; col.find({ tenantId: 7, createdAt: { $gte: since } }, { projection: { totalCents: 1 } }).sort({ createdAt: 1 }).limit(100).toArray() },
+  { name: "tenant monthly revenue", runs: 30,
+    pg: () =&gt; pgc.query(`select date_trunc('month', created_at) m, sum(total_cents) from p1.orders where tenant_id = 7 group by 1 order by 1`),
+    mg: () =&gt; col.aggregate([{ $match: { tenantId: 7 } }, { $group: { _id: { $dateTrunc: { date: "$createdAt", unit: "month" } }, s: { $sum: "$totalCents" } } }, { $sort: { _id: 1 } }]).toArray() },
+  { name: "revenue per SKU, 30d", runs: 30,
+    pg: () =&gt; pgc.query(`select l.sku, sum(l.qty * l.unit_cents) s from p1.orders o join p1.order_lines l on l.order_id = o.id where o.tenant_id = 7 and o.created_at &gt;= $1 group by 1 order by 2 desc limit 5`, [since]),
+    mg: () =&gt; col.aggregate([{ $match: { tenantId: 7, createdAt: { $gte: since } } }, { $unwind: "$lines" }, { $group: { _id: "$lines.sku", s: { $sum: { $multiply: ["$lines.qty", "$lines.unitCents"] } } } }, { $sort: { s: -1 } }, { $limit: 5 }]).toArray() },
+];
+for (const p of patterns) {
+  await p.pg(); await p.mg();
+  const pgMs = await medianMs(p.runs, p.pg);
+  const mgMs = await medianMs(p.runs, p.mg);
+  console.log(`${p.name.padEnd(24)} pg ≈${String(pgMs).padStart(6)} ms   mongo ≈${String(mgMs).padStart(6)} ms`);
+}
+
+// خطة كل store للـ query الأولاني: كام ضربة في الـ index؟
+const planPg = await pgc.query(`explain (analyze, buffers, format json) select o.*, l.* from p1.orders o join p1.order_lines l on l.order_id = o.id where o.id = 1234`);
+const plan = planPg.rows[0]["QUERY PLAN"][0].Plan;
+const kids = (n: any): string[] =&gt; [n["Node Type"] + (n["Index Name"] ? `(${n["Index Name"]})` : ""), ...(n.Plans ?? []).flatMap(kids)];
+console.log("pg plan:", kids(plan).join(" &gt; "), "| shared buffers:", plan["Shared Hit Blocks"]);
+const ex: any = await col.find({ _id: 1234 }).explain("executionStats");
+console.log("mongo plan:", JSON.stringify(ex.queryPlanner.winningPlan.stage ?? ex.queryPlanner.winningPlan.queryPlan?.stage), "| docs examined:", ex.executionStats.totalDocsExamined, "| keys examined:", ex.executionStats.totalKeysExamined);
+await mongo.close();
+await pgc.end();</code></pre>
+
+<pre><code class="language-plaintext">order by id + lines      pg ≈  0.32 ms   mongo ≈  0.52 ms
+user's latest 20         pg ≈  0.33 ms   mongo ≈  0.55 ms
+tenant date range        pg ≈  0.35 ms   mongo ≈  0.81 ms
+tenant monthly revenue   pg ≈  2.92 ms   mongo ≈  8.61 ms
+revenue per SKU, 30d     pg ≈  1.15 ms   mongo ≈  1.52 ms
+pg plan: Nested Loop &gt; Index Scan(orders_pkey) &gt; Index Scan(order_lines_pkey) | shared buffers: 13
+mongo plan: "EXPRESS_IXSCAN" | docs examined: 1 | keys examined: 1</code></pre>
+  <div class="ar-note">الجدول ده الـ median لكل pattern في الاتنين. القراية بالـ id واللستات أقل من 1 ms، والـ aggregates كام ملي ثانية، لأن كل pattern ليه index معمول عشانه. آخر سطرين هما الشكل: Postgres عمل Nested Loop على indexين و13 buffer، و Mongo لمس key واحد و document واحد. الـ monthly revenue في Mongo أبطأ هنا (≈8.6 ms مقابل ≈2.9 ms) لأنه بيفك الـ documents كاملة بالـ lines اللي جواها. متاخدهاش كـ "Postgres أسرع": ده جهاز محمّل و drivers مختلفة.</div>
+
+  <table>
+    <thead><tr><th>Access pattern</th><th>Relational shape</th><th>Embedded shape</th><th>Who it favours</th></tr></thead>
+    <tbody>
+      <tr><td>Order by id with lines</td><td>2 index scans + nested loop</td><td>1 key, 1 document</td><td>Embedded, on a cold cache</td></tr>
+      <tr><td>User's latest 20</td><td>Index on (customer_id, created_at)</td><td>Same compound index</td><td>Tie</td></tr>
+      <tr><td>Tenant date range</td><td>Index on (tenant_id, created_at)</td><td>Same compound index</td><td>Tie</td></tr>
+      <tr><td>Tenant monthly revenue</td><td>Group over narrow rows</td><td>Group over whole documents</td><td>Relational, or a precomputed view</td></tr>
+      <tr><td>Revenue per SKU</td><td>Join and group on lines</td><td><code>$unwind</code> every array</td><td>Relational</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">صف صف: <b>الـ order بالـ id ومعاه الـ lines</b>: Postgres بيعمل index scan مرتين و nested loop، و Mongo بيقرا key واحد و document واحد، فالـ embedded بيكسب لو الـ cache بارد. <b>آخر 20 order لـ user</b>: index مركب في الاتنين، تعادل. <b>tenant في مدة</b>: نفس الكلام، تعادل. <b>الإيراد الشهري لـ tenant</b>: الـ group على صفوف رفيعة في relational وعلى documents كاملة في الـ embedded، فالـ relational أحسن أو تعمل view محسوبة مسبقًا. <b>الإيراد لكل SKU</b>: join و group في relational، و <code>$unwind</code> لكل array في الـ embedded، فالـ relational أنسب.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <strong>access pattern</strong> هو سؤال واحد محدد الـ app بيسأله للـ data: الـ filter، الـ sort، الأعمدة اللي محتاجها، بيتكرر قد إيه، ولازم يخلص في قد إيه. اكتب القايمة دي <b>قبل</b> ما تسمّي أي store. في نظام orders عندك 4 واضحين: هات order بالـ id ومعاه الـ lines، آخر 20 order لـ user، orders بتاعة tenant في مدة معينة، والإيراد الشهري لكل tenant. والخامس هو اللي بيوقّع الناس: الإيراد لكل SKU، وده بيقطع في الـ lines بتاعة كل order.</p>
+    <p>الشكلين الطبيعيين هما جدولين relational (<code>orders</code> و <code>order_lines</code> وتعمل join وقت القراية)، أو document والـ lines جواه. السكريبت فوق بيحط نفس الـ 200 ألف order و600 ألف line في الاتنين، ويعمل index لكل pattern في كل ناحية، ويشغّل كل pattern بالطريقة الطبيعية للـ store بتاعه.</p>
+    <p>الـ output بيوريك 3 حاجات. الأولى: القراية بالـ id واللستات أقل من ملي ثانية في الناحيتين، وحتى الـ aggregates كام ملي ثانية بس، لأن كل pattern ليه index معمول عشانه، يعني الـ index هو اللي بيشتغل مش اسم الـ store. التانية: الشكل مختلف: القراية الـ embedded لمست key واحد و document واحد، والـ join مشي على indexين و13 buffer، ولو الـ cache بارد الفرق ده هو الفرق بين random read واحدة وكذا واحدة. التالتة: الموديل الـ embedded لسه بيجاوب سؤال الـ SKU بس لازم يفك كل array، وأي pattern زي "أنهي orders فيها SKU-42" أو "صلّح اسم منتج غلط جوه orders قديمة" بقى معناه تلمس documents كتير. تفاصيل الـ modelling في <a href="../../07-Databases/lessons/31-nosql-map-mongodb-modeling.html">قسم 07: الـ NoSQL و MongoDB modeling</a>.</p>
+    <p>الخلاصة مش إن store كسب. الخلاصة إن <em>قايمة الـ patterns</em> هي اللي بتقرر. الـ lines جوه الـ document تنفع لما الـ order بيتقرا ويتكتب ككتلة واحدة تقريبًا دايمًا ومفيش invariant بين orders وبعض. الجداول المنفصلة تنفع لما كمان محتاج reporting متغير و invariants عبر صفوف، زي المخزون أو الأرصدة.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      قبل ما تكتب أي ADR فيه "هنستخدم Mongo" أو "هنستخدم Postgres"، حط في أول الـ design doc جدول فيه: الـ pattern، الـ filter والـ sort، الـ rate المتوقع، الـ p99، ومحتاج transaction ولا لأ. في code review لو حد ضاف feature بـ query جديدة شكلها مختلف، ارجع للجدول وشوف: هل الـ store والـ indexes لسه بيخدموها؟ الغلطة الشائعة: تختار الـ store الأول وبعدين تكتشف إن الـ reporting محتاج <code>$unwind</code> على كل حاجة.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Why not just use MongoDB for orders, since an order is naturally a document?" → Because the document shape only helps the patterns that read one order whole. Orders also need invariants across rows (stock, payments) and reporting across lines. I would write the access patterns first: if ad-hoc analytics and multi-row transactions are on the list, relational is the default and JSONB covers the flexible part. If the list is really "get order by id" and "list orders by user", embedded lines are a good fit.
+    <div class="ar-note">"ليه ما نستخدمش MongoDB للـ orders طالما الـ order بطبيعته document؟" ← لأن شكل الـ document بيفيد بس الـ patterns اللي بتقرا order كامل. الـ orders كمان محتاجة invariants عبر صفوف (مخزون، مدفوعات) و reporting عبر الـ lines. أكتب الـ access patterns الأول: لو الـ analytics المتغير والـ multi-row transactions في القايمة، يبقى relational هو الاختيار الأساسي و JSONB بيغطي الجزء المرن. ولو القايمة فعلًا "هات order بالـ id" و"لستة orders لـ user"، الـ lines جوه الـ document مناسبة.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — A decision framework you can test <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — decision framework تقدر تختبره</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The framework is a fixed order of questions: <strong>access patterns → consistency needs → read or write heavy → schema flexibility → team</strong>. The order matters. A multi-row invariant ends the discussion at step 2 no matter how the writes scale. Scale comes third and acts mostly as a tie-breaker. Team familiarity comes last, but it can legitimately flip a tie, because someone has to operate the thing at 3 a.m.</p>
+    <p>"NoSQL for scale" is a myth at most sizes. To put a number on it, the second script measures durable writes per second on one real Postgres (<code>fsync=on</code>, <code>synchronous_commit=on</code>) and compares them with SaaS estimates built the way <a href="./02-back-of-the-envelope-estimation.html">lesson 02</a> taught. About 33,000 durable single-row commits per second beat the flash-sale estimate of about 1,157 writes per second by roughly 28× here. Watch the batching line too: batching 100 rows per commit moved roughly 281,000 rows per second, because one fsync now covers 100 rows.</p>
+    <p>The caveats are real and belong in the design doc. This is a local SSD and a table with one small index, not a cloud network volume, and Windows uses <code>wal_sync_method=open_datasync</code>. Group commit is why 32 connections beat 1 connection seven times over: many transactions share one WAL flush. Long before raw write throughput, a single node usually hits data volume, autovacuum on huge tables, or connection counts.</p>
+    <p>JSONB is the middle ground when part of your data has no fixed shape. A catalog where shirts have a size and phones have RAM fits one table with a <code>jsonb</code> column and a GIN index. You keep transactions, joins and one backup story. The price is that JSONB has no per-key statistics, so the planner guesses selectivity for <code>@&gt;</code> and a bad guess gives a bad plan, and keys are not typed or constrained unless you add checks.</p>
+  </section>
+
+<pre class="diagram">
+  1. Access patterns   what is asked, how often, how fast?
+          |
+  2. Consistency       multi-row invariant? ---- yes ----> relational + ACID
+          |
+  3. Read/write heavy  does it outgrow one node?  (tie-breaker, not the opener)
+          |
+  4. Schema            per-item attributes? ---> JSONB or document
+          |
+  5. Team              who runs this at 3 a.m.?  (flips ties)
+</pre>
+  <div class="ar-note">الترتيب من فوق لتحت هو كل الفكرة: (1) الـ patterns، إيه اللي بيتسأل وبيتكرر قد إيه؟ (2) الـ consistency، لو فيه invariant عبر صفوف بنروح relational مع ACID ونقفل النقاش. (3) الـ read/write، هل الحمل فعلًا أكبر من node واحدة؟ ده بيكسر التعادل مش نقطة البداية. (4) الـ schema، لو الـ attributes بتختلف من عنصر لعنصر نروح JSONB أو document. (5) الـ team، مين هيشغّل ده الساعة 3 الفجر؟ ده بيقلب التعادل.</div>
+
+<pre data-file="src/decide.ts"><code class="language-typescript">// الـ framework: access patterns ← consistency ← read/write heavy ← schema ← team
+export type Pattern =
+  | "lookup-by-key"          // هات قيمة بالـ key بس
+  | "relational"             // فيه joins و reporting و filters متغيرة
+  | "partition-time-range"   // كل القراية جوه partition واحد مترتب بالوقت
+  | "attribute-filter"       // فلترة على attributes بتختلف من صف لصف
+  | "aggregate-over-time";   // تجميع sum/count على ملايين الصفوف
+
+export interface Workload {
+  name: string;
+  pattern: Pattern;
+  // فيه invariant لازم يتحقق عبر أكتر من صف في نفس الـ transaction؟
+  multiRowInvariant: boolean;
+  writesPerSecPeak: number;
+  dataTb: number;
+  schemaVaries: boolean;
+  teamKnowsPostgres: boolean;
+}
+
+export interface Decision { store: string; because: string }
+
+// الحد ده افتراض تكتبه وتراجعه: قيس على hardware بتاعك، متنسخهوش
+const SINGLE_NODE_WRITES_PER_SEC = 20_000;
+const SINGLE_NODE_DATA_TB = 10;
+
+export function decide(w: Workload): Decision {
+  // (1) الـ consistency الأول: أي invariant عبر صفوف بيقفل النقاش
+  if (w.multiRowInvariant) {
+    return { store: "relational (Postgres)", because: "multi-row invariant needs ACID transactions" };
+  }
+  const outgrowsOneNode = w.writesPerSecPeak &gt; SINGLE_NODE_WRITES_PER_SEC || w.dataTb &gt; SINGLE_NODE_DATA_TB;
+
+  // (2) الـ pattern بيختار، والـ scale بيكسر التعادل بس
+  switch (w.pattern) {
+    case "lookup-by-key":
+      return { store: "key-value (Redis / DynamoDB)", because: "only ever read by key, no query shape to serve" };
+    case "partition-time-range":
+      return outgrowsOneNode
+        ? { store: "wide-column (Cassandra / ScyllaDB)", because: "partitioned, append-mostly, exceeds one node" }
+        : { store: "relational (Postgres, time-partitioned)", because: "same pattern fits one node; no second system to operate" };
+    case "aggregate-over-time":
+      return { store: "columnar / time-series (ClickHouse / TimescaleDB)", because: "scans few columns over many rows" };
+    case "attribute-filter":
+      return w.teamKnowsPostgres
+        ? { store: "JSONB on Postgres", because: "flexible attributes, team and backups already exist" }
+        : { store: "document (MongoDB)", because: "flexible attributes and no relational base to reuse" };
+    case "relational":
+      return { store: "relational (Postgres)", because: "ad-hoc joins and reporting" };
+  }
+}</code></pre>
+
+<pre data-file="src/decide.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { decide, type Workload } from "./decide.ts";
+
+// الأساس لكل scenario، وكل test بيغيّر اللي يخصه بس
+const base: Workload = {
+  name: "", pattern: "relational", multiRowInvariant: false,
+  writesPerSecPeak: 300, dataTb: 0.5, schemaVaries: false, teamKnowsPostgres: true,
+};
+const pick = (o: Partial&lt;Workload&gt;) =&gt; decide({ ...base, ...o }).store;
+
+test("wallet balance needs ACID across rows", () =&gt; {
+  assert.match(pick({ multiRowInvariant: true, writesPerSecPeak: 8000 }), /relational/);
+});
+test("chat history at huge scale goes wide-column", () =&gt; {
+  assert.match(pick({ pattern: "partition-time-range", writesPerSecPeak: 300_000, dataTb: 500 }), /wide-column/);
+});
+test("feature flags are key-value", () =&gt; {
+  assert.match(pick({ pattern: "lookup-by-key", dataTb: 0.001 }), /key-value/);
+});
+test("catalog attributes: JSONB when Postgres is already there", () =&gt; {
+  assert.match(pick({ pattern: "attribute-filter", schemaVaries: true }), /JSONB/);
+});
+test("catalog attributes: document store when there is no relational base", () =&gt; {
+  assert.match(pick({ pattern: "attribute-filter", schemaVaries: true, teamKnowsPostgres: false }), /document/);
+});
+test("event logs are columnar or time-series", () =&gt; {
+  assert.match(pick({ pattern: "aggregate-over-time", writesPerSecPeak: 50_000, dataTb: 40 }), /columnar/);
+});
+test("chat history at SaaS size stays on Postgres: the 'NoSQL for scale' myth", () =&gt; {
+  assert.match(pick({ pattern: "partition-time-range", writesPerSecPeak: 300, dataTb: 0.5 }), /Postgres, time-partitioned/);
+});</code></pre>
+
+<pre><code class="language-plaintext">ok 1 - wallet balance needs ACID across rows
+ok 2 - chat history at huge scale goes wide-column
+ok 3 - feature flags are key-value
+ok 4 - catalog attributes: JSONB when Postgres is already there
+ok 5 - catalog attributes: document store when there is no relational base
+ok 6 - event logs are columnar or time-series
+ok 7 - chat history at SaaS size stays on Postgres: the 'NoSQL for scale' myth
+# tests 7
+# pass 7
+# fail 0</code></pre>
+  <div class="ar-note">الـ 7 tests نجحوا بـ <code>node --test</code>. أهم واحد هو الأخير: نفس الـ chat history لما حجمه SaaS عادي (300 write/s) بيفضل على Postgres، يعني الـ scale بيغيّر الاختيار لما يكون فعلًا موجود مش كفكرة.</div>
+
+<pre data-file="src/write-capacity.ts"><code class="language-typescript">import { client } from "./db.ts";
+
+// كام write في الثانية يقدر Postgres واحد durable يعمله؟ (fsync و synchronous_commit شغالين)
+const admin = await client();
+await admin.query(`drop table if exists cap; create table cap (
+  id bigint generated always as identity primary key,
+  tenant_id int not null, customer_id bigint not null, total_cents int not null, created_at timestamptz not null default now())`);
+await admin.query(`create index on cap (customer_id, created_at desc)`);
+const settings = await admin.query(`select name, setting from pg_settings where name in ('fsync','synchronous_commit') order by 1`);
+console.log(settings.rows.map((r) =&gt; `${r.name}=${r.setting}`).join(" "));
+
+async function run(label: string, conns: number, batch: number, seconds: number) {
+  const until = performance.now() + seconds * 1000;
+  let commits = 0;
+  await Promise.all(Array.from({ length: conns }, async (_, w) =&gt; {
+    const db = await client();
+    while (performance.now() &lt; until) {
+      // صف واحد لكل commit، أو batch من الصفوف في statement واحد
+      await db.query(`insert into cap (tenant_id, customer_id, total_cents)
+        select 1 + (random() * 49)::int, 1 + (random() * 20000)::bigint, 1000 from generate_series(1, $1)`, [batch]);
+      commits++;
+    }
+    await db.end();
+  }));
+  console.log(`${label.padEnd(28)} ≈${Math.round(commits / seconds)} commits/s  ≈${Math.round(commits * batch / seconds)} rows/s`);
+}
+
+await run("1 conn, 1 row/commit", 1, 1, 3);
+await run("8 conns, 1 row/commit", 8, 1, 3);
+await run("32 conns, 1 row/commit", 32, 1, 3);
+await run("8 conns, 100 rows/commit", 8, 100, 3);
+
+// نسبة الاستخدام: كام SaaS يستحملهم القياس ده؟
+const daily = (dau: number, writesPerUser: number) =&gt; (dau * writesPerUser) / 86400;
+for (const [name, dau, w, peak] of [["B2B SaaS", 50_000, 20, 3], ["consumer orders", 5_000_000, 2, 3], ["flash sale", 5_000_000, 2, 10]] as const) {
+  console.log(`${name.padEnd(16)} avg ${daily(dau, w).toFixed(0)} writes/s, peak x${peak} = ${(daily(dau, w) * peak).toFixed(0)} writes/s`);
+}
+await admin.query(`drop table cap`);
+await admin.end();</code></pre>
+
+<pre><code class="language-plaintext">fsync=on synchronous_commit=on
+1 conn, 1 row/commit         ≈4569 commits/s  ≈4569 rows/s
+8 conns, 1 row/commit        ≈15750 commits/s  ≈15750 rows/s
+32 conns, 1 row/commit       ≈33014 commits/s  ≈33014 rows/s
+8 conns, 100 rows/commit     ≈2813 commits/s  ≈281333 rows/s
+B2B SaaS         avg 12 writes/s, peak x3 = 35 writes/s
+consumer orders  avg 116 writes/s, peak x3 = 347 writes/s
+flash sale       avg 116 writes/s, peak x10 = 1157 writes/s</code></pre>
+  <div class="ar-note">Postgres واحد durable: connection واحدة ≈4,569 commit في الثانية، 32 connection ≈33,014 بفضل الـ group commit، و100 صف في الـ commit ≈281 ألف صف في الثانية. تحت: الـ estimates: B2B SaaS عند الـ peak ≈35 write/s، وconsumer orders ≈347، والـ flash sale ≈1,157. يعني القياس ≈28 ضعف أعلى peak. الـ 3 حالات دي أرقام افتراضية محسوبة زي الدرس 02.</div>
+
+<pre data-file="src/jsonb-gin.ts"><code class="language-typescript">import { client, medianMs } from "./db.ts";
+
+// كتالوج فيه attributes مختلفة لكل category: ده مكان JSONB الطبيعي
+const db = await client();
+await db.query(`
+  drop table if exists products;
+  create table products (id bigint primary key, category text not null, attrs jsonb not null);
+  insert into products
+  select g,
+         (array['shirt','phone','sofa'])[1 + g % 3],
+         case g % 3
+           when 0 then jsonb_build_object('color', (array['red','blue','black','white'])[1 + (random()*3)::int], 'size', (array['S','M','L','XL'])[1 + (random()*3)::int])
+           when 1 then jsonb_build_object('ram_gb', (array[4,8,12,16])[1 + (random()*3)::int], 'storage_gb', (array[64,128,256])[1 + (random()*2)::int])
+           else jsonb_build_object('material', (array['leather','fabric'])[1 + (random()*1)::int], 'seats', 2 + (random()*3)::int)
+         end
+  from generate_series(1, 300000) g;
+  analyze products;
+`);
+
+const q = `select id from products where attrs @&gt; '{"color":"red","size":"L"}'::jsonb`;
+const plan = async () =&gt; {
+  const { rows } = await db.query(`explain (analyze, costs off, timing off, summary off) ${q}`);
+  return rows.map((r) =&gt; r["QUERY PLAN"]).join("\n");
+};
+
+console.log("--- no index");
+console.log(await plan());
+console.log("median ≈", await medianMs(15, () =&gt; db.query(q)), "ms");
+
+await db.query(`create index products_attrs_gin on products using gin (attrs jsonb_path_ops)`);
+await db.query(`analyze products`);
+console.log("--- GIN (jsonb_path_ops)");
+console.log(await plan());
+console.log("median ≈", await medianMs(15, () =&gt; db.query(q)), "ms");
+
+const size = await db.query(`select pg_size_pretty(pg_relation_size('products')) heap, pg_size_pretty(pg_relation_size('products_attrs_gin')) gin`);
+console.log(size.rows[0]);
+await db.end();</code></pre>
+
+<pre><code class="language-plaintext">--- no index
+Gather (actual rows=5522.00 loops=1)
+  Workers Planned: 2
+  Workers Launched: 2
+  Buffers: shared hit=3435
+  -&gt;  Parallel Seq Scan on products (actual rows=1840.67 loops=3)
+        Filter: (attrs @&gt; '{"size": "L", "color": "red"}'::jsonb)
+        Rows Removed by Filter: 98159
+        Buffers: shared hit=3435
+median ≈ 37.13 ms
+--- GIN (jsonb_path_ops)
+Bitmap Heap Scan on products (actual rows=5522.00 loops=1)
+  Recheck Cond: (attrs @&gt; '{"size": "L", "color": "red"}'::jsonb)
+  Heap Blocks: exact=2787
+  Buffers: shared hit=2804
+  -&gt;  Bitmap Index Scan on products_attrs_gin (actual rows=5522.00 loops=1)
+        Index Cond: (attrs @&gt; '{"size": "L", "color": "red"}'::jsonb)
+        Index Searches: 1
+        Buffers: shared hit=17
+median ≈ 4.58 ms
+{ heap: '27 MB', gin: '928 kB' }</code></pre>
+  <div class="ar-note">من غير index الـ query اتنفذت Parallel Seq Scan على 300 ألف صف (3,435 buffer، ≈37 ms). بعد الـ GIN بقت Bitmap Index Scan (17 buffer في الـ index، ≈4.6 ms). حجم الـ GIN بـ <code>jsonb_path_ops</code> كان 928 kB بس على heap حجمه 27 MB.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ framework ترتيب ثابت للأسئلة: <strong>access patterns ← consistency ← read أو write heavy ← schema flexibility ← team</strong>. والترتيب مهم. أي invariant عبر أكتر من صف بيقفل النقاش عند الخطوة التانية، مهما كان حجم الكتابة. الـ scale بييجي تالت وغالبًا بيكسر التعادل بس. الـ team آخر حاجة، بس ممكن تقلب تعادل بجد، لأن حد لازم يشغّل الحاجة دي الساعة 3 الفجر.</p>
+    <p>فكرة "NoSQL عشان الـ scale" خرافة في معظم الأحجام. عشان نحط رقم: السكريبت التاني بيقيس الكتابة الـ durable في الثانية على Postgres واحد حقيقي (<code>fsync=on</code> و <code>synchronous_commit=on</code>)، وبيقارنها بـ estimates لـ SaaS بنفس طريقة <a href="./02-back-of-the-envelope-estimation.html">الدرس 02</a>. حوالي 33 ألف commit durable في الثانية عدّت estimate الـ flash sale (حوالي 1,157 write في الثانية) بحوالي 28 مرة هنا. وبص كمان على سطر الـ batching: 100 صف في الـ commit الواحد حرّك حوالي 281 ألف صف في الثانية، لأن fsync واحد بقى بيغطي 100 صف.</p>
+    <p>الـ caveats حقيقية ولازم تتكتب في الـ design doc. ده SSD محلي وجدول فيه index صغير واحد، مش cloud network volume، و Windows بيستخدم <code>wal_sync_method=open_datasync</code>. الـ group commit هو السبب إن 32 connection أسرع 7 مرات من connection واحدة: transactions كتير بتشارك في WAL flush واحد. وقبل ما توصل لحد الكتابة الخام، الـ node الواحدة غالبًا بتخبط في حجم الـ data، أو autovacuum على جداول ضخمة، أو عدد الـ connections.</p>
+    <p>الـ JSONB هو الحل الوسط لما جزء من الـ data ملوش شكل ثابت. كتالوج القمصان فيه size والموبايلات فيها RAM يتحط في جدول واحد بعمود <code>jsonb</code> و GIN index، وتفضل عندك transactions و joins وخطة backup واحدة. التمن: الـ JSONB معندوش statistics لكل key، فالـ planner بيخمن الـ selectivity بتاعة <code>@&gt;</code> والتخمين الغلط بيطلّع plan وحش، والـ keys مش typed ولا عليها constraints إلا لو ضفت checks بإيدك.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما حد في الفريق يقول "المنتج هيكبر، نستخدم Cassandra من دلوقتي"، ادخل بالأرقام: DAU × writes في اليوم ÷ 86400 × peak factor، وقارنها بـ pgbench على نفس الـ instance type بتاعك. لو الـ peak 400 write/s، الـ Postgres معاه هامش ضخم، والـ Cassandra معناها cluster تشغّله وتراقبه وتتعلمه من الصفر. والـ <code>attrs jsonb</code> هو الإجابة المعتادة لـ "كل tenant عايز custom fields". الغلطة الشائعة: تعتمد على رقم قستُه على laptop كأنه رقم الـ production.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: where the framework can be wrong</b>
+    The threshold constants in <code>decide()</code> (20,000 writes/s, 10 TB) are assumptions, not facts. Replace them with what you measured on your own instance type. A framework that hides its thresholds is an opinion. A framework that states them can be tested and overruled.
+    <div class="ar-note"><b>الـ trade-off:</b> الـ constants اللي في <code>decide()</code> (20,000 write/s و 10 TB) افتراضات مش حقايق، فبدّلها باللي قست على الـ instance type بتاعك. الـ framework اللي بيخبي الحدود بتاعته رأي، واللي بيقولها تقدر تختبره وترد عليه.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Queries decide indexes <span class="lvl lvl-1">🟢 Basic</span><span class="ar-sub">الجزء 3 — الـ queries هي اللي بتحدد الـ indexes</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>You derive indexes from the pattern list in the same order you wrote it. The rule for a composite index: columns compared with equality go first, then the column you sort or range over. "A user's latest 20" is an equality on <code>customer_id</code> and a sort on <code>created_at</code>, so the index is <code>(customer_id, created_at DESC)</code>. B-tree mechanics are in <a href="../../01-CS-Fundamentals/lessons/17-database-theory-sql.html#p8">section 01, Database Theory part 8</a> and <a href="../../07-Databases/lessons/10-btree-composite-partial-covering.html">section 07 · composite and partial indexes</a>; here the question is what the design buys.</p>
+    <p>The experiment runs the same query on one million orders in three states. With no helpful index, Postgres parallel-scans the table and touches 9,422 buffers. With the columns in the wrong order, the index is sorted by date and the customer's rows are scattered across it, so it walks 1,833 buffers to find 20 rows. With equality first it needs 23 buffers. Postgres 18 added B-tree <em>skip scan</em>, which can use a later column when the leading column has few distinct values; <code>created_at</code> has millions, so <code>Index Searches: 1</code> shows no skipping happened.</p>
+    <p>Indexes are not free. Every index is a second structure each insert must update, in the same transaction and the same WAL. On a table that had already been warmed to 200,000 rows, adding two secondary indexes cut batched inserts from about 420,000 to about 160,000 rows per second, and six indexes cut them to about 50,000, so 8.4× slower, with the indexes taking 85 MB against a 26 MB table. Single-row commits are dominated by the fsync, so expect a smaller ratio there. The cost is highest on random keys, because each insert lands on a different leaf page.</p>
+  </section>
+
+<pre data-file="src/queries-to-indexes.ts"><code class="language-typescript">import { client, medianMs } from "./db.ts";
+
+// الـ pattern: آخر 20 order لـ customer. نفس الـ query بتلات حالات للـ index
+const db = await client();
+const q = `select id, total_cents, created_at from orders where customer_id = 777 order by created_at desc limit 20`;
+
+const show = async (label: string) =&gt; {
+  await db.query(`analyze orders`);
+  const { rows } = await db.query(`explain (analyze, buffers, costs off, timing off, summary off) ${q}`);
+  const lines = rows.map((r) =&gt; r["QUERY PLAN"] as string).filter((l) =&gt; !l.includes("Planning"));
+  console.log(`--- ${label}`);
+  console.log(lines.join("\n"));
+  console.log(`median ≈ ${await medianMs(15, () =&gt; db.query(q))} ms`);
+};
+
+await db.query(`drop index if exists idx_a; drop index if exists idx_b`);
+await show("no helpful index");
+
+// ترتيب غلط: created_at الأول، فالـ customer بقى شرط بيتفلتر بعد ما نمشي على الـ index
+await db.query(`create index idx_a on orders (created_at desc, customer_id)`);
+await show("(created_at desc, customer_id): wrong order");
+await db.query(`drop index idx_a`);
+
+// الترتيب الصح: عمود الـ equality الأول، وعمود الـ sort/range بعده
+await db.query(`create index idx_b on orders (customer_id, created_at desc)`);
+await show("(customer_id, created_at desc): equality first");
+await db.query(`drop index idx_b`);
+await db.end();</code></pre>
+
+<pre><code class="language-plaintext">--- no helpful index
+Limit (actual rows=20.00 loops=1)
+  Buffers: shared hit=9422
+  -&gt;  Gather Merge (actual rows=20.00 loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        Buffers: shared hit=9422
+        -&gt;  Sort (actual rows=8.67 loops=3)
+              Sort Key: created_at DESC
+              Sort Method: quicksort  Memory: 27kB
+              Buffers: shared hit=9422
+              Worker 0:  Sort Method: quicksort  Memory: 25kB
+              Worker 1:  Sort Method: quicksort  Memory: 25kB
+              -&gt;  Parallel Seq Scan on orders (actual rows=14.67 loops=3)
+                    Filter: (customer_id = 777)
+                    Rows Removed by Filter: 333319
+                    Buffers: shared hit=9346
+median ≈ 33.6 ms
+--- (created_at desc, customer_id): wrong order
+Limit (actual rows=20.00 loops=1)
+  Buffers: shared hit=26 read=1807
+  -&gt;  Index Scan using idx_a on orders (actual rows=20.00 loops=1)
+        Index Cond: (customer_id = 777)
+        Index Searches: 1
+        Buffers: shared hit=26 read=1807
+median ≈ 5.53 ms
+--- (customer_id, created_at desc): equality first
+Limit (actual rows=20.00 loops=1)
+  Buffers: shared hit=20 read=3
+  -&gt;  Index Scan using idx_b on orders (actual rows=20.00 loops=1)
+        Index Cond: (customer_id = 777)
+        Index Searches: 1
+        Buffers: shared hit=20 read=3
+median ≈ 0.26 ms</code></pre>
+  <div class="ar-note">3 خطط لنفس الـ query. <b>من غير index</b>: Parallel Seq Scan، بيشيل حوالي 333 ألف صف في كل worker، 9,422 buffer و≈33.6 ms. <b>ترتيب غلط</b>: Index Scan بس بيمشي على الـ index كله تقريبًا، 26+1807 = 1,833 buffer و≈5.5 ms. <b>الـ equality الأول</b>: 23 buffer و≈0.26 ms. <code>Index Searches: 1</code> معناها نزول واحد في الشجرة ومشي ورا بعض.</div>
+
+<pre class="diagram">
+ (customer_id, created_at DESC)        (created_at DESC, customer_id)
+ ------------------------------        ------------------------------
+ customer 776  ...                     2026-11-09  customer 12
+ customer 777  2026-11-01  &lt;- start    2026-11-09  customer 9012
+ customer 777  2026-10-19              2026-11-08  customer 777   &lt;- match
+ customer 777  2026-09-30              2026-11-07  customer 4431
+ ... 20 entries next to each other     ... matches scattered, walk on ...
+ customer 778  ...                     2025-03-14  customer 777   &lt;- match
+
+ 1 descent + 20 neighbours = 23        1 descent + long walk = 1,833
+</pre>
+  <div class="ar-note">شمال: الـ index مترتب بالـ customer الأول، فكل orders الـ 777 جنب بعض: نزلة واحدة في الشجرة و20 entry متجاورين، 23 buffer. يمين: الـ index مترتب بالتاريخ، فالـ customer 777 متفرق في كل حتة ولازم نمشي على الـ leaves لحد ما نلاقي 20 صف: 1,833 buffer. ترتيب الأعمدة هو كل الفرق.</div>
+
+<pre data-file="src/index-write-cost.ts"><code class="language-typescript">import { client } from "./db.ts";
+
+// تمن الـ indexes على الكتابة: نفس الـ insert على جدول فيه 0 و 2 و 6 indexes
+const db = await client();
+const INDEXES = [
+  `(customer_id, created_at desc)`,
+  `(tenant_id, created_at)`,
+  `(status, created_at)`,
+  `(total_cents)`,
+  `(created_at)`,
+  `(tenant_id, customer_id, status)`,
+];
+
+async function trial(count: number) {
+  await db.query(`drop table if exists w; create table w (
+    id bigint generated always as identity primary key,
+    tenant_id int not null, customer_id bigint not null, status text not null, total_cents int not null, created_at timestamptz not null)`);
+  for (const idx of INDEXES.slice(0, count)) await db.query(`create index on w ${idx}`);
+
+  // سخّنة الأول: نحط 200 ألف صف عشان الـ indexes يبقى ليها عمق حقيقي
+  const insert = (n: number) =&gt; db.query(`insert into w (tenant_id, customer_id, status, total_cents, created_at)
+    select 1 + (random()*49)::int, 1 + (random()*20000)::bigint, 'delivered', (random()*50000)::int, now() - random() * interval '730 days'
+    from generate_series(1, ${n})`);
+  await insert(200_000);
+
+  // القياس: 150 batch كل واحد 1000 صف، commit بعد كل batch
+  const t0 = performance.now();
+  for (let i = 0; i &lt; 150; i++) await insert(1000);
+  const ms = performance.now() - t0;
+
+  const size = await db.query(`select pg_size_pretty(pg_indexes_size('w')) idx, pg_size_pretty(pg_relation_size('w')) heap`);
+  return { indexes: count, rowsPerSec: Math.round(150_000 / (ms / 1000)), ...size.rows[0] };
+}
+
+// كل حالة بتتعاد مرتين وناخد الأحسن، عشان الجهاز عليه حمل تاني
+const best: Record&lt;number, Awaited&lt;ReturnType&lt;typeof trial&gt;&gt;&gt; = {};
+for (const n of [0, 2, 6, 0, 2, 6]) {
+  const r = await trial(n);
+  if (!best[n] || r.rowsPerSec &gt; best[n].rowsPerSec) best[n] = r;
+}
+for (const n of [0, 2, 6]) console.log(best[n]);
+console.log(`write cost of 6 indexes vs 0: x${(best[0].rowsPerSec / best[6].rowsPerSec).toFixed(1)} slower`);
+await db.query(`drop table w`);
+await db.end();</code></pre>
+
+<pre><code class="language-plaintext">{ indexes: 0, rowsPerSec: 420703, idx: '7696 kB', heap: '26 MB' }
+{ indexes: 2, rowsPerSec: 159876, idx: '36 MB', heap: '26 MB' }
+{ indexes: 6, rowsPerSec: 50313, idx: '85 MB', heap: '26 MB' }
+write cost of 6 indexes vs 0: x8.4 slower</code></pre>
+  <div class="ar-note">نفس الـ insert بالـ batches: مع الـ primary key بس ≈420 ألف صف في الثانية، مع 2 secondary indexes ≈160 ألف، ومع 6 ≈50 ألف. يعني 8.4 مرة أبطأ، وحجم الـ indexes بقى 85 MB جنب جدول حجمه 26 MB. "0 indexes" هنا معناها مفيش secondary، الـ primary key لسه موجود.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ indexes بتطلع من قايمة الـ patterns بنفس ترتيب ما كتبتها. القاعدة للـ composite index: الأعمدة اللي عليها equality الأول، وبعدها العمود اللي بتعمل عليه sort أو range. "آخر 20 order لـ user" يعني equality على <code>customer_id</code> و sort على <code>created_at</code>، فالـ index هو <code>(customer_id, created_at DESC)</code>. آلية الـ B-tree موجودة في <a href="../../01-CS-Fundamentals/lessons/17-database-theory-sql.html#p8">قسم 01، Database Theory الجزء 8</a> و <a href="../../07-Databases/lessons/10-btree-composite-partial-covering.html">قسم 07: الـ composite و partial indexes</a>، وهنا السؤال هو الـ design بياخد إيه منها.</p>
+    <p>التجربة بتشغّل نفس الـ query على مليون order في 3 حالات. من غير index مفيد، Postgres بيعمل parallel scan على الجدول ويلمس 9,422 buffer. بترتيب أعمدة غلط، الـ index مترتب بالتاريخ وصفوف الـ customer متفرقة، فبيمشي على 1,833 buffer عشان يلاقي 20 صف. بالـ equality الأول، 23 buffer بس. Postgres 18 ضاف <em>skip scan</em> في الـ B-tree، وده بيقدر يستخدم عمود متأخر لو العمود الأول قيمه المختلفة قليلة، بس <code>created_at</code> ليه ملايين القيم، فـ <code>Index Searches: 1</code> بتقول إن مفيش skip حصل.</p>
+    <p>الـ indexes مش ببلاش. كل index هيكل تاني كل insert لازم يحدّثه، في نفس الـ transaction ونفس الـ WAL. على جدول اتسخّن لـ 200 ألف صف، إضافة 2 secondary indexes نزّلت الـ insert بالـ batches من حوالي 420 ألف لحوالي 160 ألف صف في الثانية، و6 indexes نزّلتها لحوالي 50 ألف، يعني 8.4 مرة أبطأ، والـ indexes بقت 85 MB جنب جدول 26 MB. الـ commit بصف واحد الـ fsync بيسيطر عليه، فالنسبة هناك أقل. والتمن الأعلى على الـ keys العشوائية، لأن كل insert بينزل في leaf page مختلفة.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما تعمل endpoint جديد زي <code>GET /users/:id/orders?limit=20</code>، اكتب الـ index في نفس الـ migration وأنت لسه فاكر شكل الـ query، واختبره بـ <code>EXPLAIN (ANALYZE, BUFFERS)</code> على data قريبة من الـ production. وفي code review، لو شفت migration فيها index جديد، اسأل: أنهي pattern بيخدمه؟ وبعدين <code>pg_stat_user_indexes</code> بيقولك الـ indexes اللي <code>idx_scan</code> بتاعها صفر عشان تشيلها. الغلطة الشائعة: index على كل عمود "احتياطي"، وده تمنه 8.4× على الكتابة زي ما قسنا.
+    </div>
+  </section>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Indexes at scale <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ indexes على scale</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Indexes cost memory because the pages they use must sit in RAM to be fast. Measure one million rows and multiply. The primary key here is 21.4 MB per million rows and each composite index is 30.1 MB, so at 100 million rows three indexes need about 7.9 GB. A freshly built index is the best case: an index grown by random inserts sits near 65% leaf density instead of about 90%, about 1.4× larger; the numbers are in <a href="./31-unique-id-generation.html">Unique IDs</a>. On a 16 GB instance with <code>shared_buffers</code> around a quarter of RAM, those indexes no longer fit, and the question becomes which part of each index is <em>hot</em>. A time-ordered index keeps only its recent right-hand edge hot. A random-key index keeps every page hot.</p>
+    <p><strong>Partial indexes</strong> are the first tool. A job queue only ever reads the 1% of rows with <code>status = 'pending'</code>. A full index on <code>(status, created_at)</code> is 38.7 MB, and the partial one is 0.2 MB for practically the same buffers (53 vs 52) and the same latency. Nothing got faster; the gain is memory, plus 99% of writes not touching that index at all.</p>
+    <p><strong>Covering indexes</strong> with <code>INCLUDE</code> avoid the table entirely. Adding <code>status</code> and <code>total_cents</code> grew the index from 30.1 to 47.3 MB and took the query from 22 buffers to 4 with an index-only scan. Latency on this fully cached run is within noise, so count pages, not milliseconds. The fine print is the <em>visibility map</em>: after an update there were 39 heap fetches, because Postgres has to check those pages. After <code>VACUUM</code> there were 0 in the final run, though one earlier run still showed 10. So a covering index depends on vacuum keeping up.</p>
+    <p><strong>Put <code>tenant_id</code> first</strong> in a multi-tenant table: every query is scoped to one tenant, and each tenant's rows stay adjacent. On a 30-day range the two column orders were close (773 vs 930 buffers). On 365 days, <code>(tenant_id, created_at)</code> needed 6,055 buffers and about 4.7 ms, while <code>(created_at, tenant_id)</code> made the planner give up and scan the whole table for 9,365 buffers and about 33 ms. Building any of these on a live table must use <code>CREATE INDEX CONCURRENTLY</code>, since a plain <code>CREATE INDEX</code> blocks writes; see <a href="../../07-Databases/lessons/17-safe-migrations.html">section 07 · safe migrations</a>.</p>
+  </section>
+
+<pre data-file="src/indexes-at-scale.ts"><code class="language-typescript">import { client, medianMs } from "./db.ts";
+
+// كل index بنقيس حجمه الحقيقي على مليون صف، وبعدين نفرد الرقم لـ 100 مليون
+const db = await client();
+await db.query(`create extension if not exists pageinspect`);
+await db.query(`vacuum (analyze) orders`);
+const MB = (b: number) =&gt; (b / 1024 ** 2).toFixed(1);
+const size = async (name: string) =&gt; Number((await db.query(`select pg_relation_size($1::regclass) b`, [name])).rows[0].b);
+
+await db.query(`
+  create index i_customer on orders (customer_id, created_at desc);
+  create index i_tenant on orders (tenant_id, created_at);
+`);
+console.log("index            at 1M      at 100M    btree levels");
+for (const name of ["orders_pkey", "i_customer", "i_tenant"]) {
+  const b = await size(name);
+  const lvl = (await db.query(`select level from bt_metap($1)`, [name])).rows[0].level;
+  console.log(`${name.padEnd(16)} ${MB(b).padStart(6)} MB ${(b * 100 / 1024 ** 3).toFixed(1).padStart(6)} GB   ${lvl}`);
+}
+</code></pre>
+<pre><code class="language-plaintext">index            at 1M      at 100M    btree levels
+orders_pkey        21.4 MB    2.1 GB   2
+i_customer         30.1 MB    2.9 GB   2
+i_tenant           30.1 MB    2.9 GB   2</code></pre>
+  <div class="ar-note">مقاس حقيقي على مليون صف: الـ primary key ‏21.4 MB وكل index مركب 30.1 MB، وعمود "at 100M" هو نفس الرقم × 100 (تقدير خطي مش قياس). الـ btree levels = 2 عند المليون، ومع 100 مليون متوقع يزيد level كمان، وده تقدير برضه.</div>
+
+<pre data-file="src/indexes-at-scale.ts"><code class="language-typescript">// الـ queue pattern: حالة نادرة (1% pending) و query بتعدّي عليها طول اليوم
+const pendingQ = `select id from orders where status = 'pending' order by created_at limit 50`;
+const stat = async (q: string) =&gt; {
+  const { rows } = await db.query(`explain (analyze, buffers, costs off, timing off, summary off) ${q}`);
+  const text = rows.map((r) =&gt; r["QUERY PLAN"] as string).join("\n");
+  const node = text.match(/(Index Only Scan|Index Scan|Seq Scan|Bitmap Heap Scan)[^\n]*/)?.[0].replace(/ \(actual.*/, "") ?? "?";
+  const buffers = Number(text.match(/shared hit=(\d+)/)?.[1] ?? 0) + Number(text.match(/read=(\d+)/)?.[1] ?? 0);
+  const heap = text.match(/Heap Fetches: (\d+)/)?.[1];
+  return { node, buffers, heapFetches: heap === undefined ? "-" : heap, ms: await medianMs(25, () =&gt; db.query(q)) };
+};
+
+await db.query(`create index i_full on orders (status, created_at)`);
+await db.query(`analyze orders`);
+console.log("full   ", MB(await size("i_full")), "MB", await stat(pendingQ));
+await db.query(`drop index i_full`);
+await db.query(`create index i_partial on orders (created_at) where status = 'pending'`);
+await db.query(`analyze orders`);
+console.log("partial", MB(await size("i_partial")), "MB", await stat(pendingQ));
+await db.query(`drop index i_partial`);
+</code></pre>
+<pre><code class="language-plaintext">full    38.7 MB | Index Scan using i_full | buffers 53 | heap fetches - | ≈0.25 ms
+partial 0.2 MB | Index Scan using i_partial | buffers 52 | heap fetches - | ≈0.27 ms</code></pre>
+  <div class="ar-note">نفس الـ query ونفس عدد الـ buffers (53 و52) ونفس الوقت تقريبًا (≈0.25 و≈0.27 ms)، بس الـ index الـ partial حجمه 0.2 MB بدل 38.7 MB. المكسب هنا memory مش سرعة.</div>
+
+<pre data-file="src/indexes-at-scale.ts"><code class="language-typescript">// الـ covering: لو كل الأعمدة في الـ index الـ heap مش محتاج يتلمس خالص
+const listQ = `select created_at, status, total_cents from orders where customer_id = 777 order by created_at desc limit 20`;
+console.log("plain index    ", MB(await size("i_customer")), "MB", await stat(listQ));
+await db.query(`drop index i_customer`);
+await db.query(`create index i_cover on orders (customer_id, created_at desc) include (status, total_cents)`);
+await db.query(`vacuum (analyze) orders`);
+console.log("INCLUDE index  ", MB(await size("i_cover")), "MB", await stat(listQ));
+
+// الـ visibility map: تعديل بسيط من غير vacuum بيرجّع الـ heap fetches
+await db.query(`update orders set total_cents = total_cents + 1 where customer_id = 777`);
+console.log("after update   ", await stat(listQ));
+await db.query(`vacuum orders`);
+console.log("after vacuum   ", await stat(listQ));
+await db.query(`vacuum (index_cleanup on) orders`);
+console.log("index_cleanup  ", await stat(listQ));
+await db.query(`drop index i_cover`);
+</code></pre>
+<pre><code class="language-plaintext">plain index     30.1 MB | Index Scan using i_customer | buffers 22 | heap fetches - | ≈0.25 ms
+INCLUDE index   47.3 MB | Index Only Scan using i_cover | buffers 4 | heap fetches 0 | ≈0.32 ms
+after update | Index Only Scan using i_cover | buffers 43 | heap fetches 39 | ≈0.22 ms
+after vacuum | Index Only Scan using i_cover | buffers 4 | heap fetches 0 | ≈0.2 ms
+index_cleanup | Index Only Scan using i_cover | buffers 4 | heap fetches 0 | ≈0.17 ms</code></pre>
+  <div class="ar-note">الـ INCLUDE كبّر الـ index من 30.1 لـ 47.3 MB، ونزّل الـ buffers من 22 لـ 4 بـ Index Only Scan. بعد الـ update ظهر 39 heap fetch لأن Postgres لازم يتأكد من الصفحات دي، وبعد الـ VACUUM رجع 0 في الـ run ده (في run تاني فضل 10). الملي ثانية هنا noise عشان كل حاجة في الـ cache، فعدّ الصفحات.</div>
+
+<pre data-file="src/indexes-at-scale.ts"><code class="language-typescript">// الـ tenant_id الأول: نفس الأعمدة بترتيبين على range لـ tenant واحد
+const tenantQ = (days: number) =&gt; `select count(*), sum(total_cents) from orders where tenant_id = 7 and created_at &gt;= now() - interval '${days} days'`;
+console.log("(tenant_id, created_at)   30d ", await stat(tenantQ(30)));
+console.log("(tenant_id, created_at)  365d ", await stat(tenantQ(365)));
+await db.query(`drop index i_tenant`);
+await db.query(`create index i_ct on orders (created_at, tenant_id)`);
+await db.query(`analyze orders`);
+console.log("(created_at, tenant_id)   30d ", await stat(tenantQ(30)));
+console.log("(created_at, tenant_id)  365d ", await stat(tenantQ(365)));
+await db.query(`drop index i_ct`);
+await db.end();</code></pre>
+<pre><code class="language-plaintext">(tenant_id, created_at)   30d | Bitmap Heap Scan | buffers 773 | heap fetches - | ≈0.54 ms
+(tenant_id, created_at)  365d | Bitmap Heap Scan | buffers 6055 | heap fetches - | ≈4.71 ms
+(created_at, tenant_id)   30d | Bitmap Heap Scan | buffers 930 | heap fetches - | ≈0.9 ms
+(created_at, tenant_id)  365d | Seq Scan | buffers 9365 | heap fetches - | ≈33.33 ms</code></pre>
+  <div class="ar-note">لـ 30 يوم الترتيبين قريبين (773 و930 buffer). لـ 365 يوم: <code>(tenant_id, created_at)</code> ‏6,055 buffer و≈4.7 ms، و<code>(created_at, tenant_id)</code> خلّت الـ planner يسيب الـ index خالص ويعمل Seq Scan بـ 9,365 buffer و≈33 ms.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ indexes بتاكل memory لأن الصفحات اللي بتتقرا لازم تبقى في الـ RAM عشان تبقى سريعة. قيس على مليون صف واضرب. الـ primary key هنا 21.4 MB لكل مليون صف، وكل composite index ‏30.1 MB، يعني عند 100 مليون صف 3 indexes محتاجين حوالي 7.9 GB. وده أحسن حالة لأن الـ index مبني جديد: الـ index اللي بيكبر بـ random inserts بيقعد عند حوالي 65% leaf density بدل حوالي 90%، يعني حوالي 1.4× أكبر، والأرقام في <a href="./31-unique-id-generation.html">درس الـ Unique IDs</a>. على instance بـ 16 GB و <code>shared_buffers</code> حوالي ربع الـ RAM، الـ indexes دي مش هتدخل، والسؤال يبقى أنهي جزء من كل index هو الـ <em>hot</em>. الـ index المترتب بالوقت بيخلي طرفه اليمين (الجديد) بس hot، والـ index بـ key عشوائي بيخلي كل صفحة hot.</p>
+    <p><strong>الـ partial indexes</strong> أول أداة. queue شغالة بتقرا بس الـ 1% اللي <code>status = 'pending'</code>. الـ full index على <code>(status, created_at)</code> ‏38.7 MB، والـ partial ‏0.2 MB بنفس الـ buffers تقريبًا (53 و52) ونفس الـ latency. مفيش حاجة بقت أسرع، المكسب memory، وكمان 99% من الكتابات مش بتلمس الـ index ده خالص.</p>
+    <p><strong>الـ covering indexes</strong> بـ <code>INCLUDE</code> بتتجنب الجدول نفسه. إضافة <code>status</code> و <code>total_cents</code> كبّرت الـ index من 30.1 لـ 47.3 MB ونزّلت الـ query من 22 buffer لـ 4 بـ index-only scan. الـ latency هنا noise لأن كل حاجة في الـ cache، فعدّ الصفحات مش الملي ثواني. والتفصيلة المهمة: الـ <em>visibility map</em>: بعد update ظهر 39 heap fetch لأن Postgres لازم يتأكد من الصفحات دي، وبعد <code>VACUUM</code> رجع 0 في آخر run، بس run تاني قبله فضل فيه 10. يعني الـ covering index معتمد إن الـ vacuum ملاحق.</p>
+    <p><strong>حط <code>tenant_id</code> الأول</strong> في جدول multi-tenant: كل query محصورة في tenant واحد، وصفوف كل tenant بتفضل جنب بعض. على مدى 30 يوم الترتيبين قريبين (773 مقابل 930 buffer). على 365 يوم: <code>(tenant_id, created_at)</code> احتاج 6,055 buffer وحوالي 4.7 ms، بينما <code>(created_at, tenant_id)</code> خلّت الـ planner يستسلم ويقرا الجدول كله بـ 9,365 buffer وحوالي 33 ms. وأي index من دول على جدول شغال لازم يتعمل بـ <code>CREATE INDEX CONCURRENTLY</code>، لأن <code>CREATE INDEX</code> العادي بيقفل الكتابة، شوف <a href="../../07-Databases/lessons/17-safe-migrations.html">قسم 07: الـ safe migrations</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      جدول <code>jobs</code> أو <code>outbox</code> فيه مليون صف done وكام ألف pending: الـ partial index على <code>where status = 'pending'</code> بيوفر عليك مئات الـ MB وكام وقت كتابة. وفي SaaS multi-tenant خلي <code>tenant_id</code> أول عمود في كل index تقريبًا، وده كمان بيسهّل الـ partitioning بعدين. قبل ما تضيف index على جدول production، اضرب حجمه على 1M في حجم الجدول الفعلي وشوف RAM بتاع الـ instance. الغلطة الشائعة: تعتمد على index-only scan من غير ما تتأكد إن الـ autovacuum ملاحق على الجدول.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks at 100M rows</b>
+    Linear extrapolation is a floor. Add random-insert bloat (about 1.4×), then add the other indexes the app grew over the years. Six indexes at 100M rows is about 17 GB before bloat and about 24 GB after it, and that is before you count the table. When the working set stops fitting in RAM, latency does not degrade gently: every cache miss becomes a storage read, and p99 jumps. Plan the index budget the same way you plan disk.
+    <div class="ar-note"><b>إيه اللي هيكسر عند 100 مليون صف:</b> التقدير الخطي هو أقل حد. زوّد عليه bloat الـ random inserts (حوالي 1.4×)، وبعدين الـ indexes التانية اللي الـ app كسبها على مر السنين. 6 indexes عند 100 مليون صف يعني حوالي 17 GB قبل الـ bloat وحوالي 24 GB بعده، وده قبل ما تحسب الجدول نفسه. ولما الـ working set يبطل يدخل في الـ RAM، الـ latency مش بتقل بالتدريج: كل cache miss بقت قراية من الـ storage، والـ p99 بيقفز. خطط لميزانية الـ indexes زي ما بتخطط للـ disk.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Denormalization on purpose <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ denormalization المقصودة</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>Denormalization</strong> means storing a value somewhere else so a read does not have to compute or join it. It trades a cheaper read for a more expensive write and a new way to be wrong. "On purpose" means you can name the read it speeds up, the write that pays for it, and the job that repairs it. Modelling options are in <a href="../../07-Databases/lessons/26-denormalization-read-models.html">section 07 · denormalization &amp; read models</a>; this part measures the trade.</p>
+    <p>The first result is the one people skip. Showing the latest 20 orders with the customer name by join takes about 0.42 ms, against about 0.11 ms with a copied column. That saves a third of a millisecond, on a read that is about to spend more than that on the network. A 20-row join on a primary key is <em>not</em> a reason to denormalize. The copy earns its place when the filter and sort live on different tables, so no single index can serve both: sorting by customer name went from about 6.96 ms to about 0.17 ms, roughly 40×. A counter cache is similar: <code>count(*)</code> on the whale customer's 50,000 orders takes about 2.3 ms, and reading <code>orders_count</code> about 0.07 ms.</p>
+    <p>Writes pay. Updating a counter in the same transaction cost about 26% of throughput with the load spread across customers. When all eight connections hit one customer, the row becomes a queue, and throughput falls 74%, from about 18,600 to about 4,800 transactions per second. Hot counters are a write-contention problem first and a read optimization second.</p>
+    <p>Then the anomaly, reproduced. Rename the customer and 50,000 copies now disagree with the source. A batched repair job fixed them in about 1.6 seconds and wrote about 26 MB of WAL. Where should the update live? A <strong>trigger</strong> is synchronous and can't be forgotten, but the rename now pays for every copy: about 2 ms for a small customer, about 433 ms holding 50,000 row locks for the whale. An <strong>application write</strong> is visible in code, and every code path must remember it. An <strong>outbox event</strong> (<a href="../../07-Databases/lessons/41-outbox-cdc-idempotency.html">section 07 · outbox</a>) decouples the slow fan-out from the rename, at the cost of a window where old and new names coexist.</p>
+  </section>
+
+<pre data-file="src/denorm.ts"><code class="language-typescript">import { client, medianMs } from "./db.ts";
+
+// نسخة denormalized من الـ orders فيها اسم الـ customer جوه كل صف
+const db = await client();
+await db.query(`
+  drop table if exists orders_d;
+  create table orders_d as select o.*, c.name customer_name from orders o join customers c on c.id = o.customer_id;
+  alter table orders_d add primary key (id);
+  create index on orders_d (tenant_id, created_at desc);
+  create index on orders_d (customer_id);
+  create index on orders_d (tenant_id, customer_name, created_at desc);
+  create index if not exists o_tenant on orders (tenant_id, created_at desc);
+  create index if not exists o_cust on orders (customer_id, created_at desc);
+  create index if not exists c_name on customers (tenant_id, name);
+  analyze orders_d; analyze orders; analyze customers;
+`);
+
+// القراية: قائمة الـ orders لـ tenant مع اسم الـ customer، أرخص حالة للـ join
+const a1 = `select o.id, o.total_cents, c.name from orders o join customers c on c.id = o.customer_id
+            where o.tenant_id = 7 order by o.created_at desc limit 20`;
+const a2 = `select id, total_cents, customer_name from orders_d where tenant_id = 7 order by created_at desc limit 20`;
+console.log(`latest 20 + name     join ≈${await medianMs(200, () =&gt; db.query(a1))} ms   copy ≈${await medianMs(200, () =&gt; db.query(a2))} ms`);
+
+// الحالة اللي بتفرق: filter على جدول و sort على التاني، فمفيش index واحد يخدم الاتنين
+const b1 = `select o.id, c.name, o.created_at from orders o join customers c on c.id = o.customer_id
+            where o.tenant_id = 7 and c.name between 'A' and 'Cz' order by o.created_at desc limit 20`;
+const b2 = `select id, customer_name, created_at from orders_d
+            where tenant_id = 7 and customer_name between 'A' and 'Cz' order by created_at desc limit 20`;
+const c1 = `select o.id, c.name, o.created_at from orders o join customers c on c.id = o.customer_id
+            where o.tenant_id = 7 and c.name between 'Ab' and 'Az' order by c.name, o.created_at desc limit 20`;
+const c2 = `select id, customer_name, created_at from orders_d
+            where tenant_id = 7 and customer_name between 'Ab' and 'Az' order by customer_name, created_at desc limit 20`;
+console.log(`filter name, by date join ≈${await medianMs(40, () =&gt; db.query(b1))} ms   copy ≈${await medianMs(40, () =&gt; db.query(b2))} ms`);
+console.log(`sort by name         join ≈${await medianMs(40, () =&gt; db.query(c1))} ms   copy ≈${await medianMs(40, () =&gt; db.query(c2))} ms`);</code></pre>
+<pre><code class="language-plaintext">latest 20 + name     join ≈0.42 ms   copy ≈0.11 ms
+filter name, by date join ≈0.51 ms   copy ≈0.17 ms
+sort by name         join ≈6.96 ms   copy ≈0.17 ms</code></pre>
+  <div class="ar-note">آخر 20 order مع الاسم: join ≈0.42 ms و copy ≈0.11 ms، فرق تلت ملي ثانية مش مستاهل. لما الـ filter على جدول والـ sort على التاني: الـ sort بالاسم ≈6.96 ms بالـ join و≈0.17 ms بالعمود المنسوخ، يعني حوالي 40 مرة.</div>
+
+<pre data-file="src/denorm.ts"><code class="language-typescript">// الـ counter cache: عدّ orders الـ whale (50 ألف صف) مقابل قراية عمود واحد
+const whaleCount = `select count(*) from orders where customer_id = 1`;
+const whaleCache = `select orders_count from customers where id = 1`;
+console.log(`orders count (whale) count(*) ≈${await medianMs(20, () =&gt; db.query(whaleCount))} ms   cached ≈${await medianMs(200, () =&gt; db.query(whaleCache))} ms`);
+
+// تمن الكتابة: كل insert معاه update للعداد في نفس الـ transaction
+async function writes(label: string, conns: number, cust: (w: number) =&gt; number, counter: boolean, seconds = 3) {
+  await db.query(`create temp table if not exists noop(i int)`);
+  const until = performance.now() + seconds * 1000;
+  let done = 0;
+  await Promise.all(Array.from({ length: conns }, async (_, w) =&gt; {
+    const c = await client();
+    while (performance.now() &lt; until) {
+      const id = cust(w);
+      await c.query("begin");
+      await c.query(`insert into w_orders (customer_id) values ($1)`, [id]);
+      if (counter) await c.query(`update customers set orders_count = orders_count + 1 where id = $1`, [id]);
+      await c.query("commit");
+      done++;
+    }
+    await c.end();
+  }));
+  console.log(`${label.padEnd(44)} ≈${Math.round(done / seconds)} tx/s`);
+}
+await db.query(`drop table if exists w_orders; create table w_orders (id bigint generated always as identity primary key, customer_id bigint not null)`);
+await writes("no counter, 8 conns, one whale", 8, () =&gt; 1, false);
+await writes("counter, 8 conns, spread over customers", 8, (w) =&gt; 100 + w, true);
+await writes("counter, 8 conns, one whale (one hot row)", 8, () =&gt; 1, true);</code></pre>
+<pre><code class="language-plaintext">orders count (whale) count(*) ≈2.3 ms   cached ≈0.07 ms
+no counter, 8 conns, one whale               ≈18574 tx/s
+counter, 8 conns, spread over customers      ≈13828 tx/s
+counter, 8 conns, one whale (one hot row)    ≈4785 tx/s</code></pre>
+  <div class="ar-note">الـ <code>count(*)</code> على الـ whale ‏≈2.3 ms والعداد المحفوظ ≈0.07 ms. الكتابة: من غير counter ≈18,574 transaction في الثانية، بـ counter والـ load متوزع ≈13,828 (‏-26%)، وبـ counter و8 connections على نفس الـ customer ≈4,785 (‏-74%) لأن الصف بقى طابور.</div>
+
+<pre data-file="src/denorm.ts"><code class="language-typescript">// الـ anomaly: الـ customer غيّر اسمه والصفوف القديمة لسه بالاسم القديم
+await db.query(`update customers set name = 'Whale Inc (renamed)' where id = 1`);
+const diff = `select count(*)::int n from orders_d d join customers c on c.id = d.customer_id where d.customer_name &lt;&gt; c.name`;
+console.log("rows that disagree after rename:", (await db.query(diff)).rows[0].n);
+
+// الـ repair job بالـ batches: keyset على الـ id عشان ميفتحش transaction طويلة
+const lsn0 = (await db.query(`select pg_current_wal_lsn() l`)).rows[0].l;
+const t0 = performance.now();
+let last = 0, fixed = 0, batches = 0;
+for (;;) {
+  const { rows } = await db.query(`
+    with b as (select d.id from orders_d d join customers c on c.id = d.customer_id
+               where d.id &gt; $1 and d.customer_name &lt;&gt; c.name order by d.id limit 1000)
+    update orders_d d set customer_name = c.name from b, customers c
+    where d.id = b.id and c.id = d.customer_id returning d.id`, [last]);
+  if (rows.length === 0) break;
+  last = Math.max(...rows.map((r) =&gt; Number(r.id)));
+  fixed += rows.length;
+  batches++;
+}
+const wal = (await db.query(`select pg_wal_lsn_diff(pg_current_wal_lsn(), $1) b`, [lsn0])).rows[0].b;
+console.log(`repair: ${fixed} rows in ${batches} batches, ≈${Math.round(performance.now() - t0)} ms, WAL ≈${(wal / 1024 ** 2).toFixed(1)} MB`);
+console.log("rows that disagree after repair:", (await db.query(diff)).rows[0].n);</code></pre>
+<pre><code class="language-plaintext">rows that disagree after rename: 50000
+repair: 50000 rows in 50 batches, ≈1598 ms, WAL ≈25.9 MB
+rows that disagree after repair: 0</code></pre>
+  <div class="ar-note">بعد الـ rename: 50,000 صف مختلف عن المصدر، يعني الـ anomaly حقيقية. الـ repair job بالـ batches صلّحهم كلهم في ≈1.6 ثانية وكتب ≈26 MB WAL، وبعده العدد رجع 0.</div>
+
+<pre data-file="src/denorm.ts"><code class="language-typescript">// الـ trigger: الـ rename نفسه بقى هو اللي بيدفع التمن كله في transaction واحدة
+await db.query(`
+  create or replace function sync_customer_name() returns trigger language plpgsql as $$
+  begin
+    update orders_d set customer_name = new.name where customer_id = new.id;
+    return new;
+  end $$;
+  create trigger customers_rename after update of name on customers
+  for each row when (old.name is distinct from new.name) execute function sync_customer_name();
+`);
+for (const [label, id, name] of [["small customer (~50 orders)", 777, "Small Co v2"], ["whale (50,000 orders)", 1, "Whale Inc v3"]] as const) {
+  const t = performance.now();
+  const r = await db.query(`update customers set name = $1 where id = $2`, [name, id]);
+  const copies = (await db.query(`select count(*)::int n from orders_d where customer_id = $1`, [id])).rows[0].n;
+  console.log(`trigger rename, ${label}: updated ${r.rowCount} customer + ${copies} copies, ≈${Math.round(performance.now() - t)} ms`);
+}
+await db.query(`drop trigger customers_rename on customers; drop table if exists w_orders; drop table orders_d; drop index if exists o_tenant; drop index if exists o_cust; drop index if exists c_name`);
+await db.query(`update customers set name = initcap(substr(md5(id::text), 1, 8)) where id in (1, 777)`);
+await db.end();</code></pre>
+<pre><code class="language-plaintext">trigger rename, small customer (~50 orders): updated 1 customer + 44 copies, ≈2 ms
+trigger rename, whale (50,000 orders): updated 1 customer + 50000 copies, ≈433 ms</code></pre>
+  <div class="ar-note">الـ trigger بيحدّث النسخ في نفس transaction الـ rename: customer صغير عنده 44 نسخة ≈2 ms، والـ whale بـ 50,000 نسخة ≈433 ms، وكل الصفوف دي مقفولة طول الوقت ده.</div>
+
+  <table>
+    <thead><tr><th>Option</th><th>Read gain</th><th>Write cost</th><th>How it goes wrong</th></tr></thead>
+    <tbody>
+      <tr><td>Copied column, 20-row list</td><td>≈0.3 ms saved</td><td>All renames pay</td><td>Not worth it</td></tr>
+      <tr><td>Copied column, filter + sort across tables</td><td>≈40× (6.96 → 0.17 ms)</td><td>Rename touches N rows</td><td>Stale names until repair</td></tr>
+      <tr><td>Counter cache, spread writes</td><td>≈33× (2.3 → 0.07 ms)</td><td>-26% throughput</td><td>Drift without reconciling</td></tr>
+      <tr><td>Counter cache, one hot row</td><td>Same</td><td>-74% throughput</td><td>Row becomes a queue</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">صف صف: <b>عمود منسوخ في لستة 20 صف</b>: بيوفر ≈0.3 ms بس وأي rename بيدفع، فمش مستاهل. <b>عمود منسوخ لما الـ filter والـ sort على جدولين</b>: حوالي 40 مرة أسرع، بس الـ rename بيلمس N صف والأسماء بتبقى قديمة لحد الـ repair. <b>counter والكتابة متوزعة</b>: 33 مرة أسرع في القراية، وبيقلل الـ throughput 26%، ولو ملوش reconcile بيحصله drift. <b>counter على صف واحد hot</b>: نفس مكسب القراية، بس 74% أقل throughput لأن الصف بقى طابور.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <strong>denormalization</strong> إنك تخزن قيمة في مكان تاني عشان القراية متحسبهاش أو تعمل join. بتبدّل قراية أرخص بكتابة أغلى وطريقة جديدة للغلط. "مقصودة" يعني تقدر تسمّي القراية اللي بتسرّعها، والكتابة اللي بتدفع تمنها، والـ job اللي بيصلّحها. خيارات الـ modelling في <a href="../../07-Databases/lessons/26-denormalization-read-models.html">قسم 07: الـ denormalization والـ read models</a>، والجزء ده بيقيس الصفقة نفسها.</p>
+    <p>أول نتيجة هي اللي الناس بتعدّيها. عرض آخر 20 order مع اسم الـ customer بالـ join بياخد حوالي 0.42 ms، وبالعمود المنسوخ حوالي 0.11 ms. يعني وفرت تلت ملي ثانية على قراية هتصرف أكتر من كده على الشبكة. الـ join بتاع 20 صف على primary key <em>مش</em> سبب للـ denormalization. النسخة بتستاهل لما الـ filter والـ sort يبقوا على جدولين مختلفين، فمفيش index واحد يخدم الاتنين: الـ sort باسم الـ customer نزل من حوالي 6.96 ms لحوالي 0.17 ms، حوالي 40 مرة. والـ counter cache نفس الفكرة: <code>count(*)</code> على الـ 50 ألف order بتاعة الـ whale بياخد حوالي 2.3 ms، وقراية <code>orders_count</code> حوالي 0.07 ms.</p>
+    <p>الكتابة هي اللي بتدفع. تحديث العداد في نفس الـ transaction كلّف حوالي 26% من الـ throughput لما الـ load متوزع على customers كتير. ولما الـ 8 connections يضربوا customer واحد، الصف بيبقى طابور، والـ throughput بيقع 74%، من حوالي 18,600 لحوالي 4,800 transaction في الثانية. الـ counters الـ hot هي مشكلة write contention الأول وتحسين قراية بعد كده.</p>
+    <p>وبعدين الـ anomaly، حقيقية. غيّر اسم الـ customer، و50 ألف نسخة بقت مش مطابقة للمصدر. الـ repair job بالـ batches صلّحهم في حوالي 1.6 ثانية وكتب حوالي 26 MB WAL. فين التحديث يعيش؟ الـ <strong>trigger</strong> متزامن ومستحيل يتنسي، بس الـ rename دلوقتي بيدفع تمن كل نسخة: حوالي 2 ms لـ customer صغير، وحوالي 433 ms ماسك 50 ألف row lock للـ whale. الـ <strong>application write</strong> واضح في الكود، بس كل code path لازم يفتكره. والـ <strong>outbox event</strong> (<a href="../../07-Databases/lessons/41-outbox-cdc-idempotency.html">قسم 07: الـ outbox</a>) بيفصل الـ fan-out البطيء عن الـ rename، بس فيه فترة الأسماء القديمة والجديدة بيعيشوا فيها مع بعض.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      صفحة admin بتعرض الـ orders وعايز الـ sort والـ filter باسم الـ customer: ده مكان العمود المنسوخ بالظبط، مع repair job ليلي. عمود <code>orders_count</code> أو <code>unread_notifications_count</code> على الـ user: حطه في نفس transaction الـ insert، وخد بالك من الـ whale اللي كل الكتابات بتتجمع عليه. الغلطة الشائعة: تنسخ عمود "عشان الـ performance" من غير ما تحدد أنهي query، ومن غير ما حد يبقى مسؤول عن المزامنة، فتتكشف بعد 6 شهور لما الـ support يلاقي أسماء قديمة في الـ invoices.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Your order list page is slow. Would you denormalize the customer name into orders?" → First measure what is slow. A primary-key join for 20 rows costs under a millisecond, so copying the name won't change anything. I would denormalize only if the page filters or sorts on customer fields while paginating orders, and only with a defined update path and a repair job, because 50,000 copies of a name are 50,000 chances to be stale.
+    <div class="ar-note">"صفحة الـ orders بطيئة، هتنسخ اسم الـ customer جوه الـ orders؟" ← الأول أقيس إيه البطيء. الـ join على primary key لـ 20 صف بياخد أقل من ملي ثانية، فنسخ الاسم مش هيغيّر حاجة. أنسخ بس لو الصفحة بتعمل filter أو sort على حقول الـ customer وهي بتعمل pagination للـ orders، وبشرط يبقى فيه طريقة تحديث محددة و repair job، لأن 50 ألف نسخة من اسم معناها 50 ألف فرصة تبقى قديمة.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Materialized views <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ materialized views</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A <strong>materialized view</strong> stores a query's result as a table and leaves it stale until you refresh it. It is denormalization with the repair job built in, as long as you can accept the staleness. A live aggregate across all tenants took about 253 ms on one million orders. The view holds 1,250 rows in 136 kB and answers one tenant in about 0.15 ms. The reference is <a href="../../07-Databases/lessons/26-denormalization-read-models.html">section 07 · read models</a>.</p>
+    <p>Refreshing has a catch you should see once. Plain <code>REFRESH MATERIALIZED VIEW</code> takes an <code>ACCESS EXCLUSIVE</code> lock, so every reader waits. With a reader looping throughout, only 5 reads finished during a ≈250 ms refresh and the worst read waited ≈249 ms, the whole refresh. <code>REFRESH ... CONCURRENTLY</code> took a little longer (≈279 ms) and the reader finished 1,351 queries with a worst case of ≈2 ms. It needs a unique index on the view; without one you get the real error below. CONCURRENTLY works by diffing the new result against the old rows, so it is the wrong choice when most rows change on each refresh.</p>
+    <p>The <strong>staleness budget</strong> is a product decision with a price tag: how old may the number be, and what does one refresh cost? At ≈264 ms per refresh, a one-minute budget uses about 0.44% of one core and a 15-minute budget about 0.03%. That is cheap at this size. On a billion rows the refresh takes tens of minutes and overlaps itself, which is when you need something incremental.</p>
+    <p>The alternative is a <strong>summary table</strong> updated per event. Each order inserts into <code>orders</code> and upserts one row into <code>revenue_summary</code> in the same transaction, so the number is never stale and reads take about 0.1 ms. Writes pay as usual: ≈13,700 tx/s drops to ≈10,600 with tenants spread and to ≈2,950 when one tenant takes everything. And a code path that forgets the upsert causes drift. In this run, the "insert only" path caused exactly that in 8 tenants' rows, and a reconcile job recomputed from the source of truth and fixed them.</p>
+  </section>
+
+<pre data-file="src/matviews.ts"><code class="language-typescript">import { client, medianMs } from "./db.ts";
+
+// الـ dashboard: إيراد كل شهر لكل tenant على مليون order
+const db = await client();
+const reader = await client();
+await db.query(`create index if not exists mv_t on orders (tenant_id, created_at)`);
+const liveOne = `select date_trunc('month', created_at) m, sum(total_cents) from orders where tenant_id = 7 group by 1 order by 1`;
+const liveAll = `select tenant_id, date_trunc('month', created_at) m, count(*), sum(total_cents) from orders group by 1, 2`;
+console.log(`live, one tenant   ≈${await medianMs(10, () =&gt; db.query(liveOne))} ms`);
+console.log(`live, all tenants  ≈${await medianMs(5, () =&gt; db.query(liveAll))} ms`);
+
+await db.query(`drop materialized view if exists monthly_revenue;
+  create materialized view monthly_revenue as
+    select tenant_id, date_trunc('month', created_at) as month, count(*) orders, sum(total_cents) cents
+    from orders group by 1, 2;`);
+const viewOne = `select month, cents from monthly_revenue where tenant_id = 7 order by month`;
+console.log(`view, one tenant   ≈${await medianMs(200, () =&gt; db.query(viewOne))} ms`);
+console.log("view rows:", (await db.query(`select count(*)::int n, pg_size_pretty(pg_total_relation_size('monthly_revenue')) s from monthly_revenue`)).rows[0]);
+
+// طلب CONCURRENTLY من غير unique index: الخطأ الحقيقي
+await db.query(`refresh materialized view concurrently monthly_revenue`).catch((e: any) =&gt; console.log("ERROR:", e.message, "| HINT:", e.hint));
+await db.query(`create unique index monthly_revenue_uq on monthly_revenue (tenant_id, month)`);</code></pre>
+<pre><code class="language-plaintext">live, one tenant   ≈12.41 ms
+live, all tenants  ≈253.05 ms
+view, one tenant   ≈0.15 ms
+view rows: { n: 1250, s: '136 kB' }
+ERROR: cannot refresh materialized view "public.monthly_revenue" concurrently | HINT: Create a unique index with no WHERE clause on one or more columns of the materialized view.</code></pre>
+  <div class="ar-note">الـ aggregate الـ live: tenant واحد ≈12 ms، وكل الـ tenants ≈253 ms. الـ view فيها 1,250 صف بس في 136 kB، وقراية tenant منها ≈0.15 ms. آخر سطر الخطأ الحقيقي لو طلبت <code>CONCURRENTLY</code> من غير unique index، ومعاه الـ HINT.</div>
+
+<pre data-file="src/matviews.ts"><code class="language-typescript">// الـ reader بيفضل يقرا طول الوقت، وبنسجل أطول query اتعلقت أثناء الـ refresh
+async function refreshWithReader(label: string, sql: string) {
+  let stop = false, count = 0, worst = 0;
+  const loop = (async () =&gt; {
+    while (!stop) {
+      const t = performance.now();
+      await reader.query(viewOne);
+      worst = Math.max(worst, performance.now() - t);
+      count++;
+    }
+  })();
+  await new Promise((r) =&gt; setTimeout(r, 100));
+  count = 0; worst = 0;
+  const t0 = performance.now();
+  await db.query(sql);
+  const refreshMs = performance.now() - t0;
+  const readsDuring = count, worstMs = worst;
+  stop = true;
+  await loop;
+  console.log(`${label.padEnd(26)} refresh ≈${Math.round(refreshMs)} ms | reads finished during it: ${readsDuring} | worst read ≈${Math.round(worstMs)} ms`);
+}
+// عدد صفوف بسيط اتغير عشان الـ refresh يبقى عنده شغل حقيقي
+await db.query(`update orders set total_cents = total_cents + 1 where id % 1000 = 0`);
+await refreshWithReader("REFRESH (plain)", `refresh materialized view monthly_revenue`);
+await db.query(`update orders set total_cents = total_cents + 1 where id % 1000 = 0`);
+await refreshWithReader("REFRESH CONCURRENTLY", `refresh materialized view concurrently monthly_revenue`);</code></pre>
+<pre><code class="language-plaintext">REFRESH (plain)            refresh ≈250 ms | reads finished during it: 5 | worst read ≈249 ms
+REFRESH CONCURRENTLY       refresh ≈279 ms | reads finished during it: 1351 | worst read ≈2 ms</code></pre>
+  <div class="ar-note">الـ REFRESH العادي: خلص في ≈250 ms، والـ reader عمل 5 قراءات بس أثناءها، وأسوأ قراية استنت ≈249 ms يعني الـ refresh كله. الـ CONCURRENTLY: ≈279 ms، والـ reader عمل 1,351 قراية وأسوأها ≈2 ms.</div>
+
+<pre class="diagram">
+ time ----------------------------------------------------------&gt;
+
+ plain REFRESH
+   refresh  |=========== ACCESS EXCLUSIVE lock ===========|
+   reader   r r r |---------- blocked ≈249 ms ------------| r r r
+
+ REFRESH CONCURRENTLY
+   refresh  |=== build new result ===|== diff + apply ==|
+   reader   r r r r r r r r r r r r r r r r r r r r r r r r r r r r
+</pre>
+  <div class="ar-note">فوق: الـ REFRESH العادي ماسك ACCESS EXCLUSIVE lock طول الوقت، فالـ reader واقف ≈249 ms. تحت: الـ CONCURRENTLY بيبني النتيجة الجديدة وبعدين بيعمل diff ويطبّق الفرق، والـ reader شغال طول الوقت عادي.</div>
+
+<pre data-file="src/matviews.ts"><code class="language-typescript">// الـ staleness budget: كل period بيتكلف قد إيه من وقت الـ DB لو الـ ⁦refresh ≈⁩ كام ms
+const refreshMs = await medianMs(3, () =&gt; db.query(`refresh materialized view concurrently monthly_revenue`));
+console.log(`refresh concurrently ≈${refreshMs} ms; cost at each staleness budget:`);
+for (const minutes of [1, 5, 15, 60]) {
+  console.log(`  every ${String(minutes).padStart(2)} min: stale up to ${minutes} min, DB busy ≈${((refreshMs / (minutes * 60_000)) * 100).toFixed(2)}% of one core`);
+}</code></pre>
+<pre><code class="language-plaintext">refresh concurrently ≈263.5 ms; cost at each staleness budget:
+  every  1 min: stale up to 1 min, DB busy ≈0.44% of one core
+  every  5 min: stale up to 5 min, DB busy ≈0.09% of one core
+  every 15 min: stale up to 15 min, DB busy ≈0.03% of one core
+  every 60 min: stale up to 60 min, DB busy ≈0.01% of one core</code></pre>
+  <div class="ar-note">كل refresh بياخد ≈264 ms. لو عايز البيانات متبقاش أقدم من دقيقة: 0.44% من core واحدة. كل 15 دقيقة: 0.03%. رخيص جدًا عند الحجم ده.</div>
+
+<pre data-file="src/matviews.ts"><code class="language-typescript">// البديل: summary table بتتحدث مع كل order في نفس الـ transaction
+await db.query(`
+  drop table if exists revenue_summary;
+  create table revenue_summary (tenant_id int, month timestamptz, orders int not null, cents bigint not null, primary key (tenant_id, month));
+  insert into revenue_summary select tenant_id, date_trunc('month', created_at), count(*), sum(total_cents) from orders group by 1, 2;
+  drop table if exists new_orders;
+  create table new_orders (id bigint generated always as identity primary key, tenant_id int not null, total_cents int not null, created_at timestamptz not null default now());
+`);
+async function writes(label: string, summary: boolean, tenant: (w: number) =&gt; number, seconds = 3) {
+  const until = performance.now() + seconds * 1000;
+  let done = 0;
+  await Promise.all(Array.from({ length: 8 }, async (_, w) =&gt; {
+    const c = await client();
+    while (performance.now() &lt; until) {
+      const t = tenant(w);
+      await c.query("begin");
+      await c.query(`insert into new_orders (tenant_id, total_cents) values ($1, 1000)`, [t]);
+      if (summary) {
+        await c.query(`insert into revenue_summary values ($1, date_trunc('month', now()), 1, 1000)
+          on conflict (tenant_id, month) do update set orders = revenue_summary.orders + 1, cents = revenue_summary.cents + 1000`, [t]);
+      }
+      await c.query("commit");
+      done++;
+    }
+    await c.end();
+  }));
+  console.log(`${label.padEnd(36)} ≈${Math.round(done / seconds)} tx/s`);
+}
+await writes("insert only", false, (w) =&gt; w + 1);
+await writes("insert + upsert, tenants spread", true, (w) =&gt; w + 1);
+await writes("insert + upsert, one tenant (hot row)", true, () =&gt; 7);
+const sumOne = `select month, cents from revenue_summary where tenant_id = 7 order by month`;
+console.log(`summary, one tenant ≈${await medianMs(200, () =&gt; db.query(sumOne))} ms`);
+
+// الـ drift: أول run فوق (insert only) ده code path نسي يحدّث الـ summary، زي bug حقيقي
+const truth = `select tenant_id, month, sum(cents) cents, sum(orders)::int orders from (
+    select tenant_id, date_trunc('month', created_at) as month, sum(total_cents) cents, count(*) orders from orders group by 1, 2
+    union all select tenant_id, date_trunc('month', created_at), sum(total_cents), count(*) from new_orders group by 1, 2
+  ) x group by 1, 2`;
+const check = `with t as (${truth}) select count(*)::int disagree from t join revenue_summary s using (tenant_id, month) where t.cents &lt;&gt; s.cents`;
+console.log("summary rows that disagree with a full recount:", (await db.query(check)).rows[0].disagree);
+
+// الـ reconcile job: يعيد الحساب من مصدر الحقيقة ويصلّح اللي اختلف بس
+const repaired = await db.query(`
+  with t as (${truth})
+  update revenue_summary s set cents = t.cents, orders = t.orders
+  from t where s.tenant_id = t.tenant_id and s.month = t.month and (s.cents &lt;&gt; t.cents or s.orders &lt;&gt; t.orders)`);
+console.log("reconcile job fixed rows:", repaired.rowCount, "| still disagree:", (await db.query(check)).rows[0].disagree);
+await db.query(`drop materialized view monthly_revenue; drop table revenue_summary; drop table new_orders; drop index if exists mv_t`);
+await reader.end();
+await db.end();</code></pre>
+<pre><code class="language-plaintext">insert only                          ≈13679 tx/s
+insert + upsert, tenants spread      ≈10556 tx/s
+insert + upsert, one tenant (hot row) ≈2948 tx/s
+summary, one tenant ≈0.1 ms
+summary rows that disagree with a full recount: 8
+reconcile job fixed rows: 8 | still disagree: 0</code></pre>
+  <div class="ar-note">بـ upsert في نفس الـ transaction: الكتابة ≈13,679 tx/s بتنزل لـ ≈10,556 والـ tenants متوزعين، ولـ ≈2,948 لو tenant واحد واخد كل الكتابات (hot row). القراية ≈0.1 ms. الـ "insert only" ده code path نسي الـ upsert: طلّع 8 صفوف مختلفة عن الحساب من الأول، والـ reconcile job صلّح الـ 8 ورجع العدد 0.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <strong>materialized view</strong> بتخزن نتيجة query كجدول، وبتفضل قديمة لحد ما تعملها refresh. يعني denormalization والـ repair job جواها، طالما تقدر تستحمل الـ staleness. الـ aggregate الـ live على كل الـ tenants خد حوالي 253 ms على مليون order. الـ view فيها 1,250 صف في 136 kB وبتجاوب tenant واحد في حوالي 0.15 ms. المرجع <a href="../../07-Databases/lessons/26-denormalization-read-models.html">قسم 07: الـ read models</a>.</p>
+    <p>الـ refresh فيه فخ لازم تشوفه مرة. الـ <code>REFRESH MATERIALIZED VIEW</code> العادي بياخد <code>ACCESS EXCLUSIVE</code> lock، فكل reader بيستنى. والـ reader شغال طول الوقت، 5 قراءات بس خلصت أثناء refresh بياخد ≈250 ms، وأسوأ قراية استنت ≈249 ms، يعني الـ refresh كله. <code>REFRESH ... CONCURRENTLY</code> خد شوية أكتر (≈279 ms) والـ reader خلّص 1,351 query وأسوأها ≈2 ms. بس محتاج unique index على الـ view، ومن غيره بييجيلك الخطأ الحقيقي اللي فوق. والـ CONCURRENTLY شغله إنه يقارن النتيجة الجديدة بالصفوف القديمة، فمش اختيار كويس لو معظم الصفوف بتتغير في كل refresh.</p>
+    <p>الـ <strong>staleness budget</strong> قرار product وليه تمن: الرقم ينفع يبقى قديم قد إيه، و refresh واحد بيتكلف كام؟ عند ≈264 ms للـ refresh، ميزانية دقيقة واحدة بتاخد حوالي 0.44% من core واحدة، و15 دقيقة حوالي 0.03%. رخيص عند الحجم ده. على مليار صف الـ refresh بياخد عشرات الدقايق وبيتداخل مع نفسه، وساعتها محتاج حاجة incremental.</p>
+    <p>البديل <strong>summary table</strong> بتتحدث مع كل event. كل order بيعمل insert في <code>orders</code> و upsert لصف واحد في <code>revenue_summary</code> في نفس الـ transaction، فالرقم عمره ما يبقى قديم والقراية حوالي 0.1 ms. والكتابة بتدفع زي العادة: ≈13,700 tx/s بتنزل لـ ≈10,600 والـ tenants متوزعين، ولـ ≈2,950 لما tenant واحد ياخد كله. وأي code path ينسى الـ upsert بيعمل drift. في الـ run ده، مسار الـ "insert only" عمل كده بالظبط في صفوف 8 tenants، و reconcile job حسب من مصدر الحقيقة وصلّحهم.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      dashboard الإيراد الشهري لكل tenant في SaaS: <code>REFRESH ... CONCURRENTLY</code> كل 5 دقايق من worker، وعليه alert لو الـ refresh فشل أو بقى أطول من الـ period. ولو الـ finance عايز الرقم لحظي، يبقى summary table بـ upsert، مع reconcile job ليلي بيقارنها بالـ orders ويصلّح الفرق. الغلطة الشائعة: <code>REFRESH</code> من غير <code>CONCURRENTLY</code> على جدول بيقرا منه dashboard شغال، فكل request بيقف طول الـ refresh، زي ما قسنا.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: view vs summary table</b>
+    Materialized view: no changes to write paths, stale by your budget, cost grows with the whole dataset per refresh. Summary table: always current, every write path must maintain it, and one hot tenant's row costs real throughput (≈-78% in this run, 13,700 → 2,950 tx/s). Start with the view. Move to a summary table when a refresh no longer fits inside the budget or the number has to be current.
+    <div class="ar-note"><b>الـ trade-off بين الـ view والـ summary table:</b> الـ materialized view مش بتغيّر مسارات الكتابة، قديمة بقد الـ budget بتاعك، وتمنها بيكبر مع حجم الـ data كله في كل refresh. الـ summary table دايمًا محدّثة، بس كل مسار كتابة لازم يحدّثها، وصف الـ tenant الـ hot بيكلّف throughput حقيقي (حوالي -78% في الـ run ده، من 13,700 لـ 2,950 tx/s). ابدأ بالـ view، وانقل لـ summary table لما الـ refresh ميدخلش في الـ budget أو الرقم لازم يبقى لحظي.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "How do you serve a dashboard of monthly revenue per tenant over a billion orders?" → Not a live aggregate. For staleness of minutes, a materialized view or a rollup table refreshed by a job, with <code>CONCURRENTLY</code> so readers don't block. At this size a full recompute won't fit the window, so incremental: upsert into a summary keyed by tenant and month, or a stream rollup, with a periodic reconcile against the source of truth to catch drift.
+    <div class="ar-note">"إزاي تخدم dashboard للإيراد الشهري لكل tenant على مليار order؟" ← مش aggregate live. لو الـ staleness بالدقايق ينفع، materialized view أو rollup table بيتحدث بـ job، مع <code>CONCURRENTLY</code> عشان الـ readers ميقفوش. عند الحجم ده إعادة الحساب الكاملة مش هتدخل في الوقت، فنروح incremental: upsert في summary مفتاحها tenant و month، أو stream rollup، ومعاه reconcile دوري ضد مصدر الحقيقة عشان يمسك الـ drift.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Choosing the store from its marketing</b>
+<pre><code class="language-typescript">// القرار جه قبل أي query اتكتبت
+const db = "cassandra"; // عشان الـ scale وخلاص
+// النتيجة: مفيش joins للـ reports
+// ومفيش transactions للـ stock</code></pre></div>
+    <div class="good"><b>✅ Decide from written patterns</b>
+<pre><code class="language-typescript">// الـ decision طالعة من الـ patterns والأرقام
+const choice = decide({
+  name: "orders",
+  pattern: "relational",
+  multiRowInvariant: true,
+  writesPerSecPeak: 400,
+  dataTb: 1,
+  schemaVaries: false,
+  teamKnowsPostgres: true,
+});</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ لو اخترت الـ store قبل ما تكتب ولا query، بتكتشف بعد كده إن الـ reporting والـ stock محتاجين joins و transactions مش موجودين. ✅ اكتب الـ patterns الأول، وخلي الـ decision ينتج من القايمة والأرقام: بـ 400 write/s و invariant عبر صفوف، Postgres هو الإجابة ومعاه هامش كبير.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Composite index in the wrong order</b>
+<pre><code class="language-sql">-- القراية: customer_id = ? ORDER BY created_at DESC
+CREATE INDEX ON orders (created_at DESC, customer_id);
+-- بيقرا 1,833 buffer عشان 20 صف</code></pre></div>
+    <div class="good"><b>✅ Equality first, sort after</b>
+<pre><code class="language-sql">-- عمود الـ equality الأول وبعده الـ sort
+CREATE INDEX ON orders (customer_id, created_at DESC);
+-- بيقرا 23 buffer عشان نفس الـ 20 صف</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ index بتاع <code>created_at</code> الأول بيفرّق صفوف الـ customer في كل مكان، فبيمشي على 1,833 buffer. ✅ لما الـ equality ييجي الأول، صفوف الـ customer كلها جنب بعض، 23 buffer بس، يعني حوالي 80 مرة أقل، على نفس الجدول ونفس الـ query.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Counter updated after the commit</b>
+<pre><code class="language-typescript">// لو الـ process وقع بين السطرين العداد غلط للأبد
+await db.query("insert into orders ...");
+await db.query("update customers set orders_count = orders_count + 1 where id = $1", [id]);</code></pre></div>
+    <div class="good"><b>✅ Same transaction, plus a reconcile job</b>
+<pre><code class="language-typescript">// الاتنين في نفس الـ transaction، و reconcile ليلي للـ bugs
+await db.query("begin");
+await db.query("insert into orders ...");
+await db.query("update customers set orders_count = orders_count + 1 where id = $1", [id]);
+await db.query("commit");</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ لو الـ insert حصل والـ process وقع قبل الـ update، العداد غلط للأبد ومحدش هيعرف. ✅ الاتنين في نفس الـ transaction يا إما الاتنين يتموا يا إما لا. وكمان reconcile job ليلي، لأن أي مسار كتابة تاني (bulk import مثلًا) ممكن يعدّي من غير ما يحدّث العداد.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Plain REFRESH on a live dashboard</b>
+<pre><code class="language-sql">-- كل الـ readers واقفين طول الـ refresh
+REFRESH MATERIALIZED VIEW monthly_revenue;
+-- أسوأ قراية ⁦≈249 ms⁩ على مليون صف بس</code></pre></div>
+    <div class="good"><b>✅ CONCURRENTLY with a unique index</b>
+<pre><code class="language-sql">-- محتاج unique index مرة واحدة
+CREATE UNIQUE INDEX ON monthly_revenue (tenant_id, month);
+REFRESH MATERIALIZED VIEW CONCURRENTLY monthly_revenue;
+-- أسوأ قراية ⁦≈2 ms⁩ في نفس التجربة</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>REFRESH</code> العادي بيقفل الـ view كلها بـ ACCESS EXCLUSIVE، فكل قراية بتستنى لحد ما يخلص، وعلى داتا أكبر ده بيبقى دقايق. ✅ بـ <code>CONCURRENTLY</code> والـ unique index، الـ reader مكمل شغله والأسوأ ≈2 ms، مقابل refresh أبطأ سنة.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Extend decide() <span class="lvl lvl-1">🟢 easy</span></b>
+    Add an eighth test: a session store read and written only by session id, with a TTL. Which branch of <code>decide()</code> does it hit? Then add a test where your assumption about scale flips the answer.
+    <div class="ar-note">ضيف test تامن: session store بيتقرا ويتكتب بالـ session id بس، وليه TTL. هيروح أنهي فرع في <code>decide()</code>؟ وبعدين ضيف test تاني الافتراض بتاع الـ scale فيه يقلب الإجابة.</div>
+    <details><summary>Hint · تلميح</summary>
+      A session is a pure key lookup, so <code>pattern: "lookup-by-key"</code>. For the flip, reuse <code>"partition-time-range"</code> and raise <code>writesPerSecPeak</code>.
+      <div class="ar-note">الـ session عبارة عن key lookup بحت، فـ <code>pattern: "lookup-by-key"</code>. وعشان تقلب الإجابة، استخدم <code>"partition-time-range"</code> وارفع <code>writesPerSecPeak</code>.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Index for the pending queue <span class="lvl lvl-2">🟡 medium</span></b>
+    Design the smallest index for "this tenant's pending orders, oldest first, 50 at a time" on the 1M-row table. Prove it with <code>EXPLAIN (ANALYZE, BUFFERS)</code> and report its size.
+    <div class="ar-note">صمم أصغر index لـ "الـ pending orders بتاعة tenant ده، الأقدم الأول، 50 في المرة" على جدول المليون صف. أثبته بـ <code>EXPLAIN (ANALYZE, BUFFERS)</code> وقول حجمه كام.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-solutions.ts"><code class="language-typescript">import { client } from "./db.ts";
+
+const db = await client();
+
+// تمرين 2: الـ query بتقول tenant و status = equality، و created_at = sort
+const q = `select id, total_cents from orders where tenant_id = 7 and status = 'pending' order by created_at limit 50`;
+await db.query(`create index idx_pending_tenant on orders (tenant_id, created_at) where status = 'pending'`);
+await db.query(`analyze orders`);
+const plan = await db.query(`explain (analyze, buffers, costs off, timing off, summary off) ${q}`);
+console.log(plan.rows.map((r) =&gt; r["QUERY PLAN"]).filter((l: string) =&gt; !/^(Planning| {2}Buffers: shared hit=\d+$)/.test(l)).join("\n"));
+console.log("index size:", (await db.query(`select pg_size_pretty(pg_relation_size('idx_pending_tenant')) s`)).rows[0].s);
+await db.query(`drop index idx_pending_tenant`);</code></pre>
+<pre><code class="language-plaintext">Limit (actual rows=50.00 loops=1)
+  Buffers: shared hit=50 read=2
+  -&gt;  Index Scan using idx_pending_tenant on orders (actual rows=50.00 loops=1)
+        Index Cond: (tenant_id = 7)
+        Index Searches: 1
+        Buffers: shared hit=50 read=2
+index size: 328 kB</code></pre>
+      <div class="ar-note">الـ <code>tenant_id</code> equality الأول، و<code>created_at</code> للـ sort، و<code>status = 'pending'</code> في الـ WHERE بتاع الـ index فالـ partial بيشيل كل الباقي. النتيجة: Index Scan مباشر، 52 buffer، والـ index حجمه 328 kB بس.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. A counter that can't drift forever <span class="lvl lvl-3">🔴 hard</span></b>
+    Add an <code>orders_count</code> trigger, then bypass it on purpose the way a bulk import would, and write the reconcile query that finds and fixes only the customers that drifted. Running it twice must fix nothing the second time.
+    <div class="ar-note">ضيف trigger لـ <code>orders_count</code>، وبعدين عدّيه عن قصد زي ما bulk import بيعمل، واكتب الـ reconcile query اللي بتلاقي وتصلّح الـ customers اللي عندهم drift بس. لو شغّلتها مرتين، المرة التانية لازم متصلّحش حاجة.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-solutions.ts"><code class="language-typescript">// تمرين 3: عداد بـ trigger، بيتحدث في نفس الـ transaction بتاعة الـ insert
+await db.query(`
+  create function bump_orders_count() returns trigger language plpgsql as $$
+  begin
+    update customers set orders_count = orders_count + 1 where id = new.customer_id;
+    return new;
+  end $$;
+  create trigger orders_count_bump after insert on orders
+    for each row execute function bump_orders_count();
+`);
+const count = async () =&gt; (await db.query(`select orders_count n from customers where id = 777`)).rows[0].n as number;
+const before = await count();
+await db.query(`insert into orders values (2000001, 1, 777, 'pending', 1000, now())`);
+console.log("after insert through the normal path:", (await count()) - before, "added");
+
+// الـ bug اللي بنحاكيه: bulk import بيعدّي من غير الـ trigger، زي COPY بعد disable trigger
+await db.query(`alter table orders disable trigger orders_count_bump`);
+await db.query(`insert into orders select 2000001 + g, 1, 777, 'pending', 1000, now() from generate_series(1, 5) g`);
+await db.query(`alter table orders enable trigger orders_count_bump`);
+
+const reconcile = `
+  update customers c set orders_count = x.n
+  from (select customer_id, count(*)::int n from orders group by 1) x
+  where x.customer_id = c.id and c.orders_count &lt;&gt; x.n
+  returning c.id`;
+const fixed = await db.query(reconcile);
+console.log("reconcile fixed customers:", fixed.rows.map((r) =&gt; Number(r.id)), "| second run fixes:", (await db.query(reconcile)).rowCount);
+await db.end();</code></pre>
+<pre><code class="language-plaintext">after insert through the normal path: 1 added
+reconcile fixed customers: [ 777 ] | second run fixes: 0</code></pre>
+      <div class="ar-note">الـ trigger بيزوّد العداد في نفس الـ transaction. الـ bulk insert مع <code>disable trigger</code> بيمثل مسار كتابة نسي العداد. الـ reconcile بيعد من الـ source ويصلّح اللي مختلف بس، فأول مرة صلّح customer ‏777، والتانية 0 صفوف، يعني idempotent.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project / at work <span class="lvl lvl-3">🔴 project</span></b>
+    In your side project (or your job's codebase) write the access-pattern table for the orders area: pattern, query, rate, p99. Derive the index list from it, then compare with what exists using <code>pg_stat_user_indexes</code>. List one index to drop, one to add, and one read you would denormalize with its repair job.
+    <div class="ar-note">في مشروعك الجانبي (أو في الـ codebase بتاع الشغل) اكتب جدول الـ access patterns لمنطقة الـ orders: الـ pattern، الـ query، الـ rate، الـ p99. طلّع منه قايمة الـ indexes، وقارنها باللي موجود باستخدام <code>pg_stat_user_indexes</code>. طلّع index تشيله، و index تضيفه، وقراية واحدة هتعملها denormalize ومعاها الـ repair job بتاعها.</div>
+    <details><summary>Hint · تلميح</summary>
+      <code>SELECT relname, indexrelname, idx_scan FROM pg_stat_user_indexes ORDER BY idx_scan;</code> shows indexes nothing reads. Check a replica's stats too if reads go there.
+      <div class="ar-note">الـ query دي بتوريك الـ indexes اللي محدش بيقرا منها (<code>idx_scan</code> قليل). وبص على stats الـ replica كمان لو القراية بتروح هناك، لأن الـ counters مش بتتشارك بين الـ primary والـ replica.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Write the access patterns first: filter, sort, rate, p99, transaction or not. The store comes after.</li>
+    <li>Framework order: patterns → consistency → read/write → schema → team. A multi-row invariant ends it at step 2.</li>
+    <li>"NoSQL for scale" is a myth at most sizes: one durable Postgres did ≈33,000 commits/s here against a ≈1,200/s flash-sale estimate.</li>
+    <li>JSONB is the middle ground for per-item attributes. <code>@&gt;</code> with a GIN index took ≈37 ms down to ≈4.6 ms.</li>
+    <li>Composite index: equality columns first, then sort or range. Wrong order cost 1,833 buffers vs 23.</li>
+    <li>Six indexes made batched inserts 8.4× slower. Every index needs a query that justifies it.</li>
+    <li>Index RAM: measure 1M rows, multiply, add about 1.4× for random-insert bloat, count what is really hot.</li>
+    <li>Partial indexes save memory (38.7 MB → 0.2 MB). Covering indexes save pages (22 → 4) if vacuum keeps up. <code>tenant_id</code> goes first.</li>
+    <li>Denormalize when filter and sort are on different tables (≈40×), not for a 20-row PK join (≈0.3 ms).</li>
+    <li>Every copy needs a named update path and a repair job. Hot counters are write contention: -74% on one row.</li>
+    <li>Materialized view: use <code>CONCURRENTLY</code> and a unique index, or readers stall for the whole refresh.</li>
+    <li>Summary table when the view no longer fits the staleness budget, with a reconcile job against the source of truth.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>اكتب الـ access patterns الأول: الـ filter، الـ sort، الـ rate، الـ p99، و transaction ولا لأ. الـ store بييجي بعد كده.</li>
+      <li>ترتيب الـ framework: patterns ← consistency ← read/write ← schema ← team. أي invariant عبر صفوف بيقفل النقاش عند الخطوة التانية.</li>
+      <li>"NoSQL عشان الـ scale" خرافة في معظم الأحجام: Postgres واحد durable عمل ≈33,000 commit في الثانية هنا مقابل estimate لـ flash sale حوالي 1,200.</li>
+      <li>الـ JSONB حل وسط للـ attributes اللي بتختلف من عنصر لعنصر. <code>@&gt;</code> مع GIN index نزلت من ≈37 ms لـ ≈4.6 ms.</li>
+      <li>الـ composite index: أعمدة الـ equality الأول، وبعدها الـ sort أو الـ range. الترتيب الغلط كلّف 1,833 buffer مقابل 23.</li>
+      <li>6 indexes خلّوا الـ insert بالـ batches أبطأ 8.4 مرة. كل index لازم query تبرره.</li>
+      <li>الـ RAM بتاع الـ indexes: قيس على مليون صف، اضرب، زوّد حوالي 1.4× لـ bloat الـ random inserts، واحسب اللي hot بجد.</li>
+      <li>الـ partial بيوفر memory (38.7 MB لـ 0.2 MB). الـ covering بيوفر صفحات (22 لـ 4) لو الـ vacuum ملاحق. والـ <code>tenant_id</code> أول عمود.</li>
+      <li>اعمل denormalize لما الـ filter والـ sort يبقوا على جدولين (≈40×)، مش عشان join بتاع 20 صف على PK (≈0.3 ms).</li>
+      <li>كل نسخة ليها طريقة تحديث متسمية و repair job. الـ counters الـ hot معناها write contention: -74% على صف واحد.</li>
+      <li>الـ materialized view: استخدم <code>CONCURRENTLY</code> مع unique index، وإلا الـ readers واقفين طول الـ refresh.</li>
+      <li>الـ summary table لما الـ view ميبقاش داخل في الـ staleness budget، ومعاها reconcile job ضد مصدر الحقيقة.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 10 · 1.5 — SQL vs NoSQL: الفرق الأساسي ومتى كل واحد (access patterns أولًا)</label>
+    <label><input type="checkbox" data-key="r2"> 10 · 1.5 — Indexing في الـ design: الـ queries بتحدد الـ indexes</label>
+    <label><input type="checkbox" data-key="r3"> 10 · 2.2 — SQL vs NoSQL decision framework: access patterns أولًا → consistency needs → scale pattern → schema flexibility → team familiarity …</label>
+    <label><input type="checkbox" data-key="r4"> 10 · 2.2 — Indexing على scale، denormalization المقصودة، materialized views للـ read-heavy</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.postgresql.org/docs/current/indexes-partial.html">PostgreSQL docs — Partial indexes</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/indexes-index-only-scans.html">PostgreSQL docs — Index-only scans and covering indexes</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/sql-refreshmaterializedview.html">PostgreSQL docs — REFRESH MATERIALIZED VIEW</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/datatype-json.html">PostgreSQL docs — JSON types and jsonb indexing</a></li>
+    <li><a href="https://www.mongodb.com/docs/manual/data-modeling/">MongoDB docs — Data modeling</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./10-protocols-http2-http3.html"><small>← Previous</small>10 · Protocols</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./12-replication-failover-split-brain.html"><small>Next →</small>12 · Replication</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

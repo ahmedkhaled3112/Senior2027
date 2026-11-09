@@ -5,7 +5,7 @@
 
 ## الإجمالي
 
-**0 / 1996 بند · 0%** · **273 درس** متعمل
+**0 / 1996 بند · 0%** · **322 درس** متعمل
 
 `░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░` 0%
 
@@ -20,7 +20,7 @@
 | 07 | [Databases](./07-Databases/progress.md) | 0/28 | 0/89 | 0/58 | 0 / 175 | 0% `░░░░░░░░░░` | 43 |
 | 08 | [Design Patterns](./08-Design-Patterns/progress.md) | 0/24 | 0/67 | 0/57 | 0 / 148 | 0% `░░░░░░░░░░` | 35 |
 | 09 | [Software Architecture](./09-Software-Architecture/progress.md) | 0/29 | 0/60 | 0/57 | 0 / 146 | 0% `░░░░░░░░░░` | 40 |
-| 10 | [System Design](./10-System-Design/progress.md) | 0/32 | 0/67 | 0/49 | 0 / 148 | 0% `░░░░░░░░░░` | 14 |
+| 10 | [System Design](./10-System-Design/progress.md) | 0/32 | 0/67 | 0/49 | 0 / 148 | 0% `░░░░░░░░░░` | 63 |
 | 11 | [Testing Security DevOps](./11-Testing-Security-DevOps/progress.md) | 0/69 | 0/107 | 0/53 | 0 / 229 | 0% `░░░░░░░░░░` | 0 |
 | 12 | [AI Engineering](./12-AI-Engineering/progress.md) | 0/23 | 0/58 | 0/46 | 0 / 127 | 0% `░░░░░░░░░░` | 0 |
 | 13 | [Senior Skills](./13-Senior-Skills/progress.md) | 0/26 | 0/51 | 0/32 | 0 / 109 | 0% `░░░░░░░░░░` | 0 |
