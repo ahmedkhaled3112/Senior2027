@@ -1,0 +1,2247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CQRS: Separate Reads, Real Read Models &amp; Eventual Consistency — 09 Software Architecture</title>
+<meta name="section" content="09-Software-Architecture">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">09 · Software Architecture</a></span>
+    <span>·</span>
+    <span>Lesson 27 / 40</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+<header>
+    <h1>CQRS: Separate Reads, Real Read Models &amp; Eventual Consistency</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 27 of 40 — Software Architecture</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Node 22 · TypeScript 7 · Postgres 18</span>
+      <span class="chip">Prereq: Lessons 18, 19, 20 and 23</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>09 · 3.2 — <b>CQRS</b>: فصل الـ write model (commands، aggregates، invariants) عن الـ read model (queries، denormalized views، DTOs مباشرة من SQL) — وإنه ممكن يكون بسيط جدًا (نفس الـ DB، handlers مختلفة)</li>
+        <li>09 · 3.2 — Read models denormalized: materialized views، projection tables، Elasticsearch — eventual consistency بينهم والـ write model، وإزاي الـ UI بتتعامل معاها</li>
+        <li>09 · 3.2 — Command handlers و query handlers، command bus/mediator pattern</li>
+        <li>09 · 3.2 — <b>CQRS بدون event sourcing</b> كخيار وسط (الأشهر عمليًا)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Why reads hurt the write model</a></li>
+      <li><a href="#p2">Part 2 — CQRS at its simplest</a></li>
+      <li><a href="#p3">Part 3 — Handlers and a bus</a></li>
+      <li><a href="#p4">Part 4 — Read model: materialized view</a></li>
+      <li><a href="#p5">Part 5 — Read model: projection tables</a></li>
+      <li><a href="#p6">Part 6 — Eventual consistency in the UI</a></li>
+      <li><a href="#p7">Part 7 — CQRS without event sourcing: the ladder</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Every service eventually gets a screen its aggregates weren't built for: an admin table with six filters and a sort. CQRS says stop serving that screen through the write model. It is also one of the most over-applied ideas in the field: people hear "CQRS" and picture two databases and a broker, when the most common useful form is two files and one database. This lesson climbs from that form upward on <a href="./orders-service/">the shared orders service</a>, measures what each step costs, and shows the failure each step brings: the same <code>Order</code>, <code>OrderRepository</code> and <code>makePlaceOrder</code> as before. The repo copy stays as it is, and everything added here is shown in full: to follow along, make an <code>l27/</code> folder inside your copy of the service, and from part 5 on copy <code>after/</code> to <code>after-cqrs/</code> and apply the diffs. Interviewers ask this constantly, and the strong answer names the cheapest form that solves the problem.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>كل service بييجي عليها يوم وتطلع فيها شاشة الـ aggregates مش معمولة ليها: جدول admin فيه 6 filters و sort. الـ CQRS بيقولك بطّل تخدم الشاشة دي من الـ write model. وهو كمان من أكتر الأفكار اللي الناس بتبالغ فيها: تسمع "CQRS" فتتخيل داتابيزين و broker، مع إن أشهر شكل مفيد هو ملفين وداتابيز واحدة. الدرس ده بيطلع من الشكل ده لفوق على <a href="./orders-service/">الـ orders service المشترك</a>، وبيقيس تمن كل خطوة، وبيوريك العطل اللي كل خطوة بتجيبه: نفس <code>Order</code> و<code>OrderRepository</code> و<code>makePlaceOrder</code> بتوع الدروس اللي فاتت. نسخة الـ repo بتفضل زي ما هي، وكل اللي بنضيفه معروض كامل: عشان تمشي معانا اعمل فولدر <code>l27/</code> جوه نسختك من الـ service، ومن الجزء 5 انسخ <code>after/</code> لـ <code>after-cqrs/</code> وطبّق الـ diffs. وسؤال الـ CQRS بييجي في الـ interviews كتير، والإجابة القوية هي اللي بتسمّي أرخص شكل يحل المشكلة.</p>
+  </section>
+
+  <h2 id="p1">Part 1 — Why reads hurt the write model <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — ليه القراءة بتتعب الـ write model</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>An aggregate is shaped for one job: load one order completely, run its invariants, save it in one transaction (<a href="./18-ddd-entities-value-objects-aggregates.html">lesson 18</a>). A screen is shaped for another job: many orders, a few columns from several tables, filtered and sorted. One <code>OrderRepository</code> can serve both only by doing far more work than the screen needs.</p>
+    <p>The screen here is the admin dashboard: customer, last status, total, item count. <code>findById</code> runs two queries, the order and then its lines, so a list of N rows costs <b>1 + 2N</b>. The script runs the real <code>makePgOrderRepository</code> on 50,000 real orders and counts every query through a proxy on the pool.</p>
+    <ul>
+      <li><b>A page of 50:</b> 101 queries in ≈23 ms against 1 statement in ≈1 ms.</li>
+      <li><b>Sort by item count:</b> the aggregate has no such column, so every order has to be loaded: 100,001 queries and ≈16.6 s. That is on localhost. Add a 1 ms network round trip and it costs another 100 s.</li>
+      <li><b>Fixing the N+1 doesn't fix the problem:</b> a batched <code>findByIds</code> drops to 2 queries and ≈398 ms, but Node still builds 50,000 aggregates, +82 MB of heap, to keep 50 rows. One SQL statement does it in ≈74 ms with nothing extra on the heap.</li>
+    </ul>
+    <p>So N+1 is a symptom. The cause is that aggregate shape isn't screen shape. Filtering and sorting make it worse, because each new combination either becomes another repository method (<code>findByStatusSortedByItems</code>, which <a href="./19-ddd-repositories-services-application.html">lesson 19</a> warns about) or more work in JavaScript. Timings are from a loaded Windows machine, so read the ratios and the query counts.</p>
+  </section>
+
+<pre class="diagram">
+  what the aggregate loads            what the dashboard shows
+  ┌─────────────────────────┐         ┌──────────────────────────────────────┐
+  │ Order                   │         │ customer   status   total   items    │
+  │   id, email, status     │         │ sara@...   paid     620.00  2        │
+  │   subtotal, tax, ship   │         │ omar@...   failed   335.00  1        │
+  │   lines[]: sku, qty, $  │         │ ... 50 rows, filtered and sorted     │
+  │   rules, pending events │         └──────────────────────────────────────┘
+  └─────────────────────────┘
+  ONE order, whole, so rules can run  MANY orders, few columns, no rules at all
+</pre>
+  <div class="ar-note">شمال: اللي الـ aggregate بيحمّله: order واحد كامل بالـ lines والقواعد والـ events عشان القواعد تشتغل. يمين: اللي الشاشة محتاجاه: orders كتير، أعمدة قليلة، و filter و sort، ومن غير أي قواعد. الشكلين مختلفين، والمشكلة كلها جاية من محاولة إن شكل واحد يخدم الاتنين.</div>
+
+<pre data-file="l27/lab.ts"><code class="language-typescript">// بيشغّل Postgres مؤقت على port فاضي: بيرفض الـ port الفاضي والـ ports الافتراضية قبل أي اتصال
+import pg from "pg";
+import { startPg } from "../lib/pg-throwaway.mjs";
+
+export function assertSafePort(port: unknown): void {
+  const n = Number(port);
+  if (!/^\d+$/.test(String(port)) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) throw new Error("refusing port " + port);
+}
+
+export async function startDb(extraConf = ""): Promise&lt;{ pool: pg.Pool; url: string; stop(): Promise&lt;void&gt; }&gt; {
+  const s = await startPg({ extraConf });
+  assertSafePort(s.port);
+  const pool = new pg.Pool({ connectionString: s.url, max: 10 });
+  return {
+    pool,
+    url: s.url,
+    stop: async () =&gt; {
+      await pool.end();
+      await s.stop();
+    },
+  };
+}</code></pre>
+<pre data-file="l27/seed.ts"><code class="language-typescript">// بيملى جداول الـ orders service بـ data حقيقية: عدد ثابت من الـ orders و1 لـ 3 lines لكل order
+import type pg from "pg";
+
+export async function seedOrders(pool: pg.Pool, n: number): Promise&lt;void&gt; {
+  await pool.query(
+    `insert into orders.orders (id, customer_email, status, currency, subtotal_minor, tax_minor, shipping_minor, total_minor, version, placed_at)
+     select md5(i::text)::uuid,
+            'user' || (i % 5000) || '@example.com',
+            (array['paid','paid','paid','placed','payment_failed'])[1 + i % 5],
+            'EGP', 25000 * (1 + i % 3), 3500 * (1 + i % 3), 5000, 25000 * (1 + i % 3) + 3500 * (1 + i % 3) + 5000,
+            case when i % 5 = 3 then 1 else 2 end, now() - make_interval(mins =&gt; i)
+     from generate_series(1, $1::int) i`,
+    [n],
+  );
+  await pool.query(
+    `insert into orders.order_lines (order_id, sku, qty, unit_price_minor)
+     select md5(i::text)::uuid, 'SKU-' || j, 1, 25000
+     from generate_series(1, $1::int) i
+     cross join lateral generate_series(1, 1 + i % 3) j`,
+    [n],
+  );
+  await pool.query("analyze");
+}</code></pre>
+<pre data-file="l27/p1-dashboard.ts"><code class="language-typescript">// الشاشة: "الـ orders مع الـ customer والـ total وعدد الـ items وآخر ⁦status"⁩، مرة بالـ repository ومرة بـ SQL
+// التشغيل بـ node --expose-gc عشان أرقام الـ heap تبقى نضيفة
+import { readFileSync } from "node:fs";
+import type pg from "pg";
+import { startDb } from "./lab.ts";
+import { seedOrders } from "./seed.ts";
+import { makePgOrderRepository } from "../after/src/modules/orders/infrastructure/pg-order-repository.ts";
+import { Money } from "../after/src/shared/money.ts";
+import { Order } from "../after/src/modules/orders/domain/order.ts";
+import type { OrderStatus } from "../after/src/modules/orders/domain/order.ts";
+
+const N = 50_000;
+const db = await startDb();
+try {
+  await db.pool.query(readFileSync(new URL("../after/schema.sql", import.meta.url), "utf8"));
+  await db.pool.query("create index on orders.orders (placed_at desc)");
+  await seedOrders(db.pool, N);
+
+  // عدّاد: بيحسب كل query بتعدّي على الـ pool عشان الرقم يبقى حقيقي مش محسوب على الورق
+  let queries = 0;
+  const counted = new Proxy(db.pool, {
+    get(target, prop, receiver) {
+      if (prop === "query") return (...args: Parameters&lt;pg.Pool["query"]&gt;) =&gt; (queries++, (target.query as (...a: unknown[]) =&gt; unknown)(...args));
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+  const repo = makePgOrderRepository(counted);
+  const toRow = (o: Order) =&gt; ({
+    id: o.state.id,
+    customer: o.state.customerEmail,
+    status: o.state.status,
+    totalMinor: o.state.total.minor,
+    items: o.state.lines.length,
+  });
+
+  const timed = async &lt;T,&gt;(label: string, fn: () =&gt; Promise&lt;T&gt;): Promise&lt;T&gt; =&gt; {
+    queries = 0;
+    global.gc?.();
+    const heap0 = process.memoryUsage().heapUsed;
+    const t0 = performance.now();
+    const out = await fn();
+    const ms = performance.now() - t0;
+    const heapMb = (process.memoryUsage().heapUsed - heap0) / 1e6;
+    console.log(`${label.padEnd(44)} queries=${String(queries).padStart(6)}  ${ms.toFixed(0).padStart(7)} ms  heap +${heapMb.toFixed(0)} MB`);
+    return out;
+  };
+
+  // (1) صفحة 50 order بالـ aggregate: 1 + 2N
+  await timed("page of 50, findById per row", async () =&gt; {
+    const ids = await counted.query("select id from orders.orders order by placed_at desc limit 50");
+    const rows = [];
+    for (const r of ids.rows) rows.push(toRow((await repo.findById(r.id))!));
+    return rows;
+  });
+
+  // (2) نفس الصفحة بـ statement واحد بيرجّع DTO
+  const pageSql = `
+    select o.id, o.customer_email as customer, o.status, o.total_minor as "totalMinor",
+           (select count(*)::int from orders.order_lines l where l.order_id = o.id) as items
+    from orders.orders o
+    order by o.placed_at desc
+    limit 50`;
+  await timed("page of 50, one SQL statement", () =&gt; counted.query(pageSql));
+
+  // ⁦(3) "⁩رتّب بعدد الـ ⁦items"⁩: الـ aggregate معندوش عمود كده، فلازم تحمّل كله في Node وترتّب
+  await timed(`top 50 by items, findById x ${N}`, async () =&gt; {
+    const ids = await counted.query("select id from orders.orders");
+    const rows = [];
+    for (const r of ids.rows) rows.push(toRow((await repo.findById(r.id))!));
+    return rows.sort((a, b) =&gt; b.items - a.items).slice(0, 50);
+  });
+
+  // (4) تصليح الـ N+1 بـ findByIds: الـ queries بقت 2 بس لسه بتحمّل 50k aggregate في الـ memory
+  await timed(`top 50 by items, findByIds (no N+1)`, async () =&gt; {
+    const o = await counted.query("select * from orders.orders");
+    const l = await counted.query("select order_id, sku, qty, unit_price_minor from orders.order_lines");
+    const byOrder = new Map&lt;string, { sku: string; qty: number; unitPrice: Money }[]&gt;();
+    for (const x of l.rows) {
+      const list = byOrder.get(x.order_id) ?? [];
+      list.push({ sku: x.sku, qty: x.qty, unitPrice: Money.of(x.unit_price_minor, "EGP") });
+      byOrder.set(x.order_id, list);
+    }
+    const money = (m: number) =&gt; Money.of(m, "EGP");
+    const orders = o.rows.map((r) =&gt;
+      Order.rehydrate({
+        id: r.id, customerEmail: r.customer_email, status: r.status as OrderStatus, lines: byOrder.get(r.id) ?? [],
+        subtotal: money(r.subtotal_minor), tax: money(r.tax_minor), shipping: money(r.shipping_minor), total: money(r.total_minor),
+        version: r.version, placedAt: r.placed_at,
+      }),
+    );
+    return orders.map(toRow).sort((a, b) =&gt; b.items - a.items).slice(0, 50);
+  });
+
+  // (5) نفس الترتيب في SQL: الـ DB بتعمل الـ sort والـ limit وبترجّع 50 صف بس
+  await timed("top 50 by items, one SQL statement", () =&gt;
+    counted.query(`
+      select o.id, o.customer_email as customer, o.status, o.total_minor as "totalMinor", count(*)::int as items
+      from orders.orders o join orders.order_lines l on l.order_id = o.id
+      group by o.id
+      order by items desc, o.placed_at desc
+      limit 50`),
+  );
+} finally {
+  await db.stop();
+}</code></pre>
+<pre><code class="language-plaintext">page of 50, findById per row                 queries=   101       23 ms  heap +0 MB
+page of 50, one SQL statement                queries=     1        1 ms  heap +0 MB
+top 50 by items, findById x 50000            queries=100001    16601 ms  heap +30 MB
+top 50 by items, findByIds (no N+1)          queries=     2      398 ms  heap +82 MB
+top 50 by items, one SQL statement           queries=     1       74 ms  heap +0 MB</code></pre>
+  <div class="ar-note">كل سطر: السيناريو، وعدد الـ queries اللي اتعدّت فعلًا، والوقت، والزيادة في الـ heap. الصفحة بالـ repository 101 query، وبالـ SQL واحد بس. الترتيب بعدد الـ items بالـ repository 100,001 query وحوالي 16.6 ثانية. وتصليح الـ N+1 نزّلها لـ 2 query بس الـ heap زاد 82 MB، و الـ SQL المباشر أسرع ومن غير أي زيادة.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ aggregate معمول لشغلانة واحدة: يحمّل order واحد كامل، يشغّل الـ invariants، ويحفظه في transaction واحدة (<a href="./18-ddd-entities-value-objects-aggregates.html">الدرس 18</a>). الشاشة شغلانتها تانية خالص: orders كتير، وأعمدة قليلة من كذا جدول، و filter و sort. و<code>OrderRepository</code> واحد ميقدرش يخدم الاتنين غير لو عمل شغل أكتر بكتير من اللي الشاشة عايزاه.</p>
+    <p>الشاشة هنا dashboard للـ admin: الـ customer، وآخر status، والـ total، وعدد الـ items. <code>findById</code> بيعمل 2 queries، الـ order وبعدين الـ lines، فلستة من N صف تكلفتها <b>1 + 2N</b>. السكريبت بيشغّل <code>makePgOrderRepository</code> الحقيقي على 50,000 order حقيقي، وبيعد كل query من خلال proxy على الـ pool.</p>
+    <ul>
+      <li><b>صفحة 50 صف:</b> 101 query في حوالي 23 ms، قصاد statement واحد في حوالي 1 ms.</li>
+      <li><b>الترتيب بعدد الـ items:</b> الـ aggregate معندوش عمود كده، فلازم كل الـ orders تتحمّل: 100,001 query وحوالي 16.6 ثانية. وده على localhost. زوّد 1 ms network لكل query، تزيد 100 ثانية كمان.</li>
+      <li><b>تصليح الـ N+1 مش بيحل المشكلة:</b> <code>findByIds</code> بيخليها 2 query وحوالي 398 ms، بس Node لسه بيبني 50,000 aggregate، و+82 MB في الـ heap، عشان ياخد 50 صف. و statement واحد بيعملها في حوالي 74 ms ومن غير أي زيادة في الـ heap.</li>
+    </ul>
+    <p>يعني الـ N+1 عرض مش المرض. المرض إن شكل الـ aggregate مش شكل الشاشة. والـ filters والترتيب بيزوّدوا الطين بلة، لأن كل تركيبة جديدة يا إما method جديدة في الـ repository (<code>findByStatusSortedByItems</code>، وده اللي <a href="./19-ddd-repositories-services-application.html">الدرس 19</a> حذّر منه)، يا إما شغل أكتر في JavaScript. الأوقات من جهاز Windows عليه ضغط، فبص على النسب وعدد الـ queries.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      صفحة <code>/admin/orders</code> في Next.js بتبطأ كل ما الجدول يكبر، والـ PR بيقترح <code>Promise.all(ids.map(repo.findById))</code>. ده مش بيقلل الـ queries، ده بيضغطها على الـ pool في نفس اللحظة. في الـ code review اسأل: "الشاشة دي بتغيّر state؟". لو لأ، يبقى مكانها query بيرجّع DTO، مش repository.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Is CQRS just a fix for N+1 queries?" → No. N+1 can be fixed inside the repository with a batch load, and the screen is still slow because thousands of aggregates get built to show a few columns. CQRS addresses the mismatch between the shape you need to enforce rules and the shape you need to display data.
+    <div class="ar-note">"هل الـ CQRS مجرد حل لمشكلة الـ N+1؟" ← لأ. الـ N+1 ممكن يتصلح جوه الـ repository بـ batch load، والشاشة تفضل بطيئة لأن آلاف الـ aggregates بتتبني عشان تعرض كام عمود. الـ CQRS بيعالج الفرق بين الشكل اللي محتاجه عشان تطبّق القواعد، والشكل اللي محتاجه عشان تعرض الـ data.</div>
+  </div>
+
+  <h2 id="p2">Part 2 — CQRS at its simplest <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — الـ CQRS في أبسط شكل</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Bertrand Meyer's Command-Query Separation works at the method level: a method either changes state or returns data. Greg Young took it to the object level. In his <a href="https://cqrs.wordpress.com/wp-content/uploads/2010/11/cqrs_documents.pdf">CQRS Documents</a> (p. 17): "in CQRS objects are split into two objects, one containing the Commands one containing the Queries." That's the whole pattern. Events, a second database and a bus are options that came later, and none of them is in the definition.</p>
+    <p>So the simplest CQRS is this: <b>commands go through aggregates, queries are SQL that returns DTOs, in the same database and the same tables, in two files.</b> <code>place-order.ts</code> stays as it was. A new <code>queries/order-dashboard.ts</code> reads directly. Martin Fowler <a href="https://martinfowler.com/bliki/CQRS.html">warns</a> that "for most systems CQRS adds risky complexity". His article is about separate update and read models, and this form has no second model to drift and no lag, so that risk mostly doesn't apply.</p>
+    <p>The read side skips the domain, and that's fine: invariants protect state changes, and a <code>SELECT</code> changes nothing. The one real risk is a display rule that duplicates a business rule, say a "can be cancelled" badge written again in SQL. Compute it from a pure function the domain exports, or store it, but keep one definition.</p>
+    <p>A folder convention alone will erode, so the boundary becomes a rule that fails the build. <a href="../../07-Databases/lessons/26-denormalization-read-models.html">Section 07 · 3.7</a> shows this same split from the data side: one <code>jsonb_agg</code> query against loading entities through an ORM. Your README artifact is exactly this form, one dashboard page in the side project, and the last exercise builds it.</p>
+  </section>
+
+<pre class="diagram">
+  after/src/modules/orders/
+  ├── domain/order.ts              WRITE  rules, invariants, events
+  ├── application/place-order.ts   WRITE  command handler: load, decide, save
+  ├── infrastructure/...           WRITE  repository, outbox
+  ├── presentation/http.ts         WRITE  POST /orders
+  └── queries/order-dashboard.ts   READ   SQL returning DTOs, nothing else
+                  │
+                  └────── same database, same tables, no events, no lag
+</pre>
+  <div class="ar-note">شكل الـ module بعد الإضافة. الأربع سطور الأولانيين جانب الكتابة زي ما هو: القواعد، والـ command handler، والـ repository، والـ route. الملف الوحيد الجديد <code>queries/order-dashboard.ts</code> وهو قراءة بس. والتحت: نفس الداتابيز ونفس الجداول، يعني مفيش events ومفيش lag.</div>
+
+<pre data-file="after/src/modules/orders/queries/order-dashboard.ts"><code class="language-typescript">// جانب القراءة: SQL بيرجّع DTO على مقاس الشاشة، من غير aggregate ومن غير repository
+import type { Pool } from "pg";
+
+export interface OrderDashboardRow {
+  id: string;
+  customerEmail: string;
+  status: string;
+  totalMinor: number;
+  currency: string;
+  items: number;
+  placedAt: string;
+}
+
+export interface OrderDashboardQuery {
+  status?: string;
+  limit: number;
+}
+
+export const makeOrderDashboard =
+  (pool: Pool) =&gt;
+  async (q: OrderDashboardQuery): Promise&lt;OrderDashboardRow[]&gt; =&gt; {
+    // لازم cast لـ int: الـ count بيرجع bigint والـ driver بيحوّله string
+    const r = await pool.query&lt;OrderDashboardRow&gt;(
+      `select o.id,
+              o.customer_email as "customerEmail",
+              o.status,
+              o.total_minor as "totalMinor",
+              o.currency,
+              (select count(*)::int from orders.order_lines l where l.order_id = o.id) as items,
+              to_char(o.placed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as "placedAt"
+       from orders.orders o
+       where ($1::text is null or o.status = $1)
+       order by o.placed_at desc
+       limit $2`,
+      [q.status ?? null, q.limit],
+    );
+    return r.rows;
+  };</code></pre>
+<pre data-file="l27/p2-two-files.ts"><code class="language-typescript">// نفس الـ orders service ونفس الـ DB: الكتابة من الـ use case والقراءة من ملف تاني خالص
+import { listen, startLab } from "../lib/lab.ts";
+import { compose } from "../after/src/composition-root.ts";
+import { makeOrderDashboard } from "../after/src/modules/orders/queries/order-dashboard.ts";
+
+const lab = await startLab(new URL("../after/schema.sql", import.meta.url));
+const { app } = compose({ pool: lab.pool, paymentsUrl: lab.paymentsUrl, send: () =&gt; {} });
+
+// الـ route ده قراءة بس: مفيش Order ومفيش rules ومفيش transaction
+const dashboard = makeOrderDashboard(lab.pool);
+app.get("/orders/dashboard", async (req, res) =&gt; {
+  const status = typeof req.query.status === "string" ? req.query.status : undefined;
+  res.json(await dashboard({ status, limit: 50 }));
+});
+
+const srv = await listen(app);
+try {
+  const post = (body: unknown) =&gt;
+    fetch(srv.url + "/orders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  console.log("POST sara:", (await post({ customerEmail: "sara@example.com", lines: [{ sku: "SKU-MUG", qty: 2 }] })).status);
+  lab.setDecline(true);
+  console.log("POST omar (declined):", (await post({ customerEmail: "omar@example.com", lines: [{ sku: "SKU-MUG", qty: 1 }] })).status);
+  lab.setDecline(false);
+
+  console.log(await (await fetch(srv.url + "/orders/dashboard")).json());
+  console.log(await (await fetch(srv.url + "/orders/dashboard?status=payment_failed")).json());
+} finally {
+  await srv.close();
+  await lab.stop();
+}</code></pre>
+<pre><code class="language-plaintext">POST sara: 201
+POST omar (declined): 402
+[
+  {
+    id: '45bd2fc3-ef9e-4b8f-97e5-30c9614aaca8',
+    customerEmail: 'omar@example.com',
+    status: 'payment_failed',
+    totalMinor: 33500,
+    currency: 'EGP',
+    items: 1,
+    placedAt: '2026-11-04T04:50:56Z'
+  },
+  {
+    id: 'f4426228-967f-4fab-b229-e85afc2c67fd',
+    customerEmail: 'sara@example.com',
+    status: 'paid',
+    totalMinor: 62000,
+    currency: 'EGP',
+    items: 1,
+    placedAt: '2026-11-04T04:50:56Z'
+  }
+]
+[
+  {
+    id: '45bd2fc3-ef9e-4b8f-97e5-30c9614aaca8',
+    customerEmail: 'omar@example.com',
+    status: 'payment_failed',
+    totalMinor: 33500,
+    currency: 'EGP',
+    items: 1,
+    placedAt: '2026-11-04T04:50:56Z'
+  }
+]</code></pre>
+  <div class="ar-note">الطلب الأول اترد بـ 201 والتاني بـ 402 لأن الكارت اترفض. وبعدين الـ dashboard بيرجّع الـ DTO: الـ status والـ total والـ items مباشرة من SQL، و<code>?status=payment_failed</code> بيفلتر من غير أي method جديدة في الـ repository.</div>
+
+<pre data-file="l27/depcruise-read-side.cjs"><code class="language-javascript">// الـ queries بترجّع DTOs من SQL: لو ملف فيها استورد aggregate يبقى جانب القراءة بدأ يكبّر قواعد
+{
+  name: "read-side-skips-the-domain",
+  severity: "error",
+  from: { path: `${SRC}/modules/[^/]+/queries` },
+  to: { path: `${SRC}/modules/[^/]+/(domain|application)` },
+},</code></pre>
+<pre><code class="language-plaintext">✔ no dependency violations found (18 modules, 34 dependencies cruised)
+--- after planting an import of the aggregate in queries/planted.ts
+  error read-side-skips-the-domain: after/src/modules/orders/queries/planted.ts → after/src/modules/orders/domain/order.ts
+x 1 dependency violations (1 errors, 0 warnings). 19 modules, 35 dependencies cruised.</code></pre>
+  <div class="ar-note">أول سطر: الكود نضيف، 18 module اتفحصوا. وبعدين زرعنا ملف في <code>queries/</code> بيعمل import لـ <code>Order</code>، فالـ rule مسكته باسمه والـ build فشل. ده معناه إن الحدود بقت حاجة بتتفحص مش كلام في wiki.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ Command-Query Separation بتاع Bertrand Meyer شغال على مستوى الـ method: الـ method يا بتغيّر state يا بترجّع data. Greg Young طلّعها لمستوى الـ object. في <a href="https://cqrs.wordpress.com/wp-content/uploads/2010/11/cqrs_documents.pdf">CQRS Documents</a> (صفحة 17) بيقول إن في الـ CQRS الـ objects بتتقسم لـ object فيه الـ Commands و object فيه الـ Queries. ده الـ pattern كله. الـ events والداتابيز التانية والـ bus اختيارات جت بعدين، ومفيش واحدة منهم في التعريف.</p>
+    <p>يعني أبسط CQRS هو ده: <b>الـ commands بتعدّي على الـ aggregates، والـ queries هي SQL بيرجّع DTOs، في نفس الداتابيز ونفس الجداول، في ملفين.</b> <code>place-order.ts</code> زي ما هو، وملف جديد <code>queries/order-dashboard.ts</code> بيقرا مباشرة. وMartin Fowler <a href="https://martinfowler.com/bliki/CQRS.html">بيحذّر</a> إن الـ CQRS "لمعظم الأنظمة بيضيف تعقيد خطر". كلامه عن models منفصلة للتعديل والقراءة، والشكل ده مفيهوش model تاني يتفرّق عن الأولاني ولا lag، فالخطر ده تقريبًا مش موجود هنا.</p>
+    <p>جانب القراءة بيعدّي من غير الـ domain، وده تمام: الـ invariants بتحمي تغيير الـ state، والـ <code>SELECT</code> مبيغيّرش حاجة. الخطر الحقيقي الوحيد إن قاعدة عرض تكرر قاعدة business، زي badge "ممكن يتلغي" مكتوبة تاني في SQL. احسبها من pure function الـ domain بيصدّرها، أو خزّنها، بس خلّي تعريفها في مكان واحد.</p>
+    <p>اتفاق الفولدرات لوحده بيتآكل، فبنحوّل الحدود لـ rule بيوقّع الـ build. و<a href="../../07-Databases/lessons/26-denormalization-read-models.html">القسم 07 · 3.7</a> بيوري نفس التقسيمة من ناحية الـ data: query واحد بـ <code>jsonb_agg</code> قصاد تحميل entities من ORM. والـ artifact المطلوب في الـ README هو الشكل ده بالظبط، صفحة dashboard واحدة في المشروع الجانبي، وآخر تمرين بيبنيها.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      API عندك فيه <code>OrderService</code> كبير، ونص الـ methods بتاعته قراءة بس. ابدأ بفولدر <code>queries/</code> جنب <code>application/</code>، وانقل الـ list والـ search والـ export ليه كـ SQL على المقاس. مفيش migration ومفيش infrastructure جديدة، والـ PR صغير. وخد بالك من الغلطة الشائعة: <code>count(*)</code> بيرجع string في driver الـ <code>pg</code>، فلازم <code>::int</code>.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off</b>
+    Two files buy a free read side and cost a schema dependency: a query that reads <code>orders.orders</code> breaks if the write side renames a column, and the compiler can't see inside the SQL string. Keep queries inside the module that owns the tables, so a rename is one PR in one folder, and cover each with a test that runs against a real database.
+    <div class="ar-note">الملفين بيدّوك جانب قراءة ببلاش، وتمنهم إن الـ query معتمد على الـ schema: query بيقرا <code>orders.orders</code> هيقع لو جانب الكتابة غيّر اسم عمود، والـ compiler مش شايف جوه الـ SQL string. خلّي الـ queries جوه الـ module اللي مالك الجداول، عشان الـ rename يبقى PR واحد في فولدر واحد، واعمل لكل واحد test على داتابيز حقيقية.</div>
+  </div>
+
+  <h2 id="p3">Part 3 — Handlers and a bus <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — الـ handlers والـ bus</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A <b>handler</b> is one use case behind one method: <code>CommandHandler&lt;C, R&gt;</code> and <code>QueryHandler&lt;Q, R&gt;</code>. <code>makePlaceOrder</code> already is one. A <b>bus</b> adds a registry between the caller and the handler: <code>bus.execute({ type: "PlaceOrder", ... })</code>. The typed version below uses a mapped type, so a command without a handler doesn't compile, and the return type follows from the command name. Is the indirection worth it? Three things were measured on the same use case:</p>
+    <ul>
+      <li><b>Go-to-definition.</b> Asking the TypeScript language service the same question your editor asks: <code>placeOrder(...)</code> lands on the use case, in <code>place-order.ts</code>. <code>bus.execute(...)</code> lands on <code>bus.ts:29</code>, the generic method, so you then search by the string.</li>
+      <li><b>Stack depth.</b> 5 frames direct, 7 through the bus, 15 with four behaviours. Node's default <code>Error.stackTraceLimit</code> is 10, so with four behaviours the production trace ends before it reaches the caller.</li>
+      <li><b>Compile errors.</b> A tie, as long as the bus is typed. A wrong command name, a wrong field type and a missing handler are all caught. An untyped <code>bus.execute("PlaceOrder", payload)</code> loses all three.</li>
+    </ul>
+    <p>A bus earns its place when <b>pipeline behaviours run on every command</b> (validation, logging, a transaction, metrics, idempotency) or when commands also travel over a queue. <a href="../../08-Design-Patterns/lessons/13-command-memento-mediator-bus.html">Section 08 · 3.3</a> writes that bus and its behaviours in full, so it isn't repeated here. <b>The decision for this service: no bus.</b> It has one command and no behaviours, and a plain function gives better navigation for free. Revisit when several behaviours repeat across many commands.</p>
+  </section>
+
+<pre data-file="l27/bus.ts"><code class="language-typescript">// الـ handlers والـ bus: كل command ليه handler واحد، والـ registry بيتأكد من ده وقت الـ compile
+import type { PlaceOrderCommand, PlaceOrderResult } from "../after/src/modules/orders/application/place-order.ts";
+import type { OrderDashboardQuery, OrderDashboardRow } from "../after/src/modules/orders/queries/order-dashboard.ts";
+
+export interface CommandHandler&lt;C, R&gt; {
+  handle(command: C): Promise&lt;R&gt;;
+}
+export interface QueryHandler&lt;Q, R&gt; {
+  handle(query: Q): Promise&lt;R&gt;;
+}
+
+// الخريطة دي بتربط اسم كل رسالة بنوع الـ input والـ output بتوعها
+export interface Commands {
+  PlaceOrder: { input: PlaceOrderCommand; output: PlaceOrderResult };
+}
+export interface Queries {
+  OrderDashboard: { input: OrderDashboardQuery; output: OrderDashboardRow[] };
+}
+
+// الـ mapped type ده معناه: لو نسيت handler لأي اسم في الخريطة، الكود مش هيعمل compile
+export type CommandHandlers = { [K in keyof Commands]: CommandHandler&lt;Commands[K]["input"], Commands[K]["output"]&gt; };
+export type QueryHandlers = { [K in keyof Queries]: QueryHandler&lt;Queries[K]["input"], Queries[K]["output"]&gt; };
+
+// الـ behavior بيلف حوالين كل command: logging، validation، transaction، metrics
+export type Behavior = (type: string, message: unknown, next: () =&gt; Promise&lt;unknown&gt;) =&gt; Promise&lt;unknown&gt;;
+
+export function makeBus(commands: CommandHandlers, queries: QueryHandlers, behaviors: readonly Behavior[] = []) {
+  return {
+    async execute&lt;K extends keyof Commands&gt;(command: { type: K } &amp; Commands[K]["input"]): Promise&lt;Commands[K]["output"]&gt; {
+      const handler = commands[command.type] as CommandHandler&lt;unknown, Commands[K]["output"]&gt;;
+      const run = behaviors.reduceRight&lt;() =&gt; Promise&lt;unknown&gt;&gt;(
+        (next, behavior) =&gt; () =&gt; behavior(command.type, command, next),
+        () =&gt; handler.handle(command),
+      );
+      return run() as Promise&lt;Commands[K]["output"]&gt;;
+    },
+    // الـ queries مش محتاجة behaviors الكتابة: مفيش transaction ومفيش rules
+    async ask&lt;K extends keyof Queries&gt;(query: { type: K } &amp; Queries[K]["input"]): Promise&lt;Queries[K]["output"]&gt; {
+      const handler = queries[query.type] as QueryHandler&lt;unknown, Queries[K]["output"]&gt;;
+      return handler.handle(query);
+    },
+  };
+}</code></pre>
+<pre data-file="l27/p3-stack.ts"><code class="language-typescript">// نفس الـ use case ونفس الغلطة: بنقارن الـ stack trace من function عادية ومن الـ bus
+import { makePlaceOrder } from "../after/src/modules/orders/application/place-order.ts";
+import type { PlaceOrderCommand } from "../after/src/modules/orders/application/place-order.ts";
+import { Money } from "../after/src/shared/money.ts";
+import { makeBus } from "./bus.ts";
+import type { Behavior } from "./bus.ts";
+
+// الـ catalog هنا بيرمي في أول خطوة من الـ use case عشان الـ trace يطلع كامل
+const placeOrder = makePlaceOrder({
+  orders: { save: async () =&gt; {}, findById: async () =&gt; null },
+  payments: { charge: async () =&gt; ({ ok: true, ref: "ch_1" }) },
+  catalog: {
+    quote: () =&gt; {
+      throw new Error("catalog down");
+    },
+    reserve: async () =&gt; true,
+    release: async () =&gt; {},
+  },
+  clock: { now: () =&gt; new Date() },
+  ids: { next: () =&gt; "o-1" },
+});
+const command: PlaceOrderCommand = { customerEmail: "sara@example.com", lines: [{ sku: "SKU-MUG", qty: 1 }] };
+
+const behavior: Behavior = async function behavior(_type, _message, next) {
+  return await next();
+};
+const noQueries = { OrderDashboard: { handle: async () =&gt; [] } };
+const bare = makeBus({ PlaceOrder: { handle: placeOrder } }, noQueries);
+const piped = makeBus({ PlaceOrder: { handle: placeOrder } }, noQueries, [behavior, behavior, behavior, behavior]);
+
+const frames = async (run: () =&gt; Promise&lt;unknown&gt;): Promise&lt;string[]&gt; =&gt; {
+  try {
+    await run();
+    return [];
+  } catch (err) {
+    return (err as Error).stack!.split("\n").slice(1).map((l) =&gt; l.trim().replace(/file:\/\/.*arch-27-28\//, ""));
+  }
+};
+const report = (label: string, f: string[]): void =&gt; {
+  const mine = f.filter((l) =&gt; !l.includes("node:"));
+  console.log(`${label}: ${f.length} frames, caller visible: ${f.some((l) =&gt; l.includes("callSite"))}`);
+  console.log(mine.map((l) =&gt; "  " + l).join("\n"));
+};
+
+// (1) الحد الافتراضي بتاع Node: 10 frames بس
+console.log("default Error.stackTraceLimit:", Error.stackTraceLimit);
+report("bus + 4 behaviors, default limit", await frames(function callSite() { return piped.execute({ type: "PlaceOrder", ...command }); }));
+
+// (2) زوّدنا الحد عشان نعد الـ frames كلها
+Error.stackTraceLimit = 100;
+report("direct call", await frames(function callSite() { return placeOrder(command); }));
+report("bus", await frames(function callSite() { return bare.execute({ type: "PlaceOrder", ...command }); }));
+report("bus + 4 behaviors", await frames(function callSite() { return piped.execute({ type: "PlaceOrder", ...command }); }));</code></pre>
+<pre><code class="language-plaintext">default Error.stackTraceLimit: 10
+bus + 4 behaviors, default limit: 10 frames, caller visible: false
+  at Object.quote (l27/p3-stack.ts:14:13)
+  at Object.handle (after/src/modules/orders/application/place-order.ts:27:34)
+  at l27/bus.ts:33:23
+  at behavior (l27/p3-stack.ts:25:16)
+  at l27/bus.ts:32:35
+  at behavior (l27/p3-stack.ts:25:16)
+  at l27/bus.ts:32:35
+  at behavior (l27/p3-stack.ts:25:16)
+  at l27/bus.ts:32:35
+  at behavior (l27/p3-stack.ts:25:16)</code></pre>
+<pre><code class="language-plaintext">direct call: 5 frames, caller visible: true
+  at Object.quote (l27/p3-stack.ts:14:13)
+  at after/src/modules/orders/application/place-order.ts:27:34
+  at callSite (l27/p3-stack.ts:51:65)
+  at frames (l27/p3-stack.ts:33:11)
+  at l27/p3-stack.ts:51:29
+bus: 7 frames, caller visible: true
+  at Object.quote (l27/p3-stack.ts:14:13)
+  at Object.handle (after/src/modules/orders/application/place-order.ts:27:34)
+  at l27/bus.ts:33:23
+  at Object.execute (l27/bus.ts:35:14)
+  at callSite (l27/p3-stack.ts:52:62)
+  at frames (l27/p3-stack.ts:33:11)
+  at l27/p3-stack.ts:52:21
+bus + 4 behaviors: 15 frames, caller visible: true
+  at Object.quote (l27/p3-stack.ts:14:13)
+  at Object.handle (after/src/modules/orders/application/place-order.ts:27:34)
+  at l27/bus.ts:33:23
+  at behavior (l27/p3-stack.ts:25:16)
+  at l27/bus.ts:32:35
+  at behavior (l27/p3-stack.ts:25:16)
+  at l27/bus.ts:32:35
+  at behavior (l27/p3-stack.ts:25:16)
+  at l27/bus.ts:32:35
+  at behavior (l27/p3-stack.ts:25:16)
+  at l27/bus.ts:32:35
+  at Object.execute (l27/bus.ts:35:14)
+  at callSite (l27/p3-stack.ts:53:77)
+  at frames (l27/p3-stack.ts:33:11)
+  at l27/p3-stack.ts:53:35</code></pre>
+  <div class="ar-note">أول بلوك: الحد الافتراضي 10 frames، ومع 4 behaviors الـ trace وقف قبل ما يوصل للـ caller (<code>caller visible: false</code>) وكله تكرار <code>behavior</code> و<code>bus.ts</code>. التاني: الاستدعاء المباشر 5 frames. التالت: الـ bus بـ 4 behaviors طلع 15 frame لما زوّدنا الحد عشان نعد.</div>
+
+<pre data-file="l27/p3-errors.ts"><code class="language-typescript">import { makeBus } from "./bus.ts";
+import type { CommandHandlers } from "./bus.ts";
+
+declare const handlers: CommandHandlers;
+const bus = makeBus(handlers, { OrderDashboard: { handle: async () =&gt; [] } });
+
+// (1) اسم command غلط: الـ union بيمسكه
+await bus.execute({ type: "PlaceOrdr", customerEmail: "a@b.co", lines: [] });
+// ✗ TS2322: Type '"PlaceOrdr"' is not assignable to type '"PlaceOrder"'.
+
+// (2) نوع field غلط: الـ input بيتحدد من اسم الـ command
+await bus.execute({ type: "PlaceOrder", customerEmail: 1, lines: [] });
+// ✗ TS2322: Type 'number' is not assignable to type 'string'.
+
+// (3) الـ registry ناقص handler: ده الوعد الأساسي بتاع الـ mapped type
+const missing: CommandHandlers = {};
+// ✗ TS2741: Property 'PlaceOrder' is missing in type '{}' but required in type 'CommandHandlers'.
+export { missing };</code></pre>
+<pre data-file="l27/p3-goto.mjs"><code class="language-javascript">// بيسأل الـ TypeScript language service نفس السؤال اللي الـ editor بيسأله لما تدوس F12
+import { readFileSync, existsSync, readdirSync } from "node:fs";
+import path from "node:path";
+import ts from "typescript";
+
+const root = path.resolve(import.meta.dirname, "..");
+const entry = path.join(root, "l27/p3-call-sites.ts").replaceAll("\\", "/");
+const options = {
+  strict: true, target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext,
+  allowImportingTsExtensions: true, noEmit: true, skipLibCheck: true, types: ["node"],
+};
+const host = {
+  getCompilationSettings: () =&gt; options,
+  getScriptFileNames: () =&gt; [entry],
+  getScriptVersion: () =&gt; "1",
+  getScriptSnapshot: (f) =&gt; (existsSync(f) ? ts.ScriptSnapshot.fromString(readFileSync(f, "utf8")) : undefined),
+  getCurrentDirectory: () =&gt; root,
+  getDefaultLibFileName: (o) =&gt; ts.getDefaultLibFilePath(o),
+  fileExists: ts.sys.fileExists, readFile: ts.sys.readFile, readDirectory: ts.sys.readDirectory,
+  directoryExists: ts.sys.directoryExists, getDirectories: ts.sys.getDirectories,
+};
+const ls = ts.createLanguageService(host);
+const text = readFileSync(entry, "utf8");
+const where = (needle, offset) =&gt; {
+  const pos = text.indexOf(needle) + offset;
+  const defs = ls.getDefinitionAtPosition(entry, pos) ?? [];
+  for (const d of defs) {
+    const src = ls.getProgram().getSourceFile(d.fileName);
+    const { line } = src.getLineAndCharacterOfPosition(d.textSpan.start);
+    console.log(`F12 on "${needle.trim()}" → ${path.relative(root, d.fileName).replaceAll("\\", "/")}:${line + 1}  ${src.text.split("\n")[line].trim().slice(0, 70)}`);
+  }
+};
+where("await placeOrder(", 6);
+where("await bus.execute(", 10);</code></pre>
+<pre><code class="language-plaintext">F12 on "await placeOrder(" → l27/p3-call-sites.ts:7  const placeOrder = makePlaceOrder(deps);
+F12 on "await placeOrder(" → after/src/modules/orders/application/place-order.ts:26  async (cmd: PlaceOrderCommand): Promise&lt;PlaceOrderResult&gt; =&gt; {
+F12 on "await bus.execute(" → l27/bus.ts:29  async execute&lt;K extends keyof Commands&gt;(command: { type: K } &amp; Command</code></pre>
+  <div class="ar-note">سطرين لـ <code>placeOrder</code>: الـ language service وداك على التعريف في الملف ده وعلى الـ use case نفسه في <code>place-order.ts</code>. السطر التالت لـ <code>bus.execute</code>: رايح على الـ method العامة في <code>bus.ts:29</code>، ومنها لازم تدوّر بالاسم.</div>
+
+  <table>
+    <tr><th>Question</th><th>Plain function</th><th>Typed bus</th></tr>
+    <tr><td>F12 from the caller</td><td>The use case</td><td>The bus method, then a text search</td></tr>
+    <tr><td>Stack frames (real)</td><td>5</td><td>7, or 15 with 4 behaviours</td></tr>
+    <tr><td>Wrong command, field, missing handler</td><td>Compile error</td><td>Compile error, if typed</td></tr>
+    <tr><td>One behaviour on every command</td><td>Wrap each function by hand</td><td>One line in the pipeline</td></tr>
+    <tr><td>Commands over a queue</td><td>You add a serialized form</td><td>Already a value with a <code>type</code></td></tr>
+  </table>
+  <div class="ar-note">صف صف: الـ F12 بيوديك للـ use case في الـ function العادية، وللـ bus وبعدين بحث نصي في التانية. الـ stack frames 5 قصاد 7، أو 15 مع 4 behaviors. الأخطاء وقت الـ compile متساوية بشرط الـ bus يكون typed. behavior واحد على كل الـ commands: في الـ function بتلف كل واحدة بإيدك، وفي الـ bus سطر واحد. والـ commands فوق queue: في الـ function لازم تضيف شكل serialized، وفي الـ bus هي أصلًا قيمة فيها <code>type</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>handler</b> هو use case واحد ورا method واحدة: <code>CommandHandler&lt;C, R&gt;</code> و<code>QueryHandler&lt;Q, R&gt;</code>. و<code>makePlaceOrder</code> أصلًا واحد منهم. الـ <b>bus</b> بيضيف registry بين اللي بينادي والـ handler: <code>bus.execute({ type: "PlaceOrder", ... })</code>. النسخة الـ typed اللي فوق بتستخدم mapped type، فـ command من غير handler مش هيعمل compile، ونوع الـ return بيتحدد من اسم الـ command. طب الـ indirection ده يستاهل؟ قسنا 3 حاجات على نفس الـ use case:</p>
+    <ul>
+      <li><b>الـ Go-to-definition.</b> سألنا الـ TypeScript language service نفس السؤال اللي الـ editor بيسأله: <code>placeOrder(...)</code> بيوديك على الـ use case في <code>place-order.ts</code>. و<code>bus.execute(...)</code> بيوديك على <code>bus.ts:29</code>، الـ method العامة، وبعدها تدوّر بالـ string.</li>
+      <li><b>عمق الـ stack.</b> 5 frames مباشر، و7 من الـ bus، و15 مع 4 behaviors. والـ <code>Error.stackTraceLimit</code> الافتراضي في Node هو 10، يعني مع 4 behaviors الـ trace في production بيقف قبل ما يوصل للـ caller.</li>
+      <li><b>أخطاء الـ compile.</b> تعادل، طالما الـ bus typed. اسم command غلط، و field نوعه غلط، و handler ناقص، كلهم بيتمسكوا. و<code>bus.execute("PlaceOrder", payload)</code> من غير types بيخسر التلاتة.</li>
+    </ul>
+    <p>الـ bus بيستاهل مكانه لما <b>pipeline behaviors تشتغل على كل command</b> (validation، logging، transaction، metrics، idempotency)، أو لما الـ commands تمشي كمان على queue. <a href="../../08-Design-Patterns/lessons/13-command-memento-mediator-bus.html">القسم 08 · 3.3</a> بيكتب الـ bus ده والـ behaviors بتاعته كاملين، فمش هنكررهم هنا. <b>القرار للـ service ده: مفيش bus.</b> عنده command واحد ومفيش behaviors، و function عادية بتديك navigation أحسن ببلاش. ارجع للقرار لما behaviors كذا تتكرر على commands كتير.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو شغال بـ NestJS CQRS، ولقيت 5 commands وكل handler فيه نفس سطور الـ logging والـ transaction: ساعتها الـ bus بيدفع تمنه، وانقلهم لـ behaviors. ولو service صغير بـ command أو اتنين، و PR بيضيف <code>CommandBus</code> "عشان المستقبل"، اطلب منه الـ behaviors اللي هتشتغل عليه دلوقتي. لو مفيش، اقفله. ولو عندك bus في production، زوّد <code>Error.stackTraceLimit</code> في الـ startup عشان متتعماش في الـ errors.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Does CQRS need a mediator or command bus?" → No. CQRS is the split between the write model and the read model; a function call satisfies it. A bus is a separate decision that pays when the same cross-cutting behaviours wrap many commands, and it costs navigation and stack depth.
+    <div class="ar-note">"هل الـ CQRS محتاج mediator أو command bus؟" ← لأ. الـ CQRS هو التقسيمة بين الـ write model والـ read model، و function call عادية بتحققها. الـ bus قرار تاني منفصل، بيدفع تمنه لما نفس الـ cross-cutting behaviors تلف حوالين commands كتير، وتمنه بيتدفع في الـ navigation وعمق الـ stack.</div>
+  </div>
+
+  <h2 id="p4">Part 4 — Read model: materialized view <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ read model: materialized view</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A materialized view stores a query's result as a table. <code>CREATE MATERIALIZED VIEW</code> computes it once, and reads become plain lookups: on 200,000 orders and 400,001 lines, ≈198 ms for the live join against ≈1.4 ms from the view. No application code changes on the write side. The cost moves to the refresh, and there are two kinds:</p>
+    <ul>
+      <li><b>Plain <code>REFRESH</code></b> takes an <code>ACCESS EXCLUSIVE</code> lock for the whole run. Here it took ≈1,677 ms and the worst concurrent read waited ≈1,610 ms: the reader simply stops.</li>
+      <li><b><code>REFRESH ... CONCURRENTLY</code></b> builds a new copy, diffs it against the old one and applies the difference, so readers keep going: ≈2,851 ms, slower, with the worst read at ≈6 ms across 4,095 reads. Across runs it took between 1.7× and 2.6× as long as a plain refresh. The docs say it <i>may</i> be faster when few rows change; here zero rows changed and it was still slower, because the query and the diff run either way.</li>
+    </ul>
+    <p><code>CONCURRENTLY</code> needs a unique index with no <code>WHERE</code> clause; without one you get error <code>55000</code>, shown below. <b>Staleness is your refresh interval:</b> a new order is invisible until the next refresh, also shown. It is enough for reports that can lag minutes. It's a bad fit for "my order" pages, and for very large views where a full recompute on every refresh is the problem. <a href="../../07-Databases/lessons/26-denormalization-read-models.html">Section 07 · 26</a> covers scheduling and incremental options.</p>
+  </section>
+
+<pre class="diagram">
+  plain REFRESH
+    refresh  [==== ACCESS EXCLUSIVE, whole run ====]
+    reader   --x waits .............................x-- continues
+
+  REFRESH CONCURRENTLY
+    refresh  [== build new copy ==][== diff, apply ==]
+    reader   ------------- keeps reading old rows -------------
+</pre>
+  <div class="ar-note">فوق: الـ refresh العادي ماسك lock طول الوقت، والقارئ بيقف عند أول محاولة ويكمل بعد ما الـ lock يتفك. تحت: الـ CONCURRENTLY بيبني نسخة جديدة ويقارنها ويطبّق الفرق، والقارئ شغال عادي على الصفوف القديمة طول الوقت.</div>
+
+<pre data-file="l27/p4-matview.ts"><code class="language-typescript">// الـ materialized view على 200k order: الوقت، ومين بيتحجب وقت الـ refresh، وقد إيه الـ data قديمة
+import { readFileSync } from "node:fs";
+import { startDb } from "./lab.ts";
+import { seedOrders } from "./seed.ts";
+
+const db = await startDb();
+const { pool } = db;
+const N = 200_000;
+
+const ms = async &lt;T,&gt;(fn: () =&gt; Promise&lt;T&gt;): Promise&lt;number&gt; =&gt; {
+  const t0 = performance.now();
+  await fn();
+  return performance.now() - t0;
+};
+
+// قارئ شغال طول الوقت: بيسجل كل query أخدت قد إيه أثناء الـ refresh
+async function readerDuring(refreshSql: string) {
+  let running = true;
+  const latencies: number[] = [];
+  const reader = (async () =&gt; {
+    while (running) {
+      latencies.push(await ms(() =&gt; pool.query("select * from read.order_dashboard where status = 'placed' order by placed_at desc limit 50")));
+    }
+  })();
+  // خلّي القارئ يسخن قبل الـ refresh عشان نقيس الـ baseline
+  await new Promise((r) =&gt; setTimeout(r, 300));
+  const baseline = Math.max(...latencies);
+  const countBefore = latencies.length;
+  const refreshMs = await ms(() =&gt; pool.query(refreshSql));
+  running = false;
+  await reader;
+  const during = latencies.slice(countBefore);
+  return { refreshMs, baseline, reads: during.length, worstRead: Math.max(...during) };
+}
+
+try {
+  await pool.query(readFileSync(new URL("../after/schema.sql", import.meta.url), "utf8"));
+  await seedOrders(pool, N);
+  await pool.query("create schema read");
+
+  console.log("orders:", (await pool.query("select count(*)::int as n from orders.orders")).rows[0].n, "lines:", (await pool.query("select count(*)::int as n from orders.order_lines")).rows[0].n);
+
+  // (1) الـ view: صف لكل order، والـ join محسوب مرة واحدة ومتخزن
+  const createMs = await ms(() =&gt;
+    pool.query(`
+      create materialized view read.order_dashboard as
+      select o.id, o.customer_email, o.status, o.total_minor, o.currency, o.placed_at, count(*)::int as items
+      from orders.orders o join orders.order_lines l on l.order_id = o.id
+      group by o.id`),
+  );
+  console.log(`create matview: ${createMs.toFixed(0)} ms`);
+  await pool.query("create index on read.order_dashboard (status, placed_at desc)");
+
+  // (2) من غير unique index الـ CONCURRENTLY بيترفض
+  try {
+    await pool.query("refresh materialized view concurrently read.order_dashboard");
+  } catch (e) {
+    const err = e as { code: string; message: string; hint?: string };
+    console.log("without unique index:", err.code, err.message);
+    console.log("hint:", err.hint);
+  }
+  await pool.query("create unique index on read.order_dashboard (id)");
+  await pool.query("analyze read.order_dashboard");
+
+  // (3) الفرق في الوقت: join وقت القراءة ولا قراءة من الـ view
+  const liveMs = await ms(() =&gt;
+    pool.query(`select o.id, o.customer_email, o.status, o.total_minor, o.currency, o.placed_at, count(*)::int as items
+                from orders.orders o join orders.order_lines l on l.order_id = o.id
+                where o.status = 'placed' group by o.id order by o.placed_at desc limit 50`),
+  );
+  const mvMs = await ms(() =&gt; pool.query("select * from read.order_dashboard where status = 'placed' order by placed_at desc limit 50"));
+  console.log(`read: live join ${liveMs.toFixed(1)} ms, matview ${mvMs.toFixed(1)} ms`);
+
+  // (4) الـ refresh العادي: الـ reader بيقف لحد ما يخلص
+  const plain = await readerDuring("refresh materialized view read.order_dashboard");
+  console.log(`plain      refresh ${plain.refreshMs.toFixed(0)} ms, reads during ${plain.reads}, worst read ${plain.worstRead.toFixed(0)} ms (idle worst ${plain.baseline.toFixed(0)} ms)`);
+
+  // (5) الـ refresh المتزامن: الـ reader شغال عادي، والـ refresh نفسه أبطأ
+  const conc = await readerDuring("refresh materialized view concurrently read.order_dashboard");
+  console.log(`concurrent refresh ${conc.refreshMs.toFixed(0)} ms, reads during ${conc.reads}, worst read ${conc.worstRead.toFixed(0)} ms (idle worst ${conc.baseline.toFixed(0)} ms)`);
+
+  // (6) القدم: order جديد مش بيظهر لحد الـ refresh اللي بعده
+  await pool.query(`insert into orders.orders values ('00000000-0000-4000-8000-000000000001','sara@example.com','placed','EGP',25000,3500,5000,33500,1,now())`);
+  await pool.query(`insert into orders.order_lines values ('00000000-0000-4000-8000-000000000001','SKU-MUG',1,25000)`);
+  const seen = async () =&gt; (await pool.query("select count(*)::int as n from read.order_dashboard where id = '00000000-0000-4000-8000-000000000001'")).rows[0].n;
+  console.log("new order visible before refresh:", await seen());
+  await pool.query("refresh materialized view concurrently read.order_dashboard");
+  console.log("new order visible after refresh:", await seen());
+} finally {
+  await db.stop();
+}</code></pre>
+<pre><code class="language-plaintext">orders: 200000 lines: 400001
+create matview: 931 ms
+without unique index: 55000 cannot refresh materialized view "read.order_dashboard" concurrently
+hint: Create a unique index with no WHERE clause on one or more columns of the materialized view.
+read: live join 197.7 ms, matview 1.4 ms
+plain      refresh 1677 ms, reads during 98, worst read 1610 ms (idle worst 4 ms)
+concurrent refresh 2851 ms, reads during 4095, worst read 6 ms (idle worst 4 ms)
+new order visible before refresh: 0
+new order visible after refresh: 1</code></pre>
+  <div class="ar-note">العدد 200,000 order و 400,001 line. من غير unique index بييجي error <code>55000</code> ومعاه hint بالحل. القراءة من الـ view حوالي 1.4 ms قصاد 198 ms للـ join. الـ refresh العادي: أسوأ قراءة 1,610 ms، يعني القارئ وقف طول المدة تقريبًا. الـ concurrent: أبطأ في نفسه (2,851 ms) بس أسوأ قراءة 6 ms. والآخر: order جديد مش بيبان (0) لحد الـ refresh اللي بعده (1).</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ materialized view بيخزّن نتيجة query كأنها جدول. <code>CREATE MATERIALIZED VIEW</code> بيحسبها مرة، والقراءة بعدها بتبقى lookup عادي: على 200,000 order و400,001 line، حوالي 198 ms للـ join المباشر قصاد حوالي 1.4 ms من الـ view. ومفيش أي تعديل في كود الكتابة. التمن بيتنقل للـ refresh، وهو نوعين:</p>
+    <ul>
+      <li><b><code>REFRESH</code> العادي</b> بياخد lock <code>ACCESS EXCLUSIVE</code> طول مدته. هنا خد حوالي 1,677 ms وأسوأ قراءة استنت حوالي 1,610 ms: القارئ بيقف خالص.</li>
+      <li><b><code>REFRESH ... CONCURRENTLY</code></b> بيبني نسخة جديدة، ويقارنها بالقديمة، ويطبّق الفرق، فالقراء بيكملوا: حوالي 2,851 ms، أبطأ، وأسوأ قراءة حوالي 6 ms من 4,095 قراءة. وعبر التشغيلات أخد بين 1.7 و2.6 ضعف الـ refresh العادي. الـ docs بتقول إنه <i>ممكن</i> يبقى أسرع لما صفوف قليلة تتغير، وهنا صفر صفوف اتغيرت وبرضه كان أبطأ، لأن الـ query والـ diff بيشتغلوا في كل الأحوال.</li>
+    </ul>
+    <p>الـ <code>CONCURRENTLY</code> محتاج unique index من غير <code>WHERE</code>، ومن غيره بييجي error <code>55000</code> اللي تحت. <b>قدم الـ data هو الـ refresh interval بتاعك:</b> order جديد مش بيبان لحد الـ refresh الجاي، وده باين كمان تحت. ده كفاية للتقارير اللي تستحمل تتأخر دقايق. ومش مناسب لصفحات "طلبي"، ولا للـ views الكبيرة قوي اللي إعادة الحساب الكامل في كل refresh هي مشكلتها. و<a href="../../07-Databases/lessons/26-denormalization-read-models.html">القسم 07 · 26</a> بيغطي الجدولة والخيارات الـ incremental.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      تقرير "مبيعات كل tenant الشهر ده" اللي بياخد 8 ثواني وكل مدير بيفتحه الصبح: materialized view و refresh concurrently كل 10 دقايق من job. الغلطة الشائعة: <code>setInterval</code> على refresh عادي، فكل القراء بيقفوا مع كل دورة، ولو دورة طوّلت بيتراكموا. الحل في الغلطات تحت.
+    </div>
+  </section>
+
+  <h2 id="p5">Part 5 — Read model: projection tables <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — الـ read model: projection tables</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A projection table is a read model you maintain row by row from events. <code>read.order_summary</code> gets one row per order, built from the outbox the service already writes (<a href="./20-ddd-events-when-worth-it.html">lesson 20</a>). It needs two small changes to the write side, shown as a real diff: every outbox row gets the aggregate's id and version, and <code>OrderPlaced</code> grows the fields the screen needs. The stat below shows a fourth file, <code>place-order.ts</code>, whose results now return the version for part 6.</p>
+    <p><b>Duplicates and reordering are normal.</b> The outbox relay is at-least-once, and parallel workers finish out of order. A naive <code>ON CONFLICT DO UPDATE SET status = excluded.status</code> lets the last arrival win. Running every delivery order of two events, each delivered twice, the naive version ends right in only 2 of 6 orders; some end as <code>placed</code> for a paid order, and some lose the customer email. The fix is an upsert <b>guarded by event version</b>: status follows the highest version, facts carried only by <code>OrderPlaced</code> fill in whenever it arrives, and a duplicate writes nothing. That gives 6 of 6. Exercise 2 extends it to 90 of 90 with a third event.</p>
+    <p><b>Lag</b>, from the POST returning to the row being visible, is about half the poll interval: ≈633 ms at p50 polling every 1,000 ms, ≈58 ms every 100 ms, and ≈13 ms every 10 ms. Exercise 3 replaces polling with <code>LISTEN/NOTIFY</code> and gets ≈1 ms.</p>
+    <p><b>Scaling out reorders events.</b> Four workers on a shared <code>SKIP LOCKED</code> queue, with varied batch sizes, applied <code>OrderPlaced</code> after <code>OrderPaid</code> for 6 to 293 of 1,000 orders across runs, and hit 0 to 2 real deadlocks (<code>40P01</code>). The guard kept every row correct anyway. Partitioning by a hash of the order ID, so each order has one worker, gave 0 reorderings and 0 deadlocks in every run.</p>
+    <p><b>Rebuild from scratch.</b> A projection is disposable. Replaying 90,000 events through the projector took ≈33 s. A set-based rebuild from the write tables took ≈529 ms, about 60× faster, and matched row for row (0 differences). Build into a new table while the old one serves, then swap with two renames in one transaction, ≈1 ms. Events that arrive during the rebuild get re-applied afterward, and the version guard makes that safe.</p>
+    <p><b>Search.</b> The README names Elasticsearch, whose server isn't allowed on this machine, so its code below compiles on TS 7 against client 9.5.1 and is labelled <b>not run here</b>. The sync uses the same idea as the guard: <code>version_type: "external"</code> rejects anything not higher than the stored version. As a labelled local stand-in, a Postgres <code>tsvector</code> projection ran for real. Two traps came up: a generated column on <code>array_to_string</code> fails with <code>42P17</code>, and the <code>simple</code> parser keeps <code>sara@example.com</code> as one token, so a search for "sara" would miss it without splitting the email first.</p>
+    <p><b>The cost: every new screen is a write path.</b> This one column family touched 4 existing files (27 lines added, 8 removed) plus a 111-line projector, a migration, a backfill and monitoring. At rung 1, the same new column is one line of SQL.</p>
+  </section>
+
+<pre><code class="language-diff">+++ b/after-cqrs-step1/src/modules/orders/domain/order.ts
+@@ -13 +13 @@ export type OrderEvent =
+-  | { readonly type: "OrderPlaced"; readonly orderId: string; readonly totalMinor: number; readonly currency: string; readonly at: string }
++  | { readonly type: "OrderPlaced"; readonly orderId: string; readonly customerEmail: string; readonly skus: readonly string[]; readonly itemCount: number; readonly totalMinor: number; readonly currency: string; readonly at: string }
+@@ -63 +63 @@ export class Order {
+-    order.#events.push({ type: "OrderPlaced", orderId: input.id, totalMinor: total.minor, currency: total.currency, at: input.now.toISOString() });
++    order.#events.push({ type: "OrderPlaced", orderId: input.id, customerEmail: input.customerEmail, skus: input.lines.map((l) =&gt; l.sku), itemCount: input.lines.length, totalMinor: total.minor, currency: total.currency, at: input.now.toISOString() });
++++ b/after-cqrs-step1/src/modules/orders/infrastructure/pg-order-repository.ts
+@@ -34 +34 @@ export const makePgOrderRepository = (pool: Pool): OrderRepository =&gt; ({
+-        await client.query("insert into orders.outbox (type, payload, occurred_at) values ($1,$2,$3)", [e.type, JSON.stringify(e), e.at]);
++        await client.query("insert into orders.outbox (type, payload, occurred_at, aggregate_id, aggregate_version) values ($1,$2,$3,$4,$5)", [e.type, JSON.stringify(e), e.at, s.id, s.version + 1]);
++++ b/after-cqrs-step1/schema.sql
+@@ -30 +30,4 @@ create table orders.outbox (
+-  published_at timestamptz
++  published_at timestamptz,
++  aggregate_id uuid not null,
++  aggregate_version int not null,
++  projected_at timestamptz
+@@ -31,0 +35,16 @@ create table orders.outbox (
++create index outbox_not_projected on orders.outbox (id) where projected_at is null;
++
++create schema read;
++create table read.order_summary (
++  order_id uuid primary key,
++  customer_email text,
++  status text not null,
++  total_minor int,
++  currency text,
++  item_count int,
++  skus text[],
++  placed_at timestamptz,
++  version int not null,
++  updated_at timestamptz not null default now()
++);
++create index on read.order_summary (status, placed_at desc);</code></pre>
+<pre><code class="language-plaintext"> {after =&gt; after-cqrs-step1}/schema.sql              | 21 ++++++++++++++++++++-
+ .../src/modules/orders/application/place-order.ts   |  8 ++++----
+ .../src/modules/orders/domain/order.ts              |  4 ++--
+ .../orders/infrastructure/pg-order-repository.ts    |  2 +-
+ 4 files changed, 27 insertions(+), 8 deletions(-)
+new file: after-cqrs/src/modules/orders/projections/order-summary.ts 111 lines</code></pre>
+  <div class="ar-note">ده الـ diff الحقيقي على جانب الكتابة: <code>OrderPlaced</code> زاد فيه الـ email والـ skus وعدد الـ items، والـ outbox بقى فيه <code>aggregate_id</code> و<code>aggregate_version</code> و<code>projected_at</code>، وجدول القراءة الجديد. والإحصائية تحت: 4 ملفات اتعدلت، 27 سطر زيادة و8 ناقصين، وملف projector جديد 111 سطر.</div>
+
+<pre data-file="after-cqrs/src/modules/orders/projections/order-summary.ts"><code class="language-typescript">// الـ projector: بياخد events من الـ outbox ويحدّث read.order_summary، ومستحمل التكرار وتبديل الترتيب
+import type { Pool, PoolClient } from "pg";
+
+export interface OutboxRow {
+  id: string;
+  type: string;
+  aggregate_id: string;
+  aggregate_version: number;
+  payload: {
+    customerEmail?: string;
+    skus?: string[];
+    itemCount?: number;
+    totalMinor?: number;
+    currency?: string;
+    at: string;
+  };
+}
+
+const STATUS_BY_EVENT: Record&lt;string, string&gt; = {
+  OrderPlaced: "placed",
+  OrderPaid: "paid",
+  OrderPaymentFailed: "payment_failed",
+};
+
+// الـ upsert ده بيجاوب على 3 حالات: event جديد، event مكرر، event وصل متأخر عن اللي بعده
+// (1) الـ status بييجي من أعلى version بس، فالـ event المتأخر مش بيرجّعه لورا
+// (2) الحقايق اللي في OrderPlaced بس بتتملى لو ناقصة، مهما كان ترتيب الوصول
+// (3) شرط الـ where بيخلّي التكرار no-op: مفيش كتابة ومفيش updated_at جديد
+export const GUARDED_UPSERT = `
+  insert into read.order_summary
+    (order_id, status, version, customer_email, total_minor, currency, item_count, skus, placed_at)
+  values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+  on conflict (order_id) do update set
+    status = case when excluded.version &gt; read.order_summary.version then excluded.status else read.order_summary.status end,
+    version = greatest(excluded.version, read.order_summary.version),
+    customer_email = coalesce(read.order_summary.customer_email, excluded.customer_email),
+    total_minor = coalesce(read.order_summary.total_minor, excluded.total_minor),
+    currency = coalesce(read.order_summary.currency, excluded.currency),
+    item_count = coalesce(read.order_summary.item_count, excluded.item_count),
+    skus = coalesce(read.order_summary.skus, excluded.skus),
+    placed_at = coalesce(read.order_summary.placed_at, excluded.placed_at),
+    updated_at = now()
+  where excluded.version &gt; read.order_summary.version
+     or (read.order_summary.customer_email is null and excluded.customer_email is not null)`;
+
+export async function applyOrderEvent(db: Pool | PoolClient, e: OutboxRow): Promise&lt;number&gt; {
+  const status = STATUS_BY_EVENT[e.type];
+  if (!status) return 0;
+  const p = e.payload;
+  const r = await db.query(GUARDED_UPSERT, [
+    e.aggregate_id,
+    status,
+    e.aggregate_version,
+    p.customerEmail ?? null,
+    p.totalMinor ?? null,
+    p.currency ?? null,
+    p.itemCount ?? null,
+    p.skus ?? null,
+    e.type === "OrderPlaced" ? p.at : null,
+  ]);
+  return r.rowCount ?? 0;
+}
+
+// دفعة واحدة: الـ apply وعلامة projected_at في نفس الـ transaction، فمفيش event بيضيع ومفيش نص شغل
+// الـ partition اختياري: كل order بيروح لـ worker واحد بس، فترتيبه ميتلخبطش
+export async function projectBatch(pool: Pool, limit = 100, partition?: { index: number; count: number }): Promise&lt;number&gt; {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const r = await client.query&lt;OutboxRow&gt;(
+      `select id, type, aggregate_id, aggregate_version, payload
+       from orders.outbox
+       where projected_at is null
+         and ($2::int is null or abs(hashtext(aggregate_id::text)) % $3::int = $2::int)
+       order by id
+       limit $1
+       for update skip locked`,
+      [limit, partition?.index ?? null, partition?.count ?? 1],
+    );
+    for (const row of r.rows) await applyOrderEvent(client, row);
+    await client.query("update orders.outbox set projected_at = now() where id = any($1)", [r.rows.map((x) =&gt; x.id)]);
+    await client.query("commit");
+    return r.rows.length;
+  } catch (err) {
+    await client.query("rollback");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// حلقة الـ polling: لو لقت شغل بتكمل على طول، ولو فاضية بتستنى الـ interval
+export function startProjector(pool: Pool, intervalMs: number, limit = 100): { stop(): Promise&lt;void&gt; } {
+  let running = true;
+  const loop = (async () =&gt; {
+    while (running) {
+      const n = await projectBatch(pool, limit).catch((err: { code?: string }) =&gt; {
+        // لو الـ read table واقع، الـ projector بيستنى ويحاول تاني: الـ events في أمان في الـ outbox
+        console.log("projector error:", err.code);
+        return 0;
+      });
+      if (n === 0) await new Promise((r) =&gt; setTimeout(r, intervalMs));
+    }
+  })();
+  return {
+    stop: async () =&gt; {
+      running = false;
+      await loop;
+    },
+  };
+}</code></pre>
+<pre data-file="l27/p5-permutations.ts"><code class="language-typescript">// كل ترتيبات الوصول الممكنة لـ events نفس الـ order: Placed وPaid وكل واحد واصل مرتين
+import { readFileSync } from "node:fs";
+import { startDb } from "./lab.ts";
+import { applyOrderEvent } from "../after-cqrs/src/modules/orders/projections/order-summary.ts";
+import type { OutboxRow } from "../after-cqrs/src/modules/orders/projections/order-summary.ts";
+
+const db = await startDb();
+const { pool } = db;
+const ORDER = "00000000-0000-4000-8000-000000000007";
+const placed: OutboxRow = {
+  id: "1", type: "OrderPlaced", aggregate_id: ORDER, aggregate_version: 1,
+  payload: { customerEmail: "sara@example.com", skus: ["SKU-MUG"], itemCount: 1, totalMinor: 62000, currency: "EGP", at: "2026-11-04T10:00:00Z" },
+};
+const paid: OutboxRow = { id: "2", type: "OrderPaid", aggregate_id: ORDER, aggregate_version: 2, payload: { at: "2026-11-04T10:00:01Z" } };
+
+// النسخة الساذجة: آخر واحد يوصل هو اللي بيكسب
+const naive = (e: OutboxRow) =&gt;
+  pool.query(
+    `insert into read.order_summary (order_id, status, version, customer_email, total_minor)
+     values ($1, $2, $3, $4, $5)
+     on conflict (order_id) do update set status = excluded.status, version = excluded.version`,
+    [e.aggregate_id, e.type === "OrderPlaced" ? "placed" : "paid", e.aggregate_version, e.payload.customerEmail ?? null, e.payload.totalMinor ?? null],
+  );
+
+// كل الترتيبات المختلفة لـ P و P و V و V
+const distinct = new Set&lt;string&gt;();
+const permute = (a: string[], k = 0): void =&gt; {
+  if (k === a.length) {
+    distinct.add(a.join(""));
+    return;
+  }
+  for (let i = k; i &lt; a.length; i++) {
+    [a[k], a[i]] = [a[i]!, a[k]!];
+    permute(a, k + 1);
+    [a[k], a[i]] = [a[i]!, a[k]!];
+  }
+};
+permute(["P", "P", "V", "V"]);
+
+const row = async () =&gt; (await pool.query("select status, version, customer_email, total_minor from read.order_summary")).rows[0];
+const right = (r: { status: string; version: number; customer_email: string; total_minor: number }) =&gt;
+  r.status === "paid" &amp;&amp; r.version === 2 &amp;&amp; r.customer_email === "sara@example.com" &amp;&amp; r.total_minor === 62000;
+
+try {
+  await pool.query(readFileSync(new URL("../after-cqrs/schema.sql", import.meta.url), "utf8"));
+  const variants = [
+    ["naive  ", naive],
+    ["guarded", (e: OutboxRow) =&gt; applyOrderEvent(pool, e)],
+  ] as const;
+  for (const [name, apply] of variants) {
+    let good = 0;
+    const wrong: string[] = [];
+    for (const order of distinct) {
+      await pool.query("truncate read.order_summary");
+      for (const c of order) await apply(c === "P" ? placed : paid);
+      const r = await row();
+      if (right(r)) good++;
+      else wrong.push(`${order}=${r.status}/v${r.version}${r.customer_email ? "" : "/no-email"}`);
+    }
+    console.log(`${name}: ${good} of ${distinct.size} delivery orders end right${wrong.length ? "   wrong: " + wrong.join(" ") : ""}`);
+  }
+  // المكرر بيبقى no-op فعلًا: الـ rowCount صفر
+  await pool.query("truncate read.order_summary");
+  console.log("first delivery rowCount:", await applyOrderEvent(pool, placed));
+  console.log("duplicate rowCount:", await applyOrderEvent(pool, placed));
+} finally {
+  await db.stop();
+}</code></pre>
+<pre><code class="language-plaintext">naive  : 2 of 6 delivery orders end right   wrong: PVVP=placed/v1 VPPV=paid/v2/no-email VPVP=placed/v1/no-email VVPP=placed/v1/no-email
+guarded: 6 of 6 delivery orders end right
+first delivery rowCount: 1
+duplicate rowCount: 0</code></pre>
+  <div class="ar-note">الترتيبات الـ 6 المختلفة لوصول Placed و Paid وكل واحد مرتين. النسخة الساذجة صح في 2 بس: فيه ترتيبات خلّت order مدفوع يرجع <code>placed</code>، وفيه اللي ضيّع الـ email (<code>no-email</code>). النسخة الـ guarded صح في الـ 6. وآخر سطرين: أول وصول كتب صف، والمكرر <code>rowCount</code> بتاعه صفر.</div>
+
+<pre data-file="l27/p5-lag.ts"><code class="language-typescript">// (1) الـ lag على فترات polling مختلفة: order واحد في المرة
+for (const [intervalMs, samples] of [[1000, 30], [100, 100], [10, 200]] as const) {
+  const projector = startProjector(lab.pool, intervalMs);
+  const lags: number[] = [];
+  for (let i = 0; i &lt; samples; i++) {
+    const { orderId, version } = await post(`lag${i}@example.com`);
+    const t0 = performance.now();
+    for (;;) {
+      const r = await lab.pool.query("select version from read.order_summary where order_id = $1", [orderId]);
+      if (r.rows[0]?.version &gt;= version) break;
+      await sleep(1);
+    }
+    lags.push(performance.now() - t0);
+    // فاصل عشوائي صغير عشان الـ POST ميقعش دايمًا في نفس اللحظة من دورة الـ polling
+    await sleep(Math.random() * intervalMs);
+  }
+  await projector.stop();
+  console.log(`poll every ${String(intervalMs).padStart(4)} ms: lag p50 ${pct(lags, 50).toFixed(0).padStart(4)} ms, p99 ${pct(lags, 99).toFixed(0).padStart(4)} ms, max ${Math.max(...lags).toFixed(0).padStart(4)} ms (n=${samples})`);
+}</code></pre>
+<pre data-file="l27/p5-lag.ts"><code class="language-typescript">// (2) الـ projector واقف والـ writers شغالين: query الـ monitoring بيوريك الـ backlog
+await lab.pool.query("truncate read.order_summary, orders.outbox");
+await Promise.all(
+  Array.from({ length: 20 }, async (_, c) =&gt; {
+    for (let i = 0; i &lt; 50; i++) await post(`burst${c}.${i}@example.com`);
+  }),
+);
+const backlog = await lab.pool.query(`
+  select count(*)::int as pending,
+         round(extract(epoch from now() - min(occurred_at)) * 1000)::int as oldest_ms
+  from orders.outbox where projected_at is null`);
+console.log("after a burst of 1000 orders with no projector:", backlog.rows[0]);</code></pre>
+<pre data-file="l27/p5-lag.ts"><code class="language-typescript">// (3) أربع workers بيسحبوا مع بعض: الـ trigger بيعد كل OrderPlaced وصل بعد OrderPaid
+await lab.pool.query(`
+  create table arrival_log (order_id uuid primary key);
+  create function log_late_placed() returns trigger language plpgsql as $$
+  begin
+    if old.customer_email is null and new.customer_email is not null then
+      insert into arrival_log values (new.order_id) on conflict do nothing;
+    end if;
+    return new;
+  end $$;
+  create trigger log_late_placed before update on read.order_summary for each row execute function log_late_placed();`);
+const t0 = performance.now();
+let deadlocks = 0;
+await Promise.all(
+  Array.from({ length: 4 }, async () =&gt; {
+    for (;;) {
+      // دفعات مقاسها بيتغير عشان واحد ممكن يخلّص قبل اللي قبله
+      const size = 1 + Math.floor(Math.random() * 40);
+      const n = await projectBatch(lab.pool, size).catch((e: { code?: string }) =&gt; {
+        if (e.code === "40P01") {
+          deadlocks++;
+          return -1;
+        }
+        throw e;
+      });
+      if (n === 0) return;
+    }
+  }),
+);
+const seconds = (performance.now() - t0) / 1000;
+const check = await lab.pool.query(`
+  select (select count(*)::int from arrival_log) as placed_after_paid,
+         (select count(*)::int from read.order_summary) as rows,
+         (select count(*)::int from read.order_summary where status = 'paid' and version = 2 and customer_email is not null) as complete,
+         (select count(*)::int from orders.outbox where projected_at is null) as pending`);
+console.log(`4 workers, shared queue: ${seconds.toFixed(2)} s, deadlocks ${deadlocks}`, check.rows[0]);
+
+// (4) نفس الـ 4 workers بس كل order ليه worker ثابت بالـ hash
+await lab.pool.query("truncate read.order_summary, arrival_log");
+await lab.pool.query("update orders.outbox set projected_at = null");
+const t1 = performance.now();
+let deadlocks2 = 0;
+await Promise.all(
+  Array.from({ length: 4 }, async (_, index) =&gt; {
+    for (;;) {
+      const size = 1 + Math.floor(Math.random() * 40);
+      const n = await projectBatch(lab.pool, size, { index, count: 4 }).catch((e: { code?: string }) =&gt; {
+        if (e.code === "40P01") {
+          deadlocks2++;
+          return -1;
+        }
+        throw e;
+      });
+      if (n === 0) return;
+    }
+  }),
+);
+const check2 = await lab.pool.query(`
+  select (select count(*)::int from arrival_log) as placed_after_paid,
+         (select count(*)::int from read.order_summary) as rows,
+         (select count(*)::int from read.order_summary where status = 'paid' and version = 2 and customer_email is not null) as complete,
+         (select count(*)::int from orders.outbox where projected_at is null) as pending`);
+console.log(`4 workers, partitioned:  ${((performance.now() - t1) / 1000).toFixed(2)} s, deadlocks ${deadlocks2}`, check2.rows[0]);</code></pre>
+<pre><code class="language-plaintext">poll every 1000 ms: lag p50  633 ms, p99  985 ms, max  985 ms (n=30)
+poll every  100 ms: lag p50   58 ms, p99  107 ms, max  107 ms (n=100)
+poll every   10 ms: lag p50   13 ms, p99  102 ms, max  232 ms (n=200)
+after a burst of 1000 orders with no projector: { pending: 2000, oldest_ms: 2598 }
+4 workers, shared queue: 1.73 s, deadlocks 1 { placed_after_paid: 169, rows: 1000, complete: 1000, pending: 0 }
+4 workers, partitioned:  0.13 s, deadlocks 0 { placed_after_paid: 0, rows: 1000, complete: 1000, pending: 0 }</code></pre>
+  <div class="ar-note">أول 3 سطور الـ lag بفترات polling مختلفة، والـ p50 حوالي نص الفترة. السطر الرابع: الـ projector واقف، فـ query الـ monitoring بيقول 2000 event مستنيين وأقدمهم من 2.6 ثانية. الخامس: 4 workers على queue مشترك: 169 order جالهم Placed بعد Paid في التشغيلة دي، و deadlock واحد، وبرضه كل الصفوف طلعت صح. السادس: نفس الـ 4 workers بالـ partition: صفر تبديل وصفر deadlock.</div>
+
+<pre data-file="l27/p5-rebuild.ts"><code class="language-typescript">// (1) أول بناء من الـ events: نفس كود الـ projector اللي شغال في production
+const [, replayMs] = await timed(async () =&gt; {
+  while ((await projectBatch(pool, 1000)) &gt; 0);
+});
+console.log(`replay through projector: ${replayMs.toFixed(0)} ms, ${Math.round((events / replayMs) * 1000)} events/s`);
+
+// (2) بناء تاني بـ statement واحد من جداول الكتابة في جدول جديد والقديم شغال
+const [, setMs] = await timed(() =&gt;
+  pool.query(`
+    create table read.order_summary_new (like read.order_summary including all);
+    insert into read.order_summary_new (order_id, status, version, customer_email, total_minor, currency, item_count, skus, placed_at)
+    select o.id, o.status, o.version, o.customer_email, o.total_minor, o.currency, count(*)::int, array_agg(l.sku), o.placed_at
+    from orders.orders o join orders.order_lines l on l.order_id = o.id
+    group by o.id;
+    analyze read.order_summary_new`),
+);
+console.log(`set-based rebuild into a new table: ${setMs.toFixed(0)} ms`);
+console.log("rows that differ between the two:", await diffRows("read.order_summary", "read.order_summary_new"));
+
+// (3) التبديل: rename في transaction واحدة، فالقارئ بيشوف القديم أو الجديد بس
+const [, swapMs] = await timed(() =&gt;
+  pool.query(`
+    begin;
+    alter table read.order_summary rename to order_summary_old;
+    alter table read.order_summary_new rename to order_summary;
+    commit;`),
+);
+console.log(`swap: ${swapMs.toFixed(1)} ms`);</code></pre>
+<pre data-file="l27/p5-rebuild.ts"><code class="language-typescript">// (4) بديل tsvector: البحث على الـ read table نفسه
+try {
+  await pool.query(`alter table read.order_summary add column search tsvector generated always as
+    (to_tsvector('simple', coalesce(customer_email, '') || ' ' || array_to_string(skus, ' '))) stored`);
+} catch (e) {
+  const err = e as { code: string; message: string };
+  console.log("generated column:", err.code, err.message);
+}
+
+const tokens = await pool.query("select to_tsvector('simple', 'sara@example.com SKU-MUG') as v");
+console.log("tokens:", tokens.rows[0].v);
+
+// الحل: function معلّنة immutable بتكسّر الـ email عند الـ @
+await pool.query(`
+  create function read.order_search_text(email text, skus text[]) returns text language sql immutable as
+  $$ select replace(coalesce(email, ''), '@', ' ') || ' ' || coalesce(array_to_string(skus, ' '), '') $$;
+  alter table read.order_summary add column search tsvector
+    generated always as (to_tsvector('simple', read.order_search_text(customer_email, skus))) stored;
+  create index order_summary_search on read.order_summary using gin (search);
+  analyze read.order_summary;`);
+const q = "select order_id, customer_email, status from read.order_summary where search @@ websearch_to_tsquery('simple', $1) limit 20";
+const [hit, hitMs] = await timed(() =&gt; pool.query(q, ["user42 SKU-3"]));
+const [, likeMs] = await timed(() =&gt; pool.query("select order_id from read.order_summary where customer_email ilike '%user42@%' limit 20000"));
+const plan = await pool.query("explain " + q.replace("$1", "'user42 SKU-3'"));
+console.log(`search "user42 SKU-3": ${hit.rowCount} rows in ${hitMs.toFixed(1)} ms; ilike scan ${likeMs.toFixed(1)} ms`);
+console.log(plan.rows.map((r) =&gt; r["QUERY PLAN"]).filter((l: string) =&gt; /Scan/.test(l)).join("\n"));
+console.log("sample:", hit.rows[0]);</code></pre>
+<pre><code class="language-plaintext">events in outbox: 90000
+replay through projector: 33127 ms, 2717 events/s
+set-based rebuild into a new table: 529 ms
+rows that differ between the two: 0
+swap: 1.0 ms
+generated column: 42P17 generation expression is not immutable
+tokens: 'mug':4 'sara@example.com':1 'sku':3 'sku-mug':2
+search "user42 SKU-3": 3 rows in 4.5 ms; ilike scan 13.8 ms
+  -&gt;  Bitmap Heap Scan on order_summary  (cost=30.22..41.86 rows=3 width=43)
+        -&gt;  Bitmap Index Scan on order_summary_search  (cost=0.00..30.22 rows=3 width=0)
+sample: {
+  order_id: 'ba6d843e-b425-1a45-26ce-65d1807a9309',
+  customer_email: 'user42@example.com',
+  status: 'paid'
+}</code></pre>
+  <div class="ar-note">الـ replay من الـ projector أخد حوالي 33 ثانية (2,717 event في الثانية)، والبناء بـ statement واحد حوالي 529 ms، والجدولين متطابقين (0 فرق)، والتبديل حوالي 1 ms. وبعدين الـ <code>42P17</code>: الـ <code>array_to_string</code> مش immutable فالـ generated column اترفض. سطر الـ tokens بيوري إن الـ email طلع token واحد. والبحث بالـ GIN index رجع 3 صفوف في حوالي 4.5 ms، والـ plan فعلًا <code>Bitmap Index Scan</code>. ده <b>بديل محلي</b> لـ Elasticsearch مش هو.</div>
+
+  <div class="callout warn">
+    <b>Not run here</b>
+    Elasticsearch servers aren't allowed on this machine. The code below compiles on TypeScript 7 against <code>@elastic/elasticsearch</code> 9.5.1 and has never talked to a server. The version rule it relies on comes from the Elasticsearch docs: an external version less than or equal to the stored one is a conflict.
+    <div class="ar-note">سيرفرات Elasticsearch مش مسموحة على الجهاز ده. الكود اللي تحت بيعمل compile على TypeScript 7 مع <code>@elastic/elasticsearch</code> 9.5.1، وعمره ما كلّم سيرفر. وقاعدة الـ version اللي معتمد عليها جاية من docs بتاعة Elasticsearch: الـ external version لو أقل من أو تساوي المتخزنة يبقى conflict.</div>
+  </div>
+
+<pre data-file="l27/es-sync.ts"><code class="language-typescript">// اتعمله compile بس، not run here: سيرفر Elasticsearch مش مسموح يشتغل على الجهاز ده
+import { Client, errors } from "@elastic/elasticsearch";
+import type { Pool } from "pg";
+
+const es = new Client({ node: process.env.ELASTICSEARCH_URL! });
+
+// الـ mapping: الـ email و الـ status و الـ currency قيم بالظبط، وتكست حر للبحث بس
+export async function createOrderIndex(): Promise&lt;void&gt; {
+  await es.indices.create({
+    index: "order_summary_v1",
+    mappings: {
+      dynamic: "strict",
+      properties: {
+        customerEmail: { type: "keyword", fields: { search: { type: "text", analyzer: "simple" } } },
+        status: { type: "keyword" },
+        totalMinor: { type: "integer" },
+        currency: { type: "keyword" },
+        itemCount: { type: "integer" },
+        skus: { type: "keyword", fields: { search: { type: "text" } } },
+        placedAt: { type: "date" },
+      },
+    },
+  });
+}
+
+// بنبعت الصف كله من read.order_summary، مش الـ event: الـ doc في Elasticsearch بيتبدل كامل
+export async function syncOrderToSearch(pool: Pool, orderId: string): Promise&lt;"indexed" | "stale"&gt; {
+  const { rows } = await pool.query("select * from read.order_summary where order_id = $1", [orderId]);
+  const row = rows[0];
+  if (!row) return "stale";
+  try {
+    await es.index({
+      index: "order_summary_v1",
+      id: orderId,
+      // نفس الـ version guard: الـ external version بيرفض أي حاجة مش أعلى من الموجود
+      version: row.version,
+      version_type: "external",
+      document: {
+        customerEmail: row.customer_email,
+        status: row.status,
+        totalMinor: row.total_minor,
+        currency: row.currency,
+        itemCount: row.item_count,
+        skus: row.skus,
+        placedAt: row.placed_at,
+      },
+    });
+    return "indexed";
+  } catch (err) {
+    // الـ 409 هنا معناها إن فيه نسخة أحدث وصلت قبلنا، وده طبيعي مش error
+    if (err instanceof errors.ResponseError &amp;&amp; err.statusCode === 409) return "stale";
+    throw err;
+  }
+}
+
+export async function searchOrders(text: string) {
+  const r = await es.search&lt;{ customerEmail: string; status: string }&gt;({
+    index: "order_summary_v1",
+    size: 20,
+    query: { multi_match: { query: text, fields: ["customerEmail.search", "skus.search"] } },
+  });
+  return r.hits.hits.map((h) =&gt; ({ orderId: h._id, ...h._source }));
+}</code></pre>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ projection table هو read model بتحافظ عليه صف بصف من الـ events. <code>read.order_summary</code> فيه صف لكل order، مبني من الـ outbox اللي الـ service بيكتبه أصلًا (<a href="./20-ddd-events-when-worth-it.html">الدرس 20</a>). وده محتاج تعديلين صغيرين في جانب الكتابة، موجودين كـ diff حقيقي: كل صف في الـ outbox ياخد id الـ aggregate والـ version بتاعته، و<code>OrderPlaced</code> يزيد فيه الـ fields اللي الشاشة محتاجاها. والإحصائية تحت فيها ملف رابع، <code>place-order.ts</code>، لأن نتايجه بقت بترجّع الـ version عشان الجزء 6.</p>
+    <p><b>التكرار وتبديل الترتيب حاجات عادية.</b> الـ relay بتاع الـ outbox at-least-once، والـ workers المتوازيين بيخلصوا بترتيب مختلف. <code>ON CONFLICT DO UPDATE SET status = excluded.status</code> الساذج بيخلّي آخر واحد يوصل يكسب. لما شغّلنا كل ترتيبات الوصول لـ 2 events وكل واحد واصل مرتين، النسخة الساذجة طلعت صح في 2 من 6 بس: فيه اللي خلص <code>placed</code> لـ order مدفوع، وفيه اللي ضيّع الـ email. الحل upsert <b>محمي بالـ event version</b>: الـ status بييجي من أعلى version، والحقايق اللي في <code>OrderPlaced</code> بس بتتملى وقت ما يوصل، والمكرر مبيكتبش حاجة. كده 6 من 6. والتمرين 2 بيوسّعها لـ 90 من 90 بـ event تالت.</p>
+    <p><b>الـ lag</b>، من لحظة ما الـ POST يرجع لحد ما الصف يبان، حوالي نص فترة الـ polling: حوالي 633 ms عند p50 لو بتعمل poll كل 1,000 ms، وحوالي 58 ms كل 100 ms، وحوالي 13 ms كل 10 ms. والتمرين 3 بيبدّل الـ polling بـ <code>LISTEN/NOTIFY</code> وبيوصل لحوالي 1 ms.</p>
+    <p><b>لما تزوّد workers الترتيب بيتلخبط.</b> 4 workers على queue مشترك بـ <code>SKIP LOCKED</code> وبدفعات مقاسها متغير، طبّقوا <code>OrderPlaced</code> بعد <code>OrderPaid</code> لـ بين 6 و293 order من 1,000 عبر التشغيلات، وحصل بين 0 و2 deadlocks حقيقية (<code>40P01</code>). والـ guard خلّى كل الصفوف صح برضه. ولما عملنا partition بـ hash للـ order ID، بحيث كل order ليه worker واحد، طلع صفر تبديل وصفر deadlocks في كل تشغيلة.</p>
+    <p><b>إعادة البناء من الصفر.</b> الـ projection حاجة تترمي وتتبني. الـ replay لـ 90,000 event من الـ projector أخد حوالي 33 ثانية. والبناء بـ statement واحد من جداول الكتابة أخد حوالي 529 ms، أسرع حوالي 60 مرة، وطابق صف بصف (0 فرق). ابني في جدول جديد والقديم شغال، وبعدين بدّل بـ rename مرتين في transaction واحدة، حوالي 1 ms. والـ events اللي تيجي أثناء البناء بتتطبق تاني بعده، والـ version guard بيخلّي ده آمن.</p>
+    <p><b>البحث.</b> الـ README ذاكر Elasticsearch، والسيرفر بتاعه مش مسموح يشتغل على الجهاز ده، فالكود بتاعه فوق اتعمله compile على TS 7 مع client 9.5.1 ومتعلّم عليه <b>not run here</b>. الـ sync فيه نفس فكرة الـ guard: <code>version_type: "external"</code> بيرفض أي حاجة مش أعلى من الـ version المتخزنة. وكبديل محلي متعلّم عليه، شغّلنا فعلًا projection بـ <code>tsvector</code> في Postgres. وطلع فخين: generated column على <code>array_to_string</code> بيفشل بـ <code>42P17</code>، والـ parser بتاع <code>simple</code> بيسيب <code>sara@example.com</code> token واحد، فالبحث عن "sara" مش هيلاقيه لو مكسّرتش الـ email الأول.</p>
+    <p><b>التمن: كل شاشة جديدة بقت write path.</b> مجموعة الأعمدة دي لمست 4 ملفات موجودة (27 سطر زيادة و8 ناقصين)، و projector من 111 سطر، و migration، و backfill، و monitoring. في الدرجة الأولى، نفس العمود الجديد سطر SQL واحد.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      شاشة "طلباتي" بتجمع من 5 جداول ومتاخدة 40% من وقت الـ DB: projection table واحد، ومعاه query الـ backlog في Grafana، و alert لو أقدم event عدّى دقيقة. ولو هتشغّل أكتر من projector، اعمل partition بالـ order ID من الأول. والغلطة الشائعة: projector بيعمل <code>status = excluded.status</code> من غير version، وتكتشفها لما عميل يقول "دفعت والطلب لسه placed".
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks at scale</b>
+    Polling is cheap, but a projector that falls behind stays behind if writes are faster than it can apply. Alert on the age of the oldest unprojected event, not on the row count. A backlog count of 2,000 means little, and "oldest event is 40 minutes old" means your read model is lying to users.
+    <div class="ar-note">الـ polling رخيص، بس الـ projector اللي يتأخر هيفضل متأخر لو الكتابة أسرع منه. اعمل alert على عمر أقدم event لسه ما اتطبقش، مش على عدد الصفوف. رقم backlog زي 2,000 مش بيقول حاجة، لكن "أقدم event عمره 40 دقيقة" معناها إن الـ read model بيكدب على المستخدمين.</div>
+  </div>
+
+  <h2 id="p6">Part 6 — Eventual consistency in the UI <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — الـ eventual consistency في الـ UI</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The real failure is <b>read-your-writes</b>: the customer pays, the next page shows the old state. With a projector polling every 200 ms and a GET straight after each POST, 98 of 100 got a 404 and 2 saw <code>placed</code> for an order that was already paid. Five options, each with a different price:</p>
+    <ol>
+      <li><b>Return the new state from the command.</b> The POST response already says <code>{ kind: "paid", version: 2 }</code>, so the confirmation page renders that and reads nothing. Free, and it covers the most common case.</li>
+      <li><b>A <code>minVersion</code> token.</b> The POST returns the version, and the GET waits until the read model reaches it. Real: 100 of 100 fresh, waiting ≈213 ms (close to the 200 ms poll, since each POST landed just after a cycle). It holds a request open, so it needs a deadline. With the projector stopped it answered <code>202</code> and <code>Retry-After</code> after ≈2 s, instead of returning stale data as if fresh.</li>
+      <li><b>Optimistic UI.</b> Show the expected result at once and reconcile: <code>useOptimistic</code>, run and explained in <a href="../../05-React/lessons/19-concurrent-hooks-actions.html">React lesson 19</a>. It is a guess on the screen, so failures have to roll back visibly.</li>
+      <li><b>Show "processing".</b> Be honest that the work is in flight. Right when the wait is long and the user can do something else: a payment under review, an export.</li>
+      <li><b>Update the read table in the same transaction.</b> No lag at all: 100 of 100 fresh. The price is measured in part 7: write p50 went from ≈0.7–0.9 ms to ≈1.2 ms with durable commits. There's a worse cost. With the read table broken, the POST failed with 500, so a read-side bug now blocks sales. It also exposed a real gap in the service: stock had been reserved before the failed save and never came back (−1). With the async projector the same broken table left POSTs at 201, 2 events waited safely, and it caught up in ≈32 ms after the fix.</li>
+    </ol>
+    <p>Choose per screen, in a table, and agree on it with product. The important row: <b>never make a decision from a read model.</b> Commands load the aggregate.</p>
+  </section>
+
+<pre><code class="language-diff">+++ b/after-cqrs/src/modules/orders/infrastructure/pg-order-repository.ts
+@@ -2 +2 @@
+-import type { Pool } from "pg";
++import type { Pool, PoolClient } from "pg";
+@@ -15 +15,3 @@ export class StaleOrderError extends Error {
+-export const makePgOrderRepository = (pool: Pool): OrderRepository =&gt; ({
++export type InTransaction = (client: PoolClient, event: { type: string; aggregate_id: string; aggregate_version: number; payload: never }) =&gt; Promise&lt;unknown&gt;;
++
++export const makePgOrderRepository = (pool: Pool, inTransaction?: InTransaction): OrderRepository =&gt; ({
+@@ -34,0 +37 @@ export const makePgOrderRepository = (pool: Pool): OrderRepository =&gt; ({
++        await inTransaction?.(client, { type: e.type, aggregate_id: s.id, aggregate_version: s.version + 1, payload: e as never });</code></pre>
+  <div class="ar-note">الـ diff ده بيضيف hook اختياري جوه نفس الـ transaction بتاعة الـ <code>save</code>: ده اللي بيخلّي الخيار الخامس ممكن من غير ما الـ repository يعرف حاجة عن جدول القراءة.</div>
+
+<pre data-file="after-cqrs/src/modules/orders/queries/order-summary.ts"><code class="language-typescript">// جانب القراءة من الـ projection: عادي، أو بـ minVersion يستنى لحد ما الـ projection يلحق
+import { Router } from "express";
+import type { Pool } from "pg";
+
+export interface OrderSummaryDto {
+  orderId: string;
+  status: string;
+  totalMinor: number | null;
+  version: number;
+}
+
+const SELECT = `select order_id as "orderId", status, total_minor as "totalMinor", version from read.order_summary where order_id = $1`;
+
+export const makeOrderSummaryRouter = (pool: Pool, { waitMs = 2000, stepMs = 20 } = {}): Router =&gt; {
+  const router = Router();
+  router.get("/orders/:id/summary", async (req, res) =&gt; {
+    const minVersion = Number(req.query.minVersion ?? 0);
+    const deadline = performance.now() + waitMs;
+    for (;;) {
+      const r = await pool.query&lt;OrderSummaryDto&gt;(SELECT, [req.params.id]);
+      const row = r.rows[0];
+      if (row &amp;&amp; row.version &gt;= minVersion) {
+        res.json(row);
+        return;
+      }
+      if (minVersion === 0 &amp;&amp; !row) {
+        res.status(404).json({ error: "not_found" });
+        return;
+      }
+      // خلص الوقت: مش بنرجّع data قديمة كأنها جديدة، بنقول للـ client إنها لسه بتتجهز
+      if (performance.now() &gt; deadline) {
+        res.status(202).set("retry-after", "1").json({ status: "processing", seen: row ?? null });
+        return;
+      }
+      await new Promise((resolve) =&gt; setTimeout(resolve, stepMs));
+    }
+  });
+  return router;
+};</code></pre>
+<pre data-file="l27/p6-ryw.ts"><code class="language-typescript">const { srv, post, get } = await start();
+
+// (1) المشكلة: الـ projector شغال كل 200ms والـ GET جاي بعد الـ POST على طول
+let projector = startProjector(lab.pool, 200);
+const seen: Record&lt;string, number&gt; = {};
+for (let i = 0; i &lt; 100; i++) {
+  const { body } = await post(`u${i}@example.com`);
+  const r = await get(body.orderId);
+  const key = r.http === 404 ? "404 not found" : r.body.status;
+  seen[key] = (seen[key] ?? 0) + 1;
+}
+console.log("POST then GET, no token:", seen);
+
+// (2) الحل بالـ token: الـ POST بيرجّع version والـ GET بيستنى لحد ما يوصلها
+const seenToken: Record&lt;string, number&gt; = {};
+const waits: number[] = [];
+for (let i = 0; i &lt; 100; i++) {
+  const { body } = await post(`t${i}@example.com`);
+  const t0 = performance.now();
+  const r = await get(body.orderId, body.version);
+  waits.push(performance.now() - t0);
+  seenToken[r.body.status] = (seenToken[r.body.status] ?? 0) + 1;
+}
+console.log("POST then GET with minVersion:", seenToken, `wait p50 ${pct(waits, 50).toFixed(0)} ms, p99 ${pct(waits, 99).toFixed(0)} ms`);
+
+// (3) الـ projector واقف: الـ token مش بيكدب، بيرجّع 202 بعد الـ timeout
+await projector.stop();
+const { body: stuck } = await post("stuck@example.com");
+const t0 = performance.now();
+const late = await get(stuck.orderId, stuck.version);
+console.log(`projector down: HTTP ${late.http} after ${(performance.now() - t0).toFixed(0)} ms`, late.body);
+await srv.close();
+
+// (4) تحديث الـ read table في نفس الـ transaction: مفيش lag خالص
+await lab.pool.query("update orders.outbox set projected_at = now()");
+const sync = await start((client, e) =&gt; applyOrderEvent(client, e as unknown as OutboxRow));
+const seenSync: Record&lt;string, number&gt; = {};
+for (let i = 0; i &lt; 100; i++) {
+  const { body } = await sync.post(`s${i}@example.com`);
+  const r = await sync.get(body.orderId);
+  seenSync[r.body.status] = (seenSync[r.body.status] ?? 0) + 1;
+}
+console.log("same transaction, POST then GET:", seenSync);
+
+// (5) التمن: الـ read table اتكسر يوقّع الكتابة نفسها، وقارن بالـ async
+const stock = async () =&gt; (await lab.pool.query("select stock from catalog.products where sku = 'SKU-MUG'")).rows[0].stock;
+await lab.pool.query("alter table read.order_summary rename to order_summary_broken");
+const before = await stock();
+const orphans0 = (await lab.pool.query("select count(*)::int as n from orders.orders")).rows[0].n;
+const broken = await sync.post("broken@example.com");
+const orphans1 = (await lab.pool.query("select count(*)::int as n from orders.orders")).rows[0].n;
+console.log(`read table broken, same transaction: HTTP ${broken.http}, new orders ${orphans1 - orphans0}, stock change ${(await stock()) - before}`);
+await sync.srv.close();
+
+// الأحداث اللي اتطبقت جوه الـ transaction خلاص اتحسبت: نعلّمها عشان العد يبقى صادق
+await lab.pool.query("update orders.outbox set projected_at = now() where projected_at is null");
+const asyncSide = await start();
+const ok = await asyncSide.post("still-works@example.com");
+console.log(`read table broken, async projector: HTTP ${ok.http}`);
+projector = startProjector(lab.pool, 50);
+await new Promise((r) =&gt; setTimeout(r, 300));
+const pending = (await lab.pool.query("select count(*)::int as n from orders.outbox where projected_at is null")).rows[0].n;
+console.log("events waiting while the read table is broken:", pending);
+await lab.pool.query("alter table read.order_summary_broken rename to order_summary");
+const fixedAt = performance.now();
+const pendingNow = async () =&gt; (await lab.pool.query("select count(*)::int as n from orders.outbox where projected_at is null")).rows[0].n as number;
+while ((await pendingNow()) &gt; 0 &amp;&amp; performance.now() - fixedAt &lt; 30_000) await new Promise((r) =&gt; setTimeout(r, 20));
+const after = await asyncSide.get(ok.body.orderId);
+console.log(`after the fix, caught up in ≈${(performance.now() - fixedAt).toFixed(0)} ms: status ${after.body.status}, pending ${await pendingNow()}`);
+await projector.stop();
+await asyncSide.srv.close();</code></pre>
+<pre><code class="language-plaintext">POST then GET, no token: { '404 not found': 98, placed: 2 }
+POST then GET with minVersion: { paid: 100 } wait p50 213 ms, p99 218 ms
+projector down: HTTP 202 after 2026 ms { status: 'processing', seen: null }
+same transaction, POST then GET: { paid: 100 }
+read table broken, same transaction: HTTP 500, new orders 0, stock change -1
+read table broken, async projector: HTTP 201
+projector error: 42P01
+projector error: 42P01
+projector error: 42P01
+projector error: 42P01
+projector error: 42P01
+events waiting while the read table is broken: 2
+after the fix, caught up in ≈32 ms: status paid, pending 0</code></pre>
+  <div class="ar-note">السطر الأول: من غير token، 98 من 100 جالهم 404 و2 شافوا <code>placed</code> لـ order مدفوع. التاني: بالـ token كلهم <code>paid</code> واستنوا حوالي 213 ms. التالت: الـ projector واقف فالرد 202 بعد حوالي 2 ثانية. الرابع: نفس الـ transaction، كلهم <code>paid</code>. الخامس: جدول القراءة بايظ مع الـ sync: POST فشل بـ 500، ومفيش order اتسجل، والـ stock نقص 1 ومرجعش. السادس: نفس العطل مع الـ async: الـ POST نجح بـ 201. وبعدها أخطاء <code>42P01</code> من الـ projector، و2 events مستنيين في أمان، وبعد التصليح لحق في حوالي 32 ms.</div>
+
+<pre data-file="l27/order-status.tsx"><code class="language-tsx">// اتعمله compile بس هنا: الـ useOptimistic نفسه اتشغّل واتشرح في درس React رقم 19
+"use client";
+import { useOptimistic, useState, useTransition } from "react";
+
+type Status = "placed" | "paid" | "payment_failed" | "processing";
+interface OrderView {
+  orderId: string;
+  status: Status;
+  version: number;
+}
+
+// الـ token بيتبعت مع الـ GET: والـ 202 معناها إن الـ read model لسه ملحقش
+async function fetchAtLeast(orderId: string, minVersion: number): Promise&lt;OrderView&gt; {
+  const res = await fetch(`/orders/${orderId}/summary?minVersion=${minVersion}`);
+  if (res.status === 202) return { orderId, status: "processing", version: minVersion };
+  return (await res.json()) as OrderView;
+}
+
+export function PayButton({ initial, pay }: { initial: OrderView; pay: (id: string) =&gt; Promise&lt;{ version: number }&gt; }) {
+  const [order, setOrder] = useState(initial);
+  const [shown, showOptimistic] = useOptimistic(order, (cur, status: Status) =&gt; ({ ...cur, status }));
+  const [pending, startTransition] = useTransition();
+
+  const onPay = () =&gt;
+    startTransition(async () =&gt; {
+      // المستخدم بيشوف "processing" فورًا، وبعدها الحقيقة من الـ server
+      showOptimistic("processing");
+      const { version } = await pay(order.orderId);
+      const fresh = await fetchAtLeast(order.orderId, version);
+      startTransition(() =&gt; setOrder(fresh));
+    });
+
+  return (
+    &lt;button disabled={pending} onClick={onPay}&gt;
+      {shown.status === "processing" ? "Processing…" : `Status: ${shown.status}`}
+    &lt;/button&gt;
+  );
+}</code></pre>
+
+  <table>
+    <tr><th>Screen</th><th>May be stale?</th><th>How</th></tr>
+    <tr><td>Order confirmation after pay</td><td>No</td><td>Return state from the command</td></tr>
+    <tr><td>"My orders" right after buying</td><td>A second or two</td><td><code>minVersion</code> token, then "processing"</td></tr>
+    <tr><td>Admin dashboard</td><td>Up to a minute</td><td>Async projection, age shown on screen</td></tr>
+    <tr><td>Monthly report</td><td>Hours</td><td>Materialized view on a schedule</td></tr>
+    <tr><td>Can this order be cancelled? (a decision)</td><td>Never</td><td>Load the aggregate on the write side</td></tr>
+    <tr><td>Stock check before charging</td><td>Never</td><td>Atomic <code>reserve</code> on the write side</td></tr>
+  </table>
+  <div class="ar-note">صف صف: تأكيد الـ order بعد الدفع مفيهوش أي تأخير، فبيترجع من الـ command نفسه. "طلباتي" بعد الشراء تستحمل ثانية أو اتنين، بالـ <code>minVersion</code> وبعدين "processing". الـ dashboard بتاع الـ admin يستحمل لحد دقيقة، بـ async projection ومكتوب على الشاشة عمر الـ data. التقرير الشهري يستحمل ساعات، بـ materialized view مجدول. "ممكن يتلغي؟" لما يبقى قرار: أبدًا مش من الـ read model، حمّل الـ aggregate. وفحص الـ stock قبل الخصم: أبدًا، بـ <code>reserve</code> atomic في جانب الكتابة.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>العطل الحقيقي هو <b>read-your-writes</b>: العميل دفع، والصفحة اللي بعدها بتوريه الحالة القديمة. مع projector بيعمل poll كل 200 ms و GET بعد كل POST على طول، 98 من 100 جالهم 404، و2 شافوا <code>placed</code> لـ order مدفوع خلاص. عندك 5 حلول، وكل واحد ليه تمن مختلف:</p>
+    <ol>
+      <li><b>رجّع الحالة الجديدة من الـ command.</b> رد الـ POST أصلًا بيقول <code>{ kind: "paid", version: 2 }</code>، فصفحة التأكيد بتعرض ده ومبتقراش حاجة. ببلاش، وبيغطي أشهر حالة.</li>
+      <li><b>token اسمه <code>minVersion</code>.</b> الـ POST بيرجّع الـ version، والـ GET بيستنى لحد ما الـ read model يوصلها. الحقيقي: 100 من 100 جديدة، بانتظار حوالي 213 ms (قريب من الـ poll بتاع 200 ms، لأن كل POST وقع بعد دورة على طول). ده بيمسك request مفتوح، فلازم له deadline. ولما الـ projector وقف رد بـ <code>202</code> و<code>Retry-After</code> بعد حوالي 2 ثانية، بدل ما يرجّع data قديمة كأنها جديدة.</li>
+      <li><b>الـ Optimistic UI.</b> اعرض النتيجة المتوقعة فورًا وبعدين صلّح: <code>useOptimistic</code>، اتشغّل واتشرح في <a href="../../05-React/lessons/19-concurrent-hooks-actions.html">درس React رقم 19</a>. ده تخمين على الشاشة، فالفشل لازم يرجع قدام المستخدم بوضوح.</li>
+      <li><b>اعرض "processing".</b> كن صريح إن الشغل لسه ماشي. ده الصح لما الانتظار طويل والمستخدم يقدر يعمل حاجة تانية: دفعة تحت المراجعة، أو export.</li>
+      <li><b>حدّث جدول القراءة في نفس الـ transaction.</b> مفيش lag خالص: 100 من 100 جديدة. التمن متقاس في الجزء 7: الـ write p50 راح من حوالي 0.7–0.9 ms لحوالي 1.2 ms مع commits متأمّنة على الـ disk. وفيه تمن أوحش: لما جدول القراءة باظ، الـ POST فشل بـ 500، يعني bug في القراءة بقى بيوقّف البيع. وكمان كشف ثغرة حقيقية في الـ service: الـ stock اتحجز قبل الـ save الفاشل ومرجعش (−1). ومع الـ projector الـ async، نفس العطل سايب الـ POSTs بـ 201، و2 events مستنيين في أمان، ولحق في حوالي 32 ms بعد التصليح.</li>
+    </ol>
+    <p>اختار لكل شاشة في جدول، واتفق عليه مع الـ product. والصف الأهم: <b>عمرك ما تاخد قرار من read model.</b> الـ commands بتحمّل الـ aggregate.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      بعد ما تضيف projection لقائمة الطلبات، هيجيلك bug report "عملت طلب وملقيتوش". قبل ما تعمل sleep في الـ frontend، خلّي الـ POST يرجّع <code>version</code>، والـ Next page تبعته كـ <code>minVersion</code>، وارسم حالة "بنجهّز طلبك" للـ 202. والغلطة الشائعة: تزوّد الـ polling لـ 1 ms عشان تخبّي المشكلة، فالـ DB تتضرب والـ race يفضل موجود.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "A user updates their profile and the page still shows the old value. Your read model is async. What do you do?" → First return the new state from the command so the same screen needs no read. For the next page, pass a version token and let the read wait with a deadline, then show "processing". Don't add a sleep, and don't route all reads to the write side.
+    <div class="ar-note">"مستخدم عدّل بروفايله والصفحة لسه بتعرض القديم، والـ read model عندك async. تعمل إيه؟" ← الأول رجّع الحالة الجديدة من الـ command، فنفس الشاشة متحتاجش قراءة أصلًا. وللصفحة اللي بعدها ابعت version token وخلّي القراءة تستنى بـ deadline، وبعدها اعرض "processing". متحطش sleep، ومتحوّلش كل القراءة لجانب الكتابة.</div>
+  </div>
+
+  <h2 id="p7">Part 7 — CQRS without event sourcing: the ladder <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 7 — الـ CQRS من غير event sourcing: السلّم</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>CQRS without event sourcing is the most common form in practice. Treat the options as a ladder and climb a rung only when a measured signal pushes you. The script below runs the same screen through every rung available here, on 200,000 orders with durable commits (<code>fsync</code> on).</p>
+    <p>Two results stand out. First, adding an index to the <code>GROUP BY</code> query barely helps (≈62 → ≈54 ms), but <b>rewriting the query</b> to walk the index and count per row gets ≈0.5 ms, nearly the same as a read table (≈0.2 ms), with no new table and no lag. Second, the query that really needs to climb is the <b>sort on a computed value</b>: ≈214 ms as a join, ≈0.1 ms on a read table with an index on that column. That's what a signal looks like.</p>
+    <p>A <b>read replica</b> (rung 4) isn't run here because <a href="../../07-Databases/lessons/23-replication-read-replicas.html">section 07 · 2.7</a> measures replication lag. A <b>separate store</b> (rung 5) is the Elasticsearch shape from part 5. <b>Event sourcing</b> (rung 6) is <a href="./28-event-sourcing-postgres.html">the next lesson</a>, and it is a different decision: you adopt it because the history is itself valuable, never to make reads faster.</p>
+  </section>
+
+<pre class="diagram">
+  6  event sourcing          history is the source of truth
+  5  separate store          search or analytics engine, second system
+  4  read replica            same shape, more capacity, replication lag
+  3  async projections       read tables fed by events, lag, rebuilds
+  2  read tables, same tx    no lag, slower writes, read bugs block writes
+  1  separate query code     two files, one database   ◀── most apps stop here
+  │
+  └─ climb only when a measured signal pushes you
+</pre>
+  <div class="ar-note">السلّم من تحت لفوق. الدرجة 1 ملفين وداتابيز واحدة، ومعظم التطبيقات بتقف هنا. 2 جداول قراءة في نفس الـ transaction: مفيش lag بس الكتابة أبطأ وbugs القراءة بتوقّف الكتابة. 3 projections async: جداول قراءة بتتغذى من events، وفيها lag وإعادة بناء. 4 read replica: نفس الشكل وسعة أكبر، وفيها replication lag. 5 مخزن منفصل زي محرك بحث أو تحليلات، يعني نظام تاني. 6 event sourcing: التاريخ هو مصدر الحقيقة. والسهم تحت: اطلع درجة بس لما إشارة متقاسة تزقّك.</div>
+
+<pre data-file="l27/p7-ladder.ts"><code class="language-typescript">// تسخين: أول كتابات بتبقى أبطأ لأن الـ cache لسه فاضي
+const plainRepo = makePgOrderRepository(pool);
+await sampleMs(300, () =&gt; placeAndPay(plainRepo));
+
+// الدرجة 1: الـ query بيحسب وقت الطلب، والكتابة زي ما هي
+const write1 = await sampleMs(SAMPLES, () =&gt; placeAndPay(plainRepo));
+report("1 separate query code (GROUP BY)", await sampleMs(30, () =&gt; pool.query(JOIN_SQL)), write1, "none");
+
+// نفس الدرجة بـ index على المقاس: نفس الـ query بالـ group by مبيستفادش كتير
+await pool.query("create index orders_status_placed on orders.orders (status, placed_at desc); analyze orders.orders");
+const write1b = await sampleMs(SAMPLES, () =&gt; placeAndPay(plainRepo));
+report("1 + index, same GROUP BY query", await sampleMs(30, () =&gt; pool.query(JOIN_SQL)), write1b, "none");
+
+// نفس الدرجة والـ query اتكتب صح: الـ index بيجيب 50 صف والـ subquery بيعد لكل صف
+report("1 + index + correlated subquery", await sampleMs(30, () =&gt; pool.query(TUNED_SQL)), write1b, "none");
+
+// الدرجة 2: الـ read table بيتحدث جوه نفس الـ transaction
+const syncRepo = makePgOrderRepository(pool, (client, e) =&gt; applyOrderEvent(client, e as unknown as OutboxRow));
+const write2 = await sampleMs(SAMPLES, () =&gt; placeAndPay(syncRepo));
+report("2 read table, same transaction", await sampleMs(30, () =&gt; pool.query(TABLE_SQL)), write2, "none");
+
+// الدرجة 3: الـ projector بعيد عن الكتابة، والـ lag مقاس في الجزء 5
+await pool.query("update orders.outbox set projected_at = now()");
+const write3 = await sampleMs(SAMPLES, () =&gt; placeAndPay(plainRepo));
+while ((await projectBatch(pool, 500)) &gt; 0);
+report("3 read table, async projector", await sampleMs(30, () =&gt; pool.query(TABLE_SQL)), write3, "poll interval, see part 5");
+
+// الفرع الجانبي: materialized view، الكتابة مبتحسش بيه والتمن في الـ refresh
+const t0 = performance.now();
+await pool.query("refresh materialized view concurrently read.order_dashboard");
+const refreshS = (performance.now() - t0) / 1000;
+report("  matview (reports)", await sampleMs(30, () =&gt; pool.query(MV_SQL)), write3, `refresh interval, each refresh ${refreshS.toFixed(1)} s`);
+
+console.log(rows.join("\n"));
+
+// الإشارة إنك تطلع درجة: ترتيب على قيمة محسوبة، مفيش index يقدر يساعد الـ join فيها
+await pool.query("create index on read.order_summary (item_count desc, placed_at desc); analyze read.order_summary");
+const topJoin = await sampleMs(15, () =&gt;
+  pool.query(`select o.id, count(*)::int as items from orders.orders o join orders.order_lines l on l.order_id = o.id
+              group by o.id order by items desc, o.placed_at desc limit 50`),
+);
+const topTable = await sampleMs(30, () =&gt; pool.query("select order_id, item_count from read.order_summary order by item_count desc, placed_at desc limit 50"));
+console.log(`sort by items: join ${pct(topJoin, 50).toFixed(1)} ms, read table with index ${pct(topTable, 50).toFixed(1)} ms`);</code></pre>
+<pre><code class="language-plaintext">1 separate query code (GROUP BY)     read p50   62.1 ms   write p50   1.1 ms   stale: none
+1 + index, same GROUP BY query       read p50   54.4 ms   write p50   0.7 ms   stale: none
+1 + index + correlated subquery      read p50    0.5 ms   write p50   0.7 ms   stale: none
+2 read table, same transaction       read p50    0.2 ms   write p50   1.2 ms   stale: none
+3 read table, async projector        read p50    0.2 ms   write p50   0.9 ms   stale: poll interval, see part 5
+  matview (reports)                  read p50    0.2 ms   write p50   0.9 ms   stale: refresh interval, each refresh 1.2 s
+sort by items: join 213.9 ms, read table with index 0.1 ms</code></pre>
+  <div class="ar-note">كل سطر درجة: وقت القراءة عند p50، ووقت الكتابة عند p50، وقد إيه الـ data قديمة. الـ index على نفس الـ GROUP BY نزّلها من 62 لـ 54 ms بس، وإعادة كتابة الـ query نزّلتها لـ 0.5 ms. الكتابة حوالي 0.7–0.9 ms، وفي نفس الـ transaction حوالي 1.2 ms. وآخر سطر هو الإشارة الحقيقية: الترتيب بقيمة محسوبة 214 ms بالـ join، و0.1 ms من جدول قراءة عليه index. الأوقات تقريبية على جهاز عليه ضغط.</div>
+
+  <table>
+    <tr><th>Rung</th><th>You pay</th><th>What breaks</th><th>Signal to climb</th></tr>
+    <tr><td>1 Separate query code</td><td>One file per screen</td><td>Slow aggregation on big tables; SQL coupled to the schema</td><td>Still over budget after an index and a rewrite, or sorting on a computed value</td></tr>
+    <tr><td>2 Read tables, same transaction</td><td>≈0.3–0.5 ms per write here; one write path per screen</td><td>A read-side bug fails writes; hot summary rows contend</td><td>Write latency budget, or read models start blocking sales</td></tr>
+    <tr><td>3 Async projections</td><td>Projector, versions, rebuilds, monitoring, lag</td><td>Read-your-writes; backlog; reordering</td><td>Read load still hurts the primary</td></tr>
+    <tr><td>4 Read replica</td><td>Infrastructure, routing, replication lag</td><td>Lag spikes; read-your-writes across failover</td><td>You need a different shape or engine</td></tr>
+    <tr><td>5 Separate store</td><td>A second system to run and keep in sync</td><td>Two failure modes; full rebuilds are expensive</td><td>The history itself becomes the requirement</td></tr>
+    <tr><td>6 Event sourcing</td><td>All of the above, plus immutable events forever</td><td>See lessons 28 and 29</td><td>Rarely: audit trail, ledger, temporal queries</td></tr>
+  </table>
+  <div class="ar-note">صف صف. الدرجة 1: بتدفع ملف لكل شاشة، وبيقع لو الـ aggregation بطيئة على جداول كبيرة والـ SQL مربوط بالـ schema، وتطلع منها لو لسه فوق الميزانية بعد index وإعادة كتابة أو عندك ترتيب بقيمة محسوبة. الدرجة 2: حوالي 0.3–0.5 ms زيادة لكل كتابة هنا و write path لكل شاشة، وبيقع لما bug قراءة يوقّف الكتابة أو الصفوف السخنة تتزاحم، وتطلع لو ميزانية الكتابة خلصت أو الـ read models بدأت توقّف البيع. الدرجة 3: projector و versions وإعادة بناء و monitoring و lag، وبيقع في read-your-writes والـ backlog وتبديل الترتيب، وتطلع لو حمل القراءة لسه بيتعب الـ primary. الدرجة 4: infrastructure و routing و replication lag، وبيقع في قفزات الـ lag و read-your-writes وقت الـ failover، وتطلع لو محتاج شكل أو محرك مختلف. الدرجة 5: نظام تاني تشغّله وتزامنه، وبيقع بطريقتين عطل وإعادة بناء غالية، وتطلع لو التاريخ نفسه بقى هو المطلوب. الدرجة 6: كل اللي فات ومعاه events ثابتة للأبد، والتفاصيل في الدرسين 28 و29، ونادرًا ما تطلع لها: audit trail أو ledger أو temporal queries.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ CQRS من غير event sourcing هو أشهر شكل عمليًا. اتعامل مع الاختيارات كسلّم، واطلع درجة بس لما إشارة متقاسة تزقّك. السكريبت اللي فوق بيشغّل نفس الشاشة على كل درجة متاحة هنا، على 200,000 order و commits متأمّنة (<code>fsync</code> شغال).</p>
+    <p>نتيجتين مهمين. الأولى: إضافة index على query الـ <code>GROUP BY</code> بتساعد شوية بس (حوالي 62 ← 54 ms)، لكن <b>إعادة كتابة الـ query</b> بحيث يمشي على الـ index ويعد لكل صف بتوصّل لحوالي 0.5 ms، قريب جدًا من جدول القراءة (حوالي 0.2 ms)، من غير جدول جديد ومن غير lag. التانية: الـ query اللي فعلًا محتاج يطلع درجة هو <b>الترتيب بقيمة محسوبة</b>: حوالي 214 ms بالـ join، وحوالي 0.1 ms من جدول قراءة عليه index. هي دي شكل الإشارة.</p>
+    <p>الـ <b>read replica</b> (الدرجة 4) مش متشغّل هنا لأن <a href="../../07-Databases/lessons/23-replication-read-replicas.html">القسم 07 · 2.7</a> بيقيس الـ replication lag. و<b>المخزن المنفصل</b> (الدرجة 5) هو شكل Elasticsearch من الجزء 5. و<b>الـ event sourcing</b> (الدرجة 6) هو <a href="./28-event-sourcing-postgres.html">الدرس الجاي</a>، وده قرار تاني خالص: بتاخده لأن التاريخ نفسه ليه قيمة، مش عشان القراءة تبقى أسرع.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      قبل ما تكتب RFC لـ "CQRS + Kafka"، افتح <code>EXPLAIN</code> للـ query البطيء وجرّب تعيد كتابته. لو نزل تحت الميزانية، خلصت في الدرجة 1. ولو الشاشة بتترتب بقيمة محسوبة وبتزيد، اكتب ADR يقول الإشارة دي، والرقم قبل وبعد، والـ staleness المقبولة. ده اللي بيفرّق سنيور بيختار درجة، عن حد بينسخ architecture شافها في مقال.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Exit-test style question</b>
+    "When would you stop at rung 1?" → When one well-indexed statement meets the read budget, read traffic doesn't threaten the primary, and users need to see their own writes immediately. That's most services. Rung 1 costs one file and has no lag, so every later rung has to justify a real number that rung 1 failed to meet.
+    <div class="ar-note">"إمتى تقف عند الدرجة 1؟" ← لما statement واحد عليه index صح يلحق ميزانية القراءة، وحمل القراءة مش مهدد الـ primary، والمستخدمين محتاجين يشوفوا كتابتهم فورًا. وده معظم الـ services. الدرجة 1 تمنها ملف واحد ومفيهاش lag، فكل درجة بعدها لازم تبرر نفسها برقم حقيقي الدرجة 1 ماعرفتش تحققه.</div>
+  </div>
+
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+  <div class="compare">
+    <div class="bad"><b>❌ Last arrival wins</b>
+<pre><code class="language-sql">-- آخر event يوصل بيكتب فوق اللي قبله
+on conflict (order_id) do update
+  set status = excluded.status,
+      version = excluded.version;</code></pre></div>
+    <div class="good"><b>✅ Guard by version, fill missing facts</b>
+<pre><code class="language-sql">-- الـ status من أعلى version بس، والمكرر no-op
+on conflict (order_id) do update set
+  status = case when excluded.version &gt; read.order_summary.version
+                then excluded.status else read.order_summary.status end,
+  version = greatest(excluded.version, read.order_summary.version),
+  customer_email = coalesce(read.order_summary.customer_email, excluded.customer_email)
+where excluded.version &gt; read.order_summary.version
+   or (read.order_summary.customer_email is null and excluded.customer_email is not null);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الأولانية بتخلّي آخر event يوصل يكتب فوق الكل: في التجربة 2 من 6 ترتيبات بس طلعت صح، وorder مدفوع رجع <code>placed</code>. ✅ التانية بتخلّي الـ status ييجي من أعلى version، وبتملى الحقايق الناقصة مهما كان الترتيب، والمكرر مش بيكتب حاجة: 6 من 6.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Deciding from the read model</b>
+<pre><code class="language-typescript">// ❌ القرار مبني على read model ممكن يكون متأخر
+const { rows } = await pool.query("select status from read.order_summary where order_id = $1", [orderId]);
+if (rows[0]?.status !== "placed") throw new OrderRuleViolation("pay-only-placed", "cannot pay");
+await pool.query("update orders.orders set status = 'paid' where id = $1", [orderId]);</code></pre></div>
+    <div class="good"><b>✅ Deciding on the aggregate</b>
+<pre><code class="language-typescript">// ✅ القرار جوه الـ aggregate، وعلى الـ state الحقيقي، والـ version بتحمي السباق
+const order = await orders.findById(orderId);
+if (!order) throw new Error("not found");
+order.markPaid(ref, clock.now());
+await orders.save(order);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ read model ممكن يكون متأخر، فالقرار مبني على حالة قديمة: order اتلغى من ثانية ولسه ظاهر <code>placed</code>، فالدفع هيعدّي. وكمان الـ <code>update</code> المباشر بيعدّي من غير الـ invariants. ✅ حمّل الـ aggregate، وخلّيه يطبّق قاعدته على الحالة الحقيقية، والـ version في الـ <code>save</code> بتحمي من السباق.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>count(*)</code> with no cast</b>
+<pre><code class="language-typescript">// ❌ الـ driver بيرجّع bigint كـ string
+const { rows } = await pool.query("select count(*) as items from orders.order_lines");
+return rows[0].items &gt; 9;</code></pre></div>
+    <div class="good"><b>✅ Cast in the SQL</b>
+<pre><code class="language-typescript">// ✅ الـ cast جوه الـ SQL، والنوع بقى number بجد
+const { rows } = await pool.query&lt;{ items: number }&gt;("select count(*)::int as items from orders.order_lines");
+return rows[0]!.items &gt; 9;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ driver الـ <code>pg</code> بيرجّع <code>bigint</code> كـ string عشان ميخسرش دقة، فالـ DTO بيبقى فيه <code>'2000'</code> بدل <code>2000</code> (ده الناتج الحقيقي من التمرين 1)، والمقارنة والترتيب في الـ frontend بيبوظوا بهدوء. ✅ اعمل <code>::int</code> جوه الـ SQL، والنوع بقى رقم بجد. ولو القيمة ممكن تعدّي 2 مليار سيبها string وحوّلها عن قصد.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Plain refresh on a timer</b>
+<pre><code class="language-typescript">// ❌ كل دقيقة والقراء بيقفوا، ولو الـ refresh طوّل بيتراكموا فوق بعض
+setInterval(() =&gt; pool.query("refresh materialized view read.order_dashboard"), 60_000);</code></pre></div>
+    <div class="good"><b>✅ Concurrent, one at a time</b>
+<pre><code class="language-typescript">// ✅ لو فيه refresh شغال بنسيب الدور ده يعدّي، والقراء شغالين عادي
+export async function refreshDashboard(db: Pool): Promise&lt;boolean&gt; {
+  const c = await db.connect();
+  try {
+    const { rows } = await c.query("select pg_try_advisory_lock(hashtext('refresh:order_dashboard')) as ok");
+    if (!rows[0].ok) return false;
+    try {
+      await c.query("refresh materialized view concurrently read.order_dashboard");
+      return true;
+    } finally {
+      await c.query("select pg_advisory_unlock(hashtext('refresh:order_dashboard'))");
+    }
+  } finally {
+    c.release();
+  }
+}</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ كل دقيقة القراء بيقفوا طول مدة الـ refresh (أسوأ قراءة 1,610 ms في التجربة)، ولو دورة طوّلت عن الدقيقة بيتراكموا. ✅ <code>CONCURRENTLY</code> بيسيب القراء شغالين، والـ advisory lock بيخلّي refresh واحد بس يشتغل. الحقيقي: اتنين في نفس اللحظة طلعوا <code>[ true, false ]</code>، واللي بعدهم اشتغل عادي.</p>
+  </section>
+
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. One statement, one DTO <span class="lvl lvl-1">🟢 easy</span></b>
+    Write the order details page as one SQL statement that returns the lines inside the DTO with <code>jsonb_agg</code>. Count the queries against <code>findById</code>. Then print <code>count(*)</code> with and without a cast and see what the driver gives you.
+    <div class="ar-note">اكتب صفحة تفاصيل الـ order كـ statement واحد بيرجّع الـ lines جوه الـ DTO بـ <code>jsonb_agg</code>. عد الـ queries قصاد <code>findById</code>. وبعدين اطبع <code>count(*)</code> بالـ cast ومن غيره وشوف الـ driver بيرجّع إيه.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="l27/ex1-details.ts"><code class="language-typescript">// تمرين 1: صفحة تفاصيل order بـ statement واحد بيرجّع DTO جاهز، وبنقارن بالـ repository
+import { readFileSync } from "node:fs";
+import { startDb } from "./lab.ts";
+import { seedOrders } from "./seed.ts";
+import { makePgOrderRepository } from "../after/src/modules/orders/infrastructure/pg-order-repository.ts";
+
+const db = await startDb();
+const { pool } = db;
+
+// الـ lines جوه الـ DTO نفسه: jsonb_agg بيجمعهم من غير ما تعمل query تاني
+const DETAILS_SQL = `
+  select o.id, o.customer_email as "customerEmail", o.status, o.total_minor as "totalMinor", o.currency,
+         coalesce(jsonb_agg(jsonb_build_object('sku', l.sku, 'qty', l.qty, 'unitPriceMinor', l.unit_price_minor)) filter (where l.sku is not null), '[]') as lines
+  from orders.orders o left join orders.order_lines l on l.order_id = o.id
+  where o.id = $1
+  group by o.id`;
+
+try {
+  await pool.query(readFileSync(new URL("../after/schema.sql", import.meta.url), "utf8"));
+  await seedOrders(pool, 1_000);
+  const id = (await pool.query("select md5('6')::uuid as id")).rows[0].id;
+
+  let queries = 0;
+  const counted = new Proxy(pool, {
+    get: (t, p, r) =&gt; (p === "query" ? (...a: unknown[]) =&gt; (queries++, (t.query as (...x: unknown[]) =&gt; unknown)(...a)) : Reflect.get(t, p, r)),
+  });
+  await makePgOrderRepository(counted).findById(id);
+  console.log("repository findById:", queries, "queries");
+
+  queries = 0;
+  const { rows } = await counted.query(DETAILS_SQL, [id]);
+  console.log("one statement:", queries, "query");
+  console.log(rows[0]);
+
+  // الغلطة الشائعة: count من غير cast بيرجع string
+  const raw = await pool.query("select count(*) as n, count(*)::int as m from orders.order_lines");
+  console.log("count(*):", raw.rows[0]);
+} finally {
+  await db.stop();
+}</code></pre>
+<pre><code class="language-plaintext">repository findById: 2 queries
+one statement: 1 query
+{
+  id: '1679091c-5a88-0faf-6fb5-e6087eb1b2dc',
+  customerEmail: 'user6@example.com',
+  status: 'paid',
+  totalMinor: 33500,
+  currency: 'EGP',
+  lines: [ { qty: 1, sku: 'SKU-1', unitPriceMinor: 25000 } ]
+}
+count(*): { n: '2000', m: 2000 }</code></pre>
+      <div class="ar-note">الـ repository عمل 2 queries، و الـ statement واحد بس، والـ lines جوه الـ DTO نفسه. وآخر سطر هو الفرق: <code>n</code> طلع string و<code>m</code> طلع رقم.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. A third event <span class="lvl lvl-2">🟡 medium</span></b>
+    Add <code>OrderCancelled</code> as version 3 and check every delivery order of three events, each delivered twice. Decide before running: does the guard need to change?
+    <div class="ar-note">ضيف <code>OrderCancelled</code> كـ version 3 واختبر كل ترتيبات الوصول لـ 3 events وكل واحد واصل مرتين. قرر قبل ما تشغّل: الـ guard محتاج يتغير؟</div>
+    <details><summary>Hint · تلميح</summary>
+      Six messages with three pairs of duplicates give 6! / (2! · 2! · 2!) = 90 distinct orders.
+      <div class="ar-note">6 رسايل فيهم 3 أزواج مكررة بيدّوك 6! / (2! · 2! · 2!) = 90 ترتيب مختلف.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="l27/ex2-cancelled.ts"><code class="language-typescript">// تمرين 2: event تالت OrderCancelled، وكل ترتيبات الوصول لازم تخلص على نفس الصف
+import { readFileSync } from "node:fs";
+import { startDb } from "./lab.ts";
+import { GUARDED_UPSERT } from "../after-cqrs/src/modules/orders/projections/order-summary.ts";
+
+const db = await startDb();
+const { pool } = db;
+const ORDER = "00000000-0000-4000-8000-000000000009";
+const statusOf: Record&lt;string, string&gt; = { P: "placed", V: "paid", C: "cancelled" };
+const versionOf: Record&lt;string, number&gt; = { P: 1, V: 2, C: 3 };
+
+// الـ guard مش محتاج أي تعديل: event جديد يعني سطر في الخريطة بس
+const apply = (c: string) =&gt;
+  pool.query(GUARDED_UPSERT, [
+    ORDER,
+    statusOf[c],
+    versionOf[c],
+    c === "P" ? "sara@example.com" : null,
+    c === "P" ? 62000 : null,
+    c === "P" ? "EGP" : null,
+    c === "P" ? 1 : null,
+    c === "P" ? ["SKU-MUG"] : null,
+    c === "P" ? "2026-11-04T10:00:00Z" : null,
+  ]);
+
+const distinct = new Set&lt;string&gt;();
+const permute = (a: string[], k = 0): void =&gt; {
+  if (k === a.length) {
+    distinct.add(a.join(""));
+    return;
+  }
+  for (let i = k; i &lt; a.length; i++) {
+    [a[k], a[i]] = [a[i]!, a[k]!];
+    permute(a, k + 1);
+    [a[k], a[i]] = [a[i]!, a[k]!];
+  }
+};
+// كل event واصل مرتين: 6 رسايل يعني 90 ترتيب مختلف
+permute(["P", "P", "V", "V", "C", "C"]);
+
+try {
+  await pool.query(readFileSync(new URL("../after-cqrs/schema.sql", import.meta.url), "utf8"));
+  let good = 0;
+  for (const order of distinct) {
+    await pool.query("truncate read.order_summary");
+    for (const c of order) await apply(c);
+    const r = (await pool.query("select status, version, customer_email, total_minor from read.order_summary")).rows[0];
+    if (r.status === "cancelled" &amp;&amp; r.version === 3 &amp;&amp; r.customer_email === "sara@example.com" &amp;&amp; r.total_minor === 62000) good++;
+  }
+  console.log(`${good} of ${distinct.size} delivery orders end right`);
+} finally {
+  await db.stop();
+}</code></pre>
+<pre><code class="language-plaintext">90 of 90 delivery orders end right</code></pre>
+      <div class="ar-note">الـ guard متغيرش خالص: 90 من 90 طلعت صح. الـ event الجديد سطر في خريطة الـ status بس، لأن القاعدة مبنية على الـ version مش على نوع الـ event.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. Wake the projector <span class="lvl lvl-3">🔴 hard</span></b>
+    Replace the polling sleep with <code>LISTEN/NOTIFY</code>: a trigger on the outbox notifies, the projector wakes up, and a slow 1,000 ms poll stays as a safety net in case a notification is missed. Measure the lag and compare it with part 5.
+    <div class="ar-note">بدّل الـ sleep بتاع الـ polling بـ <code>LISTEN/NOTIFY</code>: trigger على الـ outbox بيبعت إشعار، والـ projector بيصحى، و poll بطيء كل 1,000 ms يفضل شبكة أمان لو إشعار ضاع. قيس الـ lag وقارنه بالجزء 5.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="l27/ex3-notify.ts"><code class="language-typescript">// تمرين 3: LISTEN/NOTIFY بيصحّي الـ projector، والـ poll البطيء بيفضل شبكة أمان لو الإشعار ضاع
+import pg from "pg";
+import { listen, startLab } from "../lib/lab.ts";
+import { compose } from "../after-cqrs/src/composition-root.ts";
+import { projectBatch } from "../after-cqrs/src/modules/orders/projections/order-summary.ts";
+
+const lab = await startLab(new URL("../after-cqrs/schema.sql", import.meta.url));
+const { app } = compose({ pool: lab.pool, paymentsUrl: lab.paymentsUrl, send: () =&gt; {} });
+const srv = await listen(app);
+const pct = (xs: number[], p: number) =&gt; [...xs].sort((a, b) =&gt; a - b)[Math.min(xs.length - 1, Math.floor((p / 100) * xs.length))]!;
+
+// الإشعار بيتبعت بعد الـ commit بس، فمفيش حد بيصحى على data لسه مش ظاهرة
+const NOTIFY_SQL = `
+  create function orders.notify_outbox() returns trigger language plpgsql as $$
+  begin
+    perform pg_notify('outbox', '');
+    return null;
+  end $$;
+  create trigger outbox_notify after insert on orders.outbox for each statement execute function orders.notify_outbox();`;
+
+function startNotifiedProjector(pgUrl: string, pool: pg.Pool, fallbackMs: number) {
+  const listener = new pg.Client({ connectionString: pgUrl });
+  let running = true;
+  let wake = () =&gt; {};
+  const loop = (async () =&gt; {
+    await listener.connect();
+    await listener.query("listen outbox");
+    listener.on("notification", () =&gt; wake());
+    while (running) {
+      const n = await projectBatch(pool);
+      if (n &gt; 0) continue;
+      // استنى إشعار أو الـ fallback، أيهما ييجي الأول
+      await new Promise&lt;void&gt;((resolve) =&gt; {
+        const t = setTimeout(resolve, fallbackMs);
+        wake = () =&gt; {
+          clearTimeout(t);
+          resolve();
+        };
+      });
+    }
+  })();
+  return {
+    stop: async () =&gt; {
+      running = false;
+      wake();
+      await loop;
+      await listener.end();
+    },
+  };
+}
+
+try {
+  await lab.pool.query("update catalog.products set stock = 1000000");
+  await lab.pool.query(NOTIFY_SQL);
+  const projector = startNotifiedProjector(lab.pgUrl, lab.pool, 1000);
+  await new Promise((r) =&gt; setTimeout(r, 100));
+  const lags: number[] = [];
+  for (let i = 0; i &lt; 100; i++) {
+    const res = await fetch(srv.url + "/orders", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ customerEmail: `n${i}@example.com`, lines: [{ sku: "SKU-MUG", qty: 1 }] }),
+    });
+    const { orderId, version } = (await res.json()) as { orderId: string; version: number };
+    const t0 = performance.now();
+    for (;;) {
+      const r = await lab.pool.query("select version from read.order_summary where order_id = $1", [orderId]);
+      if (r.rows[0]?.version &gt;= version) break;
+      await new Promise((ok) =&gt; setTimeout(ok, 1));
+    }
+    lags.push(performance.now() - t0);
+  }
+  await projector.stop();
+  console.log(`notify + 1000 ms fallback: lag p50 ${pct(lags, 50).toFixed(0)} ms, p99 ${pct(lags, 99).toFixed(0)} ms (n=${lags.length})`);
+} finally {
+  await srv.close();
+  await lab.stop();
+}</code></pre>
+<pre><code class="language-plaintext">notify + 1000 ms fallback: lag p50 1 ms, p99 18 ms (n=100)</code></pre>
+      <div class="ar-note">الـ lag عند p50 حوالي 1 ms بدل حوالي 633 ms عند الـ poll كل 1,000 ms. وخد بالك: الـ NOTIFY مش مضمون لو الـ connection وقع، فالـ fallback مش اختياري.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project: one dashboard, CQRS light <span class="lvl lvl-3">🔴 project</span></b>
+    The README artifact. In your side project add a <code>queries/</code> folder and serve one dashboard page from one SQL statement that returns a DTO, with the <code>read-side-skips-the-domain</code> rule in CI. Write a per-screen table of what may be stale and how much. Measure the screen before and after, and stop at rung 1 unless a number says otherwise.
+    <div class="ar-note">ده الـ artifact المطلوب في الـ README. في مشروعك الجانبي ضيف فولدر <code>queries/</code> واخدم صفحة dashboard واحدة بـ statement واحد بيرجّع DTO، ومعاها rule الـ <code>read-side-skips-the-domain</code> في الـ CI. اكتب جدول لكل شاشة: إيه اللي ممكن يبقى قديم وقد إيه. قيس الشاشة قبل وبعد، وخليك عند الدرجة 1 إلا لو رقم قال غير كده.</div>
+    <details><summary>Hint · تلميح</summary>
+      Start from the dashboard your users open most. Paste the <code>EXPLAIN (ANALYZE, BUFFERS)</code> output into the ADR, so the next person can see why you stopped or climbed.
+      <div class="ar-note">ابدأ بالـ dashboard اللي المستخدمين بيفتحوه أكتر حاجة. وحط ناتج <code>EXPLAIN (ANALYZE, BUFFERS)</code> في الـ ADR، عشان اللي بعدك يعرف إنت وقفت أو طلعت ليه.</div>
+    </details>
+  </div>
+
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>CQRS = split commands and queries into separate objects. Events, a bus and a second database are optional extras.</li>
+    <li>Aggregate shape isn't screen shape: N+1 is the symptom (1 + 2N queries), loading 50k aggregates for 50 rows is the disease.</li>
+    <li>Rung 1: commands through aggregates, queries as SQL returning DTOs, same DB, two files. Enforce it with a dependency rule.</li>
+    <li>A bus pays only with behaviours on many commands or commands on a queue; it costs F12 and stack depth (default limit is 10 frames).</li>
+    <li>Materialized view: <code>CONCURRENTLY</code> needs a unique index and doesn't block readers; staleness = refresh interval.</li>
+    <li>Projection upsert: status from the highest version, fill missing facts, duplicates are a no-op. Partition workers by aggregate.</li>
+    <li>Lag ≈ half the poll interval; alert on the age of the oldest unprojected event; rebuild into a new table and swap.</li>
+    <li>Read-your-writes: return state from the command, <code>minVersion</code> with a deadline, optimistic UI, "processing", or same transaction.</li>
+    <li>Same-transaction read tables mean a read bug can fail a write. Never decide from a read model.</li>
+    <li>Climb one rung at a time, and only for a measured signal such as a sort on a computed value.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ CQRS = فصل الـ commands والـ queries في objects منفصلة. الـ events والـ bus والداتابيز التانية إضافات اختيارية.</li>
+      <li>شكل الـ aggregate مش شكل الشاشة: الـ N+1 عرض (1 + 2N query)، والمرض هو تحميل 50k aggregate عشان 50 صف.</li>
+      <li>الدرجة 1: الـ commands من الـ aggregates، والـ queries SQL بيرجّع DTOs، نفس الـ DB وملفين. وثبّتها بـ dependency rule.</li>
+      <li>الـ bus بيستاهل بس مع behaviors على commands كتير أو commands على queue، وتمنه الـ F12 وعمق الـ stack (الحد الافتراضي 10 frames).</li>
+      <li>الـ materialized view: الـ <code>CONCURRENTLY</code> محتاج unique index ومبيوقفش القراء، وقدم الـ data = الـ refresh interval.</li>
+      <li>الـ upsert بتاع الـ projection: الـ status من أعلى version، واملى الحقايق الناقصة، والمكرر no-op. واعمل partition للـ workers بالـ aggregate.</li>
+      <li>الـ lag حوالي نص فترة الـ polling، والـ alert على عمر أقدم event ما اتطبقش، وإعادة البناء في جدول جديد وبعدين swap.</li>
+      <li>الـ read-your-writes: رجّع الحالة من الـ command، أو <code>minVersion</code> بـ deadline، أو optimistic UI، أو "processing"، أو نفس الـ transaction.</li>
+      <li>جداول القراءة في نفس الـ transaction معناها إن bug قراءة ممكن يوقّع كتابة. وعمرك ما تقرر من read model.</li>
+      <li>اطلع درجة واحدة في المرة، وبس لإشارة متقاسة زي الترتيب بقيمة محسوبة.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 09 · 3.2 — <b>CQRS</b>: فصل الـ write model (commands، aggregates، invariants) عن الـ read model (queries، denormalized views، DTOs مباشرة من SQL) — وإنه ممكن يكون بسيط جدًا (نفس الـ DB، handlers مختلفة)</label>
+    <label><input type="checkbox" data-key="r2"> 09 · 3.2 — Read models denormalized: materialized views، projection tables، Elasticsearch — eventual consistency بينهم والـ write model، وإزاي الـ UI بتتعامل معاها</label>
+    <label><input type="checkbox" data-key="r3"> 09 · 3.2 — Command handlers و query handlers، command bus/mediator pattern</label>
+    <label><input type="checkbox" data-key="r4"> 09 · 3.2 — <b>CQRS بدون event sourcing</b> كخيار وسط (الأشهر عمليًا)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://cqrs.wordpress.com/wp-content/uploads/2010/11/cqrs_documents.pdf">Greg Young — CQRS Documents</a></li>
+    <li><a href="https://martinfowler.com/bliki/CQRS.html">Martin Fowler — CQRS</a></li>
+    <li><a href="https://learn.microsoft.com/en-us/azure/architecture/patterns/cqrs">Microsoft Azure Architecture Center — CQRS pattern</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/sql-refreshmaterializedview.html">PostgreSQL docs — REFRESH MATERIALIZED VIEW</a></li>
+    <li><a href="https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-index">Elasticsearch API — index a document, external versioning</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./26-context-mapping-event-storming-acl.html"><small>← Previous</small>26 · Context Maps &amp; ACL</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./28-event-sourcing-postgres.html"><small>Next →</small>28 · Event Sourcing</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

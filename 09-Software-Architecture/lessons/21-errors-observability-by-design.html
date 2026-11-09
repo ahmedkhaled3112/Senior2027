@@ -1,0 +1,1742 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Errors &amp; Observability as Part of the Design — 09 Software Architecture</title>
+<meta name="section" content="09-Software-Architecture">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">09 · Software Architecture</a></span>
+    <span>·</span>
+    <span>Lesson 21 / 40</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+<header>
+    <h1>Errors &amp; Observability as Part of the Design</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 21 of 40 — Software Architecture</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">Node 22.19 · TypeScript 7 · Postgres 18 · Redis 8 · BullMQ 6 · OpenTelemetry SDK 2.12</span>
+      <span class="chip">Prereq: Lessons 13, 19 and 20</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>09 · 2.8 — <b>Error handling strategy</b> على مستوى النظام: error types hierarchy، فين بتتمسك (boundaries)، mapping للـ HTTP/responses، logging مرة واحدة</li>
+        <li>09 · 2.8 — Logging/tracing/metrics <b>كجزء من التصميم</b> مش إضافة بعدين: correlation IDs في الـ context، structured logs، spans على الـ use cases</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Errors per layer</a></li>
+      <li><a href="#p2">Part 2 — Where they're caught</a></li>
+      <li><a href="#p3">Part 3 — Every driving adapter is a boundary</a></li>
+      <li><a href="#p4">Part 4 — Correlation by design</a></li>
+      <li><a href="#p5">Part 5 — Spans on use cases</a></li>
+      <li><a href="#p6">Part 6 — Metrics and proving they exist</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>At 2 a.m. you need three answers: what failed, for which request, and does it need a human. Those answers exist only if the design provided for them. Bolted-on error handling gives you <code>err.code === "23505"</code> in a route, the same failure logged four times, and a relay that dies silently because nobody treated it as an entry point. Bolted-on observability gives you logs you can't join across a queue. In a senior interview, "where do you catch errors, and how do you follow one order across services?" separates people who've run production from people who haven't.</p>
+    <p>All the code here is the <a href="./orders-service/">shared orders service</a> from <a href="./13-layered-hexagonal.html">lesson 13</a>, with the changes below applied to a copy of its <code>after/</code>. Every output is from a real run on Postgres 18 and Redis 8.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الساعة 2 بالليل إنت محتاج 3 إجابات: إيه اللي وقع، في أنهي request، ومحتاج حد يصحى ولا لأ. الإجابات دي موجودة بس لو الـ design عمل حسابها. لو الـ error handling اتركّب في الآخر، هتلاقي <code>err.code === "23505"</code> جوه route، ونفس الفشل متسجل 4 مرات، و relay بيموت في صمت لأن محدش اعتبره نقطة دخول. ولو الـ observability اتركّبت في الآخر، هيبقى عندك logs مش عارف تربطها عبر queue. وفي interview سنيور، سؤال "بتمسك الـ errors فين، وبتتبع order واحد عبر الـ services إزاي؟" بيفرز اللي شغّل production من اللي مشغّلش.</p>
+    <p>كل الكود هنا هو <a href="./orders-service/">الـ orders service المشترك</a> من <a href="./13-layered-hexagonal.html">الدرس 13</a>، والتعديلات اللي تحت متطبقة على نسخة من الـ <code>after/</code> بتاعه. وكل output جاي من تشغيل حقيقي على Postgres 18 و Redis 8.</p>
+  </section>
+
+  <h2 id="p1">Part 1 — Errors per layer <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الـ errors في كل طبقة</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><a href="../../04-NodeJS/lessons/24-errors-shutdown-health.html">Node lesson 24</a> taught operational vs programmer errors and the central handler. This part assumes that and asks a different question: <b>who owns which error?</b> Each layer of the hexagon has its own failure language, and nothing crosses a boundary in a language the next layer doesn't own.</p>
+    <table>
+      <tr><th>Layer</th><th>Its language</th><th>Example</th><th>Must never see</th></tr>
+      <tr><td><b>Domain</b></td><td><code>OrderRuleViolation</code>, thrown by the aggregate</td><td><code>positive-qty</code>, <code>pay-only-placed</code></td><td>HTTP, SQL, anything below</td></tr>
+      <tr><td><b>Application</b></td><td>Result kinds for expected outcomes; port errors it owns</td><td><code>out_of_stock</code>, <code>StaleOrderError</code></td><td>pg codes, fetch errors, status codes</td></tr>
+      <tr><td><b>Infrastructure</b></td><td>Driver errors, translated before they cross the port</td><td><code>23505</code> → <code>StaleOrderError</code>; a timeout → <code>PaymentUnavailable</code></td><td>Status codes, response shapes</td></tr>
+      <tr><td><b>Presentation</b></td><td>One mapping table to its protocol</td><td><code>StaleOrderError</code> → 409</td><td>pg codes</td></tr>
+    </table>
+    <div class="ar-note">الجدول، صف صف:
+      <ul>
+        <li><b>الـ Domain</b>: لغته <code>OrderRuleViolation</code> اللي الـ aggregate بيرميه، زي <code>positive-qty</code> و<code>pay-only-placed</code>. مينفعش يشوف HTTP ولا SQL ولا أي حاجة تحته.</li>
+        <li><b>الـ Application</b>: لغته الـ result kinds للنتايج المتوقعة، والـ port errors اللي هو مالكها، زي <code>out_of_stock</code> و<code>StaleOrderError</code>. مينفعش يشوف أكواد pg ولا fetch errors ولا status codes.</li>
+        <li><b>الـ Infrastructure</b>: عنده errors الـ driver، وبيترجمها قبل ما تعدّي الـ port: <code>23505</code> بيبقى <code>StaleOrderError</code>، والـ timeout بيبقى <code>PaymentUnavailable</code>. مينفعش يعرف status codes ولا شكل الـ response.</li>
+        <li><b>الـ Presentation</b>: عنده جدول mapping واحد للـ protocol بتاعه، زي <code>StaleOrderError</code> لـ 409. مينفعش يشوف أكواد pg.</li>
+      </ul>
+    </div>
+    <p><b>Port errors belong to the port.</b> In the shared service <code>StaleOrderError</code> sits in <code>infrastructure/pg-order-repository.ts</code>, so neither the use case nor the route can catch it without breaking the <code>application-not-to-outer-layers</code> rule from <a href="./16-enforcing-boundaries-fitness.html">lesson 16</a>. The errors a port may throw are part of its contract, the same way its method signatures are, so they move to <code>application/errors.ts</code> next to <code>ports.ts</code>. A small base class, <code>PortError</code>, gives the core the one thing it needs from any of them: may this be retried?</p>
+    <p><b>Translation means naming the business fact.</b> A <code>23505</code> on inserting an existing id and a version mismatch on update are the same fact: someone got there first. A <code>TimeoutError</code>, a refused connection and an HTML 502 are also one fact: the provider gave no usable answer. The original error stays in <code>cause</code> for the log line, and the core never reads it.</p>
+    <p><b>Prove it with a test on the port.</b> The assertion is one line: whatever comes out of an adapter is a <code>PortError</code> with no <code>code</code>. We ran the same suite against the untouched adapters from <code>after/</code> as a planted leak: 7 of 8 cases failed, one of them a surprise. A 502 with an HTML body makes the original gateway throw <code>SyntaxError</code>, which the route would have reported as a bug. A second test scans the source for driver words outside infrastructure.</p>
+  </section>
+
+<pre data-file="src/shared/port-error.ts"><code class="language-typescript">// الأصل المشترك لأي error بيعدّي من port: الـ core بيفهم حاجة واحدة بس، ينفع نعيد ولا لأ
+export class PortError extends Error {
+  readonly retryable: boolean;
+  constructor(message: string, retryable: boolean, options?: ErrorOptions) {
+    super(message, options);
+    this.name = new.target.name;
+    this.retryable = retryable;
+  }
+}</code></pre>
+<pre data-file="src/modules/orders/application/errors.ts"><code class="language-typescript">// الـ errors دي جزء من عقد الـ port، فمكانها application مش infrastructure
+import { PortError } from "../../../shared/port-error.ts";
+
+export class StaleOrderError extends PortError {
+  constructor(id: string, options?: ErrorOptions) {
+    super(`order ${id} was changed by someone else`, true, options);
+  }
+}
+export class OrderStoreUnavailable extends PortError {
+  constructor(options?: ErrorOptions) {
+    super("order store is unavailable", true, options);
+  }
+}
+export class OrderStoreFailure extends PortError {
+  constructor(options?: ErrorOptions) {
+    super("order store rejected the operation", false, options);
+  }
+}
+export class PaymentUnavailable extends PortError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, true, options);
+  }
+}</code></pre>
+<pre data-file="src/platform/pg-errors.ts"><code class="language-typescript">// الملف الوحيد اللي عارف أكواد Postgres المؤقتة: أي adapter بيسأله
+// (1) حاجات مؤقتة: timeout أو connection وقع أو deadlock، إعادة المحاولة ممكن تنجح
+const TRANSIENT = new Set(["57014", "57P01", "57P03", "53300", "40001", "40P01", "08000", "08003", "08006", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT"]);
+
+export const isTransientPgError = (err: unknown): boolean =&gt; {
+  const code = (err as { code?: unknown }).code;
+  if (typeof code === "string" &amp;&amp; TRANSIENT.has(code)) return true;
+  // (2) الـ pool بيرمي Error من غير code لما connectionTimeoutMillis يخلص
+  return err instanceof Error &amp;&amp; /timeout exceeded when trying to connect/.test(err.message);
+};</code></pre>
+<pre data-file="src/modules/orders/infrastructure/translate-pg-error.ts"><code class="language-typescript">// هنا بس الكود 23505 بيتحول لمعنى في لغة الـ orders module
+import { isTransientPgError } from "../../../platform/pg-errors.ts";
+import { PortError } from "../../../shared/port-error.ts";
+import { OrderStoreFailure, OrderStoreUnavailable, StaleOrderError } from "../application/errors.ts";
+
+export const translatePgError = (err: unknown, orderId: string): PortError =&gt; {
+  if (err instanceof PortError) return err;
+  // (1) الـ id موجود قبل كده: حد سبقنا، وده نفس معنى الـ version اللي مش مطابقة
+  if ((err as { code?: unknown }).code === "23505") return new StaleOrderError(orderId, { cause: err });
+  if (isTransientPgError(err)) return new OrderStoreUnavailable({ cause: err });
+  // (2) أي حاجة تانية (عمود ناقص، جدول اتمسح، رقم برا الـ range): مش هتتصلح بالإعادة
+  return new OrderStoreFailure({ cause: err });
+};</code></pre>
+<pre data-file="src/modules/orders/infrastructure/http-payment-gateway.ts"><code class="language-typescript">// الملف الوحيد اللي عارف الـ URL وشكل الـ wire بتاع الـ provider، وكمان أشكال فشله
+import type { PaymentGateway } from "../application/ports.ts";
+import { PaymentUnavailable } from "../application/errors.ts";
+
+export const makeHttpPaymentGateway = (baseUrl: string, { timeoutMs = 2_000 } = {}): PaymentGateway =&gt; ({
+  async charge(orderId, amount) {
+    try {
+      const res = await fetch(baseUrl + "/charge", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ orderId, amountCents: amount.minor, currency: amount.currency }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      // الـ 5xx والـ 429 معناهم "مش عارفين الكارت اترفض ولا لأ"، فده مش رفض
+      if (res.status &gt;= 500 || res.status === 429) throw new PaymentUnavailable(`payment provider answered ${res.status}`);
+      const body = (await res.json()) as { ref?: string; error?: string };
+      return res.ok &amp;&amp; body.ref ? { ok: true, ref: body.ref } : { ok: false, reason: body.error ?? `http_${res.status}` };
+    } catch (err) {
+      if (err instanceof PaymentUnavailable) throw err;
+      // هنا الـ timeout وconnection refused والـ body اللي مش JSON: كلهم نفس المعنى للـ core
+      throw new PaymentUnavailable("payment provider did not give a usable answer", { cause: err });
+    }
+  },
+});</code></pre>
+
+<pre class="diagram">
+  HTTP route / job / relay        presentation: maps to 201, 409, 503 ...
+          |                                  ^
+          v                                  |  PortError or result kind
+  makePlaceOrder                  application: owns PortError subclasses
+          |                                  ^
+          v   OrderRepository port           |  StaleOrderError { cause }
+  - - - - - - - - - - - - - - - - - - - - - -|- - - - - - - - - - - - -
+          |                                  |  translated HERE, nowhere else
+          v                                  |
+  makePgOrderRepository  ---- pg ---->  error { code: "23505" }
+</pre>
+  <div class="ar-note">اقرا الرسمة من فوق لتحت: الـ call نازلة من الـ route للـ use case للـ adapter لحد الـ pg. الـ error طالع في الاتجاه العكسي: <code>code: "23505"</code> بيتولد تحت، وعلى الخط المتقطع (حدود الـ port) بيتترجم لـ <code>StaleOrderError</code> والأصل في <code>cause</code>. فوق الخط ده مفيش حد يعرف إن فيه Postgres أصلًا، والـ presentation هو اللي بيحوّل المعنى لـ status code.</div>
+
+<pre data-file="lab/p1-no-leak.test.ts"><code class="language-typescript">// اختبار على الـ port نفسه: مفيش error من الـ driver يعدّي، مهما كان الـ adapter
+// شغّله كده: ADAPTER=translated node --test --test-reporter=./lab/short-reporter.mjs lab/p1-no-leak.test.ts
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { RequestListener } from "node:http";
+import type { AddressInfo } from "node:net";
+import { after, before, test } from "node:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import pg from "pg";
+import { startPg } from "../lib/pg-throwaway.mjs";
+import { PortError } from "../after/src/shared/port-error.ts";
+
+// (1) الـ adapter بيتاخد من env عشان نفس الـ tests تشتغل على النسخة اللي فيها الـ leak
+const root = process.env.ADAPTER === "planted" ? "../../after/src" : "../after/src";
+const { makePgOrderRepository } = await import(`${root}/modules/orders/infrastructure/pg-order-repository.ts`);
+const { makeHttpPaymentGateway } = await import(`${root}/modules/orders/infrastructure/http-payment-gateway.ts`);
+const { Order } = await import(`${root}/modules/orders/domain/order.ts`);
+const { Money } = await import(`${root}/shared/money.ts`);
+
+const now = new Date("2026-11-04T10:00:00Z");
+const newOrder = (id: string) =&gt;
+  Order.place({ id, customerEmail: "sara@example.com", lines: [{ sku: "SKU-MUG", qty: 1, unitPrice: Money.of(25_000, "EGP") }], now });
+const uuid = (n: number) =&gt; `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
+// (2) الـ assertion الوحيد: أي حاجة بتعدّي الـ port لازم تبقى PortError ومفيهاش code بتاع driver
+const assertPortError = async (work: () =&gt; Promise&lt;unknown&gt;, name: string, retryable: boolean) =&gt; {
+  const err = await work().then(
+    () =&gt; assert.fail("expected a failure"),
+    (e: unknown) =&gt; e as Error &amp; { code?: string; retryable?: boolean },
+  );
+  assert.ok(err instanceof PortError, `leaked ${err.name}${err.code ? ` code=${err.code}` : ""}: ${err.message.slice(0, 60)}`);
+  assert.equal(err.name, name);
+  assert.equal(err.retryable, retryable);
+  assert.equal((err as { code?: string }).code, undefined);
+};
+
+test("orders.save: a duplicate id becomes StaleOrderError", async () =&gt; {
+  const repo = makePgOrderRepository(pool);
+  await repo.save(newOrder(uuid(1)));
+  await assertPortError(() =&gt; repo.save(newOrder(uuid(1))), "StaleOrderError", true);
+});
+
+test("payments.charge: a 502 with an HTML body becomes PaymentUnavailable", async () =&gt; {
+  const p = await provider((_q, r) =&gt; {
+    r.statusCode = 502;
+    r.setHeader("content-type", "text/html");
+    r.end("&lt;html&gt;Bad Gateway&lt;/html&gt;");
+  });
+  try {
+    await assertPortError(() =&gt; makeHttpPaymentGateway(p.url).charge(uuid(6), Money.of(100, "EGP")), "PaymentUnavailable", true);
+  } finally {
+    p.close();
+  }
+});</code></pre>
+<pre data-file="lab/p1-source-scan.test.ts"><code class="language-typescript">// الـ scan على الكود نفسه: أكواد الـ driver مسموح بيها في infrastructure بس
+import assert from "node:assert/strict";
+import { globSync, readFileSync } from "node:fs";
+import { test } from "node:test";
+
+const DRIVER_WORDS = /\b(23505|57014|40001|ECONNREFUSED|ETIMEDOUT|DatabaseError)\b|\.code\s*===/;
+
+test("no driver error codes in domain, application or presentation", () =&gt; {
+  const files = globSync("after/src/modules/*/{domain,application,presentation}/**/*.ts");
+  // عشان ميبقاش أخضر كداب: scan على صفر ملفات لازم يقع
+  assert.ok(files.length &gt;= 5, `scan saw only ${files.length} files`);
+  const hits = files.filter((f) =&gt; DRIVER_WORDS.test(readFileSync(f, "utf8")));
+  assert.deepEqual(hits, []);
+});</code></pre>
+
+<pre><code class="language-plaintext">$ ADAPTER=planted node --test --test-reporter=./lab/short-reporter.mjs \
+    lab/p1-no-leak.test.ts
+FAIL  orders.save: a duplicate id becomes StaleOrderError
+      leaked error code=23505: duplicate key value violates unique constraint "orders_pkey"
+FAIL  orders.save: a version mismatch becomes StaleOrderError
+      leaked StaleOrderError: order 00000000-0000-4000-8000-000000000002 was changed by so
+FAIL  orders.save: a statement timeout becomes OrderStoreUnavailable
+      leaked error code=57014: canceling statement due to statement timeout
+FAIL  orders.save: a refused connection becomes OrderStoreUnavailable
+      leaked Error code=ECONNREFUSED: connect ECONNREFUSED 127.0.0.1:51683
+FAIL  orders.save: a missing table becomes OrderStoreFailure, not retryable
+      leaked error code=42P01: relation "orders.orders" does not exist
+FAIL  payments.charge: a 502 with an HTML body becomes PaymentUnavailable
+      leaked SyntaxError: Unexpected token '&lt;', "&lt;html&gt;Bad "... is not valid JSON
+FAIL  payments.charge: a provider that never answers becomes PaymentUnavailable
+      leaked TimeoutError code=23: The operation was aborted due to timeout
+ok    payments.charge: a declined card is a result, not an error
+pass 1
+fail 7
+
+$ ADAPTER=translated node --test --test-reporter=./lab/short-reporter.mjs \
+    lab/p1-no-leak.test.ts lab/p1-source-scan.test.ts
+ok    orders.save: a duplicate id becomes StaleOrderError
+ok    orders.save: a version mismatch becomes StaleOrderError
+ok    orders.save: a statement timeout becomes OrderStoreUnavailable
+ok    orders.save: a refused connection becomes OrderStoreUnavailable
+ok    orders.save: a missing table becomes OrderStoreFailure, not retryable
+ok    payments.charge: a 502 with an HTML body becomes PaymentUnavailable
+ok    payments.charge: a provider that never answers becomes PaymentUnavailable
+ok    payments.charge: a declined card is a result, not an error
+ok    no driver error codes in domain, application or presentation
+pass 9
+fail 0</code></pre>
+  <div class="ar-note">التشغيل الأول على الـ adapters الأصلية من <code>after/</code>: 7 حالات من 8 وقعت، وكل واحدة بتقول بالظبط إيه اللي عدّى الـ port: <code>23505</code> و<code>57014</code> و<code>ECONNREFUSED</code> و<code>42P01</code>، و<code>StaleOrderError</code> الأصلي لأنه مش <code>PortError</code>، و<code>SyntaxError</code> من صفحة HTML، و<code>TimeoutError</code>. الحالة الوحيدة اللي عدّت هي الكارت المرفوض لأنه أصلًا result مش error. التشغيل التاني على الـ adapters المترجمة: الـ 9 tests كلها عدّت، ومنهم الـ scan على الكود.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><a href="../../04-NodeJS/lessons/24-errors-shutdown-health.html">درس Node رقم 24</a> شرح الفرق بين operational و programmer errors والـ central handler. هنا السؤال مختلف: <b>مين مالك أنهي error؟</b> كل طبقة في الـ hexagon ليها لغة فشل بتاعتها، ومفيش حاجة تعدّي الحدود بلغة الطبقة اللي بعدها مش مالكاها.</p>
+    <p><b>الـ port errors بتاعة الـ port.</b> في الـ service المشترك <code>StaleOrderError</code> قاعد في <code>infrastructure/pg-order-repository.ts</code>، فلا الـ use case ولا الـ route يقدروا يمسكوه من غير ما يكسروا قاعدة <code>application-not-to-outer-layers</code> من <a href="./16-enforcing-boundaries-fitness.html">الدرس 16</a>. الـ errors اللي الـ port ممكن يرميها جزء من العقد بتاعه، زيها زي الـ method signatures، فمكانها <code>application/errors.ts</code> جنب <code>ports.ts</code>. والـ base class الصغير <code>PortError</code> بيدّي الـ core الحاجة الوحيدة اللي محتاجها منهم: ينفع نعيد ولا لأ؟</p>
+    <p><b>الترجمة معناها إنك تسمّي الحقيقة بلغة الـ business.</b> <code>23505</code> لما تعمل insert لـ id موجود، و version مش مطابقة في الـ update، هما نفس الحقيقة: حد سبقك. و<code>TimeoutError</code> و connection refused و 502 بـ HTML برضه حقيقة واحدة: الـ provider مدّاش إجابة تنفع. الـ error الأصلي بيفضل في <code>cause</code> عشان سطر الـ log، والـ core عمره ما بيقراه.</p>
+    <p><b>اثبتها بـ test على الـ port.</b> الـ assertion سطر واحد: أي حاجة طالعة من الـ adapter لازم تبقى <code>PortError</code> ومفيهاش <code>code</code>. شغّلنا نفس الـ suite على الـ adapters الأصلية من <code>after/</code> كأنها leak مزروع: 7 من 8 وقعوا، وواحدة منهم مفاجأة. الـ 502 بـ body HTML بيخلّي الـ gateway الأصلي يرمي <code>SyntaxError</code>، والـ route كان هيعتبرها bug. وفيه test تاني بيعمل scan على الكود ويدوّر على كلام الـ driver برا infrastructure.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      جالك PR فيه <code>if (err.code === "23505") return res.status(409)</code> جوه route. الكود شغال، بس الـ route بقى عارف إن فيه Postgres، ويوم ما تغيّر الـ driver أو تضيف cache قدام الـ repository الكود ده هيقع في صمت. اطلب نقله لـ <code>translatePgError</code> واللي فوقه يمسك <code>StaleOrderError</code>. وأول مرة تكتب adapter جديد لـ provider (Stripe أو Paymob مثلًا)، اكتب الـ test ده الأول: timeout و 502 HTML و connection refused و 4xx، وهتكتشف زي ما اكتشفنا إن <code>res.json()</code> نفسها بترمي.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>A real bug this lesson found in the shared service</b>
+    <code>makeCatalog().reserve</code> in <code>after/</code> releases its connection in <code>finally</code> with no <code>rollback</code> when a statement throws. Quantity <code>99999999999</code> is a positive integer and a safe <code>Money</code>, so the domain lets it through, then Postgres rejects it (<code>22003</code>). The connection goes back to the pool inside an aborted transaction, and the next order that gets it fails with <code>25P02</code>. Owning an error includes cleaning up after it.
+<pre><code class="language-plaintext">$ ADAPTER=planted node lab/p1-poisoned-connection.ts   # the original catalog
+reserve(huge): error code=22003: value "99999999999" is out of range for type integer
+pool: { total: 1, idle: 1 }
+next query on the pool:
+  error code=25P02: current transaction is aborted, commands ignored until end of transaction block
+
+$ node lab/p1-poisoned-connection.ts              # with catch + rollback
+reserve(huge): CatalogFailure code=22003: catalog rejected the operation
+pool: { total: 1, idle: 1 }
+next query on the pool:
+  ok, 2 products</code></pre>
+    <div class="ar-note"><code>makeCatalog().reserve</code> في <code>after/</code> بيرجّع الـ connection في <code>finally</code> من غير <code>rollback</code> لو statement وقع. الكمية <code>99999999999</code> رقم صحيح موجب و <code>Money</code> سليم، فالـ domain بيعدّيها، وبعدين Postgres بيرفضها (<code>22003</code>). الـ connection بيرجع الـ pool وهو جوه transaction باظت، وأول order ياخده بيقع بـ <code>25P02</code>، وده اللي ظاهر في التشغيل الأول. في التشغيل التاني، بعد <code>catch</code> فيه <code>rollback</code>، الـ query اللي بعدها اشتغلت عادي. يعني ملكية الـ error معناها كمان إنك تنضف وراه.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "In a hexagonal service, where do you handle a unique-constraint violation?" → The repository adapter translates it, because only it knows the driver. It becomes a port error such as <code>StaleOrderError</code>, defined next to the port so the core can name it. The use case decides if it means something, and the driving adapter maps it to 409. The pg code stays in <code>cause</code> for the log and appears nowhere above the adapter.
+    <div class="ar-note"><b>السؤال:</b> "في service بـ hexagonal، بتتعامل مع unique-constraint violation فين؟" <b>الإجابة:</b> الـ repository adapter هو اللي بيترجمه، لأنه الوحيد اللي عارف الـ driver. بيبقى port error زي <code>StaleOrderError</code> متعرّف جنب الـ port عشان الـ core يقدر يسمّيه. الـ use case يقرر لو ليه معنى، والـ driving adapter يحوّله لـ 409. وكود pg بيفضل في <code>cause</code> للـ log، ومفيش ذكر ليه فوق الـ adapter.</div>
+  </div>
+
+  <h2 id="p2">Part 2 — Where they're caught <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — بتتمسك فين</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Boundaries only: one catch, one log.</b> A boundary is where a driving adapter hands control to your code. Below it, a layer either decides something or stays out of the way. The run below counts it: a <code>catch (e) { log(e); throw e }</code> at 4 layers gives 4 lines for one failure, then 1 when only the boundary logs. Four lines make your error rate look four times worse and make someone reading the logs think four things broke. <code>new Error(msg, { cause })</code> keeps the chain, so the single line loses nothing.</p>
+    <p><b>A deeper <code>catch</code> is fine when it decides.</b> <code>makePlaceOrder</code> catches <code>PaymentUnavailable</code> because the money may or may not have moved: the order stays <code>placed</code>, the stock stays reserved, and the result is <code>payment_pending</code>. There's no log in that catch, because it's a business decision rather than error reporting.</p>
+    <p><b>Expected outcomes don't alert; unexpected ones do.</b> A declined card is a normal day. So each row of the table chooses a level: <code>info</code> or nothing for what the client caused, <code>warn</code> for temporary trouble (alert on the rate, not on each line), and <code>error</code> for a bug, which pages someone.</p>
+    <p><b>Result vs throw, the rule in this codebase:</b></p>
+    <ul>
+      <li><b>An outcome the caller must handle → return a result kind.</b> <code>Record&lt;PlaceOrderResult["kind"], number&gt;</code> turns a forgotten case into a compile error (real TS 7 output below).</li>
+      <li><b>A broken invariant → throw from the aggregate.</b> A factory that returns half an aggregate is worse than no aggregate, and the boundary maps it to 422.</li>
+      <li><b>An infrastructure failure → throw a port error.</b> The use case usually can't fix it, and threading it through every return type is noise.</li>
+      <li><b>A bug → let it throw.</b> The boundary sends a fixed 500 and pages someone.</li>
+    </ul>
+    <p>Why not <code>Result</code> everywhere? TypeScript has no <code>?</code> operator, so each call grows an <code>if (!r.ok) return r</code>, and libraries throw anyway. <a href="../../08-Design-Patterns/lessons/20-functional-patterns.html">Section 08 · lesson 20</a> shows that style. Either works; what hurts is having no rule. The response body is RFC 9457 from <a href="../../04-NodeJS/lessons/14-rest-api-design.html">Node lesson 14</a>, and having one table means one place to review.</p>
+    <p><b>The table found two things.</b> Without the client-error row, malformed JSON became a <code>500</code> that pages someone, because the body parser's error isn't one of ours. And <code>qty 99999999999</code> correctly came out as <code>error</code>: it's a real gap, a missing limit at the boundary, and the alert is how you'd find it. Exercise 1 fixes it.</p>
+  </section>
+
+<pre data-file="lab/p2-log-count.ts"><code class="language-typescript">// فشل واحد بس: كام سطر log بيطلع؟ مرة بـ catch في كل طبقة، ومرة عند الـ boundary بس
+// شغّله كده: node lab/p2-log-count.ts
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { makeHttpPaymentGateway } from "../after/src/modules/orders/infrastructure/http-payment-gateway.ts";
+import { Money } from "../after/src/shared/money.ts";
+
+// (1) الـ provider هنا حقيقي ومبيردش، عشان الـ timeout يبقى حقيقي
+const hanging = createServer(() =&gt; {});
+await new Promise&lt;void&gt;((r) =&gt; hanging.listen(0, "127.0.0.1", r));
+const url = `http://127.0.0.1:${(hanging.address() as AddressInfo).port}`;
+const gateway = makeHttpPaymentGateway(url, { timeoutMs: 100 });
+
+const lines: string[] = [];
+const log = (where: string, err: Error) =&gt; lines.push(`${where}: ${err.name}: ${err.message}`);
+
+// ⁦(2) ❌⁩ كل طبقة بتعمل catch و log و throw
+const noisy = {
+  gateway: async () =&gt; {
+    try {
+      return await gateway.charge("order-1", Money.of(25_000, "EGP"));
+    } catch (e) {
+      log("gateway", e as Error);
+      throw e;
+    }
+  },
+  useCase: async () =&gt; {
+    try {
+      return await noisy.gateway();
+    } catch (e) {
+      log("use case", e as Error);
+      throw e;
+    }
+  },
+  route: async () =&gt; {
+    try {
+      return await noisy.useCase();
+    } catch (e) {
+      log("route", e as Error);
+      throw e;
+    }
+  },
+  boundary: async () =&gt; {
+    try {
+      return await noisy.route();
+    } catch (e) {
+      log("boundary", e as Error);
+    }
+  },
+};
+await noisy.boundary();
+console.log(`every layer logs: ${lines.length} lines for 1 failure`);
+for (const l of lines) console.log("  " + l.slice(0, 70));
+
+// ⁦(3) ✅⁩ الطبقات بتسيب الـ error يعدّي، والـ boundary بس هو اللي بيكتب
+lines.length = 0;
+const quiet = {
+  useCase: () =&gt; gateway.charge("order-1", Money.of(25_000, "EGP")),
+  route: () =&gt; quiet.useCase(),
+  boundary: async () =&gt; {
+    try {
+      return await quiet.route();
+    } catch (e) {
+      log("boundary", e as Error);
+      return e as Error;
+    }
+  },
+};
+const caught = (await quiet.boundary()) as Error;
+console.log(`boundary only: ${lines.length} line for 1 failure`);
+
+// (4) الـ cause بيحفظ الأصل: السطر الواحد فيه السلسلة كلها
+const chainOf = (err: unknown): string[] =&gt; {
+  const out: string[] = [];
+  for (let e = err as Error | undefined; e; e = e.cause as Error | undefined) out.push(`${e.name}: ${e.message}`);
+  return out;
+};
+console.log("cause chain on that one line:");
+chainOf(caught).forEach((l, i) =&gt; console.log(" ".repeat(2 + i * 2) + (i ? "caused by " : "") + l));
+
+hanging.closeAllConnections();
+hanging.close();</code></pre>
+<pre><code class="language-plaintext">$ node lab/p2-log-count.ts
+every layer logs: 4 lines for 1 failure
+  gateway: PaymentUnavailable: payment provider did not give a usable an
+  use case: PaymentUnavailable: payment provider did not give a usable a
+  route: PaymentUnavailable: payment provider did not give a usable answ
+  boundary: PaymentUnavailable: payment provider did not give a usable a
+boundary only: 1 line for 1 failure
+cause chain on that one line:
+  PaymentUnavailable: payment provider did not give a usable answer
+    caused by TimeoutError: The operation was aborted due to timeout</code></pre>
+  <div class="ar-note">نفس الفشل (provider مبيردش فعلًا، و timeout حقيقي): لما كل طبقة تعمل log طلعوا 4 سطور بنفس الرسالة بالظبط، ولما الـ boundary بس يكتب طلع سطر واحد. وآخر جزء هو السلسلة اللي على السطر الواحد ده: <code>PaymentUnavailable</code> سببه <code>TimeoutError</code>، يعني مضعناش أي معلومة.</div>
+
+<pre data-file="src/modules/orders/presentation/problems.ts"><code class="language-typescript">// جدول الـ mapping الوحيد: أي error أو نتيجة بتتحول لـ status ومستوى log هنا بس
+import { PortError } from "../../../shared/port-error.ts";
+import { OrderRuleViolation } from "../domain/order.ts";
+import type { PlaceOrderResult } from "../application/place-order.ts";
+import { StaleOrderError } from "../application/errors.ts";
+
+export type LogLevel = "info" | "warn" | "error";
+
+export interface Problem {
+  status: number;
+  code: string;
+  title: string;
+  level: LogLevel;
+  retryAfterSeconds?: number;
+}
+
+// (1) الـ Record معناها: لو ضفت kind جديد ومكتبتش الـ status بتاعه، الـ compile بيقع
+export const statusOfResult: Record&lt;PlaceOrderResult["kind"], number&gt; = {
+  paid: 201,
+  payment_pending: 202,
+  payment_failed: 402,
+  unknown_sku: 404,
+  out_of_stock: 409,
+};
+
+const isHttpClientError = (err: unknown): err is { status: number } =&gt; {
+  const status = (err as { status?: unknown }).status;
+  return typeof status === "number" &amp;&amp; status &gt;= 400 &amp;&amp; status &lt; 500;
+};
+
+export const problemOf = (err: unknown): Problem =&gt; {
+  // (2) حاجات متوقعة: الـ client هو اللي يصلحها، مفيش alert
+  if (err instanceof OrderRuleViolation) return { status: 422, code: err.rule, title: err.message, level: "info" };
+  if (isHttpClientError(err)) return { status: err.status, code: "bad_request", title: "The request could not be read", level: "info" };
+  if (err instanceof StaleOrderError) return { status: 409, code: "stale_order", title: "The order changed, reload and retry", level: "info" };
+  // (3) فشل تشغيلي مؤقت: warn، والـ alert على المعدل مش على كل سطر
+  if (err instanceof PortError &amp;&amp; err.retryable) {
+    return { status: 503, code: "temporarily_unavailable", title: "Try again shortly", level: "warn", retryAfterSeconds: 5 };
+  }
+  // (4) أي حاجة تانية bug: رسالة ثابتة للـ client، والتفاصيل في الـ log، والـ alert فورًا
+  return { status: 500, code: "internal", title: "Something went wrong", level: "error" };
+};</code></pre>
+<pre data-file="src/modules/orders/presentation/http.ts"><code class="language-typescript">// الـ driving adapter: validate للشكل، وترجمة لـ HTTP، ومفيش ولا try/catch في الـ route
+import { Router } from "express";
+import type { ErrorRequestHandler } from "express";
+import { z } from "zod";
+import type { PlaceOrderCommand, PlaceOrderResult } from "../application/place-order.ts";
+import { problemOf, statusOfResult } from "./problems.ts";
+
+// الـ type في RFC 9457 هو URI، والـ client بيتفرع عليه مش على النص
+const problemType = (code: string): string =&gt; `https://api.orders.example/problems/${code}`;
+
+const PlaceOrderBody = z.object({
+  customerEmail: z.email(),
+  lines: z.array(z.object({ sku: z.string().min(1), qty: z.number() })).min(1),
+});
+
+export const makeOrdersRouter = (placeOrder: (cmd: PlaceOrderCommand) =&gt; Promise&lt;PlaceOrderResult&gt;): Router =&gt; {
+  const router = Router();
+  router.post("/orders", async (req, res) =&gt; {
+    const parsed = PlaceOrderBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).type("application/problem+json").json({ type: problemType("bad_request"), title: "Invalid body", status: 400, issues: parsed.error.issues.map((i) =&gt; i.path.join(".")) });
+      return;
+    }
+    const result = await placeOrder(parsed.data);
+    res.status(statusOfResult[result.kind]).json(result);
+  });
+  return router;
+};
+
+export interface BoundaryLog {
+  info(obj: object, msg: string): void;
+  warn(obj: object, msg: string): void;
+  error(obj: object, msg: string): void;
+}
+
+// الـ catch الوحيد في مسار الـ HTTP، والـ log الوحيد لنفس الفشل
+export const httpErrorBoundary = (log: BoundaryLog): ErrorRequestHandler =&gt; (err, req, res, _next) =&gt; {
+  const p = problemOf(err);
+  log[p.level]({ err, status: p.status, code: p.code, route: req.path }, "request failed");
+  if (p.retryAfterSeconds) res.setHeader("retry-after", String(p.retryAfterSeconds));
+  res.status(p.status).type("application/problem+json").json({ type: problemType(p.code), title: p.title, status: p.status });
+};</code></pre>
+<pre><code class="language-plaintext">$ node lab/p2-mapping.ts
+trigger                  http kind or problem          log    retry-after
+happy path               201  paid                     -      -
+bad shape                400  bad_request              -      -
+malformed JSON           400  bad_request              info   -
+qty -5                   422  positive-qty             info   -
+unknown sku              404  unknown_sku              -      -
+out of stock             409  out_of_stock             -      -
+card declined            402  payment_failed           -      -
+catalog locked (timeout) 503  temporarily_unavailable  warn   5
+qty 99999999999          500  internal                 error  -
+bug in a use case        500  internal                 error  -
+next order after that: 201 paid</code></pre>
+  <div class="ar-note">كل صف طلب HTTP حقيقي على Postgres حقيقي. العمود الأول السبب، وبعده الـ status، وبعده الـ kind أو نوع الـ problem، وبعده مستوى الـ log، وآخر عمود <code>retry-after</code>. خد بالك: الشكل الغلط (400) والكارت المرفوض والـ sku الغلط والـ stock الخلصان مفيهمش log خالص لأنهم نتايج عادية. الـ JSON البايظ و <code>qty -5</code> بـ <code>info</code> لأن الـ client هو اللي غلطان. الـ catalog المقفول بـ <code>warn</code> و 503 و<code>retry-after: 5</code>. واللي بـ <code>error</code> حالتين بس: الـ bug الحقيقي، والكمية الكبيرة اللي معناها limit ناقص. وآخر سطر بيأكد إن الـ pool لسه سليم بعد الكمية الكبيرة.</div>
+
+<pre><code class="language-plaintext">$ node lab/p2-plant-kind.mjs     # adds a "fraud_review" kind
+after/src/modules/orders/presentation/problems.ts(18,14): error TS2741: Property 'fraud_review' is missing in type '{ paid: number; payment_pending: number; payment_failed: number; unknown_sku: number; out_of_stock: number; }' but required in type 'Record&lt;"fraud_review" | "out_of_stock" | "paid" | "payment_failed" | "payment_pending" | "unknown_sku", number&gt;'.
+exit code: 1
+
+# the same table with the client-error row removed
+malformed JSON           500  internal                 error  -</code></pre>
+  <div class="ar-note">الجزء الأول: زرعنا kind جديد اسمه <code>fraud_review</code> في الـ use case من غير ما نحدّث الجدول، و TS 7 رفض بـ <code>TS2741</code> على الجدول نفسه، يعني مستحيل تنسى. الجزء التاني: شيلنا صف الـ client errors، والـ JSON البايظ بقى 500 بـ <code>error</code>، يعني كان هيصحّي حد على request بايظ من client.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ boundaries بس: catch واحد و log واحد.</b> الـ boundary هو المكان اللي الـ driving adapter بيسلّم فيه الـ control لكودك. تحت منه، الطبقة يا إما بتقرر حاجة يا إما تسيب الـ error يعدّي. التشغيل اللي فوق بيعدّها: <code>catch (e) { log(e); throw e }</code> في 4 طبقات بيطلّع 4 سطور لفشل واحد، وبعدها سطر واحد لما الـ boundary بس يكتب. الـ 4 سطور بيخلّوا الـ error rate شكله 4 أضعاف، واللي بيقرا الـ logs يفتكر إن 4 حاجات وقعت. و<code>new Error(msg, { cause })</code> بيحفظ السلسلة، فالسطر الواحد مبيضيّعش حاجة.</p>
+    <p><b>الـ <code>catch</code> الأعمق تمام لو بيقرر.</b> <code>makePlaceOrder</code> بيمسك <code>PaymentUnavailable</code> لأن الفلوس ممكن تكون اتسحبت وممكن لأ: الـ order يفضل <code>placed</code>، والـ stock يفضل محجوز، والنتيجة <code>payment_pending</code>. ومفيش log في الـ catch ده، لأنه قرار business مش تقرير عن error.</p>
+    <p><b>المتوقع مبيعملش alert، وغير المتوقع بيعمل.</b> الكارت المرفوض ده يوم عادي. فكل صف في الجدول بيختار مستوى: <code>info</code> أو مفيش خالص للي الـ client عمله، <code>warn</code> للمشكلة المؤقتة (والـ alert على المعدل مش على كل سطر)، و<code>error</code> للـ bug وده اللي بيصحّي حد.</p>
+    <p><b>Result ولا throw؟ القاعدة في الـ codebase ده:</b></p>
+    <ul>
+      <li><b>نتيجة الـ caller لازم يتعامل معاها ← رجّع result kind.</b> <code>Record&lt;PlaceOrderResult["kind"], number&gt;</code> بيحوّل الحالة المنسية لـ compile error (الـ output الحقيقي من TS 7 فوق).</li>
+      <li><b>invariant اتكسر ← throw من الـ aggregate.</b> factory بترجع نص aggregate أوحش من مفيش aggregate، والـ boundary بيحوّلها لـ 422.</li>
+      <li><b>فشل infrastructure ← throw لـ port error.</b> الـ use case غالبًا مش هيعرف يصلحه، وتمريره في كل return type دوشة.</li>
+      <li><b>bug ← سيبه يترمي.</b> الـ boundary بيبعت 500 برسالة ثابتة وبيصحّي حد.</li>
+    </ul>
+    <p>طب ليه مش <code>Result</code> في كل حتة؟ TypeScript ملهاش عامل <code>?</code>، فكل call بتكبر بـ <code>if (!r.ok) return r</code>، والـ libraries بترمي في كل الأحوال. <a href="../../08-Design-Patterns/lessons/20-functional-patterns.html">القسم 08 · الدرس 20</a> بيوريك الأسلوب ده. الاتنين ينفعوا، واللي بيوجع إن مايبقاش فيه قاعدة أصلًا. والـ response body هو RFC 9457 من <a href="../../04-NodeJS/lessons/14-rest-api-design.html">درس Node رقم 14</a>، وجدول واحد معناه مكان واحد تعمل له review.</p>
+    <p><b>الجدول طلّع حاجتين.</b> من غير صف الـ client errors، الـ JSON البايظ بقى <code>500</code> بيصحّي حد، لأن error الـ body parser مش من بتوعنا. و<code>qty 99999999999</code> طلعت <code>error</code> وده صح: دي ثغرة حقيقية، limit ناقص على الـ boundary، والـ alert هو اللي كان هيوصّلك ليها. التمرين الأول بيصلحها.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      افتح الـ alerts بتاعتكم: لو فيه alert بيضرب كل ما كارت يترفض، أو الـ dashboard بتاع الـ errors طالع فوق بسبب 4xx، يبقى المتوقع والمش متوقع مخلوطين. حط جدول زي <code>problemOf</code> في module واحد، وخلّي الـ alert على <code>level=error</code> بس، وعلى معدل <code>warn</code>. وفي الـ code review، أي <code>catch</code> فيه <code>log</code> و<code>throw</code> مع بعض تعليقك عليه جاهز: "يا handle يا context، بس مش log".
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: a table of levels can hide things</b>
+    Marking something <code>info</code> means nobody looks at it. If <code>out_of_stock</code> jumps tenfold that's a business problem no error log will show, which is why expected outcomes still need a metric (Part 6). The level answers "wake someone?", and the metric answers "is the business healthy?".
+    <div class="ar-note">لما تعلّم حاجة <code>info</code> معناها إن محدش هيبص عليها. لو <code>out_of_stock</code> زاد 10 مرات، دي مشكلة business مفيش error log هيوريهالك، وعشان كده النتايج المتوقعة برضه محتاجة metric (الجزء 6). المستوى بيجاوب على "نصحّي حد؟"، والـ metric بيجاوب على "الـ business كويس؟".</div>
+  </div>
+
+  <h2 id="p3">Part 3 — Every driving adapter is a boundary <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — كل driving adapter هو boundary</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>HTTP gets a central handler because frameworks make you think about one. A relay, a queue consumer and a cron job have the same responsibilities and usually nothing written for them. A forgotten one is a <code>setInterval</code> around an <code>async</code> function: no one holds the promise, so the first transient database error is an unhandled rejection, and since Node 15 the default is to crash. Below it's a real child process: two good ticks, then exit code 1, because the database restarted for a moment.</p>
+    <p>The fix is a small wrapper with the same shape as the HTTP boundary: set the context, one <code>catch</code>, one log, one decision. A retryable <code>PortError</code> logs <code>warn</code> and the next tick tries again. Anything else is a bug that won't heal by itself, so it logs <code>error</code>, stops the timer and exits with code 1 for the supervisor to restart. That's the crash-on-bugs rule from <a href="./11-contracts-fail-fast-validation.html">lesson 11</a>, done in an orderly way.</p>
+    <p><b>Retry belongs on the type.</b> A queue needs one decision per failure: retry or give up. Because <code>PortError</code> carries <code>retryable</code>, the job adapter answers without parsing messages. BullMQ's <code>UnrecoverableError</code> skips the remaining attempts. In the run on real Redis: a provider that times out twice succeeds on attempt 3; an order already paid fails at attempt 1 with 0 provider calls; a malformed payload fails at attempt 1. The same paid order without classification burns all 3 attempts. BullMQ basics are in <a href="../../04-NodeJS/lessons/22-background-jobs-bullmq.html">Node lesson 22</a>.</p>
+    <p>The job adapter validates its payload like any boundary, since Redis is outside your process. <code>assertPayable()</code> runs before the charge, so an order in the wrong state costs nothing. And note what "provider calls=3" means: each silent call may have charged the card. Sending <code>orderId</code> as an idempotency key is what makes this retry safe, and <a href="./23-caching-concurrency-idempotency.html">lesson 23</a> builds that.</p>
+  </section>
+
+<pre data-file="lab/p3-relay-forgotten.ts"><code class="language-typescript">// ❌ الـ relay من غير boundary: أول فشل مؤقت في الـ DB بيقتل الـ process كله
+import { OrderStoreUnavailable } from "../after/src/modules/orders/application/errors.ts";
+
+let tick = 0;
+// الـ drain بيقع في المرة التالتة، زي restart للـ DB
+const drainOutbox = async (): Promise&lt;number&gt; =&gt; {
+  if (++tick === 3) throw new OrderStoreUnavailable({ cause: new Error("terminating connection due to administrator command") });
+  console.log(`tick ${tick}: drained 0 events`);
+  return 0;
+};
+
+// الـ setInterval مش بيعمل await للـ promise، فمحدش ماسك الـ rejection
+setInterval(async () =&gt; {
+  await drainOutbox();
+}, 30);</code></pre>
+<pre data-file="src/platform/boundary.ts"><code class="language-typescript">// الـ boundary بتاع أي driving adapter مش HTTP: relay أو cron، catch واحد و log واحد وقرار واحد
+import { PortError } from "../shared/port-error.ts";
+import { newCorrelationId, runInContext } from "./context.ts";
+
+export type TickOutcome = "ok" | "retry" | "stop";
+
+export interface TickLog {
+  warn(obj: object, msg: string): void;
+  error(obj: object, msg: string): void;
+}
+
+export const runTick = async (adapter: string, log: TickLog, work: () =&gt; Promise&lt;unknown&gt;): Promise&lt;TickOutcome&gt; =&gt; {
+  // كل tick ليه context جديد: الـ cron ملوش request، بس لازم يبقى ليه id
+  return runInContext({ correlationId: newCorrelationId(), causationId: null, adapter }, async () =&gt; {
+    try {
+      await work();
+      return "ok";
+    } catch (err) {
+      if (err instanceof PortError &amp;&amp; err.retryable) {
+        // فشل مؤقت: warn وكمّل، الـ tick الجاي هيحاول تاني
+        log.warn({ err }, "tick failed, will retry");
+        return "retry";
+      }
+      // ده bug: مش هيتصلح لوحده، فنقف بنظافة بدل ما نلف على نفس الغلطة
+      log.error({ err }, "tick failed with a bug, stopping");
+      return "stop";
+    }
+  });
+};</code></pre>
+<pre data-file="lab/p3-relay-boundary.ts"><code class="language-typescript">// ✅ نفس الـ relay بـ boundary: الفشل المؤقت بيعدّي، والـ bug بيوقف بنظافة بـ exit code 1
+import { OrderStoreUnavailable } from "../after/src/modules/orders/application/errors.ts";
+import { runTick } from "../after/src/platform/boundary.ts";
+import { makeLogger } from "../after/src/platform/log.ts";
+
+// الـ output مختصر للدرس: المستوى والرسالة ونوع الـ error
+const log = makeLogger({
+  write: (l: string) =&gt; {
+    const { level, msg, adapter, err } = JSON.parse(l);
+    console.log(`${level} [${adapter}] ${msg}: ${err.type}`);
+  },
+});
+
+let tick = 0;
+const drainOutbox = async (): Promise&lt;number&gt; =&gt; {
+  tick++;
+  if (tick === 3 || tick === 4) throw new OrderStoreUnavailable({ cause: new Error("terminating connection due to administrator command") });
+  // هنا bug حقيقي: قراءة property من undefined
+  if (tick === 6) return (undefined as unknown as { rowCount: number }).rowCount;
+  console.log(`tick ${tick}: drained 0 events`);
+  return 0;
+};
+
+const timer = setInterval(async () =&gt; {
+  const outcome = await runTick("relay", log, drainOutbox);
+  if (outcome === "stop") {
+    // الـ shutdown هنا منظم: وقف الـ timer وسيب الـ event loop يفضى، والـ supervisor يعيد التشغيل
+    clearInterval(timer);
+    process.exitCode = 1;
+  }
+}, 30);</code></pre>
+<pre><code class="language-plaintext">$ node lab/p3-run-relays.ts       # each relay in a real child process
+$ node lab/p3-relay-forgotten.ts
+  tick 1: drained 0 events
+  tick 2: drained 0 events
+  OrderStoreUnavailable: order store is unavailable
+    retryable: true,
+    [cause]: Error: terminating connection due to administrator command
+  }
+  exit code: 1
+
+$ node lab/p3-relay-boundary.ts
+  tick 1: drained 0 events
+  tick 2: drained 0 events
+  warn [relay] tick failed, will retry: OrderStoreUnavailable
+  warn [relay] tick failed, will retry: OrderStoreUnavailable
+  tick 5: drained 0 events
+  error [relay] tick failed with a bug, stopping: TypeError
+  exit code: 1</code></pre>
+  <div class="ar-note">الـ relay الأول: tick 1 و 2 تمام، وفي التالتة الـ DB وقعت لحظة، والـ rejection محدش ماسكه، فالـ process مات بـ exit code 1 ومعاه أي شغل تاني. الـ relay التاني بنفس الأعطال: الفشل المؤقت طلّع <code>warn</code> مرتين وكمّل، و tick 5 اشتغلت عادي. ولما جه bug حقيقي (<code>TypeError</code>)، طلّع <code>error</code> واحد ووقف بنظافة بـ exit code 1 عشان الـ supervisor يعيد التشغيل. نفس الـ exit code بس الفرق كبير: الأول مات بسبب حاجة مؤقتة، والتاني وقف بسبب bug.</div>
+
+<pre data-file="src/modules/orders/presentation/charge-job.ts"><code class="language-typescript">// الـ driving adapter بتاع الـ queue: هو كمان boundary، وليه validate و mapping بتوعه
+import { z } from "zod";
+import { PortError } from "../../../shared/port-error.ts";
+import type { ChargeOrderCommand, ChargeOrderResult } from "../application/charge-order.ts";
+
+export const ChargeOrderJob = z.object({ orderId: z.uuid(), correlationId: z.string().min(1) });
+export type ChargeOrderJobData = z.infer&lt;typeof ChargeOrderJob&gt;;
+
+export type Retry = "retry" | "give_up";
+
+// القرار على الـ type مش على نص الرسالة: PortError بيقول بنفسه ينفع نعيد ولا لأ
+export const retryDecision = (err: unknown): Retry =&gt; (err instanceof PortError &amp;&amp; err.retryable ? "retry" : "give_up");
+
+export const runChargeJob = async (
+  chargeOrder: (cmd: ChargeOrderCommand) =&gt; Promise&lt;ChargeOrderResult&gt;,
+  raw: unknown,
+): Promise&lt;ChargeOrderResult&gt; =&gt; {
+  // الـ job جاي من Redis، يعني من بره: نفس فكرة الـ body في HTTP
+  const data = ChargeOrderJob.parse(raw);
+  return chargeOrder({ orderId: data.orderId });
+};</code></pre>
+<pre data-file="src/platform/charge-worker.ts"><code class="language-typescript">// الـ worker: المكان الوحيد اللي عارف BullMQ، وبيحوّل قرار الـ retry لـ UnrecoverableError
+import { UnrecoverableError, Worker } from "bullmq";
+import type { Job } from "bullmq";
+import type { Redis } from "ioredis";
+import { runInContext } from "./context.ts";
+
+export interface ChargeWorkerDeps {
+  connection: Redis;
+  queue: string;
+  run: (raw: unknown) =&gt; Promise&lt;unknown&gt;;
+  retryDecision: (err: unknown) =&gt; "retry" | "give_up";
+  log: { warn(obj: object, msg: string): void; error(obj: object, msg: string): void };
+}
+
+export const startChargeWorker = ({ connection, queue, run, retryDecision, log }: ChargeWorkerDeps): Worker =&gt;
+  new Worker(
+    queue,
+    (job: Job&lt;{ correlationId?: string }&gt;) =&gt;
+      runInContext({ correlationId: job.data.correlationId ?? `job-${job.id}`, causationId: `job-${job.id}`, adapter: "job" }, async () =&gt; {
+        try {
+          return await run(job.data);
+        } catch (err) {
+          if (retryDecision(err) === "retry") {
+            const attempt = job.attemptsMade + 1;
+            // آخر محاولة فشلت: ده مش warn خلاص، ده محتاج حد يبص عليه
+            if (attempt &gt;= (job.opts.attempts ?? 1)) log.error({ attempt, error: (err as Error).name }, "job out of attempts");
+            else log.warn({ attempt, error: (err as Error).name }, "job failed, BullMQ will retry");
+            throw err;
+          }
+          log.error({ attempt: job.attemptsMade + 1, error: (err as Error).name }, "job failed for good");
+          // الـ error ده بيقول لـ BullMQ: متعيدش مهما كان attempts كام
+          throw new UnrecoverableError((err as Error).message);
+        }
+      }),
+    { connection, concurrency: 1 },
+  );</code></pre>
+<pre><code class="language-plaintext">$ REDIS_PORT=$(cat redis.port) node lab/p3-bullmq.ts
+provider timed out twice           state=completed  attempts=3 provider calls=3
+    warn  job failed, BullMQ will retry {"attempt":1,"error":"PaymentUnavailable"}
+    warn  job failed, BullMQ will retry {"attempt":2,"error":"PaymentUnavailable"}
+order already paid (rule violated) state=failed     attempts=1 provider calls=0
+    error job failed for good {"attempt":1,"error":"OrderRuleViolation"}
+malformed payload                  state=failed     attempts=1 provider calls=0
+    error job failed for good {"attempt":1,"error":"ZodError"}
+provider down for all attempts     state=failed     attempts=3 provider calls=3
+    warn  job failed, BullMQ will retry {"attempt":1,"error":"PaymentUnavailable"}
+    warn  job failed, BullMQ will retry {"attempt":2,"error":"PaymentUnavailable"}
+    error job out of attempts {"attempt":3,"error":"PaymentUnavailable"}
+same paid order, no classification state=failed     attempts=3 provider calls=0
+    warn  job failed, BullMQ will retry {"attempt":1,"error":"OrderRuleViolation"}
+    warn  job failed, BullMQ will retry {"attempt":2,"error":"OrderRuleViolation"}
+    error job out of attempts {"attempt":3,"error":"OrderRuleViolation"}</code></pre>
+  <div class="ar-note">كل سطر job حقيقي على Redis حقيقي بـ <code>attempts: 3</code>:
+    <ul>
+      <li><b>الـ provider سكت مرتين:</b> اتعاد ونجح في المحاولة التالتة، و 3 calls للـ provider.</li>
+      <li><b>order مدفوع قبل كده:</b> <code>failed</code> من أول محاولة و 0 calls، لأن القاعدة اتفحصت قبل الدفع.</li>
+      <li><b>payload بايظ:</b> <code>failed</code> من أول محاولة، <code>ZodError</code>.</li>
+      <li><b>الـ provider واقع طول الوقت:</b> 3 محاولات، وآخر واحدة بـ <code>error</code> عشان حد يبص.</li>
+      <li><b>نفس الـ order المدفوع من غير تصنيف:</b> ضيّع الـ 3 محاولات على حاجة عمرها ما هتنجح.</li>
+    </ul>
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ HTTP ليه central handler لأن الـ frameworks بتخليك تفكر فيه. لكن الـ relay والـ queue consumer والـ cron عليهم نفس المسؤوليات، وغالبًا مفيش حاجة مكتوبة ليهم. الشكل المنسي هو <code>setInterval</code> حوالين function <code>async</code>: محدش ماسك الـ promise، فأول error مؤقت من الـ DB بيبقى unhandled rejection، ومن Node 15 الـ default إن الـ process يقع. اللي فوق child process حقيقي: tick-ين تمام، وبعدين exit code 1 عشان الـ DB عملت restart لحظة.</p>
+    <p>الحل wrapper صغير بنفس شكل الـ HTTP boundary: يحط الـ context، و catch واحد، و log واحد، وقرار واحد. الـ <code>PortError</code> اللي ينفع يتعاد بيكتب <code>warn</code> والـ tick الجاي يحاول تاني. أي حاجة تانية bug مش هتتصلح لوحدها، فبتكتب <code>error</code> وتوقف الـ timer وتخرج بـ exit code 1 عشان الـ supervisor يعيد التشغيل. دي قاعدة crash on bugs من <a href="./11-contracts-fail-fast-validation.html">الدرس 11</a>، بس بنظام.</p>
+    <p><b>قرار الـ retry مكانه على الـ type.</b> الـ queue محتاجة قرار واحد لكل فشل: نعيد ولا نسيب. ولأن <code>PortError</code> شايل <code>retryable</code>، الـ job adapter بيجاوب من غير ما يحلل رسايل. و<code>UnrecoverableError</code> بتاع BullMQ بيلغي باقي المحاولات. في التشغيل على Redis حقيقي: provider بيعمل timeout مرتين بينجح في المحاولة 3؛ order مدفوع بيفشل في المحاولة 1 بـ 0 calls للـ provider؛ payload بايظ بيفشل في المحاولة 1. ونفس الـ order المدفوع من غير تصنيف بيحرق الـ 3 محاولات. أساسيات BullMQ في <a href="../../04-NodeJS/lessons/22-background-jobs-bullmq.html">درس Node رقم 22</a>.</p>
+    <p>الـ job adapter بيعمل validate للـ payload زي أي boundary، لأن Redis برا الـ process بتاعك. و<code>assertPayable()</code> بتشتغل قبل الدفع، فالـ order اللي في حالة غلط مبيكلفش حاجة. وخد بالك من معنى "provider calls=3": كل call ساكتة ممكن تكون سحبت من الكارت. إرسال <code>orderId</code> كـ idempotency key هو اللي بيخلي الـ retry ده آمن، و<a href="./23-caching-concurrency-idempotency.html">الدرس 23</a> بيبنيه.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      اعمل قايمة بكل نقط الدخول في الـ service بتاعك: routes، و BullMQ workers، و cron، و Kafka consumers، و <code>process.on</code> handlers، وأي <code>setInterval</code>. جنب كل واحدة اكتب: مين بيمسك الـ error؟ وبيكتب log فين؟ وبيقرر الـ retry إزاي؟ غالبًا هتلاقي واحدة فاضية، وهي دي اللي هتقع الساعة 2 بالليل. وفي الـ workers، لو شايف <code>if (err.message.includes("timeout"))</code> في قرار الـ retry، ده بالظبط اللي الـ <code>retryable</code> بيستبدله.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "A background job fails. How does your system decide whether to retry?" → The error type decides, not the message. Infrastructure adapters translate failures into port errors that say whether they're transient. The job adapter retries those with backoff and turns everything else, rule violations and bad payloads, into a non-retryable failure (<code>UnrecoverableError</code> in BullMQ) so it reaches the failed set after one attempt. Retried work must be idempotent, because a timeout doesn't tell you it didn't happen.
+    <div class="ar-note"><b>السؤال:</b> "job في الخلفية وقع. النظام بيقرر يعيد إزاي؟" <b>الإجابة:</b> نوع الـ error هو اللي بيقرر، مش الرسالة. الـ infrastructure adapters بتترجم الفشل لـ port errors بتقول هو مؤقت ولا لأ. الـ job adapter بيعيد المؤقت بـ backoff، وأي حاجة تانية زي rule violation أو payload بايظ بيحوّلها لفشل نهائي (<code>UnrecoverableError</code> في BullMQ) فتروح الـ failed set من أول محاولة. واللي بيتعاد لازم يبقى idempotent، لأن الـ timeout مبيقولش إن الحاجة محصلتش.</div>
+  </div>
+
+
+  <h2 id="p4">Part 4 — Correlation by design <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ correlation من أول الـ design</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><a href="../../04-NodeJS/lessons/30-logging-request-context.html">Node lesson 30</a> taught <code>AsyncLocalStorage</code> and pino's <code>mixin</code>. The design rule here: <b>context is set once, at each driving adapter</b>, and read by the logger and by adapters. The domain takes no logger and no context. The core emits events; adapters log them. That's what keeps <code>Order</code> pure, and the rule in Part 5 enforces it.</p>
+    <p><b>What's new is the gap.</b> <code>AsyncLocalStorage</code> follows promises inside one process. It doesn't cross a database row or a Redis key, so the relay running later has no context at all (the run prints <code>undefined</code>), and logging would break the story exactly where it gets interesting. The story has to be <b>data</b>. Two columns go on the outbox:</p>
+    <ul>
+      <li><code>correlation_id</code>: the same value from the first request to the last handler. It answers "which story?".</li>
+      <li><code>causation_id</code>: the id of the message that directly caused this one, or null when it came from outside. It answers "why this?", and lets you rebuild the tree (exercise 3).</li>
+    </ul>
+    <p>The repository copies both from the context when it writes events. The relay reads them back and opens a new context per row with <code>causationId</code> set to that row's id, so a handler that emits a new event continues the chain with no extra code. In the real run, two overlapping requests produce lines that never mix: one id across HTTP, relay and handler, and <code>ReceiptRequested</code> points back at outbox row 2.</p>
+    <p>The inbound header comes from the internet, so accept it only if it's short and safe (<a href="../../04-NodeJS/lessons/30-logging-request-context.html">Node lesson 30 · Part 2</a>), and return it in the response so a customer can quote it. Add these columns early: backfilling a story you never recorded isn't possible, and the outbox itself is taught in <a href="../../08-Design-Patterns/lessons/27-outbox-as-code.html">section 08 · lesson 27</a> and <a href="./20-ddd-events-when-worth-it.html">lesson 20</a>.</p>
+  </section>
+
+<pre data-file="src/platform/context.ts"><code class="language-typescript">// الـ context بيتحط مرة واحدة عند كل driving adapter، وبيتقرا من الـ logger والـ adapters بس
+import { AsyncLocalStorage } from "node:async_hooks";
+import { randomUUID } from "node:crypto";
+
+export interface ExecutionContext {
+  // ثابت من أول request لآخر handler في السلسلة
+  correlationId: string;
+  // الرسالة اللي سببت الشغل ده بالظبط: id صف الـ outbox، أو null لو جاي من بره
+  causationId: string | null;
+  // مين دخّل الشغل ده: http أو relay أو job
+  adapter: string;
+}
+
+const storage = new AsyncLocalStorage&lt;ExecutionContext&gt;();
+
+export const runInContext = &lt;T&gt;(ctx: ExecutionContext, work: () =&gt; T): T =&gt; storage.run(ctx, work);
+export const currentContext = (): ExecutionContext | undefined =&gt; storage.getStore();
+export const newCorrelationId = (): string =&gt; randomUUID();
+
+// الـ header جاي من بره: قبوله من غير فحص بيخلي أي حد يكتب في الـ logs بتاعتك
+const SAFE_ID = /^[A-Za-z0-9_-]{8,64}$/;
+export const correlationIdFrom = (header: string | undefined): string =&gt; (header &amp;&amp; SAFE_ID.test(header) ? header : newCorrelationId());</code></pre>
+<pre data-file="src/platform/log.ts"><code class="language-typescript">// الـ logger الوحيد: أي سطر بياخد الـ correlation من الـ context من غير ما حد يبعته
+import { pino } from "pino";
+import type { DestinationStream, Logger } from "pino";
+import { currentContext } from "./context.ts";
+
+export const makeLogger = (destination?: DestinationStream): Logger =&gt;
+  pino({ base: null, timestamp: false, formatters: { level: (label) =&gt; ({ level: label }) }, mixin: () =&gt; ({ ...currentContext() }) }, destination);</code></pre>
+<pre data-file="after/schema.sql"><code class="language-sql">-- الفرق الوحيد في الـ schema: عمودين على الـ outbox
+create table orders.outbox (
+  id bigint generated always as identity primary key,
+  type text not null,
+  payload jsonb not null,
+  occurred_at timestamptz not null,
+  published_at timestamptz,
+  correlation_id text,
+  causation_id text
+);</code></pre>
+<pre data-file="src/modules/orders/infrastructure/pg-order-repository.ts"><code class="language-typescript">// الـ correlation بيتقرا من الـ context اللي الـ driving adapter حطه، والـ domain مش عارف عنه حاجة
+const ctx = currentContext();
+for (const e of order.pendingEvents) {
+  await client.query(INSERT_OUTBOX, [e.type, JSON.stringify(e), e.at, ctx?.correlationId ?? null, ctx?.causationId ?? null]);
+}</code></pre>
+<pre data-file="src/composition-root.ts"><code class="language-typescript">// الـ context بيتحط مرة واحدة هنا، قبل أي middleware تاني
+app.use((req, res, next) =&gt; {
+  const correlationId = correlationIdFrom(req.header("x-correlation-id"));
+  res.setHeader("x-correlation-id", correlationId);
+  runInContext({ correlationId, causationId: null, adapter: "http" }, () =&gt; {
+    log.info({ method: req.method, url: req.path }, "request received");
+    next();
+  });
+});
+
+// الـ relay بتاع الـ outbox: at-least-once، والـ context بيرجع لكل صف من العمودين
+const drainOutbox = async (): Promise&lt;number&gt; =&gt; {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const r = await client.query(
+      "select id, type, payload, correlation_id from orders.outbox where published_at is null order by id limit 100 for update skip locked",
+    );
+    const notifications = makeNotifications(deps.send, appendOutbox(client));
+    for (const row of r.rows) {
+      const ctx = { correlationId: row.correlation_id ?? newCorrelationId(), causationId: String(row.id), adapter: "relay" };
+      await runInContext(ctx, async () =&gt; {
+        log.info({ eventType: row.type, outboxId: row.id }, "event published");
+        metrics.handle({ type: row.type, ...row.payload });
+        await notifications.handle({ type: row.type, orderId: row.payload.orderId });
+      });
+    }
+    await client.query("update orders.outbox set published_at = now() where id = any($1)", [r.rows.map((x) =&gt; x.id)]);
+    await client.query("commit");</code></pre>
+
+<pre class="diagram">
+  POST /orders   x-correlation-id: req-aaaaaaaa
+       |
+       v   runInContext({ correlationId, causationId: null })
+  [HTTP adapter] --&gt; placeOrder --&gt; repository
+                                       |  INSERT, same transaction as the order
+                                       v
+         outbox 1  OrderPlaced       correlation=req-aaaaaaaa  causation=null
+         outbox 2  OrderPaid         correlation=req-aaaaaaaa  causation=null
+                                       |
+  ======= AsyncLocalStorage ends here: only the columns cross ==============
+                                       |
+                                       v   runInContext({ ..., causationId: "2" })
+  [relay] --&gt; notifications handler --&gt; emit("ReceiptRequested")
+                                       |
+                                       v
+         outbox 5  ReceiptRequested  correlation=req-aaaaaaaa  causation=2
+</pre>
+  <div class="ar-note">الـ request داخل بـ id، والـ driving adapter بيحطه في الـ context، والـ repository بينسخه في صفوف الـ outbox في نفس الـ transaction. الخط العريض هو الحد الحقيقي: الـ <code>AsyncLocalStorage</code> بيموت هنا لأن الـ relay شغال بعدين في context تاني خالص، فالعمودين بس هما اللي بيعدّوا. الـ relay بيرجّع الـ context لكل صف، والـ handler لما يطلّع <code>ReceiptRequested</code> بياخد نفس الـ correlation و causation = 2 لأن الصف 2 هو اللي سببه.</div>
+
+<pre><code class="language-plaintext">$ node lab/p4-correlation.ts
+responses: 201 req-aaaaaaaa | 201 req-bbbbbbbb
+context outside any request: undefined
+
+log lines for req-aaaaaaaa:
+  http   causation=null  request received
+  relay  causation=1     event published OrderPlaced
+  relay  causation=2     event published OrderPaid
+  relay  causation=2     email sent
+  relay  causation=5     event published ReceiptRequested
+
+total lines 10, without an id 0, mixed with the other request 0
+
+outbox:
+  1   OrderPlaced       req-aaaaaaaa  causation=null
+  2   OrderPaid         req-aaaaaaaa  causation=null
+  3   OrderPlaced       req-bbbbbbbb  causation=null
+  4   OrderPaid         req-bbbbbbbb  causation=null
+  5   ReceiptRequested  req-aaaaaaaa  causation=2
+  6   ReceiptRequested  req-bbbbbbbb  causation=4</code></pre>
+  <div class="ar-note">طلبين متداخلين بـ id مختلف لكل واحد. أول سطرين: الـ response رجّع الـ id لصاحبه، وبرا الـ request الـ context بيبقى <code>undefined</code>، وده اللي بيثبت إن الـ ALS لوحده مش كفاية. بعدها سطور <code>req-aaaaaaaa</code>: سطر من الـ HTTP، و 4 من الـ relay، كلهم نفس الـ id. <code>email sent</code> و <code>event published OrderPaid</code> ليهم causation=2، يعني صف الـ <code>OrderPaid</code>. الإحصائية: 10 سطور، صفر من غير id، وصفر مخلوط بالطلب التاني. وجدول الـ outbox بيوري السلسلة: الصف 5 سببه 2، والصف 6 سببه 4.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><a href="../../04-NodeJS/lessons/30-logging-request-context.html">درس Node رقم 30</a> شرح <code>AsyncLocalStorage</code> و<code>mixin</code> بتاع pino. قاعدة الـ design هنا: <b>الـ context بيتحط مرة واحدة عند كل driving adapter</b>، وبيقراه الـ logger والـ adapters. الـ domain مبياخدش logger ولا context. الـ core بيطلّع events، والـ adapters هي اللي بتكتبها في الـ log. ده اللي بيخلي <code>Order</code> نضيف، والقاعدة في الجزء 5 بتفرض ده.</p>
+    <p><b>الجديد هو الفجوة.</b> <code>AsyncLocalStorage</code> بيمشي مع الـ promises جوه process واحد. مبيعدّيش صف في DB ولا key في Redis، فالـ relay اللي بيشتغل بعدين ملوش context خالص (التشغيل بيطبع <code>undefined</code>)، والـ logs كانت هتتقطع في أهم حتة. يعني الحكاية لازم تبقى <b>data</b>. عمودين على الـ outbox:</p>
+    <ul>
+      <li><code>correlation_id</code>: نفس القيمة من أول request لآخر handler. بيجاوب على "أنهي حكاية؟".</li>
+      <li><code>causation_id</code>: الـ id بتاع الرسالة اللي سببت دي مباشرة، أو null لو جاية من بره. بيجاوب على "ليه دي؟"، وبيخليك تعيد بناء الشجرة (التمرين 3).</li>
+    </ul>
+    <p>الـ repository بينسخ الاتنين من الـ context وهو بيكتب الـ events. الـ relay بيقراهم ويفتح context جديد لكل صف و<code>causationId</code> هو id الصف ده، فأي handler بيطلّع event جديد بيكمّل السلسلة من غير كود زيادة. في التشغيل الحقيقي، طلبين متداخلين طلّعوا سطور عمرها ما اتخلطت: id واحد عبر HTTP والـ relay والـ handler، و<code>ReceiptRequested</code> بيشاور على صف الـ outbox رقم 2.</p>
+    <p>الـ header الداخل جاي من الإنترنت، فاقبله بس لو قصير وآمن (<a href="../../04-NodeJS/lessons/30-logging-request-context.html">درس Node رقم 30 · الجزء 2</a>)، ورجّعه في الـ response عشان العميل يقدر يذكره. وضيف العمودين بدري: مينفعش تعمل backfill لحكاية عمرك ما سجلتها، والـ outbox نفسه متشرح في <a href="../../08-Design-Patterns/lessons/27-outbox-as-code.html">القسم 08 · الدرس 27</a> و<a href="./20-ddd-events-when-worth-it.html">الدرس 20</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عميل بيقول "دفعت ومجاليش إيميل". من غير العمودين هتدوّر بالوقت والإيميل في logs 3 services. بيهم: تاخد الـ <code>x-correlation-id</code> من الـ response أو من صف الـ order، وتعمل query واحدة في الـ logs، فتشوف الـ request، و<code>OrderPaid</code>، والـ handler، وتعرف وقفت فين. ولو عندك Kafka أو RabbitMQ، نفس الفكرة: الاتنين يبقوا headers على الرسالة، والـ consumer هو اللي بيرجّع الـ context.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: correlation ID vs trace ID</b>
+    A W3C <code>traceparent</code> (<a href="../../04-NodeJS/lessons/31-metrics-tracing-errors.html">Node lesson 31</a>) can also cross the outbox, and you may use the trace id as the correlation id. Keep them separate if traces are sampled or expire within days, because a correlation id lives in your own tables as long as the order does and doesn't depend on a tracing vendor. Propagating the trace context through the outbox was not run in this lesson.
+    <div class="ar-note">الـ W3C <code>traceparent</code> (<a href="../../04-NodeJS/lessons/31-metrics-tracing-errors.html">درس Node رقم 31</a>) ممكن يعدّي الـ outbox برضه، وممكن تستخدم الـ trace id كـ correlation id. افصلهم لو الـ traces عليها sampling أو بتتمسح بعد كام يوم، لأن الـ correlation id عايش في جداولك طول ما الـ order عايش، ومش معتمد على vendor للـ tracing. تمرير الـ trace context عبر الـ outbox ماتشغلش في الدرس ده.</div>
+  </div>
+
+  <h2 id="p5">Part 5 — Spans on use cases <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ spans على الـ use cases</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>SDK setup and auto-instrumentation are in <a href="../../04-NodeJS/lessons/31-metrics-tracing-errors.html">Node lesson 31</a>. Auto-instrumentation tells you <code>POST /orders</code> ran two SQL statements. It can't tell you the business operation, so this part is about two design choices: <b>what to name and where to wrap</b>.</p>
+    <p><b>Where:</b> <code>withTracing</code> is a decorator (<a href="../../08-Design-Patterns/lessons/08-decorator-proxy.html">section 08 · lesson 08</a>) applied in the composition root (<a href="./12-di-composition-root.html">lesson 12</a>). The use case stays a plain function, and <code>tracePort</code> gives child spans on every port call without touching the ports. A new rule, <code>core-has-no-telemetry</code>, keeps it that way, and <code>arch-prove</code> shows it catching a planted import in both domain and application. The run below is real, with <code>NodeTracerProvider</code> and <code>InMemorySpanExporter</code>.</p>
+    <p><b>What to name:</b></p>
+    <table>
+      <tr><th>Choice</th><th>Good</th><th>Bad</th><th>Why</th></tr>
+      <tr><td>Span name</td><td><code>orders.place</code></td><td><code>POST /orders/8123</code></td><td>Names must be low cardinality or grouping breaks; ids go in attributes</td></tr>
+      <tr><td>Attributes</td><td><code>order.id</code>, <code>order.total_minor</code>, <code>order.result</code></td><td><code>customer.email</code>, the whole command</td><td>Traces leave your system: no personal data, and bounded size</td></tr>
+      <tr><td>Error status</td><td>Unexpected failures only</td><td>A declined card</td><td>Otherwise the error rate on every dashboard means nothing</td></tr>
+    </table>
+    <div class="ar-note">الجدول، صف صف:
+      <ul>
+        <li><b>اسم الـ span:</b> الصح <code>orders.place</code>، والغلط <code>POST /orders/8123</code>. الاسم لازم عدد قيمه يبقى قليل وإلا الـ grouping بيبوظ، والـ ids مكانها الـ attributes.</li>
+        <li><b>الـ attributes:</b> الصح <code>order.id</code> و<code>order.total_minor</code> و<code>order.result</code>، والغلط <code>customer.email</code> أو الـ command كله. الـ traces بتخرج من نظامك: مفيش بيانات شخصية، والحجم محدود.</li>
+        <li><b>الـ error status:</b> للفشل غير المتوقع بس، مش لكارت مرفوض. وإلا الـ error rate في كل dashboard يبقى ملوش معنى.</li>
+      </ul>
+    </div>
+    <p>The output shows why the third row matters. A declined card gives <code>orders.place</code> with <code>order.result=payment_failed</code> and no error. A provider timeout marks only the child <code>payments.charge</code> as <code>ERROR</code>, while the parent ends normally as <code>payment_pending</code>, because the use case handled it. So the trace tells you which dependency hurt while the use case's error rate stays honest. A rule violation sets <code>ERROR</code> on the use-case span here because it arrives as a throw; if your dashboards count those, filter it by exception type or map it to a result. The decorator costs on the order of 10 µs per call here (≈, a loaded Windows machine) against a charge that takes milliseconds, so it doesn't matter on this path.</p>
+  </section>
+
+<pre data-file="src/platform/tracing.ts"><code class="language-typescript">// الـ decorators بتاعة الـ tracing: الـ composition root بس هو اللي بيستوردها
+import { SpanStatusCode } from "@opentelemetry/api";
+import type { Attributes, Tracer } from "@opentelemetry/api";
+
+export interface TracingOptions&lt;A, R&gt; {
+  // الـ attributes بتتحسب من الـ command والنتيجة، والـ use case نفسه مش شايفها
+  input?: (arg: A) =&gt; Attributes;
+  output?: (result: R) =&gt; Attributes;
+}
+
+export const withTracing =
+  &lt;A, R&gt;(tracer: Tracer, name: string, useCase: (arg: A) =&gt; Promise&lt;R&gt;, options: TracingOptions&lt;A, R&gt; = {}) =&gt;
+  (arg: A): Promise&lt;R&gt; =&gt;
+    tracer.startActiveSpan(name, async (span) =&gt; {
+      try {
+        if (options.input) span.setAttributes(options.input(arg));
+        const result = await useCase(arg);
+        if (options.output) span.setAttributes(options.output(result));
+        return result;
+      } catch (err) {
+        // هنا مفيش log: الـ span بيتعلّم error والـ boundary هو اللي بيكتب السطر الوحيد
+        span.recordException(err as Error);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: (err as Error).name });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
+
+// بيلف كل method في الـ port بـ span ابن: orders.save و payments.charge وهكذا
+export const tracePort = &lt;P extends object&gt;(tracer: Tracer, prefix: string, port: P): P =&gt; {
+  const wrapped: Record&lt;string, unknown&gt; = {};
+  for (const [method, fn] of Object.entries(port)) {
+    wrapped[method] =
+      typeof fn === "function"
+        ? (...args: unknown[]) =&gt; withTracing(tracer, `${prefix}.${method}`, async (a: unknown[]) =&gt; fn.apply(port, a))(args)
+        : fn;
+  }
+  return wrapped as P;
+};</code></pre>
+<pre data-file="src/composition-root.ts"><code class="language-typescript">// كل use case بيعدّي من هنا: الاسم هو اللي بيظهر في الـ trace، والـ attributes متحددة في مكان واحد
+export const composeUseCases = (ports: Ports, tracer: Tracer) =&gt; ({
+  placeOrder: withTracing(tracer, "orders.place", makePlaceOrder(ports), {
+    input: (cmd) =&gt; ({ "order.lines": cmd.lines.length }),
+    output: (r) =&gt; ({
+      "order.result": r.kind,
+      ...("orderId" in r ? { "order.id": r.orderId } : {}),
+      ...("totalMinor" in r ? { "order.total_minor": r.totalMinor } : {}),
+    }),
+  }),
+  chargeOrder: withTracing(tracer, "orders.charge", makeChargeOrder(ports), {
+    input: (cmd) =&gt; ({ "order.id": cmd.orderId }),
+    output: (r) =&gt; ({ "order.result": r.kind }),
+  }),
+});</code></pre>
+<pre data-file="lab/p5-spans.ts"><code class="language-typescript">// (1) الـ exporter في الـ production بيبقى OTLP، والباقي زي ما هو
+const exporter = new InMemorySpanExporter();
+const provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+provider.register();
+const tracer = provider.getTracer("orders-service");</code></pre>
+<pre><code class="language-plaintext">$ node lab/p5-spans.ts
+
+paid: 6 spans, 1 trace
+  orders.place  order.lines=1 order.result=paid order.total_minor=62000 order.id=&lt;uuid&gt;
+    catalog.quote
+    catalog.reserve
+    orders.save
+    payments.charge
+    orders.save
+
+card declined (expected): 7 spans, 1 trace
+  orders.place  order.lines=1 order.result=payment_failed order.id=&lt;uuid&gt;
+    catalog.quote
+    catalog.reserve
+    orders.save
+    payments.charge
+    orders.save
+    catalog.release
+
+provider timed out: 5 spans, 1 trace
+  orders.place  order.lines=1 order.result=payment_pending order.id=&lt;uuid&gt;
+    catalog.quote
+    catalog.reserve
+    orders.save
+    payments.charge ERROR(PaymentUnavailable)
+
+bad quantity (rule): 2 spans, 1 trace
+  orders.place ERROR(OrderRuleViolation)  order.lines=1
+    catalog.quote
+
+cost per call: bare ≈0.8 us, traced ≈7.9 us
+
+$ node scripts/arch-check.mjs after/src
+cruised 37 modules, 82 dependencies, 0 errors
+
+$ node scripts/arch-prove.mjs     # one planted violation per rule
+caught  domain-stays-pure
+caught  application-not-to-outer-layers
+caught  no-reaching-into-other-modules
+caught  shared-knows-no-module
+caught  domain-has-no-path-to-infrastructure
+caught  core-has-no-telemetry
+caught  domain-stays-pure
+caught  core-has-no-telemetry
+caught  no-cycles</code></pre>
+  <div class="ar-note">الـ traces الأربعة:
+    <ul>
+      <li><b>مدفوع:</b> 6 spans في trace واحد، الأب <code>orders.place</code> وتحته كل port call بالترتيب.</li>
+      <li><b>كارت مرفوض:</b> 7 spans، ومفيش ولا <code>ERROR</code>، والنتيجة <code>payment_failed</code> attribute، وزاد <code>catalog.release</code>.</li>
+      <li><b>الـ provider عمل timeout:</b> <code>payments.charge</code> بس هو الـ <code>ERROR</code>، والأب خلص عادي بـ <code>payment_pending</code>.</li>
+      <li><b>كمية غلط:</b> الأب <code>ERROR(OrderRuleViolation)</code>، ومفيش port بعد <code>catalog.quote</code> اتنادى.</li>
+    </ul>
+    سطر <code>cost</code> تقريبي على جهاز Windows عليه ضغط: الـ decorator بيكلف حوالي 10 µs لكل call. وبعدها <code>arch-check</code> عدّى، و<code>arch-prove</code> مسك كل زرعة، ومنها import لـ OTel في الـ domain وفي الـ application وimport لـ <code>platform</code>.
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>تجهيز الـ SDK والـ auto-instrumentation في <a href="../../04-NodeJS/lessons/31-metrics-tracing-errors.html">درس Node رقم 31</a>. الـ auto-instrumentation بتقولك إن <code>POST /orders</code> عمل 2 SQL statements. لكن مش هتقولك العملية بتاعة الـ business إيه، فالجزء ده عن قرارين في الـ design: <b>تسمّي إيه وتلف فين</b>.</p>
+    <p><b>فين:</b> <code>withTracing</code> هو decorator (<a href="../../08-Design-Patterns/lessons/08-decorator-proxy.html">القسم 08 · الدرس 08</a>) بيتركّب في الـ composition root (<a href="./12-di-composition-root.html">الدرس 12</a>). الـ use case بيفضل function عادية، و<code>tracePort</code> بيدّي child spans على كل port call من غير ما يلمس الـ ports. وقاعدة جديدة اسمها <code>core-has-no-telemetry</code> بتحافظ على ده، و<code>arch-prove</code> بيوريها وهي بتمسك import مزروع في الـ domain وفي الـ application. والتشغيل حقيقي بـ <code>NodeTracerProvider</code> و<code>InMemorySpanExporter</code>.</p>
+    <p><b>تسمّي إيه:</b> الجدول اللي فوق بيقول: الاسم عدد قيمه قليل (<code>orders.place</code> مش <code>POST /orders/8123</code>)، والـ attributes من غير بيانات شخصية (<code>order.id</code> مش <code>customer.email</code>)، والـ error status للي مش متوقع بس.</p>
+    <p>الـ output بيوريك أهمية الصف التالت. الكارت المرفوض بيطلّع <code>orders.place</code> بـ <code>order.result=payment_failed</code> من غير error. والـ provider timeout بيعلّم <code>payments.charge</code> بس بـ <code>ERROR</code>، والأب بيخلص عادي بـ <code>payment_pending</code> لأن الـ use case اتعامل معاه. يعني الـ trace بيقولك أنهي dependency وجعت، والـ error rate بتاع الـ use case يفضل صادق. الـ rule violation هنا بيعلّم <code>ERROR</code> على span الـ use case لأنه جاي كـ throw؛ لو الـ dashboards بتعدّها، فلترها بنوع الـ exception أو حوّلها لـ result. والـ decorator بيكلف حوالي 10 µs لكل call هنا (تقريبي، على جهاز Windows عليه ضغط) قدام charge بياخد ملي ثواني، فمش فارقة في المسار ده.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما <code>checkout</code> يبطأ، الـ trace بتاع <code>orders.place</code> بيوريك في ثانية: هل الوقت في <code>catalog.reserve</code> ولا <code>payments.charge</code>. ولأن الـ attribute فيها <code>order.total_minor</code>، تقدر تسأل "هل الـ orders الكبيرة بس هي اللي بطيئة؟". وفي الـ review، لو حد عمل <code>import { trace }</code> جوه use case، الـ CI هيوقعه، والحل سطر واحد في الـ composition root.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Where would you put tracing in a clean architecture, without polluting the core?" → In a decorator applied at the composition root: one span per use case, named after the business operation, plus child spans from decorators on the ports. The core has no tracing import, and an architecture rule in CI enforces it. Span names stay low cardinality, ids go in attributes, personal data stays out, and expected outcomes don't set the error status.
+    <div class="ar-note"><b>السؤال:</b> "تحط الـ tracing فين في clean architecture من غير ما توسّخ الـ core؟" <b>الإجابة:</b> في decorator بيتركّب في الـ composition root: span لكل use case باسم العملية، و child spans من decorators على الـ ports. الـ core مفيهوش أي import للـ tracing، وقاعدة architecture في الـ CI بتفرض ده. أسماء الـ spans عدد قيمها قليل، والـ ids في الـ attributes، والبيانات الشخصية برا، والنتايج المتوقعة مبتعملش error status.</div>
+  </div>
+
+  <h2 id="p6">Part 6 — Metrics and proving they exist <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ metrics وإثبات إنها موجودة</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Two kinds, in two places.</b> Business metrics (<code>orders_placed_total</code>, <code>payment_failed_total</code>) <b>subscribe to events</b> rather than being sprinkled through use cases. Technical RED (rate, errors, duration) sits at the driving adapter, labelled by route and never by URL. The client is <code>@prometheus-io/client</code>; <a href="../../04-NodeJS/lessons/31-metrics-tracing-errors.html">Node lesson 31</a> explains why it replaced <code>prom-client</code>, and covers histogram buckets and cardinality.</p>
+    <p><b>Why events?</b> A counter inside the use case counts attempts, not facts. In the run below the third save fails: the sprinkled counter says 4 while 3 orders exist, and the event counter says 3. An event only exists if its transaction committed, so a metric built on it can't count something that rolled back. The labels are bounded too: <code>reason</code> comes from an outside provider, so anything unknown becomes <code>other</code>.</p>
+    <p><b>The cost, stated plainly.</b> The relay is at-least-once, so if it crashes after handling and before committing, a redelivered event is counted again (the last line below goes from 3 to 4). Also, numbers lag until the relay runs, as the run's first line shows. That's fine for dashboards and alerts. For money, ask the database, which the same run does.</p>
+    <p><b>Prove every use case is observable.</b> A convention nobody checks decays. The fitness check (<a href="./16-enforcing-boundaries-fitness.html">lesson 16</a>) reads the use cases exported from <code>index.ts</code>, calls each one through <code>composeUseCases</code> with fake ports, and fails if no span comes out or the name breaks the convention. It takes its list from the exports so it can't go stale, and it fails on 0 use cases rather than passing. Planted twice below: a use case exported but not composed, and one composed bare.</p>
+  </section>
+
+<pre data-file="src/platform/metrics.ts"><code class="language-typescript">// الـ metrics: الـ business منها بيسمع الـ events، والـ RED عند الـ adapter
+import { Counter, Histogram } from "@prometheus-io/client";
+import type { Registry } from "@prometheus-io/client";
+import type { RequestHandler } from "express";
+
+export interface MetricEvent {
+  type: string;
+  currency?: string;
+  reason?: string;
+}
+
+const KNOWN_REASONS = new Set(["card_declined", "insufficient_funds", "expired_card"]);
+
+export const makeBusinessMetrics = (registry: Registry) =&gt; {
+  const placed = new Counter({ name: "orders_placed_total", help: "Orders placed", labelNames: ["currency"] as const, registers: [registry] });
+  const paid = new Counter({ name: "orders_paid_total", help: "Orders paid", registers: [registry] });
+  const failed = new Counter({ name: "payment_failed_total", help: "Payments that failed", labelNames: ["reason"] as const, registers: [registry] });
+  return {
+    handle(event: MetricEvent): void {
+      if (event.type === "OrderPlaced") placed.inc({ currency: event.currency ?? "unknown" });
+      if (event.type === "OrderPaid") paid.inc();
+      // الـ reason جاي من provider بره: أي قيمة غريبة تبقى other عشان الـ cardinality ميفرقعش
+      if (event.type === "OrderPaymentFailed") failed.inc({ reason: KNOWN_REASONS.has(event.reason ?? "") ? event.reason! : "other" });
+    },
+  };
+};
+
+// الـ RED عند الـ driving adapter: rate و errors و duration لكل route، مش لكل URL
+export const redMiddleware = (registry: Registry): RequestHandler =&gt; {
+  const requests = new Counter({ name: "http_requests_total", help: "HTTP requests", labelNames: ["method", "route", "status"] as const, registers: [registry] });
+  const duration = new Histogram({ name: "http_request_duration_seconds", help: "HTTP duration", labelNames: ["route"] as const, buckets: [0.05, 0.1, 0.3, 1, 3], registers: [registry] });
+  return (req, res, next) =&gt; {
+    const end = duration.startTimer();
+    res.on("finish", () =&gt; {
+      const route = (req.route?.path as string | undefined) ?? "unmatched";
+      requests.inc({ method: req.method, route, status: res.statusCode });
+      end({ route });
+    });
+    next();
+  };
+};</code></pre>
+<pre><code class="language-plaintext">$ node lab/p6-metrics.ts       # 6 requests of different kinds
+before the relay runs: 1 business series
+orders_placed_total{currency="EGP"} 3
+orders_paid_total 2
+payment_failed_total{reason="card_declined"} 1
+http_requests_total{method="POST",route="/orders",status="201"} 2
+http_requests_total{method="POST",route="/orders",status="402"} 1
+http_requests_total{method="POST",route="/orders",status="404"} 1
+http_requests_total{method="POST",route="/orders",status="422"} 1
+http_requests_total{method="POST",route="/orders",status="400"} 1
+database says: [{"status":"paid","n":2},{"status":"payment_failed","n":1}]</code></pre>
+  <div class="ar-note">الـ 6 requests: 2 اتدفعوا، و 1 كارت مرفوض، و 1 sku غلط، و 1 كمية غلط، و 1 شكل غلط. قبل ما الـ relay يشتغل، الـ <code>orders_paid_total</code> لسه 0، وده تأخير الـ events. بعد الـ relay: 3 orders اتعملوا، 2 اتدفعوا، و 1 فشل بسبب <code>card_declined</code>. وسطور <code>http_requests_total</code> هي الـ RED من الـ adapter، بالـ route مش بالـ URL: 201 مرتين و 402 و 404 و 422 و 400. آخر سطر من الـ database بيأكد نفس الأرقام. الـ sku الغلط والكمية الغلط مظهروش في الـ business metrics لأن مفيش event اتكتب أصلًا. والـ RED هو اللي بيعدّهم.</div>
+
+<pre data-file="lab/p6-sprinkled.ts"><code class="language-typescript">// ليه الـ business metric تسمع الـ events: counter جوه الـ use case بيعدّ حاجات متعملتش
+// شغّله كده: node lab/p6-sprinkled.ts
+import { Counter, Registry } from "@prometheus-io/client";
+import { Order } from "../after/src/modules/orders/domain/order.ts";
+import { makeInMemoryOrderRepository } from "../after/src/modules/orders/infrastructure/in-memory-order-repository.ts";
+import { OrderStoreUnavailable } from "../after/src/modules/orders/application/errors.ts";
+import { makeBusinessMetrics } from "../after/src/platform/metrics.ts";
+import { Money } from "../after/src/shared/money.ts";
+
+const registry = new Registry();
+const sprinkled = new Counter({ name: "orders_placed_sprinkled_total", help: "counted inside the use case", registers: [registry] });
+const fromEvents = makeBusinessMetrics(registry);
+const repo = makeInMemoryOrderRepository();
+
+let attempts = 0;
+const placeSprinkled = async (id: string) =&gt; {
+  const order = Order.place({ id, customerEmail: "sara@example.com", lines: [{ sku: "SKU-MUG", qty: 1, unitPrice: Money.of(25_000, "EGP") }], now: new Date() });
+  // ❌ الـ counter قبل الـ save: لو الـ save وقع، الرقم غلط خلاص
+  sprinkled.inc();
+  // الـ save التالت بيقع، زي الـ DB لما تقع لحظة
+  if (++attempts === 3) throw new OrderStoreUnavailable();
+  await repo.save(order);
+};
+for (const id of ["o1", "o2", "o3", "o4"]) await placeSprinkled(id).catch(() =&gt; {});
+
+// ✅ بيسمع اللي اتحفظ فعلًا: الـ repo هو اللي بينشر، زي الـ relay
+for (const e of repo.published) fromEvents.handle(e);
+
+const first = async (name: string) =&gt; (await registry.getSingleMetric(name)!.get()).values.reduce((n, v) =&gt; n + v.value, 0);
+console.log("saved orders:", repo.published.length);
+console.log("sprinkled counter:", await first("orders_placed_sprinkled_total"));
+console.log("event counter:", await first("orders_placed_total"));
+
+// ⚠ الـ relay نفسه at-least-once: لو وقع بعد الـ handle وقبل الـ commit، نفس الـ event بيتعد تاني
+for (const e of repo.published.slice(0, 1)) fromEvents.handle(e);
+console.log("event counter after one redelivery:", await first("orders_placed_total"));</code></pre>
+<pre><code class="language-plaintext">$ node lab/p6-sprinkled.ts
+saved orders: 3
+sprinkled counter: 4
+event counter: 3
+event counter after one redelivery: 4</code></pre>
+  <div class="ar-note">4 محاولات، والتالتة وقعت في الـ save، فالموجود فعلًا 3 orders. الـ counter المرشوش جوه الكود بيقول 4 لأنه عدّ المحاولات. والـ counter اللي بيسمع الـ events بيقول 3 وده الصح. وآخر سطر الثمن: لو الـ relay وصّل نفس الـ event مرتين، الرقم بيبقى 4.</div>
+
+<pre data-file="scripts/check-use-case-spans.ts"><code class="language-typescript">// فحص في الـ CI: كل use case متصدّر من index.ts لازم يطلّع span باسم صح
+// شغّله كده: node scripts/check-use-case-spans.ts
+import { readFileSync } from "node:fs";
+import { InMemorySpanExporter, NodeTracerProvider, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-node";
+import { composeUseCases } from "../after/src/composition-root.ts";
+import type { Ports } from "../after/src/composition-root.ts";
+
+const exporter = new InMemorySpanExporter();
+const provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+provider.register();
+
+// (1) الـ ports وهمية بالكامل: الفحص ده مش محتاج DB ولا شبكة
+const idle = (): never =&gt; {
+  throw new Error("port not available in this check");
+};
+const ports = new Proxy({}, { get: () =&gt; new Proxy({}, { get: () =&gt; idle }) }) as Ports;
+const useCases = composeUseCases(ports, provider.getTracer("check")) as unknown as Record&lt;string, (arg: unknown) =&gt; Promise&lt;unknown&gt;&gt;;
+
+// (2) مصدر الحقيقة هو الـ exports نفسها، مش قايمة حد بيفتكر يحدّثها
+const index = readFileSync("after/src/modules/orders/index.ts", "utf8");
+const factories = [...index.matchAll(/export \{ (make\w+) \} from "\.\/application\//g)].map((m) =&gt; m[1]!);
+if (factories.length === 0) {
+  console.error("found 0 use cases in index.ts: the check is not checking anything");
+  process.exit(2);
+}
+
+const NAME = /^[a-z]+\.[a-z_]+$/;
+let bad = 0;
+for (const factory of factories) {
+  const key = factory[4]!.toLowerCase() + factory.slice(5);
+  const useCase = useCases[key];
+  if (!useCase) {
+    console.log(`MISSING  ${factory} is exported but composeUseCases has no ${key}`);
+    bad++;
+    continue;
+  }
+  exporter.reset();
+  await useCase({ orderId: "probe", customerEmail: "probe", lines: [] }).catch(() =&gt; {});
+  const root = exporter.getFinishedSpans().find((s) =&gt; !s.parentSpanContext);
+  if (!root) {
+    console.log(`NO SPAN  ${key} ran and produced no span`);
+    bad++;
+  } else if (!NAME.test(root.name)) {
+    console.log(`BAD NAME ${key} produced a span named "${root.name}"`);
+    bad++;
+  } else {
+    console.log(`ok       ${key} -&gt; ${root.name}`);
+  }
+}
+await provider.shutdown();
+process.exit(bad ? 1 : 0);</code></pre>
+<pre><code class="language-plaintext">$ node scripts/prove-use-case-spans.mjs
+--- clean tree
+ok       placeOrder -&gt; orders.place
+ok       chargeOrder -&gt; orders.charge
+exit code: 0
+--- planted: exported, not composed
+ok       placeOrder -&gt; orders.place
+ok       chargeOrder -&gt; orders.charge
+MISSING  makeCancelOrder is exported but composeUseCases has no cancelOrder
+exit code: 1
+--- planted: composed bare, no withTracing
+ok       placeOrder -&gt; orders.place
+ok       chargeOrder -&gt; orders.charge
+NO SPAN  cancelOrder ran and produced no span
+exit code: 1</code></pre>
+  <div class="ar-note">الشجرة نضيفة: الـ use cases الاتنين طلّعوا span بالاسم الصح و exit code 0. أول زرعة: <code>makeCancelOrder</code> متصدّر من <code>index.ts</code> ومحدش ركّبه، فالفحص قال <code>MISSING</code> و exit code 1. تاني زرعة: اتركّب من غير <code>withTracing</code>، فاتنادى فعلًا ومطلعش span، والفحص قال <code>NO SPAN</code> و exit code 1.</div>
+
+  <table>
+    <tr><th>Design in on day one</th><th>Why now</th><th>Add later</th><th>Why it can wait</th></tr>
+    <tr><td>One error vocabulary per layer; <code>PortError</code></td><td>Rewriting every catch later touches all files</td><td>Tuned alert thresholds, SLOs</td><td>You need real traffic to choose them</td></tr>
+    <tr><td>A boundary around every driving adapter</td><td>A forgotten one takes the process down</td><td>Dashboards</td><td>Data is there, views are cheap</td></tr>
+    <tr><td>Correlation and causation columns</td><td>Past stories can't be backfilled</td><td>Tail sampling, exemplars</td><td>Only matter at volume</td></tr>
+    <tr><td>Structured logger reading the context</td><td>Every later line benefits</td><td>Log shipping vendor</td><td>JSON on stdout moves anywhere</td></tr>
+    <tr><td><code>withTracing</code> and the span fitness check</td><td>One line per use case now, a project later</td><td>A real tracing backend</td><td>The exporter is a config line</td></tr>
+    <tr><td>Business metrics on events</td><td>Free once events exist</td><td>More business metrics</td><td>Add as questions appear</td></tr>
+  </table>
+  <div class="ar-note">الجدول، صف صف:
+    <ul>
+      <li><b>لغة errors لكل طبقة و<code>PortError</code> من أول يوم:</b> تعديل كل catch بعدين بيلمس كل الملفات. أما ضبط حدود الـ alerts والـ SLOs فيستنى، لأنك محتاج traffic حقيقي عشان تختارهم.</li>
+      <li><b>boundary حوالين كل driving adapter من أول يوم:</b> المنسي بيوقّع الـ process. أما الـ dashboards فتستنى: الـ data موجودة، والعرض رخيص.</li>
+      <li><b>عمودين الـ correlation والـ causation من أول يوم:</b> الحكايات اللي فاتت مينفعش تتعمل لها backfill. أما tail sampling والـ exemplars فيستنوا: بيفرقوا مع الحجم الكبير بس.</li>
+      <li><b>structured logger بيقرا الـ context من أول يوم:</b> كل سطر بعد كده بيستفيد. أما vendor شحن الـ logs فيستنى: الـ JSON على stdout يتنقل لأي حتة.</li>
+      <li><b><code>withTracing</code> وفحص الـ spans من أول يوم:</b> سطر لكل use case دلوقتي، ومشروع كامل بعدين. أما الـ tracing backend الحقيقي فيستنى: الـ exporter سطر config.</li>
+      <li><b>الـ business metrics على الـ events من أول يوم:</b> ببلاش طالما الـ events موجودة. أما metrics أكتر فتستنى: ضيفها لما الأسئلة تظهر.</li>
+    </ul>
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>نوعين في مكانين.</b> الـ business metrics (<code>orders_placed_total</code> و<code>payment_failed_total</code>) <b>بتسمع الـ events</b>، مش مرشوشة في الـ use cases. والـ RED التقني (rate و errors و duration) عند الـ driving adapter، بالـ route وعمره ما يبقى بالـ URL. الـ client هو <code>@prometheus-io/client</code>، و<a href="../../04-NodeJS/lessons/31-metrics-tracing-errors.html">درس Node رقم 31</a> بيشرح ليه حل محل <code>prom-client</code>، وبيغطي الـ histogram buckets والـ cardinality.</p>
+    <p><b>ليه events؟</b> الـ counter جوه الـ use case بيعدّ محاولات مش حقايق. في التشغيل فوق، الـ save التالت وقع: الـ counter المرشوش بيقول 4 والموجود 3 orders، والـ counter بتاع الـ events بيقول 3. الـ event موجود بس لو الـ transaction بتاعته عملت commit، فالـ metric المبني عليه مينفعش يعدّ حاجة اتعمل لها rollback. والـ labels كمان محدودة: <code>reason</code> جاي من provider بره، فأي قيمة مش معروفة بتبقى <code>other</code>.</p>
+    <p><b>التمن بصراحة.</b> الـ relay بتاعنا at-least-once، فلو وقع بعد الـ handle وقبل الـ commit، الـ event اللي هيتبعت تاني هيتعد تاني (آخر سطر فوق بيروح من 3 لـ 4). وكمان الأرقام بتتأخر لحد ما الـ relay يشتغل، زي ما أول سطر في التشغيل بيوضح. ده تمام للـ dashboards والـ alerts. أما الفلوس فاسأل الـ database، وده اللي نفس التشغيل بيعمله.</p>
+    <p><b>اثبت إن كل use case مراقَب.</b> العُرف اللي محدش بيفحصه بيموت. الـ fitness check (<a href="./16-enforcing-boundaries-fitness.html">الدرس 16</a>) بيقرا الـ use cases المتصدّرة من <code>index.ts</code>، وبينادي كل واحد عبر <code>composeUseCases</code> بـ ports وهمية، وبيقع لو مطلعش span أو الاسم كسر العُرف. بياخد القايمة من الـ exports فمتبقاش قديمة، وبيقع على 0 use cases بدل ما يعدّي. وزرعناه مرتين فوق: use case متصدّر ومش متركّب، وواحد متركّب من غير tracing.</p>
+    <p>وآخر جدول بيقولك إيه تعمله من أول يوم وإيه يستنى: كل حاجة صعب تترجّع أو ترجع بأثر رجعي من أول يوم، وكل حاجة محتاجة traffic حقيقي أو رخيصة تتضاف تستنى.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ product بيسأل "كام order اتعمل النهاردة؟". لو الرقم جاي من counter جوه <code>createOrder</code> قبل الـ commit، هتلاقيه مش مطابق لتقرير المالية، وهتقضي يوم تدوّر. حط الـ counter على <code>OrderPlaced</code> في الـ relay، وقول للـ product إن الـ dashboard للاتجاهات، والتقرير الرسمي من الـ DB. وضيف فحص الـ spans في الـ CI عشان أي use case جديد بعد سنة يتراقب من غير ما حد يفتكر.
+    </div>
+  </section>
+
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+  <div class="compare">
+    <div class="bad"><b>❌ Log and rethrow at every layer</b>
+<pre><code class="language-typescript">try {
+  return await repo.save(order);
+} catch (err) {
+  // ❌ نفس الفشل هيتكتب 4 مرات
+  log.error(err);
+  throw err;
+}</code></pre></div>
+    <div class="good"><b>✅ Add context, or stay out of the way</b>
+<pre><code class="language-typescript">try {
+  return await fetchFromProvider();
+} catch (err) {
+  // ✅ سياق جديد، ومن غير log: الـ boundary هيكتب مرة واحدة
+  throw new PaymentUnavailable("provider failed", { cause: err });
+}</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>log</code> والـ <code>throw</code> مع بعض في كل طبقة: 4 سطور لفشل واحد، والـ error rate شكله 4 أضعاف. ✅ يا إما تضيف context بـ <code>cause</code> وتسيبه يطلع، يا إما تسيبه يعدّي خالص. الـ log مكانه الـ boundary بس، والسطر ده فيه السلسلة كلها.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Driver codes above the adapter</b>
+<pre><code class="language-typescript">router.post("/orders", async (req, res) =&gt; {
+  try {
+    res.json(await placeOrder(req.body));
+  } catch (err: any) {
+    // ❌ الـ route بقى عارف Postgres
+    if (err.code === "23505") res.status(409).end();
+    else res.status(500).json({ error: err.message });
+  }
+});</code></pre></div>
+    <div class="good"><b>✅ Translate in the adapter, map once</b>
+<pre><code class="language-typescript">// ✅ في الـ adapter بس
+if (code === "23505") return new StaleOrderError(id, { cause: err });
+
+// ✅ في جدول الـ mapping
+if (err instanceof StaleOrderError) return { status: 409, code: "stale_order", title: "The order changed, reload and retry", level: "info" };</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ route فيه <code>err.code === "23505"</code>، يعني معتمد على الـ driver، ولو غيّرته الكود يقع في صمت. ومعاها <code>err.message</code> في الـ response، وده بيطلّع اسم الـ constraint واسم الجدول للعميل. ✅ الـ adapter بيترجم لـ <code>StaleOrderError</code>، والجدول الواحد بيحوّله لـ 409 برسالة ثابتة، والتفاصيل في الـ log.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Retry by reading the message</b>
+<pre><code class="language-typescript">// ❌ حد يغيّر نص الرسالة، والـ retry يقف من غير ما حد يعرف
+if (err.message.includes("timeout")) throw err;
+throw new UnrecoverableError(err.message);</code></pre></div>
+    <div class="good"><b>✅ Decide on the type</b>
+<pre><code class="language-typescript">// ✅ الـ type بيقول بنفسه ينفع نعيد ولا لأ
+if (err instanceof PortError &amp;&amp; err.retryable) throw err;
+throw new UnrecoverableError((err as Error).message);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ فحص نص الرسالة هش: تحديث library يغيّر النص، فالـ retry يقف أو يعيد حاجة مش هتنجح، ومحدش يلاحظ. ✅ <code>retryable</code> على الـ type جزء من العقد، والـ adapter هو اللي حدده وهو بيترجم.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Trusting context to cross a queue</b>
+<pre><code class="language-typescript">await pool.query(
+  "insert into orders.outbox (type, payload, occurred_at) values ($1,$2,$3)",
+  [e.type, JSON.stringify(e), e.at],
+);
+// ❌ الـ relay بعدين: مفيش context، والحكاية اتقطعت
+log.info(currentContext()?.correlationId);</code></pre></div>
+    <div class="good"><b>✅ Make the story data</b>
+<pre><code class="language-typescript">const ctx = currentContext();
+await client.query(INSERT_OUTBOX, [e.type, JSON.stringify(e), e.at, ctx?.correlationId ?? null, ctx?.causationId ?? null]);
+// ✅ الـ relay: العمود بيرجّع الـ context لكل صف
+await runInContext({ correlationId: row.correlation_id, causationId: String(row.id), adapter: "relay" }, handle);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>AsyncLocalStorage</code> شغال مع الـ promises جوه process واحد بس، فالـ relay بيشوف <code>undefined</code> والـ logs بتتقطع عند الـ queue. ✅ خلّي الـ correlation والـ causation عمودين في صف الـ outbox، والـ relay يرجّع منهم الـ context لكل صف.</p>
+  </section>
+
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Close the gap the alert found <span class="lvl lvl-1">🟢 easy</span></b>
+    In Part 2, <code>qty 99999999999</code> ended as a 500 with level <code>error</code>. Add a limit at the HTTP boundary and re-run the table until that row is a 400 with no error line.
+    <div class="ar-note">في الجزء 2، <code>qty 99999999999</code> طلعت 500 بمستوى <code>error</code>. ضيف limit على الـ HTTP boundary وشغّل الجدول تاني لحد ما الصف ده يبقى 400 من غير سطر error.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/modules/orders/presentation/http.ts"><code class="language-typescript">// الشكل بيتفحص على الحدود، والـ invariant بيفضل في الـ aggregate لأي adapter تاني
+const PlaceOrderBody = z.object({
+  customerEmail: z.email(),
+  lines: z.array(z.object({ sku: z.string().min(1), qty: z.number().int().positive().max(10_000) })).min(1),
+});</code></pre>
+<pre><code class="language-plaintext">--- exercise 1: limit qty at the boundary
+qty -5                   400  bad_request              -      -
+qty 99999999999          400  bad_request              -      -</code></pre>
+      <div class="ar-note">بعد التعديل، الكمية الكبيرة بقت 400 ومفيش log، و<code>qty -5</code> كمان بقت 400 بدل 422 لأنها اتمسكت على الحدود قبل الـ aggregate. الـ invariant بيفضل في <code>Order.place</code> عشان الـ CLI والـ jobs وأي adapter تاني.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. A new use case, and the check that notices <span class="lvl lvl-2">🟡 medium</span></b>
+    Add <code>makeCancelOrder</code> to the service and export it from <code>index.ts</code>. Run <code>check-use-case-spans.ts</code> and watch it fail. Then compose it with <code>withTracing</code> so it passes under the name <code>orders.cancel</code>.
+    <div class="ar-note">ضيف <code>makeCancelOrder</code> للـ service وصدّره من <code>index.ts</code>. شغّل <code>check-use-case-spans.ts</code> وشوفه وهو بيقع. بعدها ركّبه بـ <code>withTracing</code> عشان يعدّي باسم <code>orders.cancel</code>.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/composition-root.ts"><code class="language-typescript">// سطر في composeUseCases، والـ use case نفسه مفيهوش أي tracing
+cancelOrder: withTracing(tracer, "orders.cancel", makeCancelOrder(), {
+  output: (r) =&gt; ({ "order.result": r.kind }),
+}),</code></pre>
+<pre><code class="language-plaintext">--- exercise 2: composed with withTracing
+ok       placeOrder -&gt; orders.place
+ok       cancelOrder -&gt; orders.cancel
+ok       chargeOrder -&gt; orders.charge
+exit code: 0</code></pre>
+      <div class="ar-note">الفحص بياخد القايمة من الـ exports، فأول ما صدّرت الـ use case هو شافه، وبعد التركيب بقى <code>ok</code> بالاسم الصح.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. Rebuild the tree <span class="lvl lvl-3">🔴 hard</span></b>
+    Write a query that, given a correlation id, prints the outbox events as a tree using <code>causation_id</code>.
+    <div class="ar-note">اكتب query تاخد correlation id وتطبع events الـ outbox على شكل شجرة باستخدام <code>causation_id</code>.</div>
+    <details><summary>Hint · تلميح</summary>
+      Start from the rows with a null <code>causation_id</code> and join children with <code>WITH RECURSIVE</code>. The column is text and the id is bigint, so cast one side.
+      <div class="ar-note">ابدأ من الصفوف اللي <code>causation_id</code> بتاعها null، واربط الأبناء بـ <code>WITH RECURSIVE</code>. العمود text والـ id من نوع bigint، فلازم cast لواحد منهم.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="lab/ex-chain.ts"><code class="language-sql">with recursive chain as (
+  select id, type, causation_id, 0 as depth
+    from orders.outbox
+   where correlation_id = $1 and causation_id is null
+  union all
+  select o.id, o.type, o.causation_id, c.depth + 1
+    from orders.outbox o
+    join chain c on o.causation_id = c.id::text
+)
+select id, type, depth from chain order by depth, id`;</code></pre>
+<pre><code class="language-plaintext">$ node lab/ex-chain.ts
+OrderPlaced (outbox 1)
+OrderPaid (outbox 2)
+  ReceiptRequested (outbox 3)</code></pre>
+      <div class="ar-note">الجزء الأول من الـ query بيجيب الجذور اللي جت من الـ request، والجزء التاني بيربط كل صف بالصف اللي سببه. <code>ReceiptRequested</code> طالع تحت <code>OrderPaid</code> لأن الـ <code>causation_id</code> بتاعه هو صف الـ <code>OrderPaid</code>.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project / at work <span class="lvl lvl-3">🔴 project</span></b>
+    List every driving adapter in your service: routes, workers, crons, consumers. For each, write who catches, who logs, and how retry is decided. Fix the worst one with a boundary like <code>runTick</code>, add <code>correlation_id</code> to your outbox or job payload, and name one span after a real use case.
+    <div class="ar-note">اعمل قايمة بكل driving adapter في الـ service بتاعك: routes و workers و crons و consumers. لكل واحد اكتب مين بيمسك، ومين بيكتب log، والـ retry بيتقرر إزاي. صلّح أوحش واحد بـ boundary زي <code>runTick</code>، وضيف <code>correlation_id</code> في الـ outbox أو الـ job payload، وسمّي span واحد باسم use case حقيقي.</div>
+  </div>
+
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Four languages: domain throws <code>OrderRuleViolation</code>, application returns kinds and owns port errors, infrastructure translates, presentation maps once.</li>
+    <li>Port errors live next to the port. <code>retryable</code> on the base class is all the core needs.</li>
+    <li>A test on the port proves no driver error crosses: the untouched adapters failed 7 of 8, including <code>SyntaxError</code> from an HTML 502.</li>
+    <li>Rollback in <code>catch</code>, or the pool hands out an aborted transaction (<code>25P02</code>).</li>
+    <li>One catch and one log per boundary: 4 lines became 1. A deeper <code>catch</code> must decide something. Carry context with <code>cause</code>.</li>
+    <li>Levels: <code>info</code> or nothing for the client's fault, <code>warn</code> for temporary, <code>error</code> for bugs. Page on <code>error</code>, alert on the rate of <code>warn</code>.</li>
+    <li>Result for outcomes, throw for invariants, port errors and bugs. <code>Record&lt;kind, number&gt;</code> gives <code>TS2741</code> on a forgotten case.</li>
+    <li>Every driving adapter is a boundary. A bare <code>setInterval</code> dies on the first rejection. <code>UnrecoverableError</code> stops pointless retries.</li>
+    <li><code>AsyncLocalStorage</code> ends at the process. <code>correlation_id</code> and <code>causation_id</code> columns carry the story across the outbox.</li>
+    <li><code>withTracing</code> in the composition root: names like <code>orders.place</code>, ids in attributes, no personal data, no error status for expected outcomes.</li>
+    <li>Business metrics on events, RED at the adapter. A sprinkled counter said 4 for 3 orders. Events can double count at-least-once, so money comes from the DB.</li>
+    <li>A fitness check over <code>index.ts</code> exports proves each use case has a span, and it fails on 0 use cases.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>4 لغات: الـ domain بيرمي <code>OrderRuleViolation</code>، والـ application بيرجّع kinds ومالك الـ port errors، والـ infrastructure بيترجم، والـ presentation بيعمل mapping مرة واحدة.</li>
+      <li>الـ port errors جنب الـ port. و<code>retryable</code> على الـ base class هو كل اللي الـ core محتاجه.</li>
+      <li>test على الـ port بيثبت إن مفيش driver error بيعدّي: الـ adapters الأصلية وقعت في 7 من 8، ومنها <code>SyntaxError</code> من 502 بـ HTML.</li>
+      <li><code>rollback</code> في الـ <code>catch</code>، وإلا الـ pool هيدّي transaction باظت للي بعدك (<code>25P02</code>).</li>
+      <li>catch واحد و log واحد لكل boundary: الـ 4 سطور بقوا سطر. والـ <code>catch</code> الأعمق لازم يقرر حاجة. والـ context بيتشال في <code>cause</code>.</li>
+      <li>المستويات: <code>info</code> أو مفيش لغلطة الـ client، و<code>warn</code> للمؤقت، و<code>error</code> للـ bugs. صحّي حد على <code>error</code>، و alert على معدل <code>warn</code>.</li>
+      <li>Result للنتايج، و throw للـ invariants والـ port errors والـ bugs. و<code>Record&lt;kind, number&gt;</code> بيدّيك <code>TS2741</code> على الحالة المنسية.</li>
+      <li>كل driving adapter هو boundary. <code>setInterval</code> لوحده بيموت مع أول rejection. و<code>UnrecoverableError</code> بيوقف الـ retries اللي ملهاش لازمة.</li>
+      <li><code>AsyncLocalStorage</code> بينتهي عند الـ process. وعمودين <code>correlation_id</code> و<code>causation_id</code> بيشيلوا الحكاية عبر الـ outbox.</li>
+      <li><code>withTracing</code> في الـ composition root: أسماء زي <code>orders.place</code>، والـ ids في الـ attributes، ومفيش بيانات شخصية، ومفيش error status للمتوقع.</li>
+      <li>الـ business metrics على الـ events، والـ RED عند الـ adapter. الـ counter المرشوش قال 4 لـ 3 orders. والـ events ممكن تتعد مرتين لأنها at-least-once، فالفلوس من الـ DB.</li>
+      <li>fitness check على exports الـ <code>index.ts</code> بيثبت إن كل use case ليه span، وبيقع على 0 use cases.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 09 · 2.8 — <b>Error handling strategy</b> على مستوى النظام: error types hierarchy، فين بتتمسك (boundaries)، mapping للـ HTTP/responses، logging مرة واحدة</label>
+    <label><input type="checkbox" data-key="r2"> 09 · 2.8 — Logging/tracing/metrics <b>كجزء من التصميم</b> مش إضافة بعدين: correlation IDs في الـ context، structured logs، spans على الـ use cases</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.rfc-editor.org/rfc/rfc9457">RFC 9457 — Problem Details for HTTP APIs</a></li>
+    <li><a href="https://nodejs.org/api/async_context.html">Node.js docs — Asynchronous context tracking</a></li>
+    <li><a href="https://nodejs.org/api/process.html">Node.js docs — process (unhandled rejections)</a></li>
+    <li><a href="https://docs.bullmq.io/guide/retrying-failing-jobs">BullMQ docs — Retrying failing jobs</a></li>
+    <li><a href="https://opentelemetry.io/docs/concepts/signals/traces/">OpenTelemetry — Traces</a></li>
+    <li><a href="https://prometheus.io/docs/practices/naming/">Prometheus — Metric and label naming</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./20-ddd-events-when-worth-it.html"><small>← Previous</small>20 · Domain Events &amp; When</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./22-security-flags-multitenancy.html"><small>Next →</small>22 · Security, Flags &amp; Tenancy</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
