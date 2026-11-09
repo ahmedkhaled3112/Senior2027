@@ -1,0 +1,1728 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Caching Layers, the Cost Model &amp; the Latency Budget — 12 AI Engineering</title>
+<meta name="section" content="12-AI-Engineering">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">12 · AI Engineering</a></span>
+    <span>·</span>
+    <span>Lesson 27 / 31</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+<header>
+    <h1>Caching Layers, the Cost Model &amp; the Latency Budget</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 27 of 31 — AI Engineering</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">Node 22 · @anthropic-ai/sdk 1.6.0 · Redis 8 · TypeScript 7</span>
+      <span class="chip">Prereq: 06 Prompt Caching · 13 Embeddings</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>12 · 3.4 — Caching layers: exact cache (hash of prompt)، semantic cache (embedding similarity)، prompt caching من الـ provider</li>
+        <li>12 · 3.4 — <b>Cost model</b> قبل الـ launch: tokens per request × requests per user × users → $/month، وإيه اللي يحصل لو الـ usage ×10</li>
+        <li>12 · 3.4 — Latency budget: TTFT target (&lt; 1s)، streaming إلزامي للـ chat، parallel tool calls</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Exact cache</a></li>
+      <li><a href="#p2">Part 2 — Semantic cache</a></li>
+      <li><a href="#p3">Part 3 — Stacking the layers</a></li>
+      <li><a href="#p4">Part 4 — The cost model before launch</a></li>
+      <li><a href="#p5">Part 5 — The latency budget</a></li>
+      <li><a href="#p6">Part 6 — Cost, latency, failure, and an eval</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>An LLM feature gets judged on three numbers: is it right, what does it cost per user, and how long until the first word appears. Caching moves all three, and it is the one optimization that can make the first number worse while the dashboard looks better. A cost model written before launch is what lets you say "this feature costs $0.17 per user per month and the assumption most likely to hurt us is usage per user". A latency budget is what turns "it feels slow" into "retrieval took 170 ms at p95 against a budget of 150". In a system design interview these are the questions that separate someone who called an API from someone who ran one.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>أي feature فيها LLM بتتحاسب على 3 أرقام: الإجابة صح ولا لأ، بتكلف كام لكل user، وأول كلمة بتظهر بعد قد إيه. الـ caching بيحرّك التلاتة، وهو الـ optimization الوحيد اللي ممكن يبوّظ الرقم الأول والـ dashboard شكله أحسن. الـ cost model اللي بتكتبه قبل الـ launch هو اللي بيخليك تقول "الـ feature دي بتكلف $0.17 لكل user في الشهر، وأخطر افتراض عندنا هو عدد الطلبات لكل user". والـ latency budget هو اللي بيحوّل "حاسس إنها بطيئة" لـ "الـ retrieval خد 170 ms عند الـ p95 والـ budget بتاعه 150". في interview الـ system design، الأسئلة دي هي اللي بتفرّق بين واحد نادى API وواحد شغّل واحد.</p>
+  </section>
+
+  <div class="callout warn">
+    <b>What is real here and what isn't</b>
+    There is no API key on this machine. Model calls go to the local stand-in from <a href="./03-first-llm-call-node.html">lesson 03</a> and its output says <code>[SIMULATED]</code>. Real: Redis 8.10.3, the SDK, the HTTP, your cache code, every count of hits and wrong answers, and all the arithmetic with prices checked on 2026-11-09. Simulated: the model's words, its tokens (characters / 3.6), its timing, and the embeddings from <a href="./13-embeddings-pgvector.html">lesson 13's kit</a>. So a threshold that works here says nothing about a real embedding model. To switch to the real API, delete <code>baseURL</code> and set <code>ANTHROPIC_API_KEY</code>. Timings come from a loaded Windows machine and are marked ≈.
+    <div class="ar-note">مفيش API key على الجهاز ده. الـ calls بتروح للـ stand-in المحلي من <a href="./03-first-llm-call-node.html">الدرس 03</a> والـ output مكتوب عليه <code>[SIMULATED]</code>. الحقيقي: Redis 8.10.3، والـ SDK، والـ HTTP، وكود الـ cache بتاعك، وكل عدّ للـ hits والإجابات الغلط، وكل الحسابات بأسعار اتراجعت يوم 2026-11-09. المُحاكى: كلام الـ model، والـ tokens بتاعته (عدد الحروف / 3.6)، والتوقيت بتاعه، والـ embeddings من kit <a href="./13-embeddings-pgvector.html">الدرس 13</a>. يعني الـ threshold اللي نفع هنا مبيقولش أي حاجة عن embedding model حقيقي. عشان تحوّل للـ API الحقيقي: امسح <code>baseURL</code> وحط <code>ANTHROPIC_API_KEY</code>. التوقيتات من Windows تحت ضغط ومعلّم عليها بـ ≈.</div>
+  </div>
+
+  <h2 id="p1">Part 1 — Exact cache <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — الـ exact cache</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>An exact cache stores a finished response under a hash of the <em>canonical request</em>. The rule for the key is one sentence: <strong>everything that can change the answer goes in the key</strong>. For a multi-tenant assistant that means tenant, model, prompt version, the normalized input, and later the knowledge-base version. A hit costs one Redis <code>GET</code> (≈0.14 ms in the run below) instead of a paid model call that takes seconds.</p>
+    <p>Canonicalization decides your hit rate: normalize Unicode with NFKC, trim, collapse whitespace, and lowercase only if case can't change the meaning. Serialize in a fixed order (an array, or sorted keys), because <code>JSON.stringify</code> on an object follows insertion order. Always set a TTL; a key without one is a stale answer with no expiry. Putting the tenant in the key <em>prefix</em> also gives you a way to purge one tenant. The cache strategies themselves are in <a href="../../10-System-Design/lessons/16-caching-foundations-strategies.html">section 10, lesson 16</a>.</p>
+    <p>Exact caching only pays off when the same canonical input repeats. A chat request whose key includes the whole conversation almost never repeats, so aim it at single-shot calls and first turns: FAQ answers, classification, extraction over a document you have already seen.</p>
+    <p>The run replays 3,000 requests with a seeded Zipf distribution (a few questions get most of the traffic) from two tenants whose refund policies differ, with a prompt deploy halfway. The stand-in writes the tenant and prompt version into its answer, so the code can count wrong answers instead of guessing.</p>
+  </section>
+
+<pre data-file="src/lib.ts"><code class="language-typescript">import { readFileSync } from "node:fs";
+import { Redis } from "ioredis";
+
+// بيرفض أي port فاضي أو default قبل ما يفتح connection: الـ port الفاضي بيوصل للـ Redis الحقيقي
+export function connectRedis(): Redis {
+  const raw = readFileSync("redis.port", "utf8").trim();
+  const n = Number(raw);
+  if (!/^\d+$/.test(raw) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) throw new Error("refusing port " + raw);
+  return new Redis({ host: "127.0.0.1", port: n, maxRetriesPerRequest: 1 });
+}
+
+// مولّد أرقام بـ seed: نفس الـ workload في كل تشغيلة
+export function rng(seed: number) {
+  return () =&gt; {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed &gt;&gt;&gt; 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+// توزيع Zipf: قلة من الأسئلة بتاخد أغلب الـ traffic
+export function zipf(n: number, s: number, rand: () =&gt; number) {
+  const w = Array.from({ length: n }, (_, i) =&gt; 1 / (i + 1) ** s);
+  const total = w.reduce((a, b) =&gt; a + b, 0);
+  let acc = 0;
+  const cdf = w.map((x) =&gt; (acc += x / total));
+  return () =&gt; {
+    const r = rand();
+    let lo = 0, hi = n - 1;
+    while (lo &lt; hi) {
+      const mid = (lo + hi) &gt;&gt; 1;
+      if (cdf[mid] &lt; r) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+}
+
+export const pct = (xs: number[], p: number) =&gt; {
+  const s = [...xs].sort((a, b) =&gt; a - b);
+  return s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))];
+};
+export const sleep = (ms: number) =&gt; new Promise&lt;void&gt;((r) =&gt; setTimeout(r, ms));
+
+// بيشغّل tasks بعدد workers ثابت عشان الـ concurrency تبقى محكومة
+export async function pool&lt;T&gt;(items: T[], size: number, fn: (x: T, i: number) =&gt; Promise&lt;void&gt;) {
+  let i = 0;
+  await Promise.all(Array.from({ length: size }, async () =&gt; {
+    while (i &lt; items.length) {
+      const idx = i++;
+      await fn(items[idx], idx);
+    }
+  }));
+}</code></pre>
+
+<pre data-file="src/exact-cache.ts"><code class="language-typescript">import { createHash } from "node:crypto";
+import Anthropic from "@anthropic-ai/sdk";
+import { startMock } from "../kit/mock-anthropic.ts";
+import { costOf } from "../kit/prices.ts";
+import { connectRedis, pct, rng, zipf } from "./lib.ts";
+
+const MODEL = "claude-sonnet-5-5";
+const TTL_S = 3600;
+type Req = { tenant: string; promptVersion: string; question: string };
+
+// بيوحّد الشكل: مسافات زيادة وحروف كبيرة ميعملوش key جديد
+const normalize = (q: string) =&gt; q.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+
+// ✅ الـ key فيه كل حاجة بتغيّر الإجابة، والترتيب ثابت عشان الـ hash يبقى deterministic
+function goodKey(r: Req): string {
+  const canon = JSON.stringify([1, r.tenant, MODEL, r.promptVersion, normalize(r.question)]);
+  return `llm:exact:${r.tenant}:${createHash("sha256").update(canon).digest("hex")}`;
+}
+// ❌ الـ key ده بيتجاهل الـ tenant والـ prompt version
+const badKey = (r: Req) =&gt; `llm:bad:${createHash("sha256").update(r.question).digest("hex")}`;
+
+// السياسة بتختلف لكل tenant، فنفس السؤال ليه إجابتين صح
+const POLICY: Record&lt;string, string&gt; = { acme: "refund window is 14 days", globex: "refund window is 30 days" };
+const systemFor = (r: Req) =&gt; `TENANT=${r.tenant} PROMPT=${r.promptVersion} ${POLICY[r.tenant]}. ` + "Answer using only the help center. ".repeat(40);
+
+const mock = await startMock({
+  ttftMs: 1, tokenMs: 0,
+  reply: (req) =&gt; {
+    // الرد مكتوب بإيدينا: بيرجع الـ tenant والـ version عشان نقدر نقيس الغلط
+    const sys = JSON.stringify(req.system);
+    const tag = sys.match(/TENANT=(\w+) PROMPT=(\w+)/)!;
+    return { content: [{ type: "text", text: `[${tag[1]}|${tag[2]}] ` + "Here is the policy answer. ".repeat(25) }] };
+  },
+});
+const client = new Anthropic({ apiKey: "mock-key-not-real", baseURL: mock.url, maxRetries: 2 });
+const redis = connectRedis();
+
+// الـ workload بـ seed: نفس الأسئلة بنفس الترتيب للـ key الغلط والصح
+const DISTINCT = 400, N = 3000, DEPLOY_AT = 1500;
+const questions = Array.from({ length: DISTINCT }, (_, i) =&gt; `How do I handle refund case ${i}?`);
+function workload(): Req[] {
+  const rand = rng(42);
+  const pick = zipf(DISTINCT, 1.0, rand);
+  return Array.from({ length: N }, (_, i) =&gt; ({
+    tenant: rand() &lt; 0.5 ? "acme" : "globex",
+    promptVersion: i &lt; DEPLOY_AT ? "v1" : "v2",
+    // مستخدم ساعات بيكتب نفس السؤال بمسافات زيادة
+    question: (rand() &lt; 0.2 ? "  " : "") + questions[pick()],
+  }));
+}
+
+async function run(label: string, keyOf: (r: Req) =&gt; string) {
+  let hits = 0, calls = 0, wrongTenant = 0, stale = 0, dollars = 0;
+  const redisMs: number[] = [];
+  for (const r of workload()) {
+    const key = keyOf(r);
+    const t0 = performance.now();
+    let answer = await redis.get(key);
+    redisMs.push(performance.now() - t0);
+    if (answer) hits++;
+    else {
+      const res = await client.messages.create({ model: MODEL, max_tokens: 400, system: systemFor(r), messages: [{ role: "user", content: r.question }] });
+      calls++;
+      dollars += costOf(MODEL, res.usage);
+      answer = res.content[0].type === "text" ? res.content[0].text : "";
+      await redis.set(key, answer, "EX", TTL_S);
+    }
+    // القياس: الإجابة لازم تكون بتاعة نفس الـ tenant ونفس الـ prompt version
+    const [t, v] = answer.slice(1, answer.indexOf("]")).split("|");
+    if (t !== r.tenant) wrongTenant++;
+    else if (v !== r.promptVersion) stale++;
+  }
+  console.log(`${label.padEnd(30)} hits ${String(hits).padStart(4)} (${((100 * hits) / N).toFixed(1)}%)  calls ${String(calls).padStart(4)}  $${dollars.toFixed(3)}  wrong-tenant ${String(wrongTenant).padStart(4)}  stale-prompt ${String(stale).padStart(4)}  redis p50 ≈${pct(redisMs, 50).toFixed(2)}ms`);
+}
+
+console.log(`workload: ${N} requests, 2 tenants, ${DISTINCT} distinct questions, zipf s=1.0, prompt v2 deployed at request ${DEPLOY_AT}`);
+await redis.flushdb();
+await run("bad: hash(question)", badKey);
+await redis.flushdb();
+await run("good: hash(tenant,model,v,q)", goodKey);
+
+// الـ TTL حقيقي: الـ key بيختفي لوحده من Redis
+await redis.set("llm:ttl-demo", "answer", "PX", 60);
+const before = await redis.get("llm:ttl-demo");
+await new Promise((r) =&gt; setTimeout(r, 120));
+console.log("ttl demo:", JSON.stringify(before), "→ after 120ms:", await redis.get("llm:ttl-demo"));
+console.log("sample key:", goodKey({ tenant: "acme", promptVersion: "v2", question: "How do I get a refund?" }));
+
+await redis.flushdb();
+redis.disconnect();
+await mock.close();</code></pre>
+
+<pre><code class="language-plaintext">[SIMULATED] local stand-in on 127.0.0.1:PORT: text, tokens and latency are simulated, not a real model
+workload: 3000 requests, 2 tenants, 400 distinct questions, zipf s=1.0, prompt v2 deployed at request 1500
+bad: hash(question)            hits 2493 (83.1%)  calls  507  $1.404  wrong-tenant 1243  stale-prompt  663  redis p50 ≈0.14ms
+good: hash(tenant,model,v,q)   hits 2191 (73.0%)  calls  809  $2.240  wrong-tenant    0  stale-prompt    0  redis p50 ≈0.14ms
+ttl demo: "answer" → after 120ms: null
+sample key: llm:exact:acme:42545081f3f52e49a3d083dd6feb5fba07d1a83ef212d31fd6730a0424374a98</code></pre>
+  <div class="ar-note">السطر الأول هو الـ banner بتاع الـ stand-in. الـ key الغلط (<code>hash(question)</code>) عمل hit rate أعلى: 83.1% مقابل 73.0%، وكلّف $1.404 بدل $2.240. وفي نفس الوقت 1,243 user خدوا إجابة tenant تاني، و663 خدوا إجابة من الـ prompt القديم. الـ key الصح: صفر غلط في الاتنين. الـ <code>GET</code> من Redis خد ≈0.14 ms. وسطر الـ TTL بيوريك إن Redis مسح الـ key لوحده بعد الـ <code>PX</code>، وآخر سطر شكل الـ key: فيه الـ tenant كـ prefix وبعده الـ hash.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ exact cache بيخزّن الرد كله تحت hash لـ <em>canonical request</em>. قاعدة الـ key جملة واحدة: <strong>أي حاجة ممكن تغيّر الإجابة لازم تبقى في الـ key</strong>. في assistant لـ multi-tenant يعني: الـ tenant، والـ model، والـ prompt version، والـ input بعد الـ normalize، وبعدين الـ knowledge-base version. الـ hit بيكلفك <code>GET</code> واحد على Redis (≈0.14 ms في التشغيلة) بدل model call بفلوس وبياخد ثواني.</p>
+    <p>الـ canonicalization هو اللي بيحدد الـ hit rate: اعمل normalize للـ Unicode بـ NFKC، وtrim، ولمّ المسافات الزيادة، وخلّي الحروف صغيرة بس لو الـ case مش بيغيّر المعنى. واعمل serialize بترتيب ثابت (array أو keys مترتبة)، لأن <code>JSON.stringify</code> على object بيمشي بترتيب الإدخال. وحط TTL دايمًا: الـ key من غير TTL هو إجابة قديمة مالهاش تاريخ انتهاء. وحطّ الـ tenant في أول الـ key عشان تقدر تمسح tenant واحد لو احتجت. الـ strategies نفسها في <a href="../../10-System-Design/lessons/16-caching-foundations-strategies.html">القسم 10، الدرس 16</a>.</p>
+    <p>الـ exact cache بيكسب بس لما نفس الـ input يتكرر. طلب chat الـ key بتاعه فيه المحادثة كلها تقريبًا عمره ما بيتكرر، فاستخدمه للـ calls اللي بتتعمل مرة واحدة ولأول turn: إجابات FAQ، والـ classification، والـ extraction من document شفته قبل كده.</p>
+    <p>التشغيلة بتعيد 3,000 طلب بتوزيع Zipf بـ seed (أسئلة قليلة بتاخد أغلب الـ traffic)، من tenants اتنين سياسة الـ refund بتاعتهم مختلفة، وفيه prompt deploy في النص. الـ stand-in بيكتب الـ tenant والـ prompt version جوه الإجابة، فالكود بيعدّ الإجابات الغلط فعلًا مش بيخمّن.</p>
+    <p>الغلطة الشائعة: key من غير tenant أو prompt version. النتيجة اللي فوق بتوريك إنها مش غلطة نظرية: hit rate أعلى وفاتورة أقل و1,906 إجابة غلط.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في assistant الـ help center بتاع الـ SaaS: سؤال "إزاي أعمل refund؟" بييجي آلاف المرات. خزّنه في Redis بـ <code>llm:exact:{tenant}:{hash}</code> و TTL ساعة. ولما تعمل deploy لـ prompt جديد، الـ version جوه الـ key بيخلي الـ cache يبدأ من الأول لوحده من غير ما تعمل <code>FLUSHDB</code> في production، والـ entries القديمة بتموت بالـ TTL. وفي الـ code review، أي cache key مفيهوش <code>tenant_id</code> بتوقفه.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>The higher hit rate was the bug</b>
+    If you only track hit rate, the broken key looks like an improvement: +10 points and 37% cheaper. Track wrong answers next to hit rate, or you will ship this and celebrate it.
+    <div class="ar-note">لو بتتابع الـ hit rate بس، الـ key البايظ شكله تحسين: +10 نقط وأرخص بـ 37%. تابع الإجابات الغلط جنب الـ hit rate، وإلا هتعمل ship للغلطة دي وتحتفل بيها كمان.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "What goes in the cache key for an LLM response?" → Everything that can change the output: tenant or user scope, model, prompt version, tool set, knowledge-base version, and the normalized input. If two requests can legitimately get different answers, they must not share a key.
+    <div class="ar-note">"إيه اللي يدخل في الـ cache key بتاع رد LLM؟" ← كل حاجة ممكن تغيّر الناتج: الـ tenant أو الـ user scope، والـ model، والـ prompt version، ومجموعة الـ tools، والـ knowledge-base version، والـ input بعد الـ normalize. لو طلبين ممكن ياخدوا إجابتين مختلفتين وده صح، يبقى ممنوع يشتركوا في key.</div>
+  </div>
+
+  <h2 id="p2">Part 2 — Semantic cache <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — الـ semantic cache</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A semantic cache embeds the incoming question, finds the nearest stored question, and serves its answer if the similarity clears a threshold. It catches the paraphrases an exact hash can't. It can also return a wrong answer with complete confidence, because embeddings measure how similar two texts look, not whether they ask the same thing. <code>"cancel my order"</code> and <code>"cancel my subscription"</code> differ by one word and need completely different answers.</p>
+    <p>The sweep replays 50 labelled pairs: 22 that should hit and 28 that should miss. Raising the threshold cuts wrong hits at first, then stops helping: from 0.85 up, 5 wrong hits remain, because those pairs differ only by a negation or an ID, which this embedder can't see. Past that point a higher threshold only throws away good hits. The cheap fix is a <strong>guard</strong>: negation and literals (numbers, IDs) must match before a hit counts. At 0.85 with the guard: 19 of 22 good hits, 0 of 28 wrong.</p>
+    <p>The stand-in scores the star pair at exactly 0.500, an artefact of feature hashing. A real embedding model will give a different number and may put these pairs far closer together; you only learn that by running this same sweep on your model. The vCache paper reports that <a href="https://arxiv.org/abs/2502.03771">static thresholds do not give formal correctness guarantees</a> and produce unexpected error rates. Treat the threshold as something you measure per model and per domain.</p>
+    <p>A wrong cached answer costs far more than a miss. One avoided Sonnet 5.5 call saves about $0.0116; if one wrong answer becomes a $3 support ticket (an assumption, use your own figure), it erases 259 good hits. The negative net column below comes from a pair set that is adversarial on purpose, so it isn't a production rate, but the ratio is why the gate in Part 6 allows zero wrong hits.</p>
+    <p>Two rules follow. <strong>Never cache personalized or fresh data</strong>: decide by what built the answer (user data, a live tool, non-public sources), not by how the question sounds. And <strong>invalidate on source change</strong>: store which documents and versions produced the answer, and skip the entry when one has changed. Do that check <em>inside</em> the scan; in my first version it ran after picking the best match, so the stale entry kept winning and all 200 requests regenerated instead of 1.</p>
+  </section>
+
+<pre data-file="src/semantic.ts"><code class="language-typescript">import { cosine, embed } from "../kit/rag-kit.ts";
+
+export type Source = { id: string; version: number };
+export type Entry = { q: string; vec: number[]; answer: string; sources: Source[]; guard: string };
+export type Options = { threshold: number; guard?: boolean; versionOf?: (docId: string) =&gt; number };
+
+const NEGATION = /\b(not|no|never|without|cannot)\b|n't\b|\bun[a-z]{4,}/;
+const LITERAL = /[a-z_-]*\d[\w-]*/g;
+
+// البصمة دي بتمسك اللي الـ embedding بيضيّعه: النفي والأرقام والـ IDs
+export function guardOf(q: string): string {
+  const s = q.toLowerCase();
+  return JSON.stringify([NEGATION.test(s), [...new Set(s.match(LITERAL) ?? [])].sort()]);
+}
+
+export class SemanticCache {
+  private byTenant = new Map&lt;string, Entry[]&gt;();
+  private opts: Options;
+  constructor(opts: Options) {
+    this.opts = opts;
+  }
+
+  // البحث جوه الـ tenant بس: الـ entries بتاعة tenant تاني مش موجودة أصلًا في الـ scan
+  lookup(tenant: string, q: string): { entry: Entry; score: number } | null {
+    const vec = embed(q);
+    const { versionOf } = this.opts;
+    let best: { entry: Entry; score: number } | null = null;
+    for (const entry of this.byTenant.get(tenant) ?? []) {
+      // الإجابة اتبنت من doc اتغير: نعدّيها جوه الـ scan عشان متغطيش على الإجابة الجديدة
+      if (versionOf &amp;&amp; entry.sources.some((s) =&gt; versionOf(s.id) !== s.version)) continue;
+      const score = cosine(vec, entry.vec);
+      if (!best || score &gt; best.score) best = { entry, score };
+    }
+    if (!best || best.score &lt; this.opts.threshold) return null;
+    if (this.opts.guard &amp;&amp; best.entry.guard !== guardOf(q)) return null;
+    return best;
+  }
+
+  store(tenant: string, q: string, answer: string, sources: Source[] = []) {
+    const list = this.byTenant.get(tenant) ?? [];
+    list.push({ q, vec: embed(q), answer, sources, guard: guardOf(q) });
+    this.byTenant.set(tenant, list);
+  }
+}</code></pre>
+
+<pre data-file="src/semantic-sweep.ts"><code class="language-typescript">import { costOf } from "../kit/prices.ts";
+import { cosine, embed } from "../kit/rag-kit.ts";
+import { PAIRS } from "./pairs.ts";
+import { SemanticCache } from "./semantic.ts";
+
+console.log("[SIMULATED] embeddings come from the stand-in in kit/rag-kit.ts, not a real embedding model");
+
+// المثال الأساسي: جملتين شبه بعض وإجابتهم مختلفة تمامًا
+const star = cosine(embed("cancel my order"), embed("cancel my subscription"));
+console.log(`cosine("cancel my order", "cancel my subscription") = ${star.toFixed(3)}`);
+
+// الـ sweep: نخزّن side a ونسأل بـ side b في cache فاضي لكل pair
+function replay(threshold: number, guard: boolean) {
+  let hits = 0, wrong = 0;
+  for (const p of PAIRS) {
+    const cache = new SemanticCache({ threshold, guard });
+    cache.store("acme", p.a, "cached answer");
+    const found = cache.lookup("acme", p.b) !== null;
+    if (found &amp;&amp; p.expect === "hit") hits++;
+    if (found &amp;&amp; p.expect === "miss") wrong++;
+  }
+  return { hits, wrong };
+}
+
+// الفلوس: كل hit بيوفّر call، وكل hit غلط بيكلّف support ticket
+const saved = costOf("claude-sonnet-5-5", { input_tokens: 4050, output_tokens: 350 });
+const WRONG_ANSWER_COST = 3; // افتراض: تكلفة ticket واحدة لفريق الـ support
+console.log(`one avoided Sonnet 5.5 call saves $${saved.toFixed(4)}; assumed cost of a wrong answer $${WRONG_ANSWER_COST}; one wrong hit erases ${Math.round(WRONG_ANSWER_COST / saved)} good hits`);
+
+const should = PAIRS.filter((p) =&gt; p.expect === "hit").length;
+const shouldNot = PAIRS.length - should;
+console.log(`threshold  good hits /${should}  wrong hits /${shouldNot}  net $ for this set`);
+for (const t of [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.99]) {
+  const { hits, wrong } = replay(t, false);
+  console.log(`${t.toFixed(2).padStart(9)}  ${String(hits).padStart(13)}  ${String(wrong).padStart(14)}  ${(hits * saved - wrong * WRONG_ANSWER_COST).toFixed(2).padStart(9)}`);
+}
+const g = replay(0.85, true);
+console.log(`0.85 + guard: good hits ${g.hits}/${should}, wrong hits ${g.wrong}/${shouldNot}`);
+
+// الـ doc اتغير: الـ source version بيفرق بين إجابة قديمة وإجابة صح
+const kb = new Map([["refund-policy", 1]]);
+function staleRun(checkSources: boolean) {
+  const cache = new SemanticCache({ threshold: 0.85, guard: true, versionOf: checkSources ? (id) =&gt; kb.get(id) ?? 0 : undefined });
+  kb.set("refund-policy", 1);
+  cache.store("acme", "How do I get a refund?", "Refunds within 14 days.", [{ id: "refund-policy", version: 1 }]);
+  kb.set("refund-policy", 2);
+  let stale = 0, regenerated = 0;
+  for (let i = 0; i &lt; 200; i++) {
+    const hit = cache.lookup("acme", "How can I get my money back?");
+    if (hit?.entry.answer.includes("14 days")) stale++;
+    if (!hit) {
+      regenerated++;
+      cache.store("acme", "How can I get my money back?", "Refunds within 30 days.", [{ id: "refund-policy", version: 2 }]);
+    }
+  }
+  return { stale, regenerated };
+}
+console.log("doc changed, no source check:", staleRun(false));
+console.log("doc changed, source check:   ", staleRun(true));
+
+// بوابة قبل الـ cache: أي حاجة شخصية أو طازة متتخزنش أصلًا
+type Ctx = { question: string; usedUserData: boolean; usedLiveTool: boolean; publicSourcesOnly: boolean };
+const cacheable = (c: Ctx) =&gt; !c.usedUserData &amp;&amp; !c.usedLiveTool &amp;&amp; c.publicSourcesOnly;
+const cases: Ctx[] = [
+  { question: "What is your refund policy?", usedUserData: false, usedLiveTool: false, publicSourcesOnly: true },
+  { question: "What is my account balance?", usedUserData: true, usedLiveTool: true, publicSourcesOnly: false },
+  { question: "Is the payment gateway down right now?", usedUserData: false, usedLiveTool: true, publicSourcesOnly: true },
+  { question: "Summarise my last invoice", usedUserData: true, usedLiveTool: false, publicSourcesOnly: false },
+];
+for (const c of cases) console.log(`${cacheable(c) ? "cache " : "bypass"}  ${c.question}`);</code></pre>
+
+<pre><code class="language-plaintext">[SIMULATED] embeddings come from the stand-in in kit/rag-kit.ts, not a real embedding model
+cosine("cancel my order", "cancel my subscription") = 0.500
+one avoided Sonnet 5.5 call saves $0.0116; assumed cost of a wrong answer $3; one wrong hit erases 259 good hits
+threshold  good hits /22  wrong hits /28  net $ for this set
+     0.50             22              26     -77.74
+     0.60             22              18     -53.74
+     0.70             22              11     -32.74
+     0.80             21               7     -20.76
+     0.85             19               5     -14.78
+     0.90             18               5     -14.79
+     0.95             17               5     -14.80
+     0.99             17               5     -14.80
+0.85 + guard: good hits 19/22, wrong hits 0/28
+doc changed, no source check: { stale: 200, regenerated: 0 }
+doc changed, source check:    { stale: 0, regenerated: 1 }
+cache   What is your refund policy?
+bypass  What is my account balance?
+bypass  Is the payment gateway down right now?
+bypass  Summarise my last invoice</code></pre>
+  <div class="ar-note">الـ score بتاع الجملتين 0.500 (رقم من الـ stand-in). بعدها: الـ call الواحد اللي وفّرته بيوفّر $0.0116، وإجابة غلط واحدة بافتراض $3 بتمسح 259 hit كويس. في الجدول، كل صف فيه الـ threshold وعدد الـ hits الصح من 22، والـ hits الغلط من 28، وصافي الفلوس. لاحظ إن من 0.85 لفوق الـ hits الغلط واقفة عند 5، والـ hits الصح بتقل بس. بالـ guard عند 0.85: 19 صح وصفر غلط. بعد تغيير الـ doc: من غير فحص المصادر 200 إجابة قديمة، ومعاه صفر وإعادة توليد مرة واحدة. وآخر 4 سطور: السؤال العام بيتخزن، والشخصي والـ live بيعدّوا من غير cache.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ semantic cache بيعمل embed للسؤال الجاي، ويدوّر على أقرب سؤال متخزن، ولو الـ similarity عدّت threshold يرجّع الإجابة بتاعته. ده بيمسك الـ paraphrases اللي الـ exact hash ميشوفهاش. وبرضه ممكن يرجّع إجابة غلط بثقة كاملة، لأن الـ embeddings بتقيس النصين شبه بعض قد إيه، مش هل بيسألوا نفس السؤال. <code>"cancel my order"</code> و<code>"cancel my subscription"</code> فرقهم كلمة واحدة وإجابتهم مختلفة خالص.</p>
+    <p>الـ sweep بيعيد 50 pair ليهم label: 22 لازم يعملوا hit و28 لازم يعملوا miss. لما بترفع الـ threshold، الـ hits الغلط بتقل في الأول وبعدين الرفع مبيفيدش: من 0.85 لفوق بيفضل 5 hits غلط، لأن الـ pairs دي فرقها نفي أو ID بس، والـ embedder ده مش شايفهم. بعد النقطة دي الرفع بيرمي hits كويسة وخلاص. الحل الرخيص <strong>guard</strong>: النفي والـ literals (الأرقام والـ IDs) لازم يطابقوا قبل ما الـ hit يتحسب. عند 0.85 مع الـ guard: 19 من 22 صح، وصفر من 28 غلط.</p>
+    <p>الـ stand-in بيدّي الجملتين المشهورتين 0.500 بالظبط، وده أثر من الـ feature hashing. الـ embedding model الحقيقي هيدّي رقم تاني وممكن يقرّبهم من بعض أكتر بكتير، ومش هتعرف غير لما تشغّل نفس الـ sweep على الـ model بتاعك. ورقة vCache بتقول إن <a href="https://arxiv.org/abs/2502.03771">الـ static thresholds مبتديش ضمان رسمي للصحة</a> وبتطلّع error rates مش متوقعة. اعتبر الـ threshold حاجة بتتقاس لكل model ولكل domain.</p>
+    <p>الإجابة الغلط من الـ cache بتكلف أكتر بكتير من الـ miss. الـ call الواحد على Sonnet 5.5 بيوفّر حوالي $0.0116؛ ولو إجابة غلط واحدة بقت support ticket بـ $3 (افتراض، حط رقمك)، بتمسح 259 hit كويس. عمود الصافي السالب جاي من pairs متعمدة تكون صعبة، فده مش معدل production، بس النسبة دي هي السبب إن البوابة في الجزء 6 مسموح فيها صفر hits غلط.</p>
+    <p>يطلع من ده قاعدتين. <strong>أولًا: متعملش cache لأي حاجة شخصية أو طازة</strong>: القرار بييجي من اللي بنى الإجابة (بيانات user، أو tool live، أو مصادر مش عامة)، مش من شكل السؤال. <strong>ثانيًا: امسح لما المصدر يتغير</strong>: خزّن أنهي documents ونسخهم اللي طلّعوا الإجابة، وعدّي الـ entry لو واحد منهم اتغير. اعمل الفحص ده <em>جوه</em> الـ scan: في أول نسخة عندي كان بعد اختيار أحسن match، فالـ entry القديم فضل يكسب والـ 200 طلب كلهم عملوا regenerate بدل مرة واحدة.</p>
+    <p>الغلطة الشائعة: تختار threshold من إحساسك، أو تحط semantic cache قدام حاجة شخصية زي "رصيدي كام؟".</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      على أسئلة الـ help center العامة بس، جوه scope الـ tenant، وبعد ما الـ exact cache يعمل miss. في production حط الـ vectors في pgvector من <a href="./13-embeddings-pgvector.html">الدرس 13</a> أو Redis vector sets (جرّبت <code>VADD</code> و<code>VSIM</code> على Redis 8.10.3 هنا واشتغلوا). وسؤال زي "فين الـ invoice بتاعتي؟" أو أي حاجة بتستخدم tool بتقرا بيانات user، بتعدّي من غير cache خالص.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: the threshold has no safe value</b>
+    Low threshold: more savings, more wrong answers. High threshold: fewer wrong answers, and the layer stops paying for itself. The guard and the source check are what let you sit in the middle. The guard errs towards a miss, which only costs one model call.
+    <div class="ar-note">threshold واطي: توفير أكتر وإجابات غلط أكتر. threshold عالي: غلط أقل، والـ layer مبقتش جايبة تمنها. الـ guard وفحص المصادر هما اللي بيخلوك تقعد في النص. والـ guard بيميل ناحية الـ miss، وده بيكلفك model call واحد بس.</div>
+  </div>
+
+  <h2 id="p3">Part 3 — Stacking the layers <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — ترتيب الـ layers فوق بعض</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The layers go cheapest and safest first: exact, then semantic, then provider <a href="./06-reasoning-chaining-caching.html">prompt caching</a> (lesson 06) on whatever still reaches the model. The first two avoid the call completely. Prompt caching doesn't avoid anything: it makes the repeated prefix cheap and leaves the question, the retrieved chunks and the output at full price.</p>
+    <p>The run sends 2,000 requests over 240 intents, 40% of them paraphrased, through four configurations. On this workload prompt caching alone saves 23.7%, adding exact reaches 80.4%, and adding semantic reaches 86.9%, with zero wrong answers because the guard is on. Notice that exact hits fall from 1,486 to 864 once semantic is on: paraphrases get served by the semantic layer and never land in the exact layer. You could write semantic hits through to exact to skip the next embedding, but then one wrong semantic hit gets promoted and lives on.</p>
+    <p>A stampede is what happens when a popular key is cold and 100 requests all miss at once: 100 identical paid calls. A Redis lock with <code>SET key owner NX PX 300</code> lets one request do the work while the others poll for the result. The <code>PX</code> matters: if the holder crashes, the lock expires and a waiter takes over. Release it with a compare-and-delete so you can't remove a lock another request now owns. The third row of the output shows this: the crashing request fails, the other 99 are still served, and it took about 300 ms longer. Invalidation patterns are in <a href="../../10-System-Design/lessons/17-cache-invalidation-consistency.html">section 10, lesson 17</a>.</p>
+  </section>
+
+<pre class="diagram">
+  request
+     |
+     v
+  [ exact: Redis GET ]  --hit-->  answer       (free, safe)
+     | miss
+     v
+  [ gate: cacheable? ] --no----------------+
+     | yes                                 |
+     v                                     |
+  [ semantic: embed + nearest ]  --hit-->  answer  (cheap, can be wrong)
+     | miss                                |
+     v                                     v
+  [ model call with prompt caching on the static prefix ]
+     |
+     v
+  validate --> store in exact + semantic --> answer
+</pre>
+  <div class="ar-note">الطلب بيمشي من فوق لتحت. الأول <code>GET</code> على Redis، ولو hit يبقى مجاني وآمن. لو miss، بنسأل: ينفع يتعمله cache أصلًا؟ لو لأ بينزل على الـ model على طول. لو آه، بيروح للـ semantic: embedding وأقرب سؤال، ولو hit يبقى رخيص بس ممكن يغلط. لو miss، بينزل على الـ model call ومعاه prompt caching على الجزء الثابت. وفي الآخر validation، وبعدها بنخزّن في الاتنين ونرجّع الإجابة.</div>
+
+<pre data-file="src/stack.ts"><code class="language-typescript">import { createHash } from "node:crypto";
+import Anthropic from "@anthropic-ai/sdk";
+import { startMock } from "../kit/mock-anthropic.ts";
+import { costOf } from "../kit/prices.ts";
+import { connectRedis, pct, rng, zipf } from "./lib.ts";
+import { SemanticCache } from "./semantic.ts";
+
+const MODEL = "claude-sonnet-5-5";
+const VOYAGE_4_PER_MTOK = 0.06;
+const SYSTEM = "You are the support assistant. Answer from the help center only. ".repeat(70);
+const CHUNKS = "Retrieved help center text about this topic. ".repeat(160);
+
+const verbs = [["cancel", "terminate"], ["refund", "reimburse"], ["return", "exchange"], ["invoice", "bill"], ["ship", "deliver"], ["pay", "charge"]];
+const things = ["laptop", "phone", "tablet", "monitor", "keyboard", "camera", "headset", "printer", "router", "speaker", "charger", "backpack", "desk", "chair", "lamp", "watch", "tripod", "drone", "webcam", "console", "mouse", "dock", "scanner", "projector", "microphone", "hub", "stand", "cable", "battery", "adapter", "case", "bag", "mat", "shelf", "fan", "heater", "kettle", "toaster", "blender", "mixer"];
+const intents = verbs.flatMap(([a, b], v) =&gt; things.map((t, i) =&gt; ({ id: v * 100 + i, a: `How do I ${a} my ${t}?`, b: `How can I ${b} my ${t}?` })));
+
+const N = 2000;
+function workload() {
+  const rand = rng(7);
+  const pick = zipf(intents.length, 1.0, rand);
+  return Array.from({ length: N }, () =&gt; {
+    const it = intents[pick()];
+    return { tenant: rand() &lt; 0.5 ? "acme" : "globex", id: it.id, q: rand() &lt; 0.6 ? it.a : it.b };
+  });
+}
+
+const redis = connectRedis();
+
+type Layers = { exact: boolean; semantic: boolean; promptCache: boolean };
+async function run(label: string, layers: Layers) {
+  // نشغّل mock جديد لكل config عشان الـ prompt cache يبدأ فاضي زي أول يوم
+  const mock = await startMock({
+    quiet: label !== "no cache",
+    ttftMs: 0, tokenMs: 0,
+    reply: (req) =&gt; {
+      // الـ stand-in بيحط رقم الـ intent في الرد عشان نعد الإجابات الغلط
+      const q = String(req.messages.at(-1).content).split("QUESTION:")[1];
+      const intent = intents.find((i) =&gt; q.includes(i.a) || q.includes(i.b))!;
+      return { content: [{ type: "text", text: `intent=${intent.id} ` + "Here is how that works for your account type. ".repeat(28) }] };
+    },
+  });
+  const client = new Anthropic({ apiKey: "mock-key-not-real", baseURL: mock.url, maxRetries: 2 });
+  await redis.flushdb();
+  const sem = new SemanticCache({ threshold: 0.85, guard: true });
+  const usage = { uncached: 0, write: 0, read: 0, out: 0 };
+  let exactHits = 0, semHits = 0, calls = 0, wrong = 0, dollars = 0;
+  const lookupMs: number[] = [];
+  for (const r of workload()) {
+    let answer: string | null = null;
+    const key = "llm:" + r.tenant + ":" + createHash("sha256").update(r.q).digest("hex");
+    const t0 = performance.now();
+    if (layers.exact) {
+      answer = await redis.get(key);
+      if (answer) exactHits++;
+    }
+    if (!answer &amp;&amp; layers.semantic) {
+      // الـ embedding بيتحسب لكل طلب عدّى الـ exact، والتمن صغير بس موجود
+      dollars += (12 * VOYAGE_4_PER_MTOK) / 1e6;
+      const found = sem.lookup(r.tenant, r.q);
+      if (found) {
+        semHits++;
+        answer = found.entry.answer;
+      }
+    }
+    lookupMs.push(performance.now() - t0);
+    if (!answer) {
+      const res = await client.messages.create({
+        model: MODEL, max_tokens: 500,
+        system: layers.promptCache ? [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }] : SYSTEM,
+        messages: [{ role: "user", content: CHUNKS + "QUESTION:" + r.q }],
+      });
+      calls++;
+      dollars += costOf(MODEL, res.usage);
+      usage.uncached += res.usage.input_tokens;
+      usage.write += res.usage.cache_creation_input_tokens ?? 0;
+      usage.read += res.usage.cache_read_input_tokens ?? 0;
+      usage.out += res.usage.output_tokens;
+      answer = res.content[0].type === "text" ? res.content[0].text : "";
+      if (layers.exact) await redis.set(key, answer, "EX", 3600);
+      if (layers.semantic) sem.store(r.tenant, r.q, answer);
+    }
+    if (!answer.startsWith(`intent=${r.id} `)) wrong++;
+  }
+  // الـ model call هنا افتراض 1200ms، الـ lookup بس هو اللي مقاس بجد
+  const modelledMs = (pct(lookupMs, 50) * N + calls * 1200) / N;
+  console.log(`${label.padEnd(26)} calls ${String(calls).padStart(4)}  exact ${String(exactHits).padStart(4)}  semantic ${String(semHits).padStart(4)}  $${dollars.toFixed(3).padStart(6)}  wrong ${wrong}  input read ${String(usage.read).padStart(7)} write ${String(usage.write).padStart(5)} plain ${String(usage.uncached).padStart(7)}  modelled mean ≈${Math.round(modelledMs)}ms`);
+  await mock.close();
+  return dollars;
+}
+
+console.log(`workload: ${N} requests, 2 tenants, ${intents.length} intents, zipf s=1.0, 40% paraphrased`);
+const base = await run("no cache", { exact: false, semantic: false, promptCache: false });
+const a = await run("prompt cache", { exact: false, semantic: false, promptCache: true });
+const b = await run("exact + prompt", { exact: true, semantic: false, promptCache: true });
+const c = await run("exact + semantic + prompt", { exact: true, semantic: true, promptCache: true });
+console.log(`saved vs no cache: prompt ${(100 * (1 - a / base)).toFixed(1)}%, +exact ${(100 * (1 - b / base)).toFixed(1)}%, +semantic ${(100 * (1 - c / base)).toFixed(1)}%`);
+
+await redis.flushdb();
+redis.disconnect();</code></pre>
+
+<pre><code class="language-plaintext">workload: 2000 requests, 2 tenants, 240 intents, zipf s=1.0, 40% paraphrased
+[SIMULATED] local stand-in on 127.0.0.1:PORT: text, tokens and latency are simulated, not a real model
+no cache                   calls 2000  exact    0  semantic    0  $20.388  wrong 0  input read       0 write     0 plain 6584030  modelled mean ≈1200ms
+prompt cache               calls 2000  exact    0  semantic    0  $15.554  wrong 0  input read 2544727 write  1273 plain 4038030  modelled mean ≈1200ms
+exact + prompt             calls  514  exact 1486  semantic    0  $ 3.999  wrong 0  input read  653049 write  1273 plain 1037696  modelled mean ≈309ms
+exact + semantic + prompt  calls  344  exact  864  semantic  792  $ 2.678  wrong 0  input read  436639 write  1273 plain  694467  modelled mean ≈207ms
+saved vs no cache: prompt 23.7%, +exact 80.4%, +semantic 86.9%</code></pre>
+  <div class="ar-note">كل صف config. <code>calls</code> عدد الـ model calls الفعلية، و<code>exact</code> و<code>semantic</code> الـ hits في كل layer، وبعدها التكلفة، والإجابات الغلط (صفر في الكل)، وبعدها الـ input tokens: اللي اتقرت من الـ prompt cache، واللي اتكتبت، والعادية. آخر عمود متوسط latency محسوب بافتراض إن الـ model call واحد بياخد 1200 ms، والـ lookup بس هو اللي مقاس بجد. آخر سطر: التوفير مقارنة بـ no cache: الـ prompt cache لوحده 23.7%، ومعاه exact 80.4%، ومعاهم semantic 86.9%. النسب دي بتاعة الـ workload ده بس.</div>
+
+<pre data-file="src/stampede.ts"><code class="language-typescript">import Anthropic from "@anthropic-ai/sdk";
+import { startMock } from "../kit/mock-anthropic.ts";
+import { costOf } from "../kit/prices.ts";
+import { connectRedis, sleep } from "./lib.ts";
+
+const MODEL = "claude-sonnet-5-5";
+const SYSTEM = "Answer from the help center only. ".repeat(120);
+const mock = await startMock({ ttftMs: 120, tokenMs: 0, reply: () =&gt; ({ content: [{ type: "text", text: "Refunds take 5 days. ".repeat(40) }] }) });
+const client = new Anthropic({ apiKey: "mock-key-not-real", baseURL: mock.url, maxRetries: 2 });
+const redis = connectRedis();
+const CONCURRENT = 100;
+let calls = 0, dollars = 0, crashesLeft = 0;
+
+async function askModel(): Promise&lt;string&gt; {
+  calls++;
+  const res = await client.messages.create({ model: MODEL, max_tokens: 500, system: SYSTEM, messages: [{ role: "user", content: "How long do refunds take?" }] });
+  dollars += costOf(MODEL, res.usage);
+  return res.content[0].type === "text" ? res.content[0].text : "";
+}
+
+// ❌ كل الطلبات شافت miss في نفس اللحظة، فكلها راحت للـ model
+async function noLock(key: string) {
+  const hit = await redis.get(key);
+  if (hit) return hit;
+  const answer = await askModel();
+  await redis.set(key, answer, "EX", 3600);
+  return answer;
+}
+
+// ✅ واحد بس بياخد الـ lock، والباقي بيستنى النتيجة من Redis
+async function withLock(key: string, owner: string, deadlineMs = 2000): Promise&lt;string&gt; {
+  const lockKey = key + ":lock";
+  const start = performance.now();
+  while (performance.now() - start &lt; deadlineMs) {
+    const hit = await redis.get(key);
+    if (hit) return hit;
+    // الـ PX حماية: لو صاحب الـ lock مات، الـ lock بيختفي وواحد تاني يكمّل
+    if ((await redis.set(lockKey, owner, "PX", 300, "NX")) === "OK") {
+      if (crashesLeft &gt; 0) {
+        crashesLeft--;
+        // بنحاكي process وقع قبل ما يكتب: الـ lock هيفضل لحد الـ PX
+        throw new Error("holder crashed");
+      }
+      const answer = await askModel();
+      await redis.set(key, answer, "EX", 3600);
+      await redis.eval("if redis.call('get',KEYS[1])==ARGV[1] then return redis.call('del',KEYS[1]) end return 0", 1, lockKey, owner);
+      return answer;
+    }
+    await sleep(25);
+  }
+  // آخر حل: لو الـ lock عمره ما اتفك، الطلب يكمّل لوحده بدل ما يفشل
+  return askModel();
+}
+
+async function scenario(label: string, fn: (i: number) =&gt; Promise&lt;string&gt;) {
+  await redis.flushdb();
+  calls = 0; dollars = 0;
+  const t0 = performance.now();
+  const results = await Promise.allSettled(Array.from({ length: CONCURRENT }, (_, i) =&gt; fn(i)));
+  const ok = results.filter((r) =&gt; r.status === "fulfilled").length;
+  console.log(`${label.padEnd(26)} requests ${CONCURRENT}  served ${ok}  model calls ${String(calls).padStart(3)}  $${dollars.toFixed(4)}  wall ≈${Math.round(performance.now() - t0)}ms`);
+}
+
+await scenario("no lock", () =&gt; noLock("q:popular"));
+await scenario("redis lock", (i) =&gt; withLock("q:popular", "req-" + i));
+crashesLeft = 1;
+await scenario("lock, first holder crashes", (i) =&gt; withLock("q:popular", "req-" + i));
+
+await redis.flushdb();
+redis.disconnect();
+await mock.close();</code></pre>
+
+<pre><code class="language-plaintext">[SIMULATED] local stand-in on 127.0.0.1:PORT: text, tokens and latency are simulated, not a real model
+no lock                    requests 100  served 100  model calls 100  $0.4658  wall ≈239ms
+redis lock                 requests 100  served 100  model calls   1  $0.0047  wall ≈157ms
+lock, first holder crashes requests 100  served 99  model calls   1  $0.0047  wall ≈468ms</code></pre>
+  <div class="ar-note">100 طلب في نفس اللحظة على key فاضي. من غير lock: 100 model call و$0.4658. بالـ lock على Redis: call واحد و$0.0047. والصف التالت: صاحب الـ lock وقع قبل ما يكتب، فالطلب بتاعه فشل (خدمنا 99)، والباقي استنوا الـ <code>PX</code> وواحد منهم كمّل بـ model call واحد، والوقت زاد لحد ≈468 ms.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ layers بتتحط من الأرخص والأأمن للأغلى: exact، بعدين semantic، بعدين <a href="./06-reasoning-chaining-caching.html">الـ prompt caching</a> بتاع الـ provider (الدرس 06) على اللي لسه هيوصل للـ model. أول اتنين بيلغوا الـ call خالص. الـ prompt caching مبيلغيش حاجة: بيخلي الـ prefix المتكرر رخيص، والسؤال والـ chunks والـ output بسعرهم الكامل.</p>
+    <p>التشغيلة بتبعت 2,000 طلب على 240 intent، 40% منهم paraphrase، على 4 configurations. على الـ workload ده الـ prompt caching لوحده بيوفّر 23.7%، ومعاه exact بنوصل 80.4%، ومعاهم semantic بنوصل 86.9%، وصفر إجابات غلط لأن الـ guard شغال. لاحظ إن الـ exact hits نزلت من 1,486 لـ 864 لما شغلنا الـ semantic: الـ paraphrases بتتخدم من الـ semantic layer ومبتنزلش في الـ exact. تقدر تكتب الـ semantic hit في الـ exact عشان توفر الـ embedding الجاي، بس ساعتها hit غلط واحد بيترقّى ويعيش أطول.</p>
+    <p>الـ stampede هو لما key مشهور يبقى فاضي و100 طلب يعملوا miss مع بعض: 100 call متطابقين بفلوس. الـ lock على Redis بـ <code>SET key owner NX PX 300</code> بيخلي طلب واحد يشتغل والباقي يستنى النتيجة. الـ <code>PX</code> مهم: لو صاحب الـ lock وقع، الـ lock بينتهي وواحد تاني يكمّل. وفكّ الـ lock بـ compare-and-delete عشان متمسحش lock بتاع حد تاني. الصف التالت في الـ output بيوريك ده: الطلب اللي وقع فشل، والـ 99 التانيين اتخدموا، وخدنا حوالي 300 ms زيادة. أنماط الـ invalidation في <a href="../../10-System-Design/lessons/17-cache-invalidation-consistency.html">القسم 10، الدرس 17</a>.</p>
+    <p>الغلطة الشائعة: تحط الـ semantic قبل الـ exact، فتدفع embedding على كل طلب حتى لو نفس السؤال بالحرف، أو تنسى الـ stampede فالـ prompt الجديد أول ما يتعمله deploy يولّع الفاتورة.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      بعد deploy لـ prompt جديد الـ cache كله بيبقى فاضي لأن الـ version في الـ key اتغير، وأول موجة traffic هي الـ stampede بالظبط. حط الـ lock على أكتر الأسئلة شعبية، وفي الـ PR description اكتب الـ hit rate المتوقع لكل layer، وراجع الـ dashboard بعدها في <a href="./18-observability-cost-engineering.html">الدرس 18</a>.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Why isn't prompt caching enough on its own?" → It only discounts the shared prefix. The call still happens, so you still pay for the output and everything after the prefix, and the user still waits for generation. A response cache removes the call. Use both, and put the response cache first because it's cheaper and faster when it hits.
+    <div class="ar-note">"ليه الـ prompt caching مش كفاية لوحده؟" ← لأنه بيخصم الـ prefix المشترك بس. الـ call لسه بيحصل، فبتدفع الـ output وكل اللي بعد الـ prefix، والـ user لسه مستني الـ generation. الـ response cache بيلغي الـ call كله. استخدم الاتنين، وحط الـ response cache الأول لأنه أرخص وأسرع لما يعمل hit.</div>
+  </div>
+
+  <h2 id="p4">Part 4 — The cost model before launch <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ cost model قبل الـ launch</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The formula is short: tokens per request × requests per user × users → dollars per month. The work is in the terms people forget: retries that pay for the call twice, query embeddings, reranking (Voyage bills it as query tokens × documents + document tokens), ingestion re-embeds, and evals that run with no cache at all. Each assumption gets a name in code so it can be argued about and revised after launch. The estimation technique is in <a href="../../10-System-Design/lessons/02-back-of-the-envelope-estimation.html">section 10, lesson 02</a>.</p>
+    <p>Read four things from the output. <strong>Evals are a fixed cost</strong>: $149 a month is 49% of the bill at 1K users and under 1% at 100K. <strong>Usage ×10 isn't quite ×10</strong>: Sonnet at 10K goes from $1,711 to $15,685 (×9.2), because evals and ingestion don't scale with requests. <strong>The tier matters more than any tuning</strong>: at 10K users Haiku 5.5 is $163, Sonnet 5.5 $1,711, Opus 5.5 $3,342. <strong>A naive model can be wrong in either direction</strong>: generation-only with no caches says $2,320 against a full model of $1,711, and it would also hide the $149 eval line completely.</p>
+    <p>Sensitivity tells you where to spend your attention. Change one assumption at a time and sort by swing: requests per user ($2,329) dwarfs prompt cache hit rate ($222) and retry rate ($216). So measure usage in a beta before you tune the prompt cache. Peak load decides your rate limits, not the monthly average, so the model also prints RPM and TPM at an assumed 8× peak: 278 RPM and about 790K uncached input TPM at 100K users. Compare that with your tier's limits before launch.</p>
+    <p>The numbers are assumptions until you have production data, so write them down and replace them. This output feeds section 12 of the design doc for README artifact 8; use <code>project/design-docs/0000-template.md</code>.</p>
+  </section>
+
+<pre data-file="src/cost-model.ts"><code class="language-typescript">import { PRICES, costOf } from "../kit/prices.ts";
+
+// كل الأرقام دي افتراضات لازم تتكتب في الـ design doc وتتراجع بعد الـ launch
+type Model = keyof typeof PRICES &amp; string;
+const VOYAGE_4 = 0.06, RERANK_3 = 0.05; // الأسعار دولار لكل مليون token
+const BASE = {
+  users: 10_000,
+  requestsPerUserMonth: 20,
+  systemTokens: 1200, retrievedTokens: 2000, historyTokens: 800, questionTokens: 50,
+  outputTokens: 350,
+  promptCacheHitRatio: 0.9,
+  responseCacheHitRatio: 0.25,
+  retryRate: 0.03,
+  queryEmbedTokens: 60,
+  rerankDocs: 20, rerankDocTokens: 400,
+  chunksPerUser: 200, chunkTokens: 400, reembedFractionMonthly: 0.2,
+  evalCases: 200, evalRunsPerMonth: 60,
+};
+type A = typeof BASE;
+
+// تكلفة call واحد، جزء منه بيقرا الـ cache وجزء بيكتب
+function perCall(model: Model, a: A, hit: number) {
+  const rest = a.retrievedTokens + a.historyTokens + a.questionTokens;
+  const read = costOf(model, { input_tokens: rest, cache_read_input_tokens: a.systemTokens, output_tokens: a.outputTokens });
+  const write = costOf(model, { input_tokens: rest, cache_creation_input_tokens: a.systemTokens, output_tokens: a.outputTokens });
+  return hit * read + (1 - hit) * write;
+}
+
+export function monthly(model: Model, a: A) {
+  const requests = a.users * a.requestsPerUserMonth;
+  const llmCalls = requests * (1 - a.responseCacheHitRatio);
+  const generation = llmCalls * perCall(model, a, a.promptCacheHitRatio);
+  // الـ retry بيدفع الـ call تاني كامل، وده الفرق بين الـ model والفاتورة
+  const retries = generation * a.retryRate;
+  const queryEmbeddings = (requests * a.queryEmbedTokens * VOYAGE_4) / 1e6;
+  const rerankTokens = a.questionTokens * a.rerankDocs + a.rerankDocs * a.rerankDocTokens;
+  const rerank = (llmCalls * rerankTokens * RERANK_3) / 1e6;
+  const ingestion = (a.users * a.chunksPerUser * a.chunkTokens * a.reembedFractionMonthly * VOYAGE_4) / 1e6;
+  // الـ evals بتتشغّل من غير cache، ومعاها judge رخيص
+  const judge = costOf("claude-haiku-5-5", { input_tokens: 1500, output_tokens: 120 });
+  const evals = a.evalCases * a.evalRunsPerMonth * (perCall(model, a, 0) + judge);
+  const total = generation + retries + queryEmbeddings + rerank + ingestion + evals;
+  return { requests, generation, retries, queryEmbeddings, rerank, ingestion, evals, total };
+}
+
+const money = (x: number) =&gt; "$" + x.toLocaleString("en-US", { maximumFractionDigits: x &lt; 100 ? 2 : 0 });
+const models: Model[] = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
+
+console.log("Monthly cost by tier (generation + retries + embeddings + rerank + ingestion + evals)");
+console.log("users     usage   " + models.map((m) =&gt; m.padStart(19)).join(""));
+for (const users of [1_000, 10_000, 100_000]) for (const usage of [1, 10]) {
+  const a = { ...BASE, users, requestsPerUserMonth: BASE.requestsPerUserMonth * usage };
+  console.log(`${String(users).padEnd(9)} x${String(usage).padEnd(6)} ` + models.map((m) =&gt; money(monthly(m, a).total).padStart(19)).join(""));
+}
+
+console.log("\nBreakdown, Sonnet 5.5");
+console.log("users     generation    retries  embed q     rerank  ingest      evals      TOTAL   $/user");
+for (const users of [1_000, 10_000, 100_000]) {
+  const r = monthly("claude-sonnet-5-5", { ...BASE, users });
+  console.log(`${String(users).padEnd(9)} ${[r.generation, r.retries, r.queryEmbeddings, r.rerank, r.ingestion, r.evals, r.total].map((x, i) =&gt; money(x).padStart([10, 10, 8, 10, 7, 10, 10][i])).join(" ")}  ${(r.total / users).toFixed(3)}`);
+}
+
+// الموديل الساذج: generation بس، من غير cache ولا retries ولا rerank ولا evals
+const naive = (m: Model, a: A) =&gt; a.users * a.requestsPerUserMonth * costOf(m, { input_tokens: a.systemTokens + a.retrievedTokens + a.historyTokens + a.questionTokens, output_tokens: a.outputTokens });
+const full = monthly("claude-sonnet-5-5", BASE).total;
+console.log(`\nSonnet @10K: naive ${money(naive("claude-sonnet-5-5", BASE))}  vs full ${money(full)}`);
+
+// الحساسية: غيّر افتراض واحد في المرة وشوف الفاتورة بتتحرك قد إيه
+const swings: [string, Partial&lt;A&gt;, Partial&lt;A&gt;][] = [
+  ["requests per user (10 → 40)", { requestsPerUserMonth: 10 }, { requestsPerUserMonth: 40 }],
+  ["output tokens (175 → 700)", { outputTokens: 175 }, { outputTokens: 700 }],
+  ["retrieved tokens (1000 → 4000)", { retrievedTokens: 1000 }, { retrievedTokens: 4000 }],
+  ["response cache hit (0.5 → 0)", { responseCacheHitRatio: 0.5 }, { responseCacheHitRatio: 0 }],
+  ["prompt cache hit (1 → 0.5)", { promptCacheHitRatio: 1 }, { promptCacheHitRatio: 0.5 }],
+  ["retry rate (0 → 0.15)", { retryRate: 0 }, { retryRate: 0.15 }],
+  ["eval runs per month (20 → 300)", { evalRunsPerMonth: 20 }, { evalRunsPerMonth: 300 }],
+];
+const rows = swings.map(([name, low, high]) =&gt; ({ name, low: monthly("claude-sonnet-5-5", { ...BASE, ...low }).total, high: monthly("claude-sonnet-5-5", { ...BASE, ...high }).total }))
+  .sort((x, y) =&gt; y.high - y.low - (x.high - x.low));
+console.log(`\nSensitivity, Sonnet 5.5 @10K users, base ${money(full)}`);
+for (const r of rows) console.log(`${r.name.padEnd(33)} ${money(r.low).padStart(8)} → ${money(r.high).padStart(8)}  swing ${money(r.high - r.low)}`);
+
+// الضغط وقت الـ peak بيحدد الـ rate limit مش متوسط الشهر
+for (const users of [1_000, 10_000, 100_000]) {
+  const r = monthly("claude-sonnet-5-5", { ...BASE, users });
+  const avgRpm = (r.requests * (1 - BASE.responseCacheHitRatio)) / (30 * 24 * 60);
+  const peakRpm = avgRpm * 8;
+  const inputPerCall = BASE.retrievedTokens + BASE.historyTokens + BASE.questionTokens;
+  console.log(`${String(users).padEnd(8)} peak ≈${peakRpm.toFixed(1)} RPM  ≈${Math.round(peakRpm * inputPerCall).toLocaleString("en-US")} uncached input TPM  ≈${Math.round(peakRpm * BASE.outputTokens).toLocaleString("en-US")} output TPM`);
+}
+
+const s1k = monthly("claude-sonnet-5-5", { ...BASE, users: 1_000 }).total;
+const s10k = monthly("claude-sonnet-5-5", BASE).total;
+const s100k = monthly("claude-sonnet-5-5", { ...BASE, users: 100_000 }).total;
+console.log("\n--- paste into project/design-docs, section 12 Cost estimate ---");
+console.log(`AI feature (Sonnet 5.5, 20 req/user/month): ~${money(s1k)}/mo at 1K, ~${money(s10k)}/mo at 10K, ~${money(s100k)}/mo at 100K users.`);
+console.log(`Biggest risk: ${rows[0].name}. Compute, DB and egress are NOT in this number.`);</code></pre>
+
+<pre><code class="language-plaintext">Monthly cost by tier (generation + retries + embeddings + rerank + ingestion + evals)
+users     usage      claude-haiku-5-5  claude-sonnet-5-5    claude-opus-5-5
+1000      x1                   $25.13               $305               $600
+1000      x10                    $154             $1,703             $3,333
+10000     x1                     $163             $1,711             $3,342
+10000     x10                  $1,452            $15,685            $30,676
+100000    x1                   $1,539            $15,771            $30,762
+100000    x10                 $14,433           $155,511           $304,101
+
+Breakdown, Sonnet 5.5
+users     generation    retries  embed q     rerank  ingest      evals      TOTAL   $/user
+1000            $144      $4.32    $0.07      $6.75   $0.96       $149       $305  0.305
+10000         $1,441     $43.24    $0.72      $67.5    $9.6       $149     $1,711  0.171
+100000       $14,412       $432     $7.2       $675     $96       $149    $15,771  0.158
+
+Sonnet @10K: naive $2,320  vs full $1,711
+
+Sensitivity, Sonnet 5.5 @10K users, base $1,711
+requests per user (10 → 40)           $935 →   $3,264  swing $2,329
+response cache hit (0.5 → 0)        $1,194 →   $2,228  swing $1,035
+retrieved tokens (1000 → 4000)      $1,378 →   $2,377  swing $999
+output tokens (175 → 700)           $1,420 →   $2,294  swing $874
+eval runs per month (20 → 300)      $1,612 →   $2,307  swing $695
+prompt cache hit (1 → 0.5)          $1,667 →   $1,889  swing $222
+retry rate (0 → 0.15)               $1,668 →   $1,884  swing $216
+1000     peak ≈2.8 RPM  ≈7,917 uncached input TPM  ≈972 output TPM
+10000    peak ≈27.8 RPM  ≈79,167 uncached input TPM  ≈9,722 output TPM
+100000   peak ≈277.8 RPM  ≈791,667 uncached input TPM  ≈97,222 output TPM
+
+--- paste into project/design-docs, section 12 Cost estimate ---
+AI feature (Sonnet 5.5, 20 req/user/month): ~$305/mo at 1K, ~$1,711/mo at 10K, ~$15,771/mo at 100K users.
+Biggest risk: requests per user (10 → 40). Compute, DB and egress are NOT in this number.</code></pre>
+  <div class="ar-note">الجدول الأول: الفاتورة الشهرية لكل model عند 1K و10K و100K user، وكل حجم مرتين: الـ usage العادي و×10. الجدول التاني: تفصيل Sonnet 5.5 لكل بند، والـ evals ثابتة عند $149. بعدها الموديل الساذج $2,320 ضد الكامل $1,711. بعدها الـ sensitivity مترتبة: أكتر حاجة بتحرك الفاتورة هي عدد الطلبات لكل user. بعدها الـ RPM و الـ TPM وقت الـ peak (افتراض ×8) لكل حجم. وآخر سطرين جاهزين تنسخهم في الـ design doc، ومكتوب فيهم صراحة إن الـ compute والـ DB والـ egress مش محسوبين.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>المعادلة قصيرة: tokens لكل طلب × طلبات لكل user × users ← دولارات في الشهر. الشغل كله في البنود اللي الناس بتنساها: الـ retries اللي بتدفع الـ call مرتين، والـ query embeddings، والـ reranking (Voyage بيحسبه: query tokens × عدد الـ documents + tokens الـ documents)، والـ re-embedding في الـ ingestion، والـ evals اللي بتشتغل من غير cache خالص. كل افتراض ليه اسم في الكود عشان نتناقش فيه ونغيّره بعد الـ launch. أسلوب التقدير في <a href="../../10-System-Design/lessons/02-back-of-the-envelope-estimation.html">القسم 10، الدرس 02</a>.</p>
+    <p>اقرا 4 حاجات من الـ output. <strong>الـ evals تكلفة ثابتة</strong>: $149 في الشهر يعني 49% من الفاتورة عند 1K user وأقل من 1% عند 100K. <strong>الـ usage ×10 مش ×10 بالظبط</strong>: Sonnet عند 10K من $1,711 لـ $15,685 (×9.2)، لأن الـ evals والـ ingestion مش بيكبروا مع الطلبات. <strong>اختيار الـ model أهم من أي tuning</strong>: عند 10K user، Haiku 5.5 بـ $163، وSonnet 5.5 بـ $1,711، وOpus 5.5 بـ $3,342. <strong>الموديل الساذج ممكن يغلط في الاتجاهين</strong>: generation بس من غير caches بيقول $2,320 قصاد $1,711 في الموديل الكامل، وكمان بيخبّي بند الـ evals بتاع $149.</p>
+    <p>الـ sensitivity بتقولك تركز فين. غيّر افتراض واحد في المرة ورتّب بالفرق: الطلبات لكل user ($2,329) أكبر بكتير من الـ prompt cache hit rate ($222) والـ retry rate ($216). يعني قيس الـ usage في beta قبل ما تقعد تظبط الـ prompt cache. والـ peak هو اللي بيحدد الـ rate limits مش متوسط الشهر، فالموديل بيطبع RPM و TPM عند peak ×8 (افتراض): 278 RPM وحوالي 790K uncached input TPM عند 100K user. قارن ده بحدود الـ tier بتاعك قبل الـ launch.</p>
+    <p>الأرقام دي افتراضات لحد ما يبقى عندك data من production، فاكتبها وغيّرها بعدين. الـ output ده بيدخل في section 12 من الـ design doc بتاع artifact 8 في الـ README، واستخدم <code>project/design-docs/0000-template.md</code>.</p>
+    <p>الغلطة الشائعة: cost model فيه generation بس، أو رقم واحد من غير sensitivity.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      قبل ما المدير يوافق على الـ feature: افتح الـ design doc وحط 3 أرقام (1K و10K و100K) وأكبر افتراض خطر، وقول "لو الطلبات لكل user طلعت 40 بدل 20، التكلفة عند 10K بتبقى $3,264". لو الـ plan بيتباع بـ $10 للـ seat وتكلفة الـ AI $0.17، يبقى الـ margin تمام. ولو Opus، احسبها تاني قبل ما توعد بحاجة.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Estimate the monthly LLM cost of this feature." → State users, requests per user, tokens in and out, and model price, multiply, then add retries, embeddings, reranking and evals, subtract cache savings, and name the assumption you trust least. Say what happens at 10× usage. Saying which number you'd measure first is what gets you the senior signal.
+    <div class="ar-note">"قدّر تكلفة الـ LLM الشهرية للـ feature دي." ← قول عدد الـ users، والطلبات لكل user، والـ tokens الداخلة والخارجة، وسعر الـ model، واضرب، وبعدين زوّد الـ retries والـ embeddings والـ reranking والـ evals، واطرح توفير الـ cache، وقول أنهي افتراض مش واثق فيه. وقول إيه اللي يحصل عند ×10. لما تقول "أول رقم هقيسه هو كذا" ده اللي بيدّيك إشارة الـ senior.</div>
+  </div>
+
+  <h2 id="p5">Part 5 — The latency budget <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — الـ latency budget</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>For chat, the number users feel is <strong>TTFT</strong>, time to first token, and a sensible target is under 1 second. A budget splits that second across stages: auth, retrieval, rerank, prompt build, provider queue plus first token. Each stage gets a number, each gets a span in your traces, and a change that blows a budget has to say what it gives up. In the run below the budget is 900 ms and the p95 of the real total is ≈722 ms.</p>
+    <p><strong>Streaming is mandatory for chat.</strong> It doesn't make generation faster; it moves the first visible word from the end of the response to the start. Here that is ≈5,033 ms without streaming and ≈361 ms with it. The streaming total reads longer (≈7,497 ms) only because this stand-in sleeps once per token and Windows timers are coarse on a loaded machine, so don't read anything into it. The server-side details are in <a href="./11-production-streaming.html">lesson 11</a>.</p>
+    <p><strong>Run independent work in parallel.</strong> Three tools at 180, 220 and 150 ms take ≈568 ms one after another and ≈236 ms with <code>Promise.all</code>, close to the slowest tool. When the model returns several <code>tool_use</code> blocks in one response, execute them concurrently. Parallelism only helps where the stages are really independent and the slow one is in the group: auth plus retrieval here gives ≈78 ms against a 70 ms retrieval, a small win because auth was already 1 ms.</p>
+    <p><strong>Model tier and region</strong> are latency decisions too. Smaller models are generally quicker to produce a token, but I can't give you real numbers from a stand-in, so histogram TTFT by model on your own traffic. Calling a provider region far from your servers adds network time before anything else starts, and US-only <code>inference_geo</code> adds a 1.1× price multiplier.</p>
+    <p><strong>Fast mode</strong> (<code>speed: "fast"</code>) runs Opus 5.5 at $8/$40, exactly 2× the standard price. Be careful what it buys: the docs say up to 2.5× more <em>output tokens per second</em>, and that the benefit is <em>not</em> on TTFT, so it won't rescue a TTFT budget. It pays off on long outputs where total time matters. Per the current docs it is generally available on Opus 5.5 with no beta header; the <code>fast-mode-2026-02-01</code> header and the research-preview label apply to Opus 5 and Opus 4.8. It has its own rate limit, it isn't available with Batch, and falling back to standard speed is a prompt cache miss because the two speeds don't share cached prefixes.</p>
+  </section>
+
+<pre class="diagram">
+  0 ms                                                   900 ms budget
+  |--auth--|---retrieval---|--rerank--|p|---queue + first token---|
+     20          150           120    10           600
+
+  Split the budget BEFORE building. Each stage gets a span in traces.
+  Over budget? The stage's owner says what it gives up.
+</pre>
+  <div class="ar-note">الرسمة دي الـ 900 ms متقسمة على المراحل: 20 للـ auth، و150 للـ retrieval، و120 للـ rerank، و10 لبناء الـ prompt، و600 للـ provider queue وأول token. قسّم الـ budget قبل ما تبني، وكل مرحلة يبقى ليها span في الـ traces، ولو مرحلة عدّت الـ budget، صاحبها يقول هيتنازل عن إيه.</div>
+
+<pre data-file="src/latency-waterfall.ts"><code class="language-typescript">import Anthropic from "@anthropic-ai/sdk";
+import { startMock } from "../kit/mock-anthropic.ts";
+import { ALL_DOCS, cosine, embed, rerankScore } from "../kit/rag-kit.ts";
+import { connectRedis, pct, rng, sleep } from "./lib.ts";
+
+const MODEL = "claude-sonnet-5-5";
+const QUESTION = "How long do refunds take after a return?";
+const TEXT = "Refunds reach your card within five working days after the return arrives. ".repeat(14);
+const mock = await startMock({ ttftMs: 350, tokenMs: 16, reply: () =&gt; ({ content: [{ type: "text", text: TEXT }] }) });
+const client = new Anthropic({ apiKey: "mock-key-not-real", baseURL: mock.url, maxRetries: 2 });
+const redis = connectRedis();
+await redis.set("session:u1", JSON.stringify({ userId: "u1", tenant: "acme" }));
+
+const vectors = ALL_DOCS.map((d) =&gt; ({ d, v: embed(d.body) }));
+const rand = rng(11);
+// تأخير بذيل طويل: أغلب الطلبات سريعة وكام طلب بيتأخر، زي الـ network الحقيقي
+const jitter = (base: number) =&gt; base * Math.exp(0.45 * Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(6.283 * rand()));
+
+type Stage = "auth" | "retrieval" | "rerank" | "prompt" | "queue+ttft";
+const BUDGET: Record&lt;Stage, number&gt; = { auth: 20, retrieval: 150, rerank: 120, prompt: 10, "queue+ttft": 600 };
+
+async function pipeline() {
+  const t: Partial&lt;Record&lt;Stage, number&gt;&gt; = {};
+  const span = async &lt;T&gt;(s: Stage, fn: () =&gt; Promise&lt;T&gt; | T): Promise&lt;T&gt; =&gt; {
+    const a = performance.now();
+    const r = await fn();
+    t[s] = performance.now() - a;
+    return r;
+  };
+  // الجزء ده حقيقي: GET على Redis
+  await span("auth", () =&gt; redis.get("session:u1"));
+  const top = await span("retrieval", async () =&gt; {
+    // الـ network بتاع الـ embedding API والـ vector DB هنا sleep مفترض
+    await sleep(jitter(70));
+    const q = embed(QUESTION);
+    return vectors.map((x) =&gt; ({ d: x.d, s: cosine(q, x.v) })).sort((a, b) =&gt; b.s - a.s).slice(0, 20);
+  });
+  const best = await span("rerank", async () =&gt; {
+    // خدمة الـ rerank برا الـ process، فالوقت هنا sleep مفترض برضه
+    await sleep(jitter(60));
+    return top.map((x) =&gt; ({ d: x.d, s: rerankScore(QUESTION, x.d.body) })).sort((a, b) =&gt; b.s - a.s).slice(0, 5);
+  });
+  const messages = await span("prompt", () =&gt; [{ role: "user" as const, content: best.map((b) =&gt; b.d.body).join("\n") + "\n\n" + QUESTION }]);
+  await span("queue+ttft", async () =&gt; {
+    // طابور الـ provider مفترض، والـ TTFT جاي من الـ stream الحقيقي للـ SDK
+    await sleep(jitter(90));
+    const stream = client.messages.stream({ model: MODEL, max_tokens: 500, messages });
+    // الـ catch ده للـ abort اللي هنعمله بإيدينا بعد أول token
+    const finished = stream.finalMessage().catch(() =&gt; undefined);
+    await new Promise&lt;void&gt;((resolve) =&gt; stream.once("text", () =&gt; resolve()));
+    stream.abort();
+    await finished;
+  });
+  return t as Record&lt;Stage, number&gt;;
+}
+
+const runs: Record&lt;Stage, number&gt;[] = [];
+for (let i = 0; i &lt; 40; i++) runs.push(await pipeline());
+const stages = Object.keys(BUDGET) as Stage[];
+const totals = runs.map((r) =&gt; stages.reduce((sum, s) =&gt; sum + r[s], 0));
+const med = stages.map((s) =&gt; pct(runs.map((r) =&gt; r[s]), 50));
+console.log("stage        budget    p50     p95   waterfall (p50)");
+let offset = 0;
+stages.forEach((s, i) =&gt; {
+  const xs = runs.map((r) =&gt; r[s]);
+  const bar = " ".repeat(Math.round((offset * 40) / 900)) + "█".repeat(Math.max(1, Math.round((med[i] * 40) / 900)));
+  console.log(`${s.padEnd(11)} ${String(BUDGET[s]).padStart(6)}  ${pct(xs, 50).toFixed(0).padStart(5)}  ${pct(xs, 95).toFixed(0).padStart(6)}   ${bar}`);
+  offset += med[i];
+});
+const sumP50 = med.reduce((a, b) =&gt; a + b, 0);
+const sumBudget = stages.reduce((a, s) =&gt; a + BUDGET[s], 0);
+console.log(`total TTFT    budget ${sumBudget}  sum of p50s ≈${sumP50.toFixed(0)}  real p50 ≈${pct(totals, 50).toFixed(0)}  real p95 ≈${pct(totals, 95).toFixed(0)}  runs over 1000ms: ${totals.filter((x) =&gt; x &gt; 1000).length}/40`);
+
+// الـ streaming ضد الانتظار: أول حاجة المستخدم بيشوفها إمتى
+const a0 = performance.now();
+await client.messages.create({ model: MODEL, max_tokens: 500, messages: [{ role: "user", content: QUESTION }] });
+const nonStream = performance.now() - a0;
+const b0 = performance.now();
+let firstAt = 0;
+const s = client.messages.stream({ model: MODEL, max_tokens: 500, messages: [{ role: "user", content: QUESTION }] });
+s.on("text", () =&gt; { if (!firstAt) firstAt = performance.now() - b0; });
+await s.finalMessage();
+const streamTotal = performance.now() - b0;
+console.log(`non-streaming: first visible text ≈${nonStream.toFixed(0)}ms | streaming: first text ≈${firstAt.toFixed(0)}ms, done ≈${streamTotal.toFixed(0)}ms`);
+
+// الـ tools بتتنفذ مع بعض: الـ model رجّع 3 tool_use في رد واحد
+const tools: Record&lt;string, number&gt; = { order_status: 180, shipping_eta: 220, invoice_lookup: 150 };
+const callTool = (name: string) =&gt; sleep(tools[name]).then(() =&gt; `${name}: ok`);
+const names = Object.keys(tools);
+const c0 = performance.now();
+for (const n of names) await callTool(n);
+const serial = performance.now() - c0;
+const d0 = performance.now();
+await Promise.all(names.map(callTool));
+const parallel = performance.now() - d0;
+console.log(`3 tool calls: serial ≈${serial.toFixed(0)}ms, parallel ≈${parallel.toFixed(0)}ms`);
+
+// الـ retrieval موازي للـ auth: مكسب بسيط لأن الـ auth سريع أصلًا
+const e0 = performance.now();
+await Promise.all([redis.get("session:u1"), sleep(70)]);
+console.log(`auth + 70ms retrieval in parallel ≈${(performance.now() - e0).toFixed(0)}ms`);
+
+await redis.del("session:u1");
+redis.disconnect();
+await mock.close();</code></pre>
+
+<pre><code class="language-plaintext">[SIMULATED] local stand-in on 127.0.0.1:PORT: text, tokens and latency are simulated, not a real model
+stage        budget    p50     p95   waterfall (p50)
+auth            20      1       2   █
+retrieval      150     63     170   ███
+rerank         120     63     125      ███
+prompt          10      0       0         █
+queue+ttft     600    460     567         ████████████████████
+total TTFT    budget 900  sum of p50s ≈587  real p50 ≈614  real p95 ≈722  runs over 1000ms: 0/40
+non-streaming: first visible text ≈5033ms | streaming: first text ≈361ms, done ≈7497ms
+3 tool calls: serial ≈568ms, parallel ≈236ms
+auth + 70ms retrieval in parallel ≈78ms</code></pre>
+  <div class="ar-note">الجدول: كل مرحلة وليها الـ budget والـ p50 والـ p95، وعلى اليمين waterfall للـ p50. الـ auth حقيقي على Redis، والـ network في الـ retrieval والـ rerank والـ provider queue عبارة عن <code>sleep</code> مفترض، وأول token جاي من الـ stream الحقيقي للـ SDK. سطر الـ total: الـ budget 900، ومجموع الـ p50 ≈587، والـ p50 الحقيقي للإجمالي ≈614، والـ p95 الحقيقي ≈722، وصفر طلبات عدّت 1000 ms من 40. بعدها: من غير streaming أول نص ظهر بعد ≈5033 ms، ومع streaming ≈361 ms. والـ tools التلاتة: ≈568 ms واحد ورا التاني و≈236 ms مع بعض.</div>
+
+<pre data-file="src/fast-mode-calc.ts"><code class="language-typescript">// الأسعار من صفحة الـ fast mode، والسرعة 60 token/s افتراض للحساب مش رقم منشور
+const std = { in: 4, out: 20 }, fast = { in: 8, out: 40 };
+const inputTokens = 4000, outputs = [100, 400, 1500, 4000];
+const baseTps = 60, boost = 2.5, ttftS = 1.0;
+
+console.log("output tokens  std cost  fast cost  std total  fast total  seconds saved  $ per second saved");
+for (const out of outputs) {
+  const stdCost = (inputTokens * std.in + out * std.out) / 1e6;
+  const fastCost = (inputTokens * fast.in + out * fast.out) / 1e6;
+  const stdS = ttftS + out / baseTps;
+  const fastS = ttftS + out / (baseTps * boost);
+  const saved = stdS - fastS;
+  console.log(`${String(out).padStart(13)}  $${stdCost.toFixed(4)}   $${fastCost.toFixed(4)}   ${stdS.toFixed(1).padStart(7)}s  ${fastS.toFixed(1).padStart(9)}s  ${saved.toFixed(1).padStart(13)}s  ${"$" + ((fastCost - stdCost) / saved).toFixed(4)}`);
+}
+console.log(`TTFT is ${ttftS.toFixed(1)}s in both columns: fast mode raises output tokens per second, not time to first token.`);</code></pre>
+
+<pre><code class="language-plaintext">output tokens  std cost  fast cost  std total  fast total  seconds saved  $ per second saved
+          100  $0.0180   $0.0360       2.7s        1.7s            1.0s  $0.0180
+          400  $0.0240   $0.0480       7.7s        3.7s            4.0s  $0.0060
+         1500  $0.0460   $0.0920      26.0s       11.0s           15.0s  $0.0031
+         4000  $0.0960   $0.1920      67.7s       27.7s           40.0s  $0.0024
+TTFT is 1.0s in both columns: fast mode raises output tokens per second, not time to first token.</code></pre>
+  <div class="ar-note">كل صف طول رد مختلف. أعمدة التكلفة: عادي وfast، والـ fast دايمًا الضعف بالظبط. أعمدة الوقت محسوبة بافتراض 60 token/s (رقم للحساب مش منشور) وTTFT ثابت 1s. آخر عمود: كل ثانية وفّرتها بكلفتك كام. الرد القصير 100 token بيوفّر ثانية بـ $0.018، والطويل 4000 token بيوفّر 40 ثانية بـ $0.0024 للثانية. يعني الـ fast mode منطقي للردود الطويلة، ومبيغيّرش الـ TTFT.</div>
+
+  <p>The real call, compile-checked on TS 7. <strong>Not run here: needs an API key</strong>:</p>
+  <div class="ar-note">الـ call الحقيقي، اتعمله compile على TS 7. <strong>Not run here: محتاج API key</strong>.</div>
+
+<pre data-file="src/fast-mode.ts"><code class="language-typescript">import Anthropic from "@anthropic-ai/sdk";
+
+// مش متشغّل هنا: محتاج API key ومفيش key على الجهاز ده، بس الملف بيعدّي على tsc
+const client = new Anthropic();
+
+export async function answerFast(prompt: string) {
+  try {
+    const message = await client.messages.create(
+      { model: "claude-opus-5-5", max_tokens: 2000, speed: "fast", messages: [{ role: "user", content: prompt }] },
+      // صفر retries عشان الـ 429 ينزل فورًا على الـ fallback
+      { maxRetries: 0 },
+    );
+    return message;
+  } catch (e) {
+    if (e instanceof Anthropic.RateLimitError) {
+      // الرجوع للسرعة العادية معناه prompt cache miss، فالطلب ده أغلى
+      return client.messages.create({ model: "claude-opus-5-5", max_tokens: 2000, messages: [{ role: "user", content: prompt }] });
+    }
+    throw e;
+  }
+}</code></pre>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>في الـ chat، الرقم اللي الـ user بيحسه هو <strong>TTFT</strong>، الوقت لحد أول token، والهدف المعقول أقل من ثانية. الـ budget بيقسم الثانية دي على المراحل: auth، وretrieval، وrerank، وبناء الـ prompt، والـ provider queue مع أول token. كل مرحلة ليها رقم وليها span في الـ traces، وأي تغيير بيعدّي الـ budget لازم يقول هيتنازل عن إيه. في التشغيلة الـ budget 900 ms والـ p95 الحقيقي للإجمالي ≈722 ms.</p>
+    <p><strong>الـ streaming إلزامي للـ chat.</strong> هو مش بيسرّع الـ generation، هو بينقل أول كلمة ظاهرة من آخر الرد لأوله. هنا ده ≈5,033 ms من غير streaming و≈361 ms معاه. إجمالي الـ streaming طالع أطول (≈7,497 ms) بس لأن الـ stand-in بيعمل sleep لكل token، والـ timers على Windows تحت الضغط مش دقيقة، فمتبنيش على الرقم ده حاجة. تفاصيل الـ server في <a href="./11-production-streaming.html">الدرس 11</a>.</p>
+    <p><strong>شغّل الشغل المستقل بالتوازي.</strong> 3 tools بـ 180 و220 و150 ms بياخدوا ≈568 ms ورا بعض و≈236 ms بـ <code>Promise.all</code>، قريب من أبطأ tool فيهم. لما الـ model يرجّع كذا <code>tool_use</code> في رد واحد، نفّذهم مع بعض. الـ parallelism بيفيد بس لما المراحل مستقلة بجد والبطيء جوه المجموعة: الـ auth مع الـ retrieval هنا ≈78 ms قصاد retrieval بـ 70 ms، مكسب صغير لأن الـ auth أصلًا 1 ms.</p>
+    <p><strong>نوع الـ model والـ region</strong> قرارات latency كمان. الـ models الأصغر عمومًا أسرع في طلوع الـ token، بس مقدرش أديك أرقام حقيقية من stand-in، فاعمل histogram للـ TTFT لكل model على الـ traffic بتاعك. ولو بتنادي region بعيد عن الـ servers بتاعتك، بتزوّد network قبل أي حاجة تبدأ، و<code>inference_geo</code> الـ US-only بيزوّد السعر ×1.1.</p>
+    <p><strong>الـ fast mode</strong> (<code>speed: "fast"</code>) بيشغّل Opus 5.5 بـ $8/$40، يعني ضعف السعر بالظبط. خد بالك بيشتري إيه: الـ docs بتقول لحد 2.5× <em>output tokens per second</em> والمكسب <em>مش</em> في الـ TTFT، فمش هينقذ الـ TTFT budget. بيفيد في الردود الطويلة اللي الوقت الكلي فيها مهم. وحسب الـ docs الحالية هو متاح بشكل عام على Opus 5.5 من غير beta header، والـ header <code>fast-mode-2026-02-01</code> وكلمة research preview بتوع Opus 5 وOpus 4.8. وليه rate limit لوحده، ومش متاح مع الـ Batch، والرجوع للسرعة العادية معناه prompt cache miss لأن السرعتين مش بيشاركوا الـ cached prefixes.</p>
+    <p>الغلطة الشائعة: <code>await</code> على الـ tools واحد ورا التاني، أو تستخدم fast mode عشان تحل مشكلة TTFT.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما الـ PM يقول "الـ assistant بطيء": افتح الـ trace لطلب بطيء وقارن كل span بالـ budget بتاعه. لو الـ rerank بياخد 400 ms عند الـ p95، قلّل عدد الـ documents أو خليه بـ timeout يرجع لنتيجة الـ retrieval. ولو الـ agent بينادي <code>order_status</code> و<code>shipping_eta</code> ورا بعض، خليهم <code>Promise.all</code> واكسب وقت من غير ما تغيّر model.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "The user waits 8 seconds before the first word. How do you debug it?" → Check whether streaming is on all the way through, including proxies that buffer. Then read the per-stage spans: retrieval, rerank, provider queue, cold starts. Look at p95, not the average, and at whether tools run serially before the model starts writing.
+    <div class="ar-note">"الـ user بيستنى 8 ثواني قبل أول كلمة. هتعمل debug إزاي؟" ← الأول اتأكد إن الـ streaming شغال لحد الآخر، بما فيها الـ proxies اللي بتعمل buffering. بعدين اقرا الـ spans لكل مرحلة: retrieval، rerank، provider queue، cold starts. وبص على الـ p95 مش المتوسط، وعلى هل الـ tools بتتنفذ ورا بعض قبل ما الـ model يبدأ يكتب.</div>
+  </div>
+
+  <h2 id="p6">Part 6 — Cost, latency, failure, and an eval <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — التكلفة والـ latency والفشل والـ eval</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A semantic cache is a model behaviour you ship, so it gets an eval like any other. Here it is 50 labelled near-duplicate pairs: 22 paraphrases that must hit, and 28 that must miss (entity swaps, negations, changed values). The gate has two rules: <strong>zero wrong hits</strong>, and at least 75% of good hits. Bare thresholds all fail, and 0.70 is the worst with 11 wrong hits. Only 0.85 plus the guard passes, with 19 of 22. Run it in CI whenever the embedding model, the threshold or the guard changes (<a href="./09-evals-golden-datasets.html">lesson 09</a> covers the method). The guard here was written by hand against this set, so grow the set from real traffic or you will only have proved that the guard fits its own examples.</p>
+    <p><strong>Cache poisoning from a bad answer</strong> is the failure that turns one bad response into many. A single answer cut off by <code>max_tokens</code> gets cached, and 500 of 500 users receive it. Validate before <code>SET</code> (<code>stop_reason === "end_turn"</code>, plus your own checks on shape and length) and only the one unlucky request sees it. Give users a feedback path that deletes the key, because validation can't catch an answer that is well-formed and wrong.</p>
+    <p><strong>Budgets that ignore p95</strong>: the sum of stage p50s was ≈587 ms, the real p95 of the total was ≈722 ms, and the sum of stage p95s is 864 ms. Percentiles don't add, in either direction. Measure the end-to-end distribution directly. <strong>A cost model that forgets retries</strong> looks harmless at 3% ($43 a month at 10K users), but retries spike during outages, which is also when your token rate limits are tightest; the sensitivity table shows $216 of swing between 0% and 15%.</p>
+  </section>
+
+<pre data-file="src/pairs.ts"><code class="language-typescript">import { embed, cosine } from "../kit/rag-kit.ts";
+
+// كل pair ليها label: لازم الـ cache يعمل hit ولا miss
+export type Pair = { a: string; b: string; expect: "hit" | "miss"; tag: "paraphrase" | "entity-swap" | "negation" | "value-swap" };
+
+const hit = (a: string, b: string): Pair =&gt; ({ a, b, expect: "hit", tag: "paraphrase" });
+const swap = (a: string, b: string): Pair =&gt; ({ a, b, expect: "miss", tag: "entity-swap" });
+const neg = (a: string, b: string): Pair =&gt; ({ a, b, expect: "miss", tag: "negation" });
+const val = (a: string, b: string): Pair =&gt; ({ a, b, expect: "miss", tag: "value-swap" });
+
+export const PAIRS: Pair[] = [
+  // نفس المعنى بكلام مختلف: دي لازم تعمل hit
+  hit("How do I cancel my order?", "How can I cancel my order?"),
+  hit("How do I get a refund?", "How can I get my money back?"),
+  hit("Where is my invoice?", "Where can I find my bill?"),
+  hit("When will my package arrive?", "When will my parcel be delivered?"),
+  hit("How do I renew my subscription?", "How can I renew my membership?"),
+  hit("What are the shipping costs?", "What are the delivery fees?"),
+  hit("Can I return a damaged item?", "Can I return a broken item?"),
+  hit("How do I change my password?", "How can I change my login password?"),
+  hit("Is VAT included in the price?", "Is tax included in the price?"),
+  hit("My payment was declined", "My card was declined"),
+  hit("How long is the refund period?", "How many days is the refund window?"),
+  hit("How do I end my plan?", "How do I cancel my subscription?"),
+  hit("Why was my order delayed?", "Why is my order late?"),
+  hit("Where do I download receipts?", "Where do I download invoices?"),
+  hit("What is the API rate limit?", "What is the API quota?"),
+  hit("How do I exchange an item?", "How do I swap an item?"),
+  hit("Do you deliver to Cairo?", "Do you ship to Cairo?"),
+  hit("How do I update my billing address?", "How do I update my invoice address?"),
+  hit("Can I pay by card?", "Can I pay with a card?"),
+  hit("How do I get a receipt for my payment?", "How do I get an invoice for my payment?"),
+  hit("How do I stop my subscription renewal?", "How do I cancel my subscription renewal?"),
+  hit("What happens when my plan renews?", "What happens when my membership renews?"),
+  // الـ entity اتغيرت: الجملة شبه بعض والإجابة مختلفة
+  swap("cancel my order", "cancel my subscription"),
+  swap("How do I cancel my order?", "How do I cancel my subscription?"),
+  swap("How do I get a refund for my order?", "How do I get a refund for my subscription?"),
+  swap("How do I download my invoice?", "How do I download my contract?"),
+  swap("How do I update my billing address?", "How do I update my shipping address?"),
+  swap("What is the refund policy for books?", "What is the refund policy for laptops?"),
+  swap("How do I return a laptop?", "How do I return a gift card?"),
+  swap("How do I reset my password?", "How do I reset my API key?"),
+  swap("Can I pay my invoice by card?", "Can I pay my subscription by card?"),
+  swap("What is the shipping fee for Egypt?", "What is the shipping fee for Germany?"),
+  swap("How do I delete my account?", "How do I delete my order?"),
+  swap("Is VAT charged on subscriptions?", "Is VAT charged on shipping?"),
+  swap("Does the Pro plan include API access?", "Does the Free plan include API access?"),
+  swap("How do I cancel a pending order?", "How do I cancel a shipped order?"),
+  // النفي بيقلب المعنى
+  neg("My payment was charged", "My payment was not charged"),
+  neg("Can I cancel my order?", "Can I not cancel my order?"),
+  neg("Is shipping included?", "Is shipping not included?"),
+  neg("Why was my refund approved?", "Why was my refund rejected?"),
+  neg("My invoice is paid", "My invoice is unpaid"),
+  neg("The webhook was delivered", "The webhook was not delivered"),
+  // رقم أو تاريخ اتغير
+  val("What was invoice INV-1001 for?", "What was invoice INV-2002 for?"),
+  val("Refund policy after 14 days", "Refund policy after 30 days"),
+  val("Status of order 1001", "Status of order 1002"),
+  val("My invoices for March", "My invoices for April"),
+  val("Error ERR_PAY_4012 on checkout", "Error ERR_PAY_5000 on checkout"),
+  val("Upgrade to 5 seats", "Upgrade to 50 seats"),
+  val("Shipping to zone 1", "Shipping to zone 9"),
+  val("Plan limit of 100 requests", "Plan limit of 1000 requests"),
+];
+
+export const score = (p: Pair) =&gt; cosine(embed(p.a), embed(p.b));</code></pre>
+
+<pre data-file="src/cache-eval.ts"><code class="language-typescript">import { PAIRS, type Pair } from "./pairs.ts";
+import { SemanticCache } from "./semantic.ts";
+
+console.log("[SIMULATED] cache eval over the stand-in embedder: the harness is real, the scores are not a real model's");
+
+type Config = { name: string; threshold: number; guard: boolean };
+const GATES = { maxWrongHits: 0, minGoodHitRate: 0.75 };
+
+function evaluate(cfg: Config) {
+  const byTag = new Map&lt;string, { pass: number; total: number }&gt;();
+  const failures: string[] = [];
+  let goodHits = 0, wrongHits = 0;
+  for (const p of PAIRS) {
+    const cache = new SemanticCache({ threshold: cfg.threshold, guard: cfg.guard });
+    cache.store("acme", p.a, "cached");
+    const got: Pair["expect"] = cache.lookup("acme", p.b) ? "hit" : "miss";
+    const ok = got === p.expect;
+    const row = byTag.get(p.tag) ?? { pass: 0, total: 0 };
+    row.total++;
+    if (ok) row.pass++;
+    byTag.set(p.tag, row);
+    if (got === "hit" &amp;&amp; p.expect === "hit") goodHits++;
+    if (got === "hit" &amp;&amp; p.expect === "miss") wrongHits++;
+    if (!ok &amp;&amp; failures.length &lt; 4) failures.push(`${p.expect} expected, got ${got}: "${p.a}" vs "${p.b}"`);
+  }
+  const should = PAIRS.filter((p) =&gt; p.expect === "hit").length;
+  const rate = goodHits / should;
+  // البوابة: hit غلط واحد يوقف الـ merge، الـ hit rate ليه حد أدنى بس
+  const pass = wrongHits &lt;= GATES.maxWrongHits &amp;&amp; rate &gt;= GATES.minGoodHitRate;
+  const tags = [...byTag].map(([t, r]) =&gt; `${t} ${r.pass}/${r.total}`).join("  ");
+  console.log(`${cfg.name.padEnd(24)} ${pass ? "PASS" : "FAIL"}  good hits ${goodHits}/${should} (${(rate * 100).toFixed(0)}%)  wrong hits ${wrongHits}  | ${tags}`);
+  failures.forEach((f) =&gt; console.log("   - " + f));
+  return pass;
+}
+
+const configs: Config[] = [
+  { name: "threshold 0.70", threshold: 0.7, guard: false },
+  { name: "threshold 0.85", threshold: 0.85, guard: false },
+  { name: "threshold 0.99", threshold: 0.99, guard: false },
+  { name: "threshold 0.85 + guard", threshold: 0.85, guard: true },
+];
+const results = configs.map(evaluate);
+console.log(`cases: ${PAIRS.length}; gate passed by: ${configs.filter((_, i) =&gt; results[i]).map((c) =&gt; c.name).join(", ") || "none"}`);
+process.exitCode = results.at(-1) ? 0 : 1;</code></pre>
+
+<pre><code class="language-plaintext">[SIMULATED] cache eval over the stand-in embedder: the harness is real, the scores are not a real model's
+threshold 0.70           FAIL  good hits 22/22 (100%)  wrong hits 11  | paraphrase 22/22  entity-swap 12/14  negation 1/6  value-swap 4/8
+   - miss expected, got hit: "Can I pay my invoice by card?" vs "Can I pay my subscription by card?"
+   - miss expected, got hit: "Does the Pro plan include API access?" vs "Does the Free plan include API access?"
+   - miss expected, got hit: "My payment was charged" vs "My payment was not charged"
+   - miss expected, got hit: "Can I cancel my order?" vs "Can I not cancel my order?"
+threshold 0.85           FAIL  good hits 19/22 (86%)  wrong hits 5  | paraphrase 19/22  entity-swap 14/14  negation 2/6  value-swap 7/8
+   - hit expected, got miss: "Where is my invoice?" vs "Where can I find my bill?"
+   - hit expected, got miss: "How long is the refund period?" vs "How many days is the refund window?"
+   - hit expected, got miss: "What is the API rate limit?" vs "What is the API quota?"
+   - miss expected, got hit: "My payment was charged" vs "My payment was not charged"
+threshold 0.99           FAIL  good hits 17/22 (77%)  wrong hits 5  | paraphrase 17/22  entity-swap 14/14  negation 2/6  value-swap 7/8
+   - hit expected, got miss: "Where is my invoice?" vs "Where can I find my bill?"
+   - hit expected, got miss: "How do I change my password?" vs "How can I change my login password?"
+   - hit expected, got miss: "How long is the refund period?" vs "How many days is the refund window?"
+   - hit expected, got miss: "Why was my order delayed?" vs "Why is my order late?"
+threshold 0.85 + guard   PASS  good hits 19/22 (86%)  wrong hits 0  | paraphrase 19/22  entity-swap 14/14  negation 6/6  value-swap 8/8
+   - hit expected, got miss: "Where is my invoice?" vs "Where can I find my bill?"
+   - hit expected, got miss: "How long is the refund period?" vs "How many days is the refund window?"
+   - hit expected, got miss: "What is the API rate limit?" vs "What is the API quota?"
+cases: 50; gate passed by: threshold 0.85 + guard</code></pre>
+  <div class="ar-note">كل config ليها PASS أو FAIL، وعدد الـ hits الصح، والـ hits الغلط، والنتيجة لكل نوع pair، وتحتها أول 4 حالات غلط. الـ thresholds لوحدها كلها FAIL: 0.70 فيها 11 غلط، و0.85 فيها 5، و0.99 فيها 5 وكمان الـ hits الصح وقعت. الوحيدة اللي عدّت هي 0.85 مع الـ guard: 19 من 22 وصفر غلط. والحالات التلاتة اللي ظاهرة تحت الـ PASS هي paraphrases فاتت علينا، يعني miss، ودي بتكلف model call بس.</div>
+
+<pre data-file="src/cache-poisoning.ts"><code class="language-typescript">import { createHash } from "node:crypto";
+import Anthropic from "@anthropic-ai/sdk";
+import { startMock } from "../kit/mock-anthropic.ts";
+import { connectRedis } from "./lib.ts";
+
+let bad = true;
+const mock = await startMock({
+  ttftMs: 0, tokenMs: 0,
+  reply: () =&gt; {
+    // السيناريو مكتوب بإيدينا: أول رد مقطوع، وبعد كده الردود سليمة
+    if (bad) {
+      bad = false;
+      return { content: [{ type: "text", text: "To cancel your order, first open the" }], stop_reason: "max_tokens" };
+    }
+    return { content: [{ type: "text", text: "Open Orders, choose the order, then press Cancel." }] };
+  },
+});
+const client = new Anthropic({ apiKey: "mock-key-not-real", baseURL: mock.url, maxRetries: 2 });
+const redis = connectRedis();
+const q = "How do I cancel my order?";
+const key = "llm:acme:" + createHash("sha256").update(q).digest("hex");
+
+// ✅ بنخزن الرد لو كامل وعدّى الـ validation بس
+function safeToCache(res: Anthropic.Message, text: string) {
+  return res.stop_reason === "end_turn" &amp;&amp; text.trim().length &gt;= 20 &amp;&amp; /[.!?]$/.test(text.trim());
+}
+
+async function serve(check: boolean) {
+  const hit = await redis.get(key);
+  if (hit) return { text: hit, cached: true };
+  const res = await client.messages.create({ model: "claude-sonnet-5-5", max_tokens: 400, messages: [{ role: "user", content: q }] });
+  const text = res.content[0].type === "text" ? res.content[0].text : "";
+  if (!check || safeToCache(res, text)) await redis.set(key, text, "EX", 3600);
+  return { text, cached: false };
+}
+
+async function scenario(label: string, check: boolean) {
+  await redis.flushdb();
+  bad = true;
+  let truncated = 0, calls = 0;
+  for (let i = 0; i &lt; 500; i++) {
+    const r = await serve(check);
+    if (!r.cached) calls++;
+    if (r.text.endsWith("open the")) truncated++;
+  }
+  console.log(`${label.padEnd(30)} users ${500}  saw the broken answer ${String(truncated).padStart(3)}  model calls ${calls}`);
+}
+
+await scenario("cache everything", false);
+await scenario("validate before SET", true);
+
+// زرار "الإجابة غلط⁦":⁩ بيمسح الـ key فورًا عشان الضرر يقف
+await redis.flushdb();
+bad = true;
+await serve(false);
+console.log("poisoned key exists:", (await redis.exists(key)) === 1);
+await redis.del(key);
+console.log("after thumbs-down DEL:", (await redis.exists(key)) === 1, "| next answer:", (await serve(true)).text);
+
+await redis.flushdb();
+redis.disconnect();
+await mock.close();</code></pre>
+
+<pre><code class="language-plaintext">[SIMULATED] local stand-in on 127.0.0.1:PORT: text, tokens and latency are simulated, not a real model
+cache everything               users 500  saw the broken answer 500  model calls 1
+validate before SET            users 500  saw the broken answer   1  model calls 2
+poisoned key exists: true
+after thumbs-down DEL: false | next answer: Open Orders, choose the order, then press Cancel.</code></pre>
+  <div class="ar-note">في أول سيناريو خزّنا الرد المقطوع، فالـ 500 user كلهم شافوه بـ model call واحد. في التاني عملنا validation قبل الـ <code>SET</code>: user واحد بس شافه، وبعدها الرد السليم اتخزن (2 model calls). وآخر سطرين: لما user داس "الإجابة غلط"، الـ <code>DEL</code> شال الـ key والطلب اللي بعده جاب الإجابة الصح.</div>
+
+  <table>
+    <tr><th>Layer</th><th>Cost effect (this lesson's runs)</th><th>Latency</th><th>Failure mode</th></tr>
+    <tr><td>Exact cache</td><td>74% fewer calls (514 of 2,000 reached the model)</td><td>≈0.14 ms Redis GET</td><td>Key missing tenant or version: 1,243 wrong-tenant answers</td></tr>
+    <tr><td>Semantic cache</td><td>Another 170 calls avoided (344 vs 514)</td><td>Embedding round trip + nearest-neighbour search; measure yours</td><td>Wrong hit: 5 of 28 at 0.85 with no guard</td></tr>
+    <tr><td>Prompt caching</td><td>23.7% alone; no call avoided</td><td>Model call still happens</td><td>Prefix changes each request: you pay the 1.25× write and read nothing</td></tr>
+    <tr><td>Stampede lock</td><td>100 calls → 1 ($0.4658 → $0.0047)</td><td>Waiters poll; +≈300 ms if the holder crashes</td><td>No <code>PX</code>: a crash holds the lock until someone intervenes</td></tr>
+    <tr><td>Cost model</td><td>Sonnet @10K: $1,711/month, usage ×10: $15,685</td><td>n/a</td><td>Forgets retries, evals, rerank; hides the biggest risk</td></tr>
+    <tr><td>Latency budget</td><td>Fast mode: 2× price, no TTFT gain</td><td>p95 total ≈722 ms vs 900 ms budget</td><td>Summing averages: real p95 is higher than the sum of p50s</td></tr>
+  </table>
+  <div class="ar-note">الجدول ده الملخص، كل صف layer: الـ exact cache: 514 من 2,000 بس وصلوا للـ model، والـ <code>GET</code> ≈0.14 ms، وفشله إن الـ key ناقص tenant فـ 1,243 إجابة غلط. الـ semantic cache: وفّر 170 call زيادة، وبيزوّد embedding وبحث (قيس عندك)، وفشله hit غلط: 5 من 28 عند 0.85 من غير guard. الـ prompt caching: 23.7% لوحده من غير ما يلغي call، والـ model call لسه بيحصل، وفشله إن الـ prefix يتغير مع كل طلب فتدفع الـ write بـ 1.25× ومتقراش حاجة. الـ stampede lock: من 100 call لواحد، والمستنيين بيعملوا poll، و≈300 ms زيادة لو صاحب الـ lock وقع، وفشله لو مفيش <code>PX</code>. الـ cost model: $1,711 في الشهر و×10 usage يبقى $15,685، وفشله إنه ينسى الـ retries والـ evals والـ rerank. الـ latency budget: الـ fast mode ضعف السعر من غير مكسب في الـ TTFT، والـ p95 ≈722 ms من 900، وفشله إنك تجمع متوسطات.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ semantic cache سلوك بتعمله ship، فلازم يبقى ليه eval زي أي حاجة تانية. هنا 50 near-duplicate pair ليهم label: 22 paraphrase لازم يعملوا hit، و28 لازم يعملوا miss (تبديل entity، ونفي، وتغيير قيمة). البوابة ليها قاعدتين: <strong>صفر hits غلط</strong>، و75% على الأقل من الـ hits الصح. الـ thresholds لوحدها كلها وقعت، و0.70 أسوأهم بـ 11 hit غلط. الوحيدة اللي عدّت هي 0.85 مع الـ guard، بـ 19 من 22. شغّله في الـ CI كل ما الـ embedding model أو الـ threshold أو الـ guard يتغير (<a href="./09-evals-golden-datasets.html">الدرس 09</a> فيه الطريقة). والـ guard هنا مكتوب بإيدي على نفس الـ set، فكبّر الـ set من traffic حقيقي، وإلا هتكون أثبتّ إن الـ guard مناسب للأمثلة بتاعته وخلاص.</p>
+    <p><strong>الـ cache poisoning من إجابة بايظة</strong> هو الفشل اللي بيحوّل رد واحد وحش لرد وحش عند الناس كلها. إجابة واحدة اتقطعت عند <code>max_tokens</code> اتخزنت، و500 من 500 user خدوها. اعمل validation قبل الـ <code>SET</code> (<code>stop_reason === "end_turn"</code> مع فحوصات الشكل والطول بتاعتك) والطلب سيئ الحظ لوحده هو اللي هيشوفها. وادّي الـ users طريقة يبلّغوا تمسح الـ key، لأن الـ validation مش هتمسك إجابة شكلها سليم ومحتواها غلط.</p>
+    <p><strong>الـ budgets اللي بتتجاهل الـ p95</strong>: مجموع الـ p50 للمراحل كان ≈587 ms، والـ p95 الحقيقي للإجمالي ≈722 ms، ومجموع الـ p95 للمراحل 864 ms. الـ percentiles مبتتجمعش، لا في الاتجاه ده ولا ده. قيس التوزيع end-to-end مباشرة. <strong>والـ cost model اللي بينسى الـ retries</strong> شكله بريء عند 3% ($43 في الشهر عند 10K user)، بس الـ retries بتعلا وقت الـ outages، وهو نفس الوقت اللي الـ rate limits بتبقى ضيقة فيه؛ وجدول الـ sensitivity بيوري $216 فرق بين 0% و15%.</p>
+    <p>الغلطة الشائعة: تعمل cache لأي رد من غير ما تبص على <code>stop_reason</code>، أو تقيس المتوسط بس.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      ضيف <code>cache-eval</code> خطوة في الـ CI بتمنع الـ merge لو <code>wrongHits &gt; 0</code>، وكل شهر زوّد على الـ set أكتر الأسئلة اللي الـ users ضغطوا عليها "الإجابة غلط". وفي incident فيه إجابة بايظة منتشرة، أول خطوة: <code>DEL</code> على الـ key، أو ارفع الـ prompt version عشان تعمل invalidate لكله.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What a failing eval here does not tell you</b>
+    Passing this eval on the stand-in proves your harness and your guard work. It says nothing about whether a real embedding model separates these pairs. Before production, run the same 50 pairs on your actual embedder, then keep adding pairs from real thumbs-down events.
+    <div class="ar-note">لو الـ eval ده عدّى على الـ stand-in، ده بيثبت إن الـ harness والـ guard شغالين، ومبيقولش أي حاجة عن هل الـ embedding model الحقيقي بيفرّق بين الـ pairs دي. قبل production شغّل نفس الـ 50 pair على الـ embedder الحقيقي بتاعك، وبعدها فضل زوّد pairs من الـ thumbs-down الحقيقية.</div>
+  </div>
+
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Key by the prompt only</b>
+<pre><code class="language-typescript">const key = sha256(question);
+// الـ tenant التاني بياخد إجابة الأول</code></pre></div>
+    <div class="good"><b>✅ Everything that changes the answer</b>
+<pre><code class="language-typescript">const key = `llm:${tenant}:` + sha256(
+  JSON.stringify([tenant, model, promptVersion, kbVersion, normalize(question)]),
+);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ hash على السؤال بس معناه إن tenant هياخد إجابة tenant تاني، وفي الجزء 1 ده حصل 1,243 مرة، والـ prompt الجديد مش هيأثر على الإجابات القديمة. ✅ كل حاجة ممكن تغيّر الإجابة بتدخل في الـ key بترتيب ثابت، والـ tenant في الأول عشان تقدر تمسح بيه.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Cache whatever came back</b>
+<pre><code class="language-typescript">await redis.set(key, text, "EX", 3600);
+// رد اتقطع عند max_tokens هيتوزع على كل الناس</code></pre></div>
+    <div class="good"><b>✅ Validate, then store</b>
+<pre><code class="language-typescript">if (res.stop_reason === "end_turn" &amp;&amp; isValid(text)) {
+  await redis.set(key, text, "EX", 3600);
+}</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ تخزين أي رد معناه إن رد مقطوع واحد بيوصل لـ 500 من 500 user زي ما شفنا في الجزء 6. ✅ خزّن بس لو <code>stop_reason</code> طبيعي والنص عدّى الفحوصات بتاعتك، والطلب اللي فشل يتعامل لوحده من غير ما يلوّث الـ cache.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Budget = sum of averages</b>
+<pre><code class="language-typescript">const budget = avg(retrieval) + avg(rerank) + avg(ttft);
+// متوسطات حلوة والـ p95 الحقيقي مش ظاهر</code></pre></div>
+    <div class="good"><b>✅ Measure the end-to-end distribution</b>
+<pre><code class="language-typescript">const totals = runs.map((r) =&gt; sum(Object.values(r)));
+const p95 = pct(totals, 95);
+// قيس الإجمالي نفسه، وعلّم على كل span لوحده</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ جمع المتوسطات بيديك رقم أقل من اللي الـ users بيعيشوه: عندنا مجموع الـ p50 كان ≈587 ms والـ p95 الحقيقي ≈722 ms. ✅ قيس الإجمالي end-to-end لكل طلب وخد الـ p95 منه، وسيب الـ spans تقولك السبب.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Cost model with generation only</b>
+<pre><code class="language-typescript">const monthly = users * reqPerUser * costPerCall;
+// مفيش retries ولا evals ولا rerank ولا cache</code></pre></div>
+    <div class="good"><b>✅ Every line that shows on the invoice</b>
+<pre><code class="language-typescript">const total = generation + retries + queryEmbeddings
+  + rerank + ingestion + evals;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ generation لوحدها بتديك رقم غلط في الاتجاهين: عند 10K user كان $2,320 قصاد $1,711 في الموديل الكامل، وبيخبّي بند evals ثابت بـ $149 هو نص الفاتورة عند 1K user. ✅ حط كل بند هيظهر في الفاتورة، وكل افتراض ليه اسم.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Tools one after another</b>
+<pre><code class="language-typescript">for (const t of toolUses) {
+  results.push(await run(t));
+}
+// النتيجة ⁦≈568 ms⁩ لـ 3 tools</code></pre></div>
+    <div class="good"><b>✅ Independent tools together</b>
+<pre><code class="language-typescript">const results = await Promise.all(toolUses.map(run));
+// النتيجة ⁦≈236 ms⁩، قريب من أبطأ tool</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>await</code> جوه <code>for</code> بيخلي كل tool يستنى اللي قبله (≈568 ms). ✅ لو الـ tools مستقلين، نفّذهم بـ <code>Promise.all</code> (≈236 ms). خد بالك: لو tool بيعتمد على نتيجة tool تاني، الترتيب لازم يفضل، ولو كل tool بيكتب، فكّر في الـ concurrency والـ idempotency الأول.</p>
+  </section>
+
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Version the knowledge base in the key <span class="lvl lvl-1">🟢 easy</span></b>
+    Add a <code>kbVersion</code> field to the exact-cache key so publishing a help-center update invalidates cached answers. Prove that two spellings of one question share a key and that a version bump doesn't.
+    <div class="ar-note">ضيف <code>kbVersion</code> للـ key بتاع الـ exact cache، بحيث نشر تعديل في الـ help center يعمل invalidate للإجابات المتخزنة. وأثبت إن شكلين كتابة لنفس السؤال بيشتركوا في key، وإن تغيير النسخة بيغيّره.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex1.ts"><code class="language-typescript">import { createHash } from "node:crypto";
+
+type Req = { tenant: string; promptVersion: string; kbVersion: number; question: string };
+const normalize = (q: string) =&gt; q.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+
+// الحل: رقم نسخة الـ knowledge base بقى جزء من الـ canonical request
+const keyOf = (r: Req) =&gt; {
+  const canon = JSON.stringify([2, r.tenant, "claude-sonnet-5-5", r.promptVersion, r.kbVersion, normalize(r.question)]);
+  return `llm:exact:${r.tenant}:${createHash("sha256").update(canon).digest("hex")}`;
+};
+
+const q: Req = { tenant: "acme", promptVersion: "v2", kbVersion: 41, question: "How do I get a refund?" };
+console.log(keyOf(q) === keyOf({ ...q, question: "  how do I  get a REFUND? " }));
+// → true
+console.log(keyOf(q) === keyOf({ ...q, kbVersion: 42 }));
+// → false</code></pre>
+      <div class="ar-note">رقم الـ KB بقى جزء من الـ canonical array. أول مقارنة <code>true</code> لأن الـ normalize وحّد الشكلين، والتانية <code>false</code> لأن النسخة اتغيرت. وغيّرنا أول رقم في الـ array لـ 2 عشان شكل الـ key نفسه اتغير.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Break the guard, then fix it <span class="lvl lvl-2">🟡 medium</span></b>
+    <code>"Refund within 14 days"</code> and <code>"Refund within 14 weeks"</code> score 1.000 on the stand-in and pass the guard, because the number is the same. Extend the guard so the unit counts too, and add this pair to the eval.
+    <div class="ar-note"><code>"Refund within 14 days"</code> و<code>"Refund within 14 weeks"</code> بياخدوا 1.000 على الـ stand-in وبيعدّوا من الـ guard، لأن الرقم هو هو. وسّع الـ guard بحيث الوحدة كمان تتحسب، وزوّد الـ pair دي على الـ eval.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex2.ts"><code class="language-typescript">import { cosine, embed } from "../kit/rag-kit.ts";
+import { guardOf } from "./semantic.ts";
+
+const a = "Refund within 14 days", b = "Refund within 14 weeks";
+console.log(cosine(embed(a), embed(b)).toFixed(3));
+// → 1.000
+console.log(guardOf(a) === guardOf(b));
+// → true
+
+// الحل: الوحدة جزء من القيمة، فلازم تبقى في البصمة
+const UNIT = /\b\d+\s*(day|week|month|year|seat|user)s?\b/g;
+const guardWithUnits = (q: string) =&gt; guardOf(q) + JSON.stringify(q.toLowerCase().match(UNIT) ?? []);
+console.log(guardWithUnits(a) === guardWithUnits(b));
+// → false
+console.log(guardWithUnits(a) === guardWithUnits("Refund within 14 days please"));
+// → true</code></pre>
+      <div class="ar-note">الـ regex بيمسك الرقم مع الوحدة بتاعته، فـ days و weeks بقوا بصمتين مختلفتين. والمقارنة الأخيرة بتأكد إن كلمة زيادة زي "please" مبتكسرش الـ hit.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Find your biggest assumption <span class="lvl lvl-2">🟡 medium</span></b>
+    Change <code>BASE</code> in the cost model to match a feature you'd really build (your own token counts and usage), add one more line item you think is missing, and rerun the sensitivity. Which assumption moved to the top?
+    <div class="ar-note">غيّر <code>BASE</code> في الـ cost model على feature هتبنيها فعلًا (الـ tokens والـ usage بتوعك)، وضيف بند كمان شايف إنه ناقص، وشغّل الـ sensitivity تاني. أنهي افتراض طلع في الأول؟</div>
+    <details><summary>Hint · تلميح</summary>
+      Output tokens cost 5× input on these prices, so a chat feature with long answers often lands near the top. Try a shorter <code>max_tokens</code> and look at the swing.
+      <div class="ar-note">الـ output tokens بـ 5× سعر الـ input في الأسعار دي، فـ chat ردوده طويلة غالبًا هتلاقيه قريب من الأول. جرّب <code>max_tokens</code> أقل وبص على الفرق.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    Write the cost and latency sections of your AI feature's design doc from <code>project/design-docs/0000-template.md</code>: cost at 1K, 10K and 100K users, usage ×10, the biggest risk, a per-stage TTFT budget, and which layers you'll ship first. This is the design doc in README artifact 8.
+    <div class="ar-note">اكتب جزئين الـ cost والـ latency في الـ design doc بتاع الـ AI feature في مشروعك من <code>project/design-docs/0000-template.md</code>: التكلفة عند 1K و10K و100K user، و×10 usage، وأكبر خطر، وTTFT budget لكل مرحلة، وأنهي layers هتطلقها الأول. ده الـ design doc المطلوب في artifact 8 في الـ README.</div>
+    <details><summary>Hint · تلميح</summary>
+      Start with exact cache plus prompt caching. Add semantic only after you have a labelled pair set from real traffic that passes the eval.
+      <div class="ar-note">ابدأ بالـ exact cache مع الـ prompt caching. وزوّد الـ semantic بس لما يبقى عندك pairs من traffic حقيقي ليها label وبتعدّي الـ eval.</div>
+    </details>
+  </div>
+
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Exact cache key = every input that can change the answer: tenant, model, prompt version, KB version, normalized input. Always a TTL.</li>
+    <li>Hit rate alone is a trap: the broken key had the higher hit rate (83.1% vs 73.0%) and 1,906 wrong answers.</li>
+    <li>Semantic cache needs a threshold you measure, a guard for negation and literals, tenant scope, and source versions.</li>
+    <li>Never cache personalized or fresh answers. Decide from what built the answer, not how the question sounds.</li>
+    <li>Layers: exact → gate → semantic → model with prompt caching → validate → store.</li>
+    <li>Stampede: <code>SET lock owner NX PX</code>, waiters poll, compare-and-delete to release.</li>
+    <li>Cost model: tokens × requests × users, plus retries, embeddings, rerank, ingestion, evals. Print 1K, 10K, 100K, ×10, and a sensitivity sort.</li>
+    <li>Peak RPM and TPM decide rate limits, not the monthly average.</li>
+    <li>TTFT under 1 s, a budget per stage, spans for each. Streaming is mandatory for chat. Run independent tools in parallel.</li>
+    <li>Fast mode on Opus 5.5 is 2× price for up to 2.5× output speed, and doesn't improve TTFT.</li>
+    <li>Percentiles don't add. Measure the end-to-end p95.</li>
+    <li>Validate before <code>SET</code>, give users a way to evict, and gate the semantic cache on an eval with zero wrong hits.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ exact cache key = كل input ممكن يغيّر الإجابة: tenant، وmodel، وprompt version، وKB version، والـ input بعد الـ normalize. وTTL دايمًا.</li>
+      <li>الـ hit rate لوحده فخ: الـ key البايظ كان الـ hit rate بتاعه أعلى (83.1% قصاد 73.0%) ومعاه 1,906 إجابة غلط.</li>
+      <li>الـ semantic cache محتاج threshold مقاس، وguard للنفي والـ literals، وscope للـ tenant، وsource versions.</li>
+      <li>متعملش cache للإجابات الشخصية أو الطازة. القرار من اللي بنى الإجابة، مش من شكل السؤال.</li>
+      <li>الترتيب: exact ← gate ← semantic ← model مع prompt caching ← validate ← تخزين.</li>
+      <li>الـ stampede: <code>SET lock owner NX PX</code>، والمستنيين يعملوا poll، وcompare-and-delete للفك.</li>
+      <li>الـ cost model: tokens × طلبات × users، وزوّد retries وembeddings وrerank وingestion وevals. اطبع 1K و10K و100K و×10 وترتيب sensitivity.</li>
+      <li>الـ RPM والـ TPM وقت الـ peak هما اللي بيحددوا الـ rate limits، مش متوسط الشهر.</li>
+      <li>الـ TTFT أقل من ثانية، وbudget لكل مرحلة، وspan لكل واحدة. الـ streaming إلزامي للـ chat. والـ tools المستقلة بالتوازي.</li>
+      <li>الـ fast mode على Opus 5.5 بضعف السعر مقابل لحد 2.5× سرعة output، ومبيحسّنش الـ TTFT.</li>
+      <li>الـ percentiles مبتتجمعش. قيس الـ p95 الـ end-to-end.</li>
+      <li>validation قبل الـ <code>SET</code>، وادّي الـ users طريقة يمسحوا بيها، وخلي الـ semantic cache وراه eval بصفر hits غلط.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 12 · 3.4 — Caching layers: exact cache (hash of prompt)، semantic cache (embedding similarity)، prompt caching من الـ provider</label>
+    <label><input type="checkbox" data-key="r2"> 12 · 3.4 — <b>Cost model</b> قبل الـ launch: tokens per request × requests per user × users → $/month، وإيه اللي يحصل لو الـ usage ×10</label>
+    <label><input type="checkbox" data-key="r3"> 12 · 3.4 — Latency budget: TTFT target (&lt; 1s)، streaming إلزامي للـ chat، parallel tool calls</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://platform.claude.com/docs/en/about-claude/pricing">Claude API pricing</a></li>
+    <li><a href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching">Prompt caching (Claude docs)</a></li>
+    <li><a href="https://platform.claude.com/docs/en/build-with-claude/fast-mode">Fast mode (Claude docs)</a></li>
+    <li><a href="https://docs.voyageai.com/docs/pricing">Voyage AI pricing and reranker token counting</a></li>
+    <li><a href="https://redis.io/docs/latest/commands/set/">Redis SET command: NX, EX, PX</a></li>
+    <li><a href="https://arxiv.org/abs/2502.03771">vCache: Verified Semantic Prompt Caching (arXiv 2502.03771)</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./26-provider-abstraction-gateway-flags.html"><small>← Previous</small>26 · Providers &amp; Gateway</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./28-coding-agents-context-files.html"><small>Next →</small>28 · Coding Agents</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
