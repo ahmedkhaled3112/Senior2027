@@ -5,7 +5,7 @@
 
 ## الإجمالي
 
-**0 / 1996 بند · 0%** · **345 درس** متعمل
+**0 / 1996 بند · 0%** · **384 درس** متعمل
 
 `░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░` 0%
 
@@ -22,9 +22,9 @@
 | 09 | [Software Architecture](./09-Software-Architecture/progress.md) | 0/29 | 0/60 | 0/57 | 0 / 146 | 0% `░░░░░░░░░░` | 40 |
 | 10 | [System Design](./10-System-Design/progress.md) | 0/32 | 0/67 | 0/49 | 0 / 148 | 0% `░░░░░░░░░░` | 63 |
 | 11 | [Testing Security DevOps](./11-Testing-Security-DevOps/progress.md) | 0/69 | 0/107 | 0/53 | 0 / 229 | 0% `░░░░░░░░░░` | 0 |
-| 12 | [AI Engineering](./12-AI-Engineering/progress.md) | 0/23 | 0/58 | 0/46 | 0 / 127 | 0% `░░░░░░░░░░` | 0 |
+| 12 | [AI Engineering](./12-AI-Engineering/progress.md) | 0/23 | 0/58 | 0/46 | 0 / 127 | 0% `░░░░░░░░░░` | 21 |
 | 13 | [Senior Skills](./13-Senior-Skills/progress.md) | 0/26 | 0/51 | 0/32 | 0 / 109 | 0% `░░░░░░░░░░` | 21 |
-| 14 | [Interview Prep](./14-Interview-Prep/progress.md) | 0/26 | 0/28 | 0/28 | 0 / 82 | 0% `░░░░░░░░░░` | 2 |
+| 14 | [Interview Prep](./14-Interview-Prep/progress.md) | 0/26 | 0/28 | 0/28 | 0 / 82 | 0% `░░░░░░░░░░` | 20 |
 
 ## حسب المستوى (كل الأقسام)
 

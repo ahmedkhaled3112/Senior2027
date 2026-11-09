@@ -1,0 +1,2299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>The Node Round: Output Prediction, Async Pitfalls &amp; Concurrency Primitives — 14 Interview Prep</title>
+<meta name="section" content="14-Interview-Prep">
+<meta name="level" content="🟡 → 🔴">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">14 · Interview Prep</a></span>
+    <span>·</span>
+    <span>Lesson 08 / 20</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <header>
+    <h1>The Node Round: Output Prediction, Async Pitfalls &amp; Concurrency Primitives</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 08 of 20 — Interview Prep</p>
+    <div class="meta">
+      <span class="chip">🟡 → 🔴</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Node 22.19 · TypeScript 7</span>
+      <span class="chip">Prereq: 07 · Practical Coding</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>14 · 2.1 — Node-specific questions: event loop output prediction، streams، error handling، <code>async</code> pitfalls — كلها من قسم 04</li>
+        <li>14 · 3.1 — Concurrency questions (Node): implement semaphore، producer/consumer، rate limiter بـ sliding window، retry with backoff — كلها بـ async/await صح</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Output prediction</a></li>
+      <li><a href="#p2">Part 2 — Streams</a></li>
+      <li><a href="#p3">Part 3 — Async and error pitfalls</a></li>
+      <li><a href="#p4">Part 4 — Semaphore</a></li>
+      <li><a href="#p5">Part 5 — Producer and consumer</a></li>
+      <li><a href="#p6">Part 6 — Sliding-window limiter</a></li>
+      <li><a href="#p7">Part 7 — Retry with backoff</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A Node round tests whether you understand what your runtime does: which queue runs next, what stops a fast producer, where an error goes once it leaves your stack. Senior candidates get the same questions as everyone else plus "and what breaks?". This lesson drills them as timed exercises: six output predictions run for real, the classic stream and async bugs, then four primitives from scratch with tests. You've read the theory in section 04. Here you produce it under a clock.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ Node round بيختبر إنت فاهم الـ runtime بتاعك بيعمل إيه: أنهي queue هيشتغل بعدها، إيه اللي بيوقف producer سريع، والـ error بيروح فين لما يخرج من الـ stack بتاعك. السنيور بياخد نفس الأسئلة زي أي حد وزيادة عليها "وإيه اللي بيكسر؟". الدرس ده بيدرّبها كتمارين بتوقيت: 6 توقعات output اتشغلت بجد، وغلطات الـ streams والـ async الكلاسيكية، وبعدين 4 primitives من الصفر بـ tests. النظري قريته في القسم 04. هنا بتطلّعه وإنت تحت ضغط الوقت.</p>
+  </section>
+
+  <div class="callout warn">
+    <b>Before you read on</b>
+    <p>Timer for this session: 60 minutes, about 35 of reading plus one drill (start with Part 1, 18 minutes). The others are scheduled in Try it yourself.</p>
+    <p>Have open: paper, a phone recording you talking, and a blank editor with no AI and no assistant autocomplete. The rule: attempt first, read the model answer after. In Part 1, write your predicted order on paper before you scroll to the output.</p>
+    <div class="ar-note">
+      <p>الوقت للجلسة دي: 60 دقيقة، حوالي 35 قراية وتمرين واحد (ابدأ بالجزء 1، 18 دقيقة). الباقي متوزع في "جرّب بنفسك".</p>
+      <p>جهّز: ورقة، موبايل بيسجّلك وإنت بتتكلم، و editor فاضي من غير AI ومن غير autocomplete من أي assistant. القاعدة: حاول الأول، واقرا الحل النموذجي بعدين. في الجزء 1، اكتب الترتيب اللي متوقعه على الورقة قبل ما تنزل للـ output.</p>
+    </div>
+  </div>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Output prediction <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — توقّع الـ output</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <div class="callout tradeoff">
+      <b>⏱ Timed prompt · 18 minutes (3 per snippet)</b>
+      Six snippets below. For each, on paper: name the queues involved, write the order, and state whether your answer depends on CommonJS or ESM. Don't run them until you've written all six.
+      <div class="ar-note">⏱ التمرين بالتوقيت: 18 دقيقة (3 لكل snippet). فيه 6 snippets تحت. لكل واحد، على ورقة: سمّي الـ queues اللي داخلين في الموضوع، واكتب الترتيب، وقول إجابتك معتمدة على CommonJS ولا ESM. متشغلهمش غير لما تكتب الستة.</div>
+    </div>
+    <p><b>Brute force, for this one, is guessing:</b> memorizing the order of a snippet you saw once, which is what breaks the moment a callback is nested. There's no complexity to measure here; the model answer is a method.</p>
+    <p><b>The answer format.</b> Name the queues first, then walk through them, and ask "is this CommonJS or ESM?". The queues: synchronous code, the <code>process.nextTick</code> queue, the promise microtask queue, then the loop's phases. Since libuv 1.45 (Node 20) timers run once before the loop starts and then at the end of each iteration, after poll and check. See <a href="../../04-NodeJS/lessons/04-event-loop-libuv.html">the event loop lesson</a> and <a href="../../02-JavaScript/lessons/08-event-loop-promises.html">event loop and promises</a> for the full model. After every macrotask callback, Node drains <code>nextTick</code> and then microtasks.</p>
+    <p><b>Why the module format changes the answer.</b> A CommonJS file finishes, then Node processes the <code>nextTick</code> queue, then microtasks: tick comes before promise. An ES module body is already running inside a promise job, so when it ends V8 keeps draining microtasks first: promise comes before tick. Snippets 1 and 2 show it. Inside a timer or I/O callback we're back to the Node rule: tick, then promises, in both formats.</p>
+    <p><b>The two timing questions.</b> Inside an I/O callback, <code>setImmediate</code> wins every time: poll is followed by check, and timers come after. From the main module, <code>setTimeout(0)</code> against <code>setImmediate</code> isn't defined: <code>setTimeout(fn, 0)</code> really means 1 ms, and it depends on whether that 1 ms has passed when the timers pass runs. So the honest answer to that pair is "either", and I show a 20-run count instead of one run.</p>
+  </section>
+
+<pre class="diagram">
+  script body runs
+        |
+  CommonJS: nextTick queue, then microtasks
+  ESM:      microtasks, then nextTick queue
+        |
+        v
+  timers (once, before the loop) -> pending -> poll -> check -> close -> timers ...
+                                               ^       ^
+                                   I/O callbacks       setImmediate
+
+  after EVERY callback above: drain nextTick queue, then microtasks
+</pre>
+  <div class="ar-note">الرسمة بتمشي من فوق لتحت. الأول جسم السكريبت. بعده في CommonJS الـ nextTick queue وبعدها الـ microtasks، وفي ESM العكس. وبعدها الـ loop: الـ timers مرة قبل ما تبدأ، وبعدين pending ثم poll ثم check ثم close ثم timers، وهكذا. الـ I/O callbacks بتشتغل في poll و <code>setImmediate</code> في check، فجوه I/O callback الـ check دايمًا الجاي. وبعد كل callback من دول Node بيفضّي nextTick وبعدين الـ microtasks.</div>
+
+<pre data-file="predict-1.mjs"><code class="language-javascript">// السؤال: ترتيب الأسطر كام؟
+console.log("sync: start");
+setTimeout(() =&gt; console.log("timeout"), 0);
+process.nextTick(() =&gt; console.log("tick"));
+Promise.resolve().then(() =&gt; console.log("promise"));
+console.log("sync: end");</code></pre>
+<pre data-file="predict-2.mjs"><code class="language-javascript">// السؤال: الـ queues بتتفضى إزاي؟
+process.nextTick(() =&gt; {
+  console.log("tick-1");
+  Promise.resolve().then(() =&gt; console.log("promise-from-tick"));
+  process.nextTick(() =&gt; console.log("tick-from-tick"));
+});
+Promise.resolve().then(() =&gt; {
+  console.log("promise-1");
+  process.nextTick(() =&gt; console.log("tick-from-promise"));
+  Promise.resolve().then(() =&gt; console.log("promise-from-promise"));
+});</code></pre>
+<pre data-file="predict-3.mjs"><code class="language-javascript">// السؤال: الـ async بيقف فين بالظبط؟
+async function chargeOrder() {
+  console.log("charge: start");
+  await null;
+  console.log("charge: after await");
+}
+chargeOrder();
+Promise.resolve().then(() =&gt; console.log("promise"));
+console.log("sync");</code></pre>
+<pre data-file="predict-4.mjs"><code class="language-javascript">// السؤال: إيه اللي بيحصل بين الـ timers؟
+setTimeout(() =&gt; {
+  console.log("timer-A");
+  Promise.resolve().then(() =&gt; console.log("promise-in-A"));
+  process.nextTick(() =&gt; console.log("tick-in-A"));
+}, 1);
+setTimeout(() =&gt; console.log("timer-B"), 1);</code></pre>
+<pre data-file="predict-5.mjs"><code class="language-javascript">import { readFile } from "node:fs";
+// السؤال: مين يكسب جوه I/O callback؟
+readFile("package.json", () =&gt; {
+  setTimeout(() =&gt; console.log("timeout"), 0);
+  setImmediate(() =&gt; console.log("immediate"));
+  process.nextTick(() =&gt; console.log("tick"));
+  console.log("io-callback");
+});</code></pre>
+<pre data-file="predict-6.mjs"><code class="language-javascript">// السؤال: مين يكسب من الـ main module؟
+setTimeout(() =&gt; console.log("timeout"), 0);
+setImmediate(() =&gt; console.log("immediate"));</code></pre>
+  <div class="ar-note">كل snippet اتشغّل مرة كملف <code>.cjs</code> ومرة <code>.mjs</code> بنفس النص بالظبط (في رقم 5 الـ import بس بيبقى <code>require</code> في الـ cjs). اكتب إجاباتك قبل ما تكمل.</div>
+
+<pre><code class="language-plaintext">[1-queues]
+  cjs: sync: start &gt; sync: end &gt; tick &gt; promise &gt; timeout
+  mjs: sync: start &gt; sync: end &gt; promise &gt; tick &gt; timeout
+[2-drain]
+  cjs: tick-1 &gt; tick-from-tick &gt; promise-1 &gt; promise-from-tick &gt; promise-from-promise &gt; tick-from-promise
+  mjs: promise-1 &gt; promise-from-promise &gt; tick-1 &gt; tick-from-promise &gt; tick-from-tick &gt; promise-from-tick
+[3-await]
+  cjs: charge: start &gt; sync &gt; charge: after await &gt; promise
+  mjs: charge: start &gt; sync &gt; charge: after await &gt; promise
+[4-between-timers]
+  cjs: timer-A &gt; tick-in-A &gt; promise-in-A &gt; timer-B
+  mjs: timer-A &gt; tick-in-A &gt; promise-in-A &gt; timer-B
+[5-io] 20 runs each
+  cjs: 20/20  io-callback &gt; tick &gt; immediate &gt; timeout
+  mjs: 20/20  io-callback &gt; tick &gt; immediate &gt; timeout
+[6-pair] 3 batches of 20 runs each
+ batch 1
+  cjs: 19/20  immediate &gt; timeout
+  cjs:  1/20  timeout &gt; immediate
+  mjs: 20/20  immediate &gt; timeout
+ batch 2
+  cjs: 19/20  immediate &gt; timeout
+  cjs:  1/20  timeout &gt; immediate
+  mjs: 20/20  immediate &gt; timeout
+ batch 3
+  cjs: 20/20  immediate &gt; timeout
+  mjs: 19/20  immediate &gt; timeout
+  mjs:  1/20  timeout &gt; immediate</code></pre>
+  <div class="ar-note">
+    <p>1: الـ sync الأول، وبعدها في CommonJS الـ tick قبل الـ promise، وفي ESM الـ promise قبل الـ tick، والـ timeout آخرهم.</p>
+    <p>2: في CommonJS: الـ tick queue بتتفضى كلها الأول (<code>tick-1</code> و <code>tick-from-tick</code>)، بعدها الـ microtasks كلها، وبعدها <code>tick-from-promise</code>. في ESM: الـ microtasks كلها الأول، وبعدها الـ ticks.</p>
+    <p>3: نفس الترتيب في الاتنين: الجزء اللي قبل أول <code>await</code> بيشتغل sync، والـ continuation اتسجلت في queue قبل الـ <code>then</code>.</p>
+    <p>4: <code>timer-A</code> وبعده الـ tick والـ promise بتوعه، وبعدها <code>timer-B</code>: الـ queues بتتفضى بين الـ timers، وجوه callback الـ tick قبل الـ promise.</p>
+    <p>5: 20 من 20 الـ immediate قبل الـ timeout في الاتنين.</p>
+    <p>6: الترتيب ده مش مضمون: في 3 دفعات من 20، الـ immediate كسب أغلب المرات، وظهرت الحالتين في CJS وفي ESM. ده السبب إننا بنعدّ بدل ما نقول run واحد.</p>
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ brute force هنا هو التخمين:</b> إنك تحفظ ترتيب snippet شفته مرة، وده اللي بيقع أول ما callback يتداخل. مفيش complexity تتقاس هنا، والحل النموذجي هو طريقة تفكير.</p>
+    <p><b>شكل الإجابة.</b> سمّي الـ queues الأول، وبعدين امشي عليها، واسأل "ده CommonJS ولا ESM؟". الـ queues: الكود الـ sync، وطابور <code>process.nextTick</code>، وطابور الـ promises (microtasks)، وبعدين phases الـ loop. من libuv 1.45 (Node 20) الـ timers بتشتغل مرة قبل ما الـ loop يبدأ، وبعدين في آخر كل iteration بعد poll و check. شوف <a href="../../04-NodeJS/lessons/04-event-loop-libuv.html">درس الـ event loop</a> و<a href="../../02-JavaScript/lessons/08-event-loop-promises.html">درس الـ event loop والـ promises</a> للموديل الكامل. وبعد كل macrotask callback، Node بيفضّي <code>nextTick</code> وبعدين الـ microtasks.</p>
+    <p><b>ليه نوع الـ module بيغيّر الإجابة.</b> ملف CommonJS بيخلص، وبعدها Node بيشوف طابور <code>nextTick</code>، وبعدها الـ microtasks: الـ tick قبل الـ promise. جسم الـ ES module بيشتغل أصلًا جوه promise job، فلما يخلص V8 بيكمل يفضّي الـ microtasks الأول: الـ promise قبل الـ tick. الـ snippets 1 و 2 بيوروا ده. وجوه timer أو I/O callback بنرجع لقاعدة Node: tick وبعدين promises، في النوعين.</p>
+    <p><b>سؤالين التوقيت.</b> جوه I/O callback الـ <code>setImmediate</code> بيكسب كل مرة: poll وراها check والـ timers بعدها. من الـ main module، <code>setTimeout(0)</code> ضد <code>setImmediate</code> مش متحدد: <code>setTimeout(fn, 0)</code> معناه 1 ms، والموضوع معتمد على الـ 1 ms دي عدّت ولا لأ لحد ما الـ timers pass يشتغل. فالإجابة الأمينة هنا "أي واحد فيهم"، وعشان كده بوريك عدّ 20 run مش run واحد.</p>
+    <p><b>الغلطة الشائعة:</b> تعامل الـ microtasks كـ queue واحد مع الـ <code>nextTick</code>. لأ: طابورين منفصلين، وكل واحد بيتفضى للآخر قبل التاني، وده اللي بيفسر snippet 2.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما test بيعدي مرة ويقع مرة في الـ CI وفيه <code>setTimeout(fn, 0)</code> و <code>setImmediate</code> ببني عليهم ترتيب، ده بالظبط snippet 6: متعتمدش على الترتيب ده. وفي production، <code>process.nextTick</code> recursive بيجوّع الـ I/O لأن طابوره لازم يتفضى الأول، ولما تشوف service واقف والـ event loop lag عالي بتبص على ده في الأول.
+    </div>
+  </section>
+
+  <table>
+    <tr><th>Criterion</th><th>Strong signal</th><th>Weak signal</th></tr>
+    <tr><td>Method</td><td>Names the queues, then walks through them</td><td>Guesses from memory of one similar snippet</td></tr>
+    <tr><td>Knows the variable</td><td>Asks CJS or ESM before answering</td><td>Gives one order as if it were universal</td></tr>
+    <tr><td>Nesting</td><td>Explains why each queue drains fully first</td><td>Gets simple cases right, nested ones wrong</td></tr>
+    <tr><td>Honesty</td><td>Says "not defined" for the main-module pair</td><td>States a confident order for it</td></tr>
+  </table>
+  <div class="ar-note">صف صف: <b>المنهج</b>: القوي بيسمّي الـ queues وبيمشي عليها، والضعيف بيخمّن من snippet شبهه فاكره. <b>معرفة المتغير</b>: القوي بيسأل CJS ولا ESM قبل ما يجاوب، والضعيف بيدّي ترتيب واحد كأنه عام. <b>الـ nesting</b>: القوي بيشرح ليه كل queue بيتفضى للآخر، والضعيف بيعرف البسيط ويغلط في المتداخل. <b>الأمانة</b>: القوي بيقول "مش متحدد" لزوج الـ main module، والضعيف بيقول ترتيب بثقة.</div>
+
+  <div class="callout warn">
+    <b>Common mistake: treating <code>nextTick</code> and promises as one queue</b>
+    They are two queues. In a CommonJS file, a tick scheduled inside a tick still runs before any promise. Snippet 2 proves it.
+    <div class="ar-note">الغلطة الشائعة: إنك تعامل <code>nextTick</code> والـ promises كـ queue واحد. هما طابورين. في ملف CommonJS، tick اتسجل جوه tick لسه بيتنفذ قبل أي promise، وده اللي snippet 2 بيثبته.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "What's the output of <code>setTimeout(0)</code> and <code>setImmediate</code> together?" → It depends on where. From inside an I/O callback, immediate runs first, always. From the main module it isn't defined: the timer needs 1 ms to pass before the timers phase runs, so it varies with load. In my runs immediate usually won, and both orders appeared. I wouldn't rely on it.
+    <div class="ar-note">"إيه الـ output بتاع <code>setTimeout(0)</code> و <code>setImmediate</code> مع بعض؟" ← معتمد على المكان. من جوه I/O callback، الـ immediate الأول دايمًا. من الـ main module مش متحدد: الـ timer محتاج 1 ms تعدي قبل ما phase الـ timers يشتغل، فبيتغير مع الضغط. في تجاربي الـ immediate كسب غالبًا، والترتيبين ظهروا. مش هعتمد عليها.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Streams <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ streams</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <div class="callout tradeoff">
+      <b>⏱ Timed prompt · 15 minutes</b>
+      Copy a large invoice archive to a destination slower than your disk. Memory must stay flat however big the file is. Then answer: what happens if you ignore the return value of <code>write()</code>, and what happens to the destination if the source fails halfway?
+      <div class="ar-note">⏱ التمرين بالتوقيت: 15 دقيقة. انسخ أرشيف فواتير كبير لوجهة أبطأ من الـ disk بتاعك. الذاكرة لازم تفضل ثابتة مهما كبر الملف. وبعدها جاوب: إيه اللي بيحصل لو تجاهلت قيمة <code>write()</code>، وإيه اللي بيحصل للوجهة لو المصدر وقع في النص؟</div>
+    </div>
+    <p><b>Brute force first.</b> <code>readFile</code>: memory is O(file size), buffered in full before the first byte moves. Claim before measuring: peak memory doubles with the file. A stream with a <code>data</code> handler looks better and isn't, if it ignores backpressure: the source reads as fast as the disk allows, and bytes pile up inside the destination's buffer, so memory is still O(file).</p>
+    <p><b>Final: <code>pipeline</code>.</b> <code>write()</code> returns <code>false</code> when the buffer passes <code>highWaterMark</code>. <code>pipeline</code> pauses the source until <code>drain</code>, so at most about one <code>highWaterMark</code> sits in memory: O(1) in file size. Theory is in <a href="../../04-NodeJS/lessons/06-streams-backpressure.html">streams and backpressure</a>. The measured doubling below: <code>ignored</code> buffers 30.69, then 61.50, then 124.31 MiB while <code>pipeline</code> stays at 0.06 MiB, and RSS climbs to about 191 MB against 82 MB.</p>
+    <p><b>Errors.</b> <code>.pipe</code> forwards data, not errors: when the source fails, the destination is left open, its file descriptor leaking until the process exits. <code>pipeline</code> destroys every stream in the chain and rejects with the error. The run below shows both.</p>
+  </section>
+
+<pre data-file="node-round/streams-copy.ts"><code class="language-typescript">import { createReadStream } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { Writable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+
+const [, , mode, archivePath] = process.argv;
+
+const rssMb = () =&gt; Math.round(process.memoryUsage().rss / 1024 / 1024);
+let peakBufferedBytes = 0;
+let peakRssMb = rssMb();
+const sampler = setInterval(() =&gt; {
+  peakRssMb = Math.max(peakRssMb, rssMb());
+}, 20);
+
+// الوجهة بطيئة عن قصد: chunk كل 2 ms، زي upload على شبكة
+const destination: Writable = new Writable({
+  highWaterMark: 64 * 1024,
+  write(_chunk, _encoding, done) {
+    peakBufferedBytes = Math.max(peakBufferedBytes, destination.writableLength);
+    setTimeout(done, 2);
+  },
+});
+
+if (mode === "readFile") {
+  // أبسط حل: الملف كله في الذاكرة مرة واحدة
+  const whole = await readFile(archivePath);
+  peakBufferedBytes = whole.length;
+  peakRssMb = Math.max(peakRssMb, rssMb());
+  destination.destroy();
+} else if (mode === "ignored") {
+  // الغلطة: قيمة write متجاهلة، فالمصدر بيفضل يكتب أسرع من الوجهة
+  await new Promise&lt;void&gt;((resolve, reject) =&gt; {
+    const source = createReadStream(archivePath);
+    source.on("data", (chunk) =&gt; {
+      destination.write(chunk);
+    });
+    source.on("end", () =&gt; destination.end());
+    source.on("error", reject);
+    destination.on("error", reject);
+    destination.on("finish", resolve);
+  });
+} else {
+  // الحل: الـ pipeline بيوقف المصدر لما write ترجع false ويكمّله عند drain
+  await pipeline(createReadStream(archivePath), destination);
+}
+
+clearInterval(sampler);
+console.log(`${mode.padEnd(9)} peak buffered=${(peakBufferedBytes / 1024 / 1024).toFixed(2).padStart(7)} MiB   peak RSS≈${String(peakRssMb).padStart(4)} MB`);</code></pre>
+<details><summary>Measurement code · كود القياس</summary>
+<pre data-file="node-round/streams-run.mjs"><code class="language-javascript">// السكريبت ده بيشغّل كل mode في process جديد، عشان الـ RSS ميتأثرش باللي قبله
+import { execFileSync } from "node:child_process";
+import { unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const archive = join(here, "invoices.bin");
+try {
+  for (const sizeMb of [32, 64, 128]) {
+    writeFileSync(archive, Buffer.alloc(sizeMb * 1024 * 1024, 7));
+    console.log(`archive of ${sizeMb} MiB`);
+    for (const mode of ["readFile", "ignored", "pipeline"]) {
+      const out = execFileSync(process.execPath, [join(here, "streams-copy.ts"), mode, archive], { encoding: "utf8" });
+      console.log(`  ${out.trim()}`);
+    }
+  }
+} finally {
+  unlinkSync(archive);
+}</code></pre>
+</details>
+<pre><code class="language-plaintext">archive of 32 MiB
+  readFile  peak buffered=  32.00 MiB   peak RSS≈  88 MB
+  ignored   peak buffered=  30.69 MiB   peak RSS≈  89 MB
+  pipeline  peak buffered=   0.06 MiB   peak RSS≈  67 MB
+archive of 64 MiB
+  readFile  peak buffered=  64.00 MiB   peak RSS≈ 121 MB
+  ignored   peak buffered=  61.50 MiB   peak RSS≈ 121 MB
+  pipeline  peak buffered=   0.06 MiB   peak RSS≈  74 MB
+archive of 128 MiB
+  readFile  peak buffered= 128.00 MiB   peak RSS≈ 190 MB
+  ignored   peak buffered= 124.31 MiB   peak RSS≈ 191 MB
+  pipeline  peak buffered=   0.06 MiB   peak RSS≈  82 MB</code></pre>
+  <div class="ar-note">كل سطر process لوحده. <code>readFile</code>: الذاكرة قد الملف بالظبط، 32 ثم 64 ثم 128 MiB. <code>ignored</code>: نفس الشيء تقريبًا (30.69 ثم 61.50 ثم 124.31) لأن الـ buffer بتاع الوجهة بيشيل كل حاجة. <code>pipeline</code>: 0.06 MiB ثابتة (ده الـ <code>highWaterMark</code> 64 KiB)، والـ RSS حوالي 67 لـ 82 MB. الأرقام اتقاست على Windows تحت ضغط، فالـ RSS بـ ≈.</div>
+
+<pre data-file="node-round/streams-error.ts"><code class="language-typescript">import { createWriteStream, unlinkSync } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { setTimeout as sleep } from "node:timers/promises";
+
+const target = new URL("./copy-target.bin", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+
+// المصدر بيبعت chunk وبعدها بيقع، زي disk error في نص الملف
+const failingSource = () =&gt; {
+  let sent = false;
+  return new Readable({
+    read() {
+      if (!sent) {
+        sent = true;
+        this.push(Buffer.from("invoice-0001\n"));
+      } else {
+        this.destroy(new Error("disk read failed"));
+      }
+    },
+  });
+};
+
+// الغلطة: pipe مش بيقفل الوجهة لما المصدر يقع
+const viaPipe = createWriteStream(target);
+const brokenSource = failingSource();
+brokenSource.on("error", (error) =&gt; console.log("pipe: source error =", error.message));
+brokenSource.pipe(viaPipe);
+await sleep(50);
+console.log("pipe: destination destroyed =", viaPipe.destroyed, "| closed =", viaPipe.closed);
+viaPipe.destroy();
+await sleep(20);
+
+// الحل: pipeline بيدمّر كل الـ streams وبيرجّع الـ error
+const viaPipeline = createWriteStream(target);
+try {
+  await pipeline(failingSource(), viaPipeline);
+} catch (error) {
+  console.log("pipeline: rejected with =", (error as Error).message);
+}
+await sleep(20);
+console.log("pipeline: destination destroyed =", viaPipeline.destroyed, "| closed =", viaPipeline.closed);
+unlinkSync(target);</code></pre>
+<pre><code class="language-plaintext">pipe: source error = disk read failed
+pipe: destination destroyed = false | closed = false
+pipeline: rejected with = disk read failed
+pipeline: destination destroyed = true | closed = true</code></pre>
+  <div class="ar-note">مع <code>.pipe</code>: الـ source error وصل، والوجهة <code>destroyed = false</code> و <code>closed = false</code>، يعني الـ fd لسه مفتوح. مع <code>pipeline</code>: الـ promise رجعت rejected بنفس الـ error، والوجهة <code>destroyed = true</code> و <code>closed = true</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ brute force الأول.</b> <code>readFile</code>: الذاكرة O(حجم الملف)، والملف كله بيتحمل قبل ما أول byte يتحرك. الدعوى قبل القياس: الـ peak بيتضاعف مع الملف. والـ stream بـ <code>data</code> handler شكله أحسن بس مش كده لو بيتجاهل الـ backpressure: المصدر بيقرا بأقصى سرعة الـ disk، والـ bytes بتتراكم جوه buffer الوجهة، فالذاكرة برضه O(الملف).</p>
+    <p><b>الحل النهائي: <code>pipeline</code>.</b> <code>write()</code> بترجع <code>false</code> لما الـ buffer يعدّي <code>highWaterMark</code>. الـ <code>pipeline</code> بيوقف المصدر لحد <code>drain</code>، فبيبقى في الذاكرة حوالي <code>highWaterMark</code> واحد: O(1) بالنسبة لحجم الملف. النظري في <a href="../../04-NodeJS/lessons/06-streams-backpressure.html">درس الـ streams والـ backpressure</a>. والمضاعفة اللي اتقاست تحت: <code>ignored</code> بيعمل buffer لـ 30.69 ثم 61.50 ثم 124.31 MiB و <code>pipeline</code> ثابت عند 0.06 MiB، والـ RSS بيطلع لحوالي 191 MB مقابل 82 MB.</p>
+    <p><b>الـ errors.</b> <code>.pipe</code> بينقل data، مش errors: لما المصدر يقع، الوجهة بتفضل مفتوحة والـ file descriptor بيفضل ضايع لحد ما الـ process يخلص. <code>pipeline</code> بيدمّر كل الـ streams في السلسلة وبيرجع الـ error كـ rejection. الـ run تحت بيوري الاتنين.</p>
+    <p><b>الغلطة الشائعة:</b> تكتب في loop وتتجاهل قيمة <code>write()</code>؛ الكود بيشتغل في dev على ملف صغير وبيقع في production بـ OOM على ملف حقيقي.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      Export الفواتير كـ CSV بالـ streaming لـ S3: Postgres cursor ← Transform ← upload. لو حد كتب <code>for await</code> وعمل <code>res.write(row)</code> من غير ما يبص على القيمة الراجعة، ده بالظبط الـ <code>ignored</code> في الجدول، وبيقع لما client بطيء يطلب export كبير. استخدم <code>pipeline</code> أو <code>once(res, "drain")</code>.
+    </div>
+  </section>
+
+  <table>
+    <tr><th>Criterion</th><th>Strong signal</th><th>Weak signal</th></tr>
+    <tr><td>Backpressure</td><td>Says what <code>false</code> from <code>write()</code> means and what it pauses</td><td>"Streams use less memory" and stops</td></tr>
+    <tr><td>Error flow</td><td>Knows <code>.pipe</code> doesn't propagate, uses <code>pipeline</code></td><td>Only an <code>on("error")</code> on the source</td></tr>
+    <tr><td>Evidence</td><td>Measures peak buffer or RSS as the file doubles</td><td>Asserts memory is "constant"</td></tr>
+  </table>
+  <div class="ar-note">صف صف: <b>الـ backpressure</b>: القوي بيقول <code>false</code> من <code>write()</code> معناها إيه وبيوقف إيه، والضعيف بيقول "الـ streams بتستهلك memory أقل" ويقف. <b>مسار الـ errors</b>: القوي عارف إن <code>.pipe</code> مش بينقل الـ errors وبيستخدم <code>pipeline</code>، والضعيف عنده <code>on("error")</code> على المصدر بس. <b>الدليل</b>: القوي بيقيس الـ buffer أو الـ RSS والملف بيتضاعف، والضعيف بيقول "ثابتة" وخلاص.</div>
+
+  <div class="callout warn">
+    <b>Common mistake: a <code>data</code> handler that calls <code>write()</code></b>
+    It looks like streaming, and memory still grows with the file: that's the <code>ignored</code> row above. Use <code>pipeline</code>, or pause the source when <code>write()</code> returns <code>false</code> and resume on <code>drain</code>.
+    <div class="ar-note">الغلطة الشائعة: <code>data</code> handler بينادي <code>write()</code>. شكله streaming، والذاكرة برضه بتكبر مع الملف: ده صف <code>ignored</code> فوق. استخدم <code>pipeline</code>، أو وقّف المصدر لما <code>write()</code> ترجع <code>false</code> وكمّل عند <code>drain</code>.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>The spoken answer in 60 seconds</b>
+    "I'd use <code>pipeline</code> from <code>node:stream/promises</code>, because a slow destination must be able to slow the source. <code>write()</code> returns false once the internal buffer passes <code>highWaterMark</code>, and <code>pipeline</code> pauses the source until <code>drain</code>, so memory stays near one <code>highWaterMark</code> whatever the file size. I measured it at 0.06 MiB against 124 MiB for a loop that ignores the return value on a 128 MiB file. It also handles failure: <code>.pipe</code> leaves the destination open when the source errors, while <code>pipeline</code> destroys every stream and rejects. In production I'd add a timeout and check for partial output on the destination."
+    <div class="ar-note">الإجابة في 60 ثانية: "هستخدم <code>pipeline</code> من <code>node:stream/promises</code>، لأن الوجهة البطيئة لازم تقدر تبطّأ المصدر. <code>write()</code> بترجع false لما الـ buffer يعدّي <code>highWaterMark</code>، و <code>pipeline</code> بيوقف المصدر لحد <code>drain</code>، فالذاكرة بتفضل حوالي <code>highWaterMark</code> واحد مهما كبر الملف. قستها: 0.06 MiB مقابل 124 MiB لـ loop بيتجاهل القيمة الراجعة على ملف 128 MiB. وكمان بيتعامل مع الفشل: <code>.pipe</code> بيسيب الوجهة مفتوحة لو المصدر وقع، و <code>pipeline</code> بيدمّر كل الـ streams وبيعمل reject. وفي production هزوّد timeout وأتأكد من الـ output الناقص في الوجهة."</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Async and error pitfalls <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — فخاخ الـ async والـ errors</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <div class="callout tradeoff">
+      <b>⏱ Timed prompt · 12 minutes (2 per snippet)</b>
+      Six snippets, each with a bug. For each: say what it prints or does, why, and the one-line fix. Read only the first half of each block until you've answered.
+      <div class="ar-note">⏱ التمرين بالتوقيت: 12 دقيقة (2 لكل snippet). 6 snippets في كل واحد bug. لكل واحد: قول بيطبع أو بيعمل إيه، وليه، والإصلاح في سطر. اقرا النص الأول بس من كل block لحد ما تجاوب.</div>
+    </div>
+    <p><b>The six, with the rule behind each.</b> Every one was run; the output is under its code.</p>
+    <ol>
+      <li><b><code>forEach</code> with an async callback.</b> <code>forEach</code> ignores the returned promises, so the loop ends before any work does. Rejections become unhandled. Use <code>for...of</code>, or <code>Promise.all</code> over <code>map</code>.</li>
+      <li><b>Sequential <code>await</code> in a loop.</b> Fine when order matters. For independent work it's the sum of the durations rather than the max: ≈239 ms against ≈44 ms here.</li>
+      <li><b>An unhandled rejection kills the process.</b> Since Node 15 the default is to exit: code 1, from a promise nobody awaited. Catch at the call site, and keep the <code>unhandledRejection</code> handler for logging and shutdown, as in <a href="../../04-NodeJS/lessons/24-errors-shutdown-health.html">errors, shutdown and health</a>.</li>
+      <li><b><code>try/catch</code> can't see a callback.</b> The <code>try</code> finished before the callback ran. An exception there is uncaught: exit code 1. Wrap it in a promise and <code>await</code> it.</li>
+      <li><b><code>Promise.all</code> doesn't stop the others.</b> The first rejection settles it; the other operations keep running. Here the card is charged after the order already failed. For side effects, pass an <code>AbortSignal</code> and keep your own cancellation.</li>
+      <li><b><code>return</code> vs <code>return await</code> inside <code>try</code>.</b> A plain <code>return</code> hands the promise out before it settles, so the <code>catch</code> never fires. <code>return await</code> keeps it inside the <code>try</code>.</li>
+    </ol>
+  </section>
+
+<pre data-file="node-round/pitfall-1-foreach.ts"><code class="language-typescript">import { setTimeout as sleep } from "node:timers/promises";
+
+const orderIds = ["o_1", "o_2", "o_3"];
+const charged: string[] = [];
+const charge = async (id: string) =&gt; {
+  await sleep(5);
+  charged.push(id);
+};
+
+// ❌ الـ forEach بيتجاهل الـ promises اللي الـ callback بيرجّعها
+orderIds.forEach(async (id) =&gt; {
+  await charge(id);
+});
+console.log("forEach: charged when loop ended =", charged.length);
+await sleep(30);
+charged.length = 0;
+
+// ✅ الـ for...of بيستنى كل واحد، وأي rejection بيوصل للـ caller
+for (const id of orderIds) {
+  await charge(id);
+}
+console.log("for...of: charged when loop ended =", charged.length);</code></pre>
+<pre><code class="language-plaintext">forEach: charged when loop ended = 0
+for...of: charged when loop ended = 3</code></pre>
+  <div class="ar-note">الـ forEach: لما الـ loop خلص، صفر عمليات خلصت. الـ for...of: التلاتة خلصوا.</div>
+<pre data-file="node-round/pitfall-2-sequential.ts"><code class="language-typescript">import { setTimeout as sleep } from "node:timers/promises";
+
+const fetchInvoice = async (id: number) =&gt; {
+  await sleep(40);
+  return { id };
+};
+const ids = [1, 2, 3, 4, 5];
+
+// ❌ الـ await جوه الـ loop: كل واحد مستني اللي قبله من غير سبب
+let started = performance.now();
+for (const id of ids) await fetchInvoice(id);
+console.log(`sequential: ms≈${Math.round(performance.now() - started)}`);
+
+// ✅ الطلبات مستقلة عن بعض، فيبدأوا مع بعض (وبحد أقصى لو القايمة كبيرة)
+started = performance.now();
+await Promise.all(ids.map(fetchInvoice));
+console.log(`Promise.all: ms≈${Math.round(performance.now() - started)}`);</code></pre>
+<pre><code class="language-plaintext">sequential: ms≈239
+Promise.all: ms≈44</code></pre>
+  <div class="ar-note">5 طلبات كل واحد ≈40 ms: مجموع الأوقات تتابعيًا، و ≈أقصى وقت لما يبدأوا مع بعض (التوقيتات على Windows تحت ضغط).</div>
+<pre data-file="node-round/pitfall-3-unhandled.mjs"><code class="language-javascript">import { spawnSync } from "node:child_process";
+
+// ❌ الـ rejection ملهوش catch، فالـ process بيموت بـ exit code 1
+const unhandled = `
+const sendReceipt = async () =&gt; { throw new Error("smtp timeout"); };
+sendReceipt();
+setTimeout(() =&gt; console.log("still alive after 50 ms"), 50);
+`;
+
+// ✅ الـ catch عند نقطة الاستدعاء، والـ handler بتاع الـ process للـ logging والـ shutdown بس
+const caught = `
+const sendReceipt = async () =&gt; { throw new Error("smtp timeout"); };
+sendReceipt().catch((error) =&gt; console.log("logged:", error.message));
+setTimeout(() =&gt; console.log("still alive after 50 ms"), 50);
+`;
+
+for (const [label, code] of [["unhandled", unhandled], ["caught", caught]]) {
+  const run = spawnSync(process.execPath, ["--input-type=module", "-e", code], { encoding: "utf8" });
+  const errorLine = run.stderr.split("\n").find((line) =&gt; line.includes("Error:")) ?? "";
+  console.log(`${label}: exit code=${run.status} stdout=${JSON.stringify(run.stdout.trim())} stderr=${JSON.stringify(errorLine.trim())}`);
+}</code></pre>
+<pre><code class="language-plaintext">unhandled: exit code=1 stdout="" stderr="Error: smtp timeout"
+caught: exit code=0 stdout="logged: smtp timeout\nstill alive after 50 ms" stderr=""</code></pre>
+  <div class="ar-note">غير الممسوك: الـ exit code 1 والـ <code>setTimeout</code> عمره ما اشتغل، فالـ process مات قبل 50 ms. الممسوك: الـ log اتطبع والـ process كمّل لحد آخره بـ exit code 0.</div>
+<pre data-file="node-round/pitfall-4-callback.mjs"><code class="language-javascript">import { spawnSync } from "node:child_process";
+
+// ❌ الـ callback بيشتغل بعد ما الـ try خرج من الـ stack خالص
+const bad = `
+try {
+  setTimeout(() =&gt; { throw new Error("webhook parse failed"); }, 1);
+} catch (error) {
+  console.log("caught:", error.message);
+}
+console.log("try block finished");
+`;
+
+// ✅ حوّلها لـ promise، فالـ await يرجّع الـ error جوه نفس الـ try
+const good = `
+const parseLater = () =&gt; new Promise((resolve, reject) =&gt; {
+  setTimeout(() =&gt; {
+    try { throw new Error("webhook parse failed"); } catch (error) { reject(error); }
+  }, 1);
+});
+try {
+  await parseLater();
+} catch (error) {
+  console.log("caught:", error.message);
+}
+console.log("try block finished");
+`;
+
+for (const [label, code] of [["callback", bad], ["promise", good]]) {
+  const run = spawnSync(process.execPath, ["--input-type=module", "-e", code], { encoding: "utf8" });
+  console.log(`${label}: exit code=${run.status} stdout=${JSON.stringify(run.stdout.trim())}`);
+}</code></pre>
+<pre><code class="language-plaintext">callback: exit code=1 stdout="try block finished"
+promise: exit code=0 stdout="caught: webhook parse failed\ntry block finished"</code></pre>
+  <div class="ar-note">الـ callback: <code>try block finished</code> اتطبع والـ exception وقع بعدها والـ exit code 1، والـ <code>caught</code> عمره ما ظهر. الـ promise: اتمسك جوه الـ <code>try</code> عادي.</div>
+<pre data-file="node-round/pitfall-5-all.ts"><code class="language-typescript">import { setTimeout as sleep } from "node:timers/promises";
+
+const sideEffects: string[] = [];
+
+const reserveStock = async () =&gt; {
+  throw new Error("out of stock");
+};
+const chargeCard = async () =&gt; {
+  await sleep(10);
+  sideEffects.push("card charged");
+};
+
+// ❌ الـ Promise.all رجع rejected، بس الـ charge لسه ماشي ومحدش هيوقفه
+try {
+  await Promise.all([reserveStock(), chargeCard()]);
+} catch (error) {
+  console.log("Promise.all rejected:", (error as Error).message, "| side effects so far:", sideEffects.length);
+}
+await sleep(30);
+console.log("30 ms later, side effects:", sideEffects);
+sideEffects.length = 0;
+
+// ✅ الـ signal بيوصل للشغل نفسه، فالـ charge يقدر يوقف قبل ما يأثر
+const abortable = async (signal: AbortSignal) =&gt; {
+  await sleep(10, undefined, { signal });
+  sideEffects.push("card charged");
+};
+const controller = new AbortController();
+const reserveThenAbort = reserveStock().catch((error) =&gt; {
+  controller.abort();
+  throw error;
+});
+const results = await Promise.allSettled([reserveThenAbort, abortable(controller.signal)]);
+await sleep(30);
+console.log("with AbortSignal:", results.map((r) =&gt; r.status), "| side effects:", sideEffects);</code></pre>
+<pre><code class="language-plaintext">Promise.all rejected: out of stock | side effects so far: 0
+30 ms later, side effects: [ 'card charged' ]
+with AbortSignal: [ 'rejected', 'rejected' ] | side effects: []</code></pre>
+  <div class="ar-note">الـ <code>Promise.all</code> رجع rejected قبل الـ charge، بس بعد 30 ms الـ charge حصل برضه (<code>card charged</code>). ومع الـ signal: الاتنين rejected ومفيش side effect.</div>
+<pre data-file="node-round/pitfall-6-return-await.ts"><code class="language-typescript">const loadCustomer = async (): Promise&lt;string&gt; =&gt; {
+  throw new Error("db connection lost");
+};
+
+// ❌ الـ return من غير await: الـ promise بيطلع من الدالة قبل ما يخلص، والـ catch مش بيشوفه
+async function withoutAwait(): Promise&lt;string&gt; {
+  try {
+    return loadCustomer();
+  } catch {
+    return "fallback customer";
+  }
+}
+
+// ✅ الـ return await: الـ rejection بيحصل جوه الـ try، فالـ catch بيشتغل
+async function withAwait(): Promise&lt;string&gt; {
+  try {
+    return await loadCustomer();
+  } catch {
+    return "fallback customer";
+  }
+}
+
+console.log("return await:", await withAwait());
+try {
+  console.log("return:", await withoutAwait());
+} catch (error) {
+  console.log("return: rejected to the caller with:", (error as Error).message);
+}</code></pre>
+<pre><code class="language-plaintext">return await: fallback customer
+return: rejected to the caller with: db connection lost</code></pre>
+  <div class="ar-note">الـ <code>return await</code> طلّع الـ fallback. الـ <code>return</code> لوحده عدّى الـ <code>catch</code> والـ rejection وصل للـ caller.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الستة والقاعدة ورا كل واحد.</b> كلهم اتشغلوا، والـ output تحت الكود بتاعه.</p>
+    <ol>
+      <li><b><code>forEach</code> مع async callback.</b> الـ <code>forEach</code> بيتجاهل الـ promises اللي الـ callback بيرجّعها، فالـ loop بيخلص قبل أي شغل. والـ rejections بتبقى unhandled. استخدم <code>for...of</code> أو <code>Promise.all</code> على <code>map</code>.</li>
+      <li><b><code>await</code> متسلسل في loop.</b> كويس لما الترتيب يهم. للشغل المستقل بيبقى مجموع المدد مش أكبرها: ≈239 ms مقابل ≈44 ms هنا.</li>
+      <li><b>الـ unhandled rejection بيموّت الـ process.</b> من Node 15 الافتراضي هو الخروج: code 1، من promise محدش استناها. امسك عند مكان النداء، وسيب handler الـ <code>unhandledRejection</code> للـ logging والـ shutdown، زي <a href="../../04-NodeJS/lessons/24-errors-shutdown-health.html">درس الـ errors والـ shutdown والـ health</a>.</li>
+      <li><b><code>try/catch</code> مش شايف callback.</b> الـ <code>try</code> خلص قبل ما الـ callback يشتغل. الـ exception هناك uncaught: يعني exit code 1. لفّها في promise واعمل لها <code>await</code>.</li>
+      <li><b><code>Promise.all</code> مش بيوقف الباقي.</b> أول rejection بيخلص الـ promise، والعمليات التانية بتكمل. هنا الكارت اتسحب منه بعد ما الـ order فشل فعلًا. لو فيه side effects، ابعت <code>AbortSignal</code> وخلي عندك cancellation خاص بيك.</li>
+      <li><b><code>return</code> ضد <code>return await</code> جوه <code>try</code>.</b> الـ <code>return</code> لوحده بيطلّع الـ promise قبل ما يخلص، فالـ <code>catch</code> مش بيشتغل أبدًا. <code>return await</code> بيفضل جوه الـ <code>try</code>.</li>
+    </ol>
+    <p><b>الغلطة الشائعة:</b> <code>await</code> مش في loop، و <code>catch</code> فاضي: الـ error بيختفي ومحدش يعرف ليه الـ orders بتقع.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      دي قايمة code review بتاعتك على أي PR فيه async: <code>forEach(async</code>، و <code>Promise.all</code> على side effects من غير cancellation، و <code>return</code> جوه <code>try</code> في retries، وأي promise مش متعمل لها await أو catch (وده اللي بيخلي service يقع بعد deploy بسبب provider واحد وقع).
+    </div>
+  </section>
+
+  <table>
+    <tr><th>Criterion</th><th>Strong signal</th><th>Weak signal</th></tr>
+    <tr><td>Diagnosis</td><td>Names the mechanism (who holds the promise, where the stack went)</td><td>Says "add async" or "add try/catch"</td></tr>
+    <tr><td>Fix</td><td>The smallest correct change and why</td><td>Rewrites the whole function</td></tr>
+    <tr><td>Production sense</td><td>Mentions exit code 1, cancellation, partial side effects</td><td>Only what prints on the console</td></tr>
+  </table>
+  <div class="ar-note">صف صف: <b>التشخيص</b>: القوي بيسمّي الآلية (مين ماسك الـ promise، والـ stack راح فين)، والضعيف بيقول "ضيف async" أو "ضيف try/catch". <b>الإصلاح</b>: القوي أصغر تعديل صح وليه، والضعيف بيعيد كتابة الدالة كلها. <b>حس الـ production</b>: القوي بيذكر exit code 1 والـ cancellation والـ side effects الجزئية، والضعيف بيهتم بالي بيتطبع على الـ console بس.</div>
+
+  <div class="callout warn">
+    <b>Common mistake: an empty <code>catch</code></b>
+    <code>.catch(() =&gt; {})</code> silences the crash and the evidence together. Log with context, or rethrow. If you can't handle it, you shouldn't be catching it.
+    <div class="ar-note">الغلطة الشائعة: <code>catch</code> فاضي. <code>.catch(() =&gt; {})</code> بيسكّت الـ crash والدليل مع بعض. اعمل log بسياق، أو ارمي تاني. لو مش عارف تتعامل معاه، متمسكهوش.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Semaphore <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ semaphore</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <div class="callout tradeoff">
+      <b>⏱ Timed prompt · 20 minutes</b>
+      A PDF render library crashes if more than 3 renders run at once, and they start from different places in the code. Write <code>Semaphore(n)</code> with FIFO <code>acquire</code>, <code>release</code> and <code>withPermit(task)</code>. Test that peak concurrency never exceeds n, that waiters are served in order, and that a task that throws gives its permit back. Follow-up: cancel a waiter with an <code>AbortSignal</code>.
+      <div class="ar-note">⏱ التمرين بالتوقيت: 20 دقيقة. مكتبة PDF render بتقع لو أكتر من 3 شغالين في نفس الوقت، وهما بيبدأوا من أماكن مختلفة في الكود. اكتب <code>Semaphore(n)</code> بـ <code>acquire</code> بترتيب FIFO و <code>release</code> و <code>withPermit(task)</code>. اختبر إن الـ peak concurrency عمره ما يعدّي n، وإن اللي مستنيين بيتخدموا بالترتيب، وإن task بترمي بترجّع الـ permit بتاعها. الـ follow-up: إلغاء waiter بـ <code>AbortSignal</code>.</div>
+    </div>
+    <p><b>Brute force first.</b> Polling: while the count is full, wait a turn of the loop and check again. With n waiters each poll is O(n) work, and the queue drains over n turns: O(n²), <b>x4</b>. It also isn't FIFO: whoever polls at the right moment gets in.</p>
+    <p><b>Final.</b> A count of permits and a queue of waiters. <code>acquire</code> takes a permit if one is free, otherwise it enqueues a resolver and returns a pending promise. <code>release</code> hands the permit straight to the first waiter and doesn't increment the count, so a newcomer can't barge in: FIFO is a guarantee, not a hope. Each operation is O(1): <b>x2</b>. The pattern is in <a href="../../08-Design-Patterns/lessons/19-locks-batching-scatter-actors.html">locks, batching and actors</a>. What's new here is the 20-minute version and its tests.</p>
+    <p><b>Two details.</b> <code>release</code> belongs in <code>finally</code>: that's the whole point of <code>withPermit</code>, because otherwise one throw leaks a permit forever. And the queue isn't an array with <code>shift()</code>: draining with <code>shift()</code> measured ≈344 ms, ≈1.4 s and ≈4.5 s at 20k, 40k and 80k here, roughly x4 per doubling, against under a millisecond with a head index. The <code>Fifo</code> class is 15 lines.</p>
+    <p><b>Follow-up: cancel a waiter.</b> On abort, mark the waiter cancelled and reject its promise. <code>release</code> skips cancelled waiters. That's O(1) for the abort, and each one is skipped once. Removing the listener on grant matters too: otherwise every grant leaves a listener on a long-lived signal.</p>
+  </section>
+
+<pre data-file="practical-coding/fifo.ts"><code class="language-typescript">// طابور بـ head index: الـ shift على array كبيرة ⁦O(n)⁩، وده هيأذيك مع آلاف الـ waiters
+export class Fifo&lt;T&gt; {
+  private items: (T | undefined)[] = [];
+  private head = 0;
+
+  get length(): number {
+    return this.items.length - this.head;
+  }
+
+  push(item: T): void {
+    this.items.push(item);
+  }
+
+  peek(): T | undefined {
+    return this.items[this.head];
+  }
+
+  shift(): T | undefined {
+    if (this.head === this.items.length) return undefined;
+    const item = this.items[this.head];
+    this.items[this.head++] = undefined;
+    // الضغط لما النص يبقى فاضي: كل عنصر بيتنقل مرات قليلة، فالتكلفة ⁦amortized O(1)⁩
+    if (this.head &gt; 1024 &amp;&amp; this.head * 2 &gt; this.items.length) {
+      this.items = this.items.slice(this.head);
+      this.head = 0;
+    }
+    return item;
+  }
+}</code></pre>
+<pre data-file="practical-coding/semaphore-brute.ts"><code class="language-typescript">const nextTurn = () =&gt; new Promise&lt;void&gt;((resolve) =&gt; setImmediate(resolve));
+
+// الـ brute force: polling. كل واحد مستني بيبص كل دورة، ومفيش ترتيب مضمون
+export class PollingSemaphore {
+  private used = 0;
+  private readonly limit: number;
+  private readonly tick: () =&gt; void;
+
+  constructor(limit: number, tick: () =&gt; void = () =&gt; {}) {
+    this.limit = limit;
+    this.tick = tick;
+  }
+
+  async withPermit&lt;T&gt;(task: () =&gt; Promise&lt;T&gt;): Promise&lt;T&gt; {
+    for (;;) {
+      this.tick();
+      if (this.used &lt; this.limit) break;
+      await nextTurn();
+    }
+    this.used++;
+    try {
+      return await task();
+    } finally {
+      this.used--;
+    }
+  }
+}</code></pre>
+<pre data-file="practical-coding/semaphore.ts"><code class="language-typescript">import { Fifo } from "./fifo.ts";
+
+type Waiter = { grant: () =&gt; void; cancelled: boolean };
+
+export class Semaphore {
+  private permits: number;
+  private readonly maxPermits: number;
+  private readonly waiters = new Fifo&lt;Waiter&gt;();
+  private readonly tick: () =&gt; void;
+
+  constructor(permits: number, tick: () =&gt; void = () =&gt; {}) {
+    if (!Number.isInteger(permits) || permits &lt; 1) throw new RangeError(`permits must be a positive integer, got ${permits}`);
+    this.permits = permits;
+    this.maxPermits = permits;
+    this.tick = tick;
+  }
+
+  get available(): number {
+    return this.permits;
+  }
+
+  acquire(signal?: AbortSignal): Promise&lt;void&gt; {
+    this.tick();
+    if (signal?.aborted) return Promise.reject(signal.reason);
+    if (this.permits &gt; 0) {
+      this.permits--;
+      return Promise.resolve();
+    }
+    return new Promise&lt;void&gt;((resolve, reject) =&gt; {
+      const onAbort = () =&gt; {
+        // مسح كسول: الـ waiter بيفضل في الطابور، و release هتعدّيه
+        waiter.cancelled = true;
+        reject(signal?.reason);
+      };
+      const waiter: Waiter = {
+        cancelled: false,
+        grant: () =&gt; {
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        },
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.waiters.push(waiter);
+    });
+  }
+
+  release(): void {
+    this.tick();
+    // التسليم مباشر للي عليه الدور: الـ permits مش بتزيد، فمفيش حد يخطف الدور
+    for (let waiter = this.waiters.shift(); waiter; waiter = this.waiters.shift()) {
+      if (waiter.cancelled) continue;
+      waiter.grant();
+      return;
+    }
+    if (this.permits === this.maxPermits) throw new Error("release without a matching acquire");
+    this.permits++;
+  }
+
+  async withPermit&lt;T&gt;(task: () =&gt; Promise&lt;T&gt;, signal?: AbortSignal): Promise&lt;T&gt; {
+    await this.acquire(signal);
+    try {
+      return await task();
+    } finally {
+      // الـ finally هو الضمان الوحيد إن الـ permit يرجع لو الـ task وقعت
+      this.release();
+    }
+  }
+}</code></pre>
+<pre data-file="practical-coding/semaphore.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { Semaphore } from "./semaphore.ts";
+
+const flush = () =&gt; new Promise&lt;void&gt;((resolve) =&gt; setImmediate(resolve));
+
+test("peak concurrency never exceeds the permits", async () =&gt; {
+  const pdfRenders = new Semaphore(3);
+  let running = 0;
+  let peak = 0;
+  await Promise.all(
+    Array.from({ length: 40 }, () =&gt;
+      pdfRenders.withPermit(async () =&gt; {
+        peak = Math.max(peak, ++running);
+        await flush();
+        running--;
+      }),
+    ),
+  );
+  assert.equal(peak, 3);
+  assert.equal(pdfRenders.available, 3);
+});
+
+test("waiters are served first in, first out", async () =&gt; {
+  const semaphore = new Semaphore(1);
+  await semaphore.acquire();
+  const order: string[] = [];
+  const waiters = ["a", "b", "c"].map((name) =&gt; semaphore.acquire().then(() =&gt; order.push(name)));
+  await flush();
+  assert.deepEqual(order, []);
+  semaphore.release();
+  await flush();
+  assert.deepEqual(order, ["a"]);
+  semaphore.release();
+  await flush();
+  semaphore.release();
+  await Promise.all(waiters);
+  assert.deepEqual(order, ["a", "b", "c"]);
+});
+
+test("edge: a task that throws still gives its permit back", async () =&gt; {
+  const semaphore = new Semaphore(1);
+  await assert.rejects(semaphore.withPermit(async () =&gt; { throw new Error("render failed"); }), /render failed/);
+  assert.equal(semaphore.available, 1);
+});
+
+test("edge: an aborted waiter is skipped and costs no permit", async () =&gt; {
+  const semaphore = new Semaphore(1);
+  await semaphore.acquire();
+  const controller = new AbortController();
+  const cancelled = semaphore.acquire(controller.signal);
+  const served: string[] = [];
+  const next = semaphore.acquire().then(() =&gt; served.push("next"));
+  controller.abort(new Error("client disconnected"));
+  await assert.rejects(cancelled, /client disconnected/);
+  semaphore.release();
+  await next;
+  assert.deepEqual(served, ["next"]);
+  assert.equal(semaphore.available, 0);
+});
+
+test("edge: acquire on an already aborted signal rejects at once", async () =&gt; {
+  const semaphore = new Semaphore(1);
+  await assert.rejects(semaphore.acquire(AbortSignal.abort(new Error("gone"))), /gone/);
+  assert.equal(semaphore.available, 1);
+});
+
+test("edge: a release with no acquire is a bug and throws", () =&gt; {
+  assert.throws(() =&gt; new Semaphore(1).release(), /without a matching acquire/);
+});</code></pre>
+<pre><code class="language-plaintext">✔ peak concurrency never exceeds the permits (3.5616ms)
+✔ waiters are served first in, first out (0.9276ms)
+✔ edge: a task that throws still gives its permit back (0.3939ms)
+✔ edge: an aborted waiter is skipped and costs no permit (0.2106ms)
+✔ edge: acquire on an already aborted signal rejects at once (0.1734ms)
+✔ edge: a release with no acquire is a bug and throws (0.1056ms)
+ℹ tests 6
+ℹ pass 6
+ℹ fail 0</code></pre>
+  <div class="ar-note">الـ 6 tests نجحوا: الـ peak كان 3 بالظبط، والترتيب FIFO، و task بترمي رجّعت الـ permit، و waiter ملغي اتعدّى من غير ما ياخد permit، وآخر waiter اتخدم عادي.</div>
+
+<details><summary>Measurement code · كود القياس</summary>
+<pre data-file="practical-coding/semaphore-measure.ts"><code class="language-typescript">import { doublingAsync } from "../doubling.ts";
+import { PollingSemaphore } from "./semaphore-brute.ts";
+import { Semaphore } from "./semaphore.ts";
+
+const turn = () =&gt; new Promise&lt;void&gt;((resolve) =&gt; setImmediate(resolve));
+// السيناريو: n task على permit واحد، يعني كل waiter بيفضل مستني دوره
+const sizes = [250, 500, 1_000, 2_000];
+
+await doublingAsync("polling", async (n, tick) =&gt; {
+  const semaphore = new PollingSemaphore(1, tick);
+  await Promise.all(Array.from({ length: n }, () =&gt; semaphore.withPermit(turn)));
+}, sizes);
+
+await doublingAsync("fifo", async (n, tick) =&gt; {
+  const semaphore = new Semaphore(1, tick);
+  await Promise.all(Array.from({ length: n }, () =&gt; semaphore.withPermit(turn)));
+}, sizes);</code></pre>
+</details>
+<pre><code class="language-plaintext">polling    n=     250 ops=       31375        ms≈14.8 
+polling    n=     500 ops=      125250 x3.99  ms≈22.5 x1.52
+polling    n=    1000 ops=      500500 x4.00  ms≈70.4 x3.12
+polling    n=    2000 ops=     2001000 x4.00  ms≈284.7 x4.05
+fifo       n=     250 ops=         500        ms≈0.8 
+fifo       n=     500 ops=        1000 x2.00  ms≈0.7 x0.89
+fifo       n=    1000 ops=        2000 x2.00  ms≈1.6 x2.31
+fifo       n=    2000 ops=        4000 x2.00  ms≈3.7 x2.30</code></pre>
+  <div class="ar-note">الـ <code>polling</code> x4.00 (2 مليون فحص عند 2,000 task)، والـ <code>fifo</code> x2.00 (4,000 عملية بس). السيناريو: n task على permit واحد.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ brute force الأول.</b> polling: طول ما العداد مليان، استنى دورة من الـ loop وشوف تاني. مع n waiters كل دورة فحص O(n) شغل، والطابور بيخلص في n دورة: يعني O(n²) و <b>x4</b>. وكمان مش FIFO: اللي بيفحص في اللحظة الصح هو اللي بيدخل.</p>
+    <p><b>الحل النهائي.</b> عداد permits وطابور waiters. الـ <code>acquire</code> بياخد permit لو فيه فاضي، وإلا بيحط resolver في الطابور وبيرجّع promise pending. الـ <code>release</code> بيسلّم الـ permit مباشرة لأول waiter ومش بيزوّد العداد، فمحدش جديد يقدر يخطف الدور: الـ FIFO مضمون مش أمنية. كل عملية O(1): يعني <b>x2</b>. الـ pattern في <a href="../../08-Design-Patterns/lessons/19-locks-batching-scatter-actors.html">درس الـ locks والـ batching والـ actors</a>. الجديد هنا هو نسخة الـ 20 دقيقة والـ tests بتاعتها.</p>
+    <p><b>تفصيلتين.</b> الـ <code>release</code> مكانه في <code>finally</code>: ده الهدف كله من <code>withPermit</code>، وإلا throw واحد بيضيّع permit للأبد. والطابور مش array بـ <code>shift()</code>: تفريغ array بـ <code>shift()</code> اتقاس هنا ≈344 ms و ≈1.4 ثانية و ≈4.5 ثانية عند 20k و 40k و 80k، يعني تقريبًا x4 مع كل مضاعفة، مقابل أقل من ميلّي ثانية بـ head index. وكلاس الـ <code>Fifo</code> 15 سطر.</p>
+    <p><b>الـ follow-up: إلغاء waiter.</b> عند الـ abort، علّم الـ waiter إنه ملغي واعمل reject للـ promise بتاعته. الـ <code>release</code> بيعدّي الملغيين. ده O(1) للـ abort، وكل واحد بيتعدّى مرة واحدة. وشيل الـ listener عند التسليم كمان: وإلا كل تسليم بيسيب listener على signal عمره طويل.</p>
+    <p><b>الغلطة الشائعة:</b> <code>await acquire(); await task(); release();</code> من غير <code>finally</code>: أول throw بيضيّع permit، وبعد 3 فشلات الـ service كله واقف.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      حد أقصى لـ PDF renders أو image processing جوه الـ process، أو حماية مكتبة مش thread-safe، أو حد للـ outbound calls لـ partner API بيدّيك 10 connections بس، من أماكن مختلفة في الـ codebase. الفرق عن الـ promise pool: الـ pool بياخد قايمة معروفة، والـ semaphore بيحمي مورد مشترك للنداءات اللي بتيجي على طول.
+    </div>
+  </section>
+
+  <table>
+    <tr><th>Criterion</th><th>Strong signal</th><th>Weak signal</th></tr>
+    <tr><td>Fairness</td><td>Hands off directly, FIFO by construction</td><td>Increments, then lets waiters race</td></tr>
+    <tr><td>Safety</td><td>Release in <code>finally</code>, over-release guarded</td><td>Release after the task, no guard</td></tr>
+    <tr><td>Cancellation</td><td>Removes or skips an aborted waiter, no leaked listeners</td><td>A cancelled waiter still takes a permit</td></tr>
+    <tr><td>Tests</td><td>Peak counter, FIFO order, throw returns the permit</td><td>Only checks that the code runs</td></tr>
+  </table>
+  <div class="ar-note">صف صف: <b>العدل</b>: القوي بيسلّم مباشرة و FIFO من طريقة البناء نفسها، والضعيف بيزوّد العداد وبيسيب الـ waiters يتسابقوا. <b>الأمان</b>: القوي <code>release</code> في <code>finally</code> وعنده حماية من release زيادة، والضعيف بيعمل release بعد الـ task من غير حماية. <b>الإلغاء</b>: القوي بيشيل أو بيعدّي الـ waiter الملغي ومن غير listeners ضايعة، والضعيف الـ waiter الملغي بياخد permit برضه. <b>الـ tests</b>: القوي عنده peak counter وترتيب FIFO و throw بيرجّع الـ permit، والضعيف بيتأكد إن الكود بيشتغل وخلاص.</div>
+
+  <div class="callout warn">
+    <b>Common mistake: <code>release()</code> increments even when a waiter is queued</b>
+    Then a newcomer's <code>acquire</code> can take the permit before the first waiter runs, and FIFO is gone. Grant directly to the first waiter, and only increment when the queue is empty.
+    <div class="ar-note">الغلطة الشائعة: <code>release()</code> بتزوّد العداد حتى لو فيه waiter مستني. ساعتها <code>acquire</code> جديدة ممكن تاخد الـ permit قبل أول waiter، والـ FIFO يروح. سلّم مباشرة لأول waiter، وزوّد العداد بس لو الطابور فاضي.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Semaphore or promise pool?" → A pool when I have a known list and want to process it with a limit. A semaphore when calls arrive over time from different places and I have to protect one resource. They share the idea: a count and a queue.
+    <div class="ar-note">"semaphore ولا promise pool؟" ← الـ pool لما يكون عندي list معروفة وعايز أعالجها بحد أقصى. الـ semaphore لما النداءات بتيجي مع الوقت من أماكن مختلفة ولازم أحمي مورد واحد. الفكرة واحدة: عداد وطابور.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Producer and consumer <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — الـ producer والـ consumer</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <div class="callout tradeoff">
+      <b>⏱ Timed prompt · 25 minutes</b>
+      Invoice jobs flow from an importer (fast) to workers (slow). Write <code>Channel&lt;T&gt;</code>, a bounded async channel: <code>send</code> waits when full, <code>receive</code> waits when empty, <code>close</code> lets the buffer drain, and the channel works with <code>for await</code>. Test: depth never exceeds the capacity, every item is delivered exactly once with several producers and consumers, and <code>close</code> wakes everyone who's waiting.
+      <div class="ar-note">⏱ التمرين بالتوقيت: 25 دقيقة. jobs فواتير بتمشي من importer سريع لـ workers بطيئين. اكتب <code>Channel&lt;T&gt;</code>، bounded async channel: <code>send</code> بيستنى لما يتملى، و <code>receive</code> بيستنى لما يفضى، و <code>close</code> بيسيب الـ buffer يخلص، والـ channel بيشتغل مع <code>for await</code>. الـ tests: العمق عمره ما يعدّي الـ capacity، كل item يتسلّم مرة واحدة بالظبط مع كذا producer و consumer، و <code>close</code> بيصحّي كل اللي مستنيين.</div>
+    </div>
+    <p><b>Brute force first.</b> An unbounded array and a polling consumer. Peak depth grows with n, so a fast producer can eat all memory: <b>x2</b> per doubling in peak depth, with no upper limit. The final's depth is O(capacity): it should print <b>x1</b>.</p>
+    <p><b>Final.</b> Three queues: buffer, waiting senders, waiting receivers. <code>send</code> hands off to a waiting receiver if there is one, otherwise it fills the buffer if there's room, otherwise it waits. <code>receive</code> takes from the buffer and immediately moves the first waiting sender's item in, so order stays FIFO and depth never exceeds capacity. The patterns are in <a href="../../08-Design-Patterns/lessons/18-producers-pipelines-worker-pools.html">producers, pipelines and worker pools</a>.</p>
+    <p><b>Close, stated.</b> Items already in the buffer are delivered. Senders still waiting get a <code>ChannelClosedError</code>, so nothing is dropped silently, and waiting receivers are woken with <code>done: true</code>. That's why the signature is <code>IteratorResult</code>: <code>undefined</code> can't double as "closed", because <code>T</code> might be <code>undefined</code>.</p>
+    <p><b>Follow-up: capacity 0</b> is a rendezvous, a direct hand-off, and the same code handles it.</p>
+  </section>
+
+<pre class="diagram">
+   producers                                       consumers
+   send(x) ---------> [ buffer, at most N ] ---------> receive()
+
+   full:  senders wait in order, then their item enters the buffer
+   empty: receivers wait in order, and send() hands straight to the first
+   close: buffer still drains; waiting senders error; waiting receivers done
+</pre>
+  <div class="ar-note">الـ send بيحط في الـ buffer لحد N. لو الـ buffer مليان، الـ senders بيقفوا بالدور وبيدخلوا لما يفضى مكان. لو فاضي والـ receivers مستنيين، الـ send بيسلّم مباشرة لأولهم من غير ما يدخل buffer. عند الـ close، الـ buffer بيخلص، والـ senders المستنيين بياخدوا error، والـ receivers بياخدوا <code>done</code>.</div>
+
+<pre data-file="practical-coding/channel-brute.ts"><code class="language-typescript">const nextTurn = () =&gt; new Promise&lt;void&gt;((resolve) =&gt; setImmediate(resolve));
+
+// الـ brute force: array من غير حد، والـ consumer بيعمل polling
+export class UnboundedQueue&lt;T&gt; {
+  private readonly items: T[] = [];
+  private finished = false;
+
+  get depth(): number {
+    return this.items.length;
+  }
+
+  push(item: T): void {
+    this.items.push(item);
+  }
+
+  finish(): void {
+    this.finished = true;
+  }
+
+  async pull(): Promise&lt;T | undefined&gt; {
+    for (;;) {
+      if (this.items.length &gt; 0) return this.items.shift();
+      if (this.finished) return undefined;
+      await nextTurn();
+    }
+  }
+}</code></pre>
+<pre data-file="practical-coding/channel.ts"><code class="language-typescript">import { Fifo } from "./fifo.ts";
+
+export class ChannelClosedError extends Error {
+  override readonly name = "ChannelClosedError";
+}
+
+type PendingSend&lt;T&gt; = { value: T; resolve: () =&gt; void; reject: (error: unknown) =&gt; void };
+type PendingReceive&lt;T&gt; = (result: IteratorResult&lt;T, undefined&gt;) =&gt; void;
+
+const DONE = { value: undefined, done: true } as const;
+
+// الـ policy عند الـ close: اللي في الـ buffer بيتسلّم، واللي مستني يبعت بياخد error
+export class Channel&lt;T&gt; implements AsyncIterable&lt;T&gt; {
+  private readonly buffer = new Fifo&lt;T&gt;();
+  private readonly senders = new Fifo&lt;PendingSend&lt;T&gt;&gt;();
+  private readonly receivers = new Fifo&lt;PendingReceive&lt;T&gt;&gt;();
+  private readonly capacity: number;
+  private closed = false;
+
+  constructor(capacity: number) {
+    if (!Number.isInteger(capacity) || capacity &lt; 0) throw new RangeError(`capacity must be &gt;= 0, got ${capacity}`);
+    this.capacity = capacity;
+  }
+
+  get depth(): number {
+    return this.buffer.length;
+  }
+
+  send(value: T): Promise&lt;void&gt; {
+    if (this.closed) return Promise.reject(new ChannelClosedError("send on a closed channel"));
+    // لو فيه receiver مستني، التسليم مباشر ومفيش حاجة تدخل الـ buffer
+    const receiver = this.receivers.shift();
+    if (receiver) {
+      receiver({ value, done: false });
+      return Promise.resolve();
+    }
+    if (this.buffer.length &lt; this.capacity) {
+      this.buffer.push(value);
+      return Promise.resolve();
+    }
+    // ده الـ backpressure: الـ await عند الـ producer مش بيرجع لحد ما يبقى فيه مكان
+    return new Promise&lt;void&gt;((resolve, reject) =&gt; this.senders.push({ value, resolve, reject }));
+  }
+
+  receive(): Promise&lt;IteratorResult&lt;T, undefined&gt;&gt; {
+    if (this.buffer.length &gt; 0) {
+      const value = this.buffer.shift() as T;
+      // مكان فضي في الـ buffer: أول sender مستني يدخل، والترتيب يفضل FIFO
+      const sender = this.senders.shift();
+      if (sender) {
+        this.buffer.push(sender.value);
+        sender.resolve();
+      }
+      return Promise.resolve({ value, done: false });
+    }
+    // هنا الحالة بتاعة capacity صفر: التسليم يد بيد من الـ sender
+    const sender = this.senders.shift();
+    if (sender) {
+      sender.resolve();
+      return Promise.resolve({ value: sender.value, done: false });
+    }
+    if (this.closed) return Promise.resolve(DONE);
+    return new Promise((resolve) =&gt; this.receivers.push(resolve));
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    for (let receiver = this.receivers.shift(); receiver; receiver = this.receivers.shift()) receiver(DONE);
+    for (let sender = this.senders.shift(); sender; sender = this.senders.shift()) {
+      sender.reject(new ChannelClosedError("channel closed while waiting to send"));
+    }
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator&lt;T, undefined&gt; {
+    return { next: () =&gt; this.receive() };
+  }
+}</code></pre>
+<pre data-file="practical-coding/channel.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { Channel, ChannelClosedError } from "./channel.ts";
+
+const flush = () =&gt; new Promise&lt;void&gt;((resolve) =&gt; setImmediate(resolve));
+
+test("depth never exceeds capacity, and send waits when full", async () =&gt; {
+  const jobs = new Channel&lt;number&gt;(2);
+  await jobs.send(1);
+  await jobs.send(2);
+  let thirdAccepted = false;
+  const third = jobs.send(3).then(() =&gt; { thirdAccepted = true; });
+  await flush();
+  assert.equal(thirdAccepted, false);
+  assert.equal(jobs.depth, 2);
+  assert.deepEqual(await jobs.receive(), { value: 1, done: false });
+  await third;
+  assert.equal(thirdAccepted, true);
+  assert.equal(jobs.depth, 2);
+});
+
+test("every item delivered exactly once with 3 producers and 4 consumers", async () =&gt; {
+  const jobs = new Channel&lt;number&gt;(5);
+  const total = 3_000;
+  let peakDepth = 0;
+  const producers = [0, 1, 2].map(async (p) =&gt; {
+    for (let i = 0; i &lt; total / 3; i++) {
+      await jobs.send(p * 1_000_000 + i);
+      peakDepth = Math.max(peakDepth, jobs.depth);
+    }
+  });
+  const received: number[] = [];
+  const consumers = [0, 1, 2, 3].map(async () =&gt; {
+    for await (const job of jobs) {
+      received.push(job);
+      await flush();
+    }
+  });
+  await Promise.all(producers);
+  jobs.close();
+  await Promise.all(consumers);
+  assert.equal(received.length, total);
+  assert.equal(new Set(received).size, total);
+  assert.ok(peakDepth &lt;= 5, `peak ${peakDepth}`);
+});
+
+test("edge: receive waits when empty, send hands off directly", async () =&gt; {
+  const jobs = new Channel&lt;string&gt;(1);
+  const pending = jobs.receive();
+  await jobs.send("job");
+  assert.deepEqual(await pending, { value: "job", done: false });
+  assert.equal(jobs.depth, 0);
+});
+
+test("edge: close drains the buffer, then reports done", async () =&gt; {
+  const jobs = new Channel&lt;number&gt;(3);
+  await jobs.send(1);
+  await jobs.send(2);
+  jobs.close();
+  const seen: number[] = [];
+  for await (const job of jobs) seen.push(job);
+  assert.deepEqual(seen, [1, 2]);
+});
+
+test("edge: close wakes waiting receivers and rejects waiting senders", async () =&gt; {
+  const empty = new Channel&lt;number&gt;(1);
+  const waitingReceiver = empty.receive();
+  empty.close();
+  assert.deepEqual(await waitingReceiver, { value: undefined, done: true });
+
+  const full = new Channel&lt;number&gt;(1);
+  await full.send(1);
+  const waitingSender = full.send(2);
+  full.close();
+  await assert.rejects(waitingSender, ChannelClosedError);
+  await assert.rejects(full.send(3), ChannelClosedError);
+});
+
+test("edge: capacity 0 is a rendezvous", async () =&gt; {
+  const handoff = new Channel&lt;string&gt;(0);
+  let accepted = false;
+  const sending = handoff.send("job").then(() =&gt; { accepted = true; });
+  await flush();
+  assert.equal(accepted, false);
+  assert.deepEqual(await handoff.receive(), { value: "job", done: false });
+  await sending;
+  assert.equal(accepted, true);
+});</code></pre>
+<pre><code class="language-plaintext">✔ depth never exceeds capacity, and send waits when full (3.1601ms)
+✔ every item delivered exactly once with 3 producers and 4 consumers (18.9235ms)
+✔ edge: receive waits when empty, send hands off directly (0.2039ms)
+✔ edge: close drains the buffer, then reports done (0.1675ms)
+✔ edge: close wakes waiting receivers and rejects waiting senders (0.4278ms)
+✔ edge: capacity 0 is a rendezvous (0.6143ms)
+ℹ tests 6
+ℹ pass 6
+ℹ fail 0</code></pre>
+  <div class="ar-note">الـ 6 tests نجحوا. الأهم: 3,000 job بـ 3 producers و 4 consumers: اتسلّموا كلهم مرة واحدة بالظبط (<code>Set</code> حجمه 3,000) والـ depth عمره ما عدّى 5. و close صحّى receiver مستني ورفض sender مستني.</div>
+
+<details><summary>Measurement code · كود القياس</summary>
+<pre data-file="practical-coding/channel-measure.ts"><code class="language-typescript">import { doublingAsync } from "../doubling.ts";
+import { UnboundedQueue } from "./channel-brute.ts";
+import { Channel } from "./channel.ts";
+
+const turn = () =&gt; new Promise&lt;void&gt;((resolve) =&gt; setImmediate(resolve));
+// السيناريو: n job، الـ producer سريع والـ consumer بطيء. الـ tick مرة لكل قمة جديدة في العمق
+const sizes = [1_000, 2_000, 4_000, 8_000];
+
+await doublingAsync("unbounded", async (n, tick) =&gt; {
+  const queue = new UnboundedQueue&lt;number&gt;();
+  let peak = 0;
+  const consumer = (async () =&gt; {
+    while ((await queue.pull()) !== undefined) await turn();
+  })();
+  for (let i = 0; i &lt; n; i++) {
+    queue.push(i);
+    if (queue.depth &gt; peak) {
+      peak = queue.depth;
+      tick();
+    }
+  }
+  queue.finish();
+  await consumer;
+}, sizes);
+
+await doublingAsync("bounded", async (n, tick) =&gt; {
+  const jobs = new Channel&lt;number&gt;(16);
+  let peak = 0;
+  const consumer = (async () =&gt; {
+    for await (const job of jobs) {
+      void job;
+      await turn();
+    }
+  })();
+  for (let i = 0; i &lt; n; i++) {
+    await jobs.send(i);
+    if (jobs.depth &gt; peak) {
+      peak = jobs.depth;
+      tick();
+    }
+  }
+  jobs.close();
+  await consumer;
+}, sizes);</code></pre>
+</details>
+<pre><code class="language-plaintext">unbounded  n=    1000 ops=        1000        ms≈4.0 
+unbounded  n=    2000 ops=        2000 x2.00  ms≈5.3 x1.34
+unbounded  n=    4000 ops=        4000 x2.00  ms≈11.2 x2.10
+unbounded  n=    8000 ops=        8000 x2.00  ms≈11.1 x0.99
+bounded    n=    1000 ops=          16        ms≈2.3 
+bounded    n=    2000 ops=          16 x1.00  ms≈3.6 x1.57
+bounded    n=    4000 ops=          16 x1.00  ms≈5.6 x1.52
+bounded    n=    8000 ops=          16 x1.00  ms≈10.7 x1.92</code></pre>
+  <div class="ar-note">هنا الـ <code>ops</code> معناها أعلى عمق وصل له الـ queue. الـ <code>unbounded</code> بيطبع x2.00 (الـ producer بيحط كله قبل أي consumer)، والـ <code>bounded</code> بيفضل 16 ثابت، يعني x1.00. والوقت قريب لأن الـ consumer بيشتغل دورة loop لكل job في الاتنين.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ brute force الأول.</b> array من غير حد و consumer بيعمل polling. أعلى عمق بيكبر مع n، فـ producer سريع ممكن ياكل الذاكرة كلها: يعني <b>x2</b> مع كل مضاعفة في أعلى عمق ومن غير سقف. الحل النهائي العمق بتاعه O(capacity): المفروض يطبع <b>x1</b>.</p>
+    <p><b>الحل النهائي.</b> 3 طوابير: الـ buffer، والـ senders المستنيين، والـ receivers المستنيين. الـ <code>send</code> بيسلّم لـ receiver مستني لو فيه، وإلا بيملا الـ buffer لو فيه مكان، وإلا بيستنى. الـ <code>receive</code> بياخد من الـ buffer وعلى طول بيدخّل عنصر أول sender مستني، فالترتيب يفضل FIFO والعمق عمره ما يعدّي الـ capacity. الـ patterns في <a href="../../08-Design-Patterns/lessons/18-producers-pipelines-worker-pools.html">درس الـ producers والـ pipelines والـ worker pools</a>.</p>
+    <p><b>الـ close، قولها.</b> العناصر اللي في الـ buffer بتتسلّم. الـ senders اللي لسه مستنيين بياخدوا <code>ChannelClosedError</code>، فمفيش حاجة بتضيع من غير ما تحس، والـ receivers المستنيين بيصحوا بـ <code>done: true</code>. وده سبب إن الـ signature هو <code>IteratorResult</code>: الـ <code>undefined</code> مينفعش يعني "مقفول"، لأن <code>T</code> نفسه ممكن يبقى <code>undefined</code>.</p>
+    <p><b>الـ follow-up: capacity 0</b> ده rendezvous، تسليم يد بيد، ونفس الكود بيتعامل معاه.</p>
+    <p><b>الغلطة الشائعة:</b> في <code>receive</code> تاخد من الـ buffer ومن غير ما تدخّل الـ sender المستني: الـ buffer بيفضى والـ sender بيفضل واقف، وفي أسوأ حالة deadlock.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      Import ملف CSV كبير: الـ parser بيدّي rows بسرعة، والـ workers بيكتبوا في Postgres ببطء. <code>await jobs.send(row)</code> بيبطّأ الـ parser تلقائيًا لما الـ workers يتأخروا، والذاكرة ثابتة عند الـ capacity. ولما يكون محتاج durability أو workers على أجهزة تانية، بتنقل لـ BullMQ أو Kafka، والـ channel ده هو النسخة اللي جوه process واحد.
+    </div>
+  </section>
+
+  <table>
+    <tr><th>Criterion</th><th>Strong signal</th><th>Weak signal</th></tr>
+    <tr><td>Backpressure</td><td>Sender waits, depth bounded, and it's proved by a test</td><td>Unbounded array "for now"</td></tr>
+    <tr><td>Close semantics</td><td>States the policy; tests senders and receivers both</td><td>Hangs on close, or drops items silently</td></tr>
+    <tr><td>Exactly once</td><td>Concurrent test with a <code>Set</code> over the results</td><td>One producer, one consumer</td></tr>
+    <tr><td>Order</td><td>Moves the waiting sender into the buffer on receive</td><td>FIFO breaks under contention</td></tr>
+  </table>
+  <div class="ar-note">صف صف: <b>الـ backpressure</b>: القوي الـ sender بيستنى والعمق محدود ومتثبت بـ test، والضعيف array من غير حد "دلوقتي". <b>معنى الـ close</b>: القوي بيقول الـ policy وبيختبر الـ senders والـ receivers الاتنين، والضعيف بيعلّق عند الـ close أو بيرمي items من غير ما يحس. <b>مرة واحدة بالظبط</b>: القوي عنده test متزامن بـ <code>Set</code> على النتايج، والضعيف عنده producer و consumer واحد. <b>الترتيب</b>: القوي بينقل الـ sender المستني للـ buffer عند الـ receive، والضعيف الـ FIFO عنده بيتكسر تحت الضغط.</div>
+
+  <div class="callout warn">
+    <b>Common mistake: <code>close()</code> that only sets a flag</b>
+    Receivers already waiting never wake up, so <code>for await</code> hangs forever and the process can't exit. Close has to walk both waiting queues.
+    <div class="ar-note">الغلطة الشائعة: <code>close()</code> بتحط flag وخلاص. الـ receivers اللي مستنيين عمرهم ما هيصحوا، فـ <code>for await</code> بيعلّق للأبد والـ process مش بيخلص. الـ close لازم يلف على طابور الـ waiters الاتنين.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Sliding-window limiter <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — الـ sliding-window limiter</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <div class="callout tradeoff">
+      <b>⏱ Timed prompt · 20 minutes</b>
+      At most <code>limit</code> requests per key in any window of <code>windowMs</code> (no fixed boundaries). Write <code>tryAcquire(apiKey)</code> returning <code>{ allowed, retryAfterMs }</code>, using a sliding log and an injected clock. Test the boundary at exact milliseconds. Then show what goes wrong if the check is asynchronous.
+      <div class="ar-note">⏱ التمرين بالتوقيت: 20 دقيقة. بحد أقصى <code>limit</code> طلب لكل key في أي window طولها <code>windowMs</code> (من غير حدود ثابتة). اكتب <code>tryAcquire(apiKey)</code> ترجّع <code>{ allowed, retryAfterMs }</code>، بـ sliding log و clock متحقن. اختبر الحد عند الميلّي ثانية بالظبط. وبعدها وريني إيه اللي بيحصل لو الفحص بقى async.</div>
+    </div>
+    <p><b>Brute force first.</b> Filter the whole log on every request: O(window size) per call, so n requests in one window are O(n²): <b>x4</b>.</p>
+    <p><b>Final: a sliding log.</b> Timestamps are appended in order, so the expired ones are always at the front. Pop them until the first live one: each timestamp is pushed once and popped once, so it's amortized O(1) per request, <b>x2</b>. Note the boundary: a hit at time 0 with a 1,000 ms window still counts at 999 and has left the window at 1,000. See the <a href="../../08-Design-Patterns/lessons/24-rate-limiter-idempotent-receiver.html">rate limiter pattern lesson</a>.</p>
+    <p><b>The race.</b> Put any <code>await</code> between "how many so far?" and "record this one", and concurrent callers all pass the check before anyone records. The test below shows 20 callers against a limit of 5, and all 20 get through. The fix is to make check-and-record synchronous, with nothing to interleave. That holds for one process only. Across instances the same fix has to live in Redis, as one atomic operation, because a read followed by a write is the identical race on a network.</p>
+    <p><b>Trade-off: log against counter.</b> A sliding log stores up to <code>limit</code> timestamps per key. A sliding counter (a current and a previous fixed window, weighted by overlap) stores three numbers, but it's approximate. In the run: 100 requests at t=59s, then at t=78s the log allows 0 of 40 and the counter allows 30.</p>
+  </section>
+
+<pre data-file="practical-coding/sliding-brute.ts"><code class="language-typescript">// الـ brute force: نفلتر الـ log كله في كل request
+export class FilterAllLimiter {
+  private readonly logs = new Map&lt;string, number[]&gt;();
+  private readonly limit: number;
+  private readonly windowMs: number;
+  private readonly now: () =&gt; number;
+  private readonly tick: () =&gt; void;
+
+  constructor(limit: number, windowMs: number, now: () =&gt; number, tick: () =&gt; void = () =&gt; {}) {
+    this.limit = limit;
+    this.windowMs = windowMs;
+    this.now = now;
+    this.tick = tick;
+  }
+
+  tryAcquire(apiKey: string): boolean {
+    const now = this.now();
+    const cutoff = now - this.windowMs;
+    const recent = (this.logs.get(apiKey) ?? []).filter((at) =&gt; {
+      this.tick();
+      return at &gt; cutoff;
+    });
+    const allowed = recent.length &lt; this.limit;
+    if (allowed) recent.push(now);
+    this.logs.set(apiKey, recent);
+    return allowed;
+  }
+}
+
+// الـ race: أي await بين الفحص والتسجيل بيفتح باب لكل الـ callers التانيين
+export class RacyLimiter {
+  private readonly hits: number[] = [];
+  private readonly limit: number;
+
+  constructor(limit: number) {
+    this.limit = limit;
+  }
+
+  private async countRecent(): Promise&lt;number&gt; {
+    await Promise.resolve();
+    return this.hits.length;
+  }
+
+  async tryAcquire(): Promise&lt;boolean&gt; {
+    const used = await this.countRecent();
+    if (used &gt;= this.limit) return false;
+    this.hits.push(Date.now());
+    return true;
+  }
+}</code></pre>
+<pre data-file="practical-coding/sliding.ts"><code class="language-typescript">import { Fifo } from "./fifo.ts";
+
+export type AcquireResult = { allowed: boolean; retryAfterMs: number };
+
+export class SlidingLogLimiter {
+  private readonly logs = new Map&lt;string, Fifo&lt;number&gt;&gt;();
+  private readonly limit: number;
+  private readonly windowMs: number;
+  private readonly now: () =&gt; number;
+  private readonly tick: () =&gt; void;
+
+  constructor(limit: number, windowMs: number, now: () =&gt; number = Date.now, tick: () =&gt; void = () =&gt; {}) {
+    this.limit = limit;
+    this.windowMs = windowMs;
+    this.now = now;
+    this.tick = tick;
+  }
+
+  // الدالة متزامنة عن قصد: مفيش await بين الفحص والتسجيل، فمفيش interleaving
+  tryAcquire(apiKey: string): AcquireResult {
+    const now = this.now();
+    let log = this.logs.get(apiKey);
+    if (!log) {
+      log = new Fifo&lt;number&gt;();
+      this.logs.set(apiKey, log);
+    }
+    // الـ log مترتب بالوقت، فبنشيل من الأول لحد أول timestamp لسه جوه الـ window
+    for (let oldest = log.peek(); oldest !== undefined &amp;&amp; oldest &lt;= now - this.windowMs; oldest = log.peek()) {
+      this.tick();
+      log.shift();
+    }
+    this.tick();
+    if (log.length &gt;= this.limit) {
+      return { allowed: false, retryAfterMs: (log.peek() as number) + this.windowMs - now };
+    }
+    log.push(now);
+    return { allowed: true, retryAfterMs: 0 };
+  }
+}
+
+// البديل الأرخص: عدادين بدل log، والتمن إن النتيجة تقريبية
+export class SlidingCounterLimiter {
+  private readonly counters = new Map&lt;string, { windowStart: number; current: number; previous: number }&gt;();
+  private readonly limit: number;
+  private readonly windowMs: number;
+  private readonly now: () =&gt; number;
+
+  constructor(limit: number, windowMs: number, now: () =&gt; number) {
+    this.limit = limit;
+    this.windowMs = windowMs;
+    this.now = now;
+  }
+
+  tryAcquire(apiKey: string): boolean {
+    const now = this.now();
+    const windowStart = Math.floor(now / this.windowMs) * this.windowMs;
+    const state = this.counters.get(apiKey) ?? { windowStart, current: 0, previous: 0 };
+    if (state.windowStart !== windowStart) {
+      state.previous = state.windowStart === windowStart - this.windowMs ? state.current : 0;
+      state.current = 0;
+      state.windowStart = windowStart;
+    }
+    this.counters.set(apiKey, state);
+    const previousWeight = 1 - (now - windowStart) / this.windowMs;
+    if (state.previous * previousWeight + state.current &gt;= this.limit) return false;
+    state.current++;
+    return true;
+  }
+}</code></pre>
+<pre data-file="practical-coding/sliding.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { RacyLimiter } from "./sliding-brute.ts";
+import { SlidingLogLimiter } from "./sliding.ts";
+
+const setup = (limit: number, windowMs: number) =&gt; {
+  const clock = { now: 0 };
+  return { clock, limiter: new SlidingLogLimiter(limit, windowMs, () =&gt; clock.now) };
+};
+
+test("allows up to the limit inside the window", () =&gt; {
+  const { limiter } = setup(2, 1_000);
+  assert.equal(limiter.tryAcquire("acme").allowed, true);
+  assert.equal(limiter.tryAcquire("acme").allowed, true);
+  assert.deepEqual(limiter.tryAcquire("acme"), { allowed: false, retryAfterMs: 1_000 });
+});
+
+test("boundary: at 999 ms the hit still counts, at 1000 ms it left the window", () =&gt; {
+  const { clock, limiter } = setup(1, 1_000);
+  limiter.tryAcquire("acme");
+  clock.now = 999;
+  assert.deepEqual(limiter.tryAcquire("acme"), { allowed: false, retryAfterMs: 1 });
+  clock.now = 1_000;
+  assert.equal(limiter.tryAcquire("acme").allowed, true);
+});
+
+test("edge: the window slides, there is no reset at a fixed boundary", () =&gt; {
+  const { clock, limiter } = setup(2, 1_000);
+  clock.now = 900;
+  limiter.tryAcquire("acme");
+  limiter.tryAcquire("acme");
+  // هنا الـ fixed window كانت هتقبل: دخلنا ثانية جديدة. الـ sliding لأ
+  clock.now = 1_100;
+  assert.equal(limiter.tryAcquire("acme").allowed, false);
+  clock.now = 1_900;
+  assert.equal(limiter.tryAcquire("acme").allowed, true);
+});
+
+test("edge: keys do not share a budget", () =&gt; {
+  const { limiter } = setup(1, 1_000);
+  assert.equal(limiter.tryAcquire("acme").allowed, true);
+  assert.equal(limiter.tryAcquire("globex").allowed, true);
+});
+
+test("the race: await between check and record lets everyone through", async () =&gt; {
+  const racy = new RacyLimiter(5);
+  const results = await Promise.all(Array.from({ length: 20 }, () =&gt; racy.tryAcquire()));
+  assert.equal(results.filter(Boolean).length, 20);
+});
+
+test("the fix: a synchronous check-and-record cannot be interleaved", async () =&gt; {
+  const { limiter } = setup(5, 1_000);
+  const results = await Promise.all(
+    Array.from({ length: 20 }, async () =&gt; {
+      await Promise.resolve();
+      return limiter.tryAcquire("acme").allowed;
+    }),
+  );
+  assert.equal(results.filter(Boolean).length, 5);
+});</code></pre>
+<pre><code class="language-plaintext">✔ allows up to the limit inside the window (0.9618ms)
+✔ boundary: at 999 ms the hit still counts, at 1000 ms it left the window (0.1236ms)
+✔ edge: the window slides, there is no reset at a fixed boundary (0.1362ms)
+✔ edge: keys do not share a budget (0.0755ms)
+✔ the race: await between check and record lets everyone through (0.306ms)
+✔ the fix: a synchronous check-and-record cannot be interleaved (0.2036ms)
+ℹ tests 6
+ℹ pass 6
+ℹ fail 0</code></pre>
+  <div class="ar-note">الـ 6 tests نجحوا: الحد عند 999 و 1000 ms بالظبط، والـ sliding مفيش فيه reset عند حد ثابت، و test الـ race طلّع 20 من 20 عدّوا (الـ racy)، والـ synchronous طلّع 5 بس.</div>
+
+<details><summary>Measurement code · كود القياس</summary>
+<pre data-file="practical-coding/sliding-measure.ts"><code class="language-typescript">import { doubling } from "../doubling.ts";
+import { FilterAllLimiter } from "./sliding-brute.ts";
+import { SlidingCounterLimiter, SlidingLogLimiter } from "./sliding.ts";
+
+const frozen = () =&gt; 0;
+// السيناريو: n request جوه نفس الـ window، والـ limit قد n
+const sizes = [2_000, 4_000, 8_000, 16_000];
+
+doubling("filter", (n, tick) =&gt; {
+  const limiter = new FilterAllLimiter(n, 60_000, frozen, tick);
+  for (let i = 0; i &lt; n; i++) limiter.tryAcquire("acme");
+}, sizes);
+
+doubling("log", (n, tick) =&gt; {
+  const limiter = new SlidingLogLimiter(n, 60_000, frozen, tick);
+  for (let i = 0; i &lt; n; i++) limiter.tryAcquire("acme");
+}, sizes);
+
+// الـ log كمان بينضف أول بأول: الـ window بتتحرك فعلًا والعناصر القديمة بتطلع مرة واحدة
+const clock = { now: 0 };
+let touches = 0;
+const moving = new SlidingLogLimiter(100, 1_000, () =&gt; clock.now, () =&gt; touches++);
+for (let i = 0; i &lt; 100_000; i++) {
+  clock.now = i * 10;
+  moving.tryAcquire("acme");
+}
+console.log(`moving window: ${touches} touches for 100000 requests`);
+
+// الفرق في الدقة: 100 طلب في آخر الـ window اللي فاتت، وبعدين 30% جوه الجديدة
+const at = { now: 59_000 };
+const log = new SlidingLogLimiter(100, 60_000, () =&gt; at.now);
+const counter = new SlidingCounterLimiter(100, 60_000, () =&gt; at.now);
+for (let i = 0; i &lt; 100; i++) {
+  log.tryAcquire("acme");
+  counter.tryAcquire("acme");
+}
+at.now = 78_000;
+const logAllowed = Array.from({ length: 40 }, () =&gt; log.tryAcquire("acme").allowed).filter(Boolean).length;
+const counterAllowed = Array.from({ length: 40 }, () =&gt; counter.tryAcquire("acme")).filter(Boolean).length;
+console.log(`t=78s after 100 hits at t=59s: log allows ${logAllowed}, counter allows ${counterAllowed}`);
+console.log("stored per key at limit 100: log=100 timestamps, counter=3 numbers");</code></pre>
+</details>
+<pre><code class="language-plaintext">filter     n=    2000 ops=     1999000        ms≈17.9 
+filter     n=    4000 ops=     7998000 x4.00  ms≈31.8 x1.78
+filter     n=    8000 ops=    31996000 x4.00  ms≈110.7 x3.48
+filter     n=   16000 ops=   127992000 x4.00  ms≈528.1 x4.77
+log        n=    2000 ops=        2000        ms≈0.5 
+log        n=    4000 ops=        4000 x2.00  ms≈0.6 x1.13
+log        n=    8000 ops=        8000 x2.00  ms≈0.7 x1.26
+log        n=   16000 ops=       16000 x2.00  ms≈0.4 x0.54
+moving window: 199900 touches for 100000 requests
+t=78s after 100 hits at t=59s: log allows 0, counter allows 30
+stored per key at limit 100: log=100 timestamps, counter=3 numbers</code></pre>
+  <div class="ar-note">الـ <code>filter</code> x4.00 والـ <code>log</code> x2.00. الـ moving window: 100,000 request عملوا 199,900 لمسة، يعني حوالي 2 لكل request، فالـ amortized O(1) متأكد. وآخر سطر فرق الدقة: عند t=78s الـ log سمح 0 من 40 (الـ 100 لسه جوه الـ window) والـ counter سمح 30 (لأن وزن الـ window اللي فاتت بقى 70%).</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ brute force الأول.</b> فلتر الـ log كله في كل request: O(حجم الـ window) للنداء، فـ n request في window واحدة O(n²): يعني <b>x4</b>.</p>
+    <p><b>الحل النهائي: sliding log.</b> الـ timestamps بتتضاف بالترتيب، فالمنتهيين دايمًا في الأول. شيلهم لحد أول واحد لسه حي: كل timestamp بيدخل مرة ويطلع مرة، فده amortized O(1) لكل request، يعني <b>x2</b>. خد بالك من الحد: طلب عند الصفر مع window 1,000 ms لسه بيتحسب عند 999 وخرج من الـ window عند 1,000. شوف <a href="../../08-Design-Patterns/lessons/24-rate-limiter-idempotent-receiver.html">درس الـ rate limiter pattern</a>.</p>
+    <p><b>الـ race.</b> حط أي <code>await</code> بين "كام لحد دلوقتي؟" و "سجّل ده"، والـ callers المتزامنين كلهم بيعدّوا الفحص قبل ما حد يسجّل. الـ test تحت بيوري 20 caller مع حد 5، والـ 20 كلهم عدّوا. الحل إن الفحص والتسجيل يبقوا sync، ومفيش حاجة تتداخل. ده صحيح لـ process واحد بس. عبر instances كتير، نفس الحل لازم يبقى في Redis كعملية ذرية واحدة، لأن read وبعدها write هو نفس الـ race على الشبكة.</p>
+    <p><b>الـ trade-off: log ضد counter.</b> الـ sliding log بيخزن لحد <code>limit</code> timestamp لكل key. الـ sliding counter (window حالية وwindow سابقة ثابتين، بوزن حسب التداخل) بيخزن 3 أرقام، بس تقريبي. في الـ run: 100 طلب عند t=59s، وبعدين عند t=78s الـ log بيسمح 0 من 40 والـ counter بيسمح 30.</p>
+    <p><b>الغلطة الشائعة:</b> تقارن بـ <code>&lt;</code> بدل <code>&lt;=</code> عند الحد، فـ طلب عند اللحظة الحدّية بيتحسب مرتين أو ميتحسبش، والـ test عند 999 و 1000 هو اللي بيكشفها.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      API عامة لـ login أو OTP محتاج عدد مظبوط في آخر 15 دقيقة لكل IP: الـ sliding log هو الصح لأن الدقة مهمة والحد صغير (5 محاولات). أما الـ API العامة بحد 1000/دقيقة لكل tenant فالـ counter أرخص بكتير على Redis. وأي code review فيه <code>GET</code> و <code>SET</code> منفصلين في limiter، ده الـ race اللي فوق.
+    </div>
+  </section>
+
+  <table>
+    <tr><th>Criterion</th><th>Strong signal</th><th>Weak signal</th></tr>
+    <tr><td>Boundary</td><td>Tests 999 and 1000 at exact milliseconds</td><td>Tests "after about a second"</td></tr>
+    <tr><td>Concurrency</td><td>Sees the await race and proves the fix with a concurrent test</td><td>Assumes single-threaded means no races</td></tr>
+    <tr><td>Trade-off</td><td>Log for accuracy, counter for memory, with numbers</td><td>Knows one algorithm</td></tr>
+    <tr><td>Distribution</td><td>Names atomic Redis for multi-instance</td><td>Doesn't mention more than one server</td></tr>
+  </table>
+  <div class="ar-note">صف صف: <b>الحد</b>: القوي بيختبر 999 و 1000 بالظبط، والضعيف بيختبر "بعد حوالي ثانية". <b>الـ concurrency</b>: القوي شايف الـ race بتاع الـ await وبيثبت الإصلاح بـ test متزامن، والضعيف فاكر إن thread واحد يعني مفيش races. <b>الـ trade-off</b>: القوي log للدقة و counter للذاكرة بأرقام، والضعيف عارف خوارزمية واحدة. <b>التوزيع</b>: القوي بيسمّي Redis ذري لتعدد الـ instances، والضعيف مش بيذكر أكتر من سيرفر.</div>
+
+  <div class="callout warn">
+    <b>Common mistake: "single-threaded means no race"</b>
+    Node has one thread, but every <code>await</code> is a point where another caller can run. Single-threaded removes data races; it doesn't remove logic races across an <code>await</code>.
+    <div class="ar-note">الغلطة الشائعة: "thread واحد يعني مفيش race". الـ Node عنده thread واحد، بس كل <code>await</code> هو نقطة يقدر فيها caller تاني يشتغل. الـ thread الواحد بيمنع data races، لكنه مش بيمنع logic races عبر <code>await</code>.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "How do you make this work across four servers?" → Move the check and the record into one atomic operation in a shared store: a Redis Lua script, or the store's native atomic commands. The race we just fixed with synchronous code reappears as soon as there's a network between the read and the write.
+    <div class="ar-note">"إزاي تخلي ده يشتغل على 4 سيرفرات؟" ← انقل الفحص والتسجيل لعملية ذرية واحدة في store مشترك: Lua script على Redis أو الأوامر الذرية بتاعة الـ store. الـ race اللي حليناه بالكود الـ sync بيرجع أول ما يبقى فيه شبكة بين الـ read والـ write.</div>
+  </div>
+
+  <!-- ===================== PART 7 ===================== -->
+  <h2 id="p7">Part 7 — Retry with backoff <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 7 — الـ retry مع backoff</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <div class="callout tradeoff">
+      <b>⏱ Timed prompt · 20 minutes</b>
+      Write <code>retry(operation, options)</code> for calls to a payment provider: exponential backoff with full jitter, a cap, and a maximum number of attempts. Retry only what's safe, stop on an <code>AbortSignal</code>, respect <code>Retry-After</code>. Inject the sleep and the random source. Test the exact waits.
+      <div class="ar-note">⏱ التمرين بالتوقيت: 20 دقيقة. اكتب <code>retry(operation, options)</code> لنداءات payment provider: exponential backoff مع full jitter، وسقف، وأقصى عدد محاولات. أعد المحاولة بس على اللي آمن، وقف عند <code>AbortSignal</code>، واحترم <code>Retry-After</code>. احقن الـ sleep ومصدر الـ random. اختبر أوقات الانتظار بالظبط.</div>
+    </div>
+    <p><b>Brute force first.</b> The same fixed delay for everyone, and every error retried, including a <code>400</code> that will fail forever. The damage isn't in the complexity, which is O(attempts) in both versions: it's that clients retry at the same instant. Claim: peak retries per tick equal the number of clients.</p>
+    <p><b>Final.</b> Exponential backoff with full jitter: wait a random time between 0 and <code>min(cap, base · 2^(attempt-1))</code>. With rand fixed at 0.5 and base 100, the waits are 50, then 100. The caller supplies <code>isRetryable</code>, because only the caller knows whether a retry is safe: a POST without an idempotency key isn't. Abort: check the signal before each attempt and pass it to the sleep. <code>Retry-After</code> is a floor, and I add jitter on top so a thousand clients told "come back in 2 seconds" don't all return at the same moment.</p>
+    <p>Background in <a href="../../08-Design-Patterns/lessons/22-retry-timeout-fallback.html">retry, timeout and fallback</a> and <a href="../../10-System-Design/lessons/23-timeouts-retries-storms.html">timeouts and retry storms</a>. Here, the point is the injected <code>sleep</code> and <code>random</code>: the whole test runs instantly, and every wait is exact.</p>
+    <p><b>The simulation.</b> 1,000 clients fail at t=0 and retry three times. Fixed delay and plain exponential both put all 1,000 retries in the same 10 ms tick. Full jitter's worst tick has about 155. Total retries are identical: what changes is the peak the failing service has to survive, and that's what decides whether it recovers.</p>
+  </section>
+
+<pre data-file="practical-coding/retry-brute.ts"><code class="language-typescript">import { setTimeout as delay } from "node:timers/promises";
+
+// الـ brute force: نفس الـ delay لكل الناس، وكل error بيتعاد حتى لو 400
+export async function retryFixed&lt;T&gt;(operation: () =&gt; Promise&lt;T&gt;, attempts: number, delayMs: number): Promise&lt;T&gt; {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (attempt === attempts) throw error;
+      await delay(delayMs);
+    }
+  }
+}</code></pre>
+<pre data-file="practical-coding/retry.ts"><code class="language-typescript">import { setTimeout as delay } from "node:timers/promises";
+
+export type RetryOptions = {
+  maxAttempts: number;
+  baseMs: number;
+  capMs: number;
+  // الـ caller هو اللي يقرر: الـ POST من غير idempotency key مش آمن يتعاد
+  isRetryable: (error: unknown) =&gt; boolean;
+  // الوقت اللي السيرفر طلبه، لو طلب
+  retryAfterMs?: (error: unknown) =&gt; number | undefined;
+  signal?: AbortSignal;
+  // دول متحقنين عشان الـ test يبقى لحظي ومحدد
+  sleep?: (ms: number, signal?: AbortSignal) =&gt; Promise&lt;unknown&gt;;
+  random?: () =&gt; number;
+};
+
+const defaultSleep = (ms: number, signal?: AbortSignal) =&gt; delay(ms, undefined, { signal });
+
+export async function retry&lt;T&gt;(operation: (attempt: number) =&gt; Promise&lt;T&gt;, options: RetryOptions): Promise&lt;T&gt; {
+  const { maxAttempts, baseMs, capMs, isRetryable, retryAfterMs, signal, sleep = defaultSleep, random = Math.random } = options;
+
+  for (let attempt = 1; ; attempt++) {
+    signal?.throwIfAborted();
+    try {
+      return await operation(attempt);
+    } catch (error) {
+      if (attempt &gt;= maxAttempts || !isRetryable(error) || signal?.aborted) throw error;
+      // الـ full jitter: أي رقم بين صفر والسقف، وده اللي بيفرّق الـ clients عن بعض
+      const ceiling = Math.min(capMs, baseMs * 2 ** (attempt - 1));
+      const jitter = Math.floor(random() * ceiling);
+      // الـ Retry-After حد أدنى، والـ jitter فوقه عشان متجيش كل الـ clients في نفس اللحظة
+      const hinted = retryAfterMs?.(error);
+      await sleep(hinted === undefined ? jitter : hinted + jitter, signal);
+    }
+  }
+}
+
+// الـ header بييجي إما عدد ثواني أو تاريخ HTTP
+export function parseRetryAfter(header: string | null, nowMs: number): number | undefined {
+  if (header === null) return undefined;
+  if (/^\d+$/.test(header.trim())) return Number(header.trim()) * 1000;
+  const at = Date.parse(header);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - nowMs);
+}</code></pre>
+<pre data-file="practical-coding/retry.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { parseRetryAfter, retry, type RetryOptions } from "./retry.ts";
+
+class HttpError extends Error {
+  status: number;
+  retryAfter?: number;
+  constructor(status: number, retryAfter?: number) {
+    super(`HTTP ${status}`);
+    this.status = status;
+    this.retryAfter = retryAfter;
+  }
+}
+
+const isRetryable = (error: unknown) =&gt; error instanceof HttpError &amp;&amp; [429, 503].includes(error.status);
+
+const setup = (overrides: Partial&lt;RetryOptions&gt; = {}) =&gt; {
+  const waits: number[] = [];
+  const options: RetryOptions = {
+    maxAttempts: 4,
+    baseMs: 100,
+    capMs: 1_000,
+    isRetryable,
+    random: () =&gt; 0.5,
+    sleep: async (ms) =&gt; { waits.push(ms); },
+    ...overrides,
+  };
+  return { waits, options };
+};
+
+test("fails twice then succeeds: waits are 50 and 100 with rand 0.5, base 100", async () =&gt; {
+  const { waits, options } = setup();
+  let calls = 0;
+  const result = await retry(async () =&gt; {
+    if (++calls &lt; 3) throw new HttpError(503);
+    return "paid";
+  }, options);
+  assert.equal(result, "paid");
+  assert.equal(calls, 3);
+  assert.deepEqual(waits, [50, 100]);
+});
+
+test("edge: the delay is capped", async () =&gt; {
+  const { waits, options } = setup({ baseMs: 800, capMs: 1_000, maxAttempts: 4 });
+  await assert.rejects(retry(async () =&gt; { throw new HttpError(503); }, options));
+  assert.deepEqual(waits, [400, 500, 500]);
+});
+
+test("edge: a non-retryable error fails on the first attempt", async () =&gt; {
+  const { waits, options } = setup();
+  let calls = 0;
+  await assert.rejects(retry(async () =&gt; { calls++; throw new HttpError(422); }, options), /HTTP 422/);
+  assert.equal(calls, 1);
+  assert.deepEqual(waits, []);
+});
+
+test("edge: Retry-After is a floor, with jitter on top", async () =&gt; {
+  const { waits, options } = setup({ retryAfterMs: (error) =&gt; (error as HttpError).retryAfter });
+  let calls = 0;
+  await retry(async () =&gt; {
+    if (++calls === 1) throw new HttpError(429, 2_000);
+    return "ok";
+  }, options);
+  assert.deepEqual(waits, [2_050]);
+});
+
+test("edge: gives up after maxAttempts with the last error", async () =&gt; {
+  const { options } = setup({ maxAttempts: 2 });
+  let calls = 0;
+  await assert.rejects(retry(async () =&gt; { calls++; throw new HttpError(503); }, options), /HTTP 503/);
+  assert.equal(calls, 2);
+});
+
+test("abort during the backoff stops immediately", async () =&gt; {
+  const controller = new AbortController();
+  let calls = 0;
+  await assert.rejects(
+    retry(async () =&gt; { calls++; throw new HttpError(503); }, {
+      ...setup().options,
+      signal: controller.signal,
+      sleep: async () =&gt; {
+        controller.abort(new Error("request cancelled"));
+        throw controller.signal.reason;
+      },
+    }),
+    /request cancelled/,
+  );
+  assert.equal(calls, 1);
+});
+
+test("an already aborted signal never calls the operation", async () =&gt; {
+  let calls = 0;
+  await assert.rejects(
+    retry(async () =&gt; { calls++; return 1; }, { ...setup().options, signal: AbortSignal.abort(new Error("gone")) }),
+    /gone/,
+  );
+  assert.equal(calls, 0);
+});
+
+test("parseRetryAfter: seconds, an HTTP date, and garbage", () =&gt; {
+  const now = Date.parse("2026-11-09T10:00:00Z");
+  assert.equal(parseRetryAfter("120", now), 120_000);
+  assert.equal(parseRetryAfter("Mon, 09 Nov 2026 10:00:30 GMT", now), 30_000);
+  assert.equal(parseRetryAfter("soon", now), undefined);
+  assert.equal(parseRetryAfter(null, now), undefined);
+});</code></pre>
+<pre><code class="language-plaintext">✔ fails twice then succeeds: waits are 50 and 100 with rand 0.5, base 100 (1.2542ms)
+✔ edge: the delay is capped (0.2929ms)
+✔ edge: a non-retryable error fails on the first attempt (0.2424ms)
+✔ edge: Retry-After is a floor, with jitter on top (0.1957ms)
+✔ edge: gives up after maxAttempts with the last error (0.1958ms)
+✔ abort during the backoff stops immediately (0.189ms)
+✔ an already aborted signal never calls the operation (0.1682ms)
+✔ parseRetryAfter: seconds, an HTTP date, and garbage (0.177ms)
+ℹ tests 8
+ℹ pass 8
+ℹ fail 0</code></pre>
+  <div class="ar-note">الـ 8 tests نجحوا: الأوقات 50 و 100، والسقف عند 500، و 422 مبيتعادش، و <code>Retry-After</code> 2 ثانية بيبقى 2,050، والوقوف بعد آخر محاولة، والـ abort أثناء الانتظار وقبل أي محاولة، و <code>parseRetryAfter</code> بالثواني وبالتاريخ وبالزبالة.</div>
+
+<details><summary>Measurement code · كود القياس</summary>
+<pre data-file="practical-coding/retry-measure.ts"><code class="language-typescript">// المحاكاة: كل الـ clients وقعوا في نفس اللحظة، وبنعدّ كام retry بيوصل في كل 10 ms
+const makeRandom = (seed: number) =&gt; () =&gt; {
+  seed = (seed + 0x6d2b79f5) | 0;
+  let t = Math.imul(seed ^ (seed &gt;&gt;&gt; 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+  return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+};
+
+const BASE_MS = 100;
+const CAP_MS = 2_000;
+const ATTEMPTS = 4;
+const TICK_MS = 10;
+
+type Delay = (attempt: number) =&gt; number;
+
+function simulate(clients: number, nextDelay: Delay): { total: number; peak: number; busyTicks: number } {
+  const perTick = new Map&lt;number, number&gt;();
+  let total = 0;
+  for (let client = 0; client &lt; clients; client++) {
+    let at = 0;
+    for (let attempt = 1; attempt &lt; ATTEMPTS; attempt++) {
+      at += nextDelay(attempt);
+      const tick = Math.floor(at / TICK_MS);
+      perTick.set(tick, (perTick.get(tick) ?? 0) + 1);
+      total++;
+    }
+  }
+  return { total, peak: Math.max(...perTick.values()), busyTicks: perTick.size };
+}
+
+const ceiling = (attempt: number) =&gt; Math.min(CAP_MS, BASE_MS * 2 ** (attempt - 1));
+const random = makeRandom(14);
+
+const strategies: [string, Delay][] = [
+  ["fixed 100 ms", () =&gt; 100],
+  ["exponential", (attempt) =&gt; ceiling(attempt)],
+  ["full jitter", (attempt) =&gt; Math.floor(random() * ceiling(attempt))],
+];
+
+for (const clients of [1_000, 2_000, 4_000]) {
+  for (const [name, delay] of strategies) {
+    const { total, peak, busyTicks } = simulate(clients, delay);
+    console.log(`${String(clients).padStart(5)} clients ${name.padEnd(13)} retries=${String(total).padStart(6)} peak per ${TICK_MS} ms=${String(peak).padStart(5)} busy ticks=${busyTicks}`);
+  }
+}</code></pre>
+</details>
+<pre><code class="language-plaintext"> 1000 clients fixed 100 ms  retries=  3000 peak per 10 ms= 1000 busy ticks=3
+ 1000 clients exponential   retries=  3000 peak per 10 ms= 1000 busy ticks=3
+ 1000 clients full jitter   retries=  3000 peak per 10 ms=  155 busy ticks=67
+ 2000 clients fixed 100 ms  retries=  6000 peak per 10 ms= 2000 busy ticks=3
+ 2000 clients exponential   retries=  6000 peak per 10 ms= 2000 busy ticks=3
+ 2000 clients full jitter   retries=  6000 peak per 10 ms=  303 busy ticks=69
+ 4000 clients fixed 100 ms  retries= 12000 peak per 10 ms= 4000 busy ticks=3
+ 4000 clients exponential   retries= 12000 peak per 10 ms= 4000 busy ticks=3
+ 4000 clients full jitter   retries= 12000 peak per 10 ms=  638 busy ticks=68</code></pre>
+  <div class="ar-note">لكل عدد clients: الـ retries نفس العدد بالظبط في الـ 3 طرق (3,000 لـ 1,000 client). الفرق في عمود الـ peak: الـ fixed والـ exponential بيحطوا كل الـ clients في نفس الـ 10 ms (الـ <code>busy ticks=3</code> معناها كل الزحمة في 3 لحظات بس)، والـ full jitter بينزّل الـ peak لـ 155 ويفرّشها على 67 tick. الـ RNG بـ seed ثابت فالأرقام بتتعاد.</div>
+
+<pre class="diagram">
+ retries per 10 ms tick (1,000 clients, base 100 ms)
+
+ no jitter:     |                 ####### 1000 ###
+                |                 #######
+                +----------------------------------> t
+                                  all at the same tick
+
+ full jitter:   |   ###  ##  ### ## ## ### 155 max
+                |  ##################################
+                +----------------------------------> t
+                  same total, spread out, no spike
+</pre>
+  <div class="ar-note">الرسمة فكرتها: من غير jitter كل الـ clients بيرجعوا في نفس اللحظة، فالـ service اللي لسه بيقوم بياخد موجة كاملة (1,000 في tick واحد). مع الـ full jitter نفس العدد بيتفرش على وقت أطول، وأعلى tick 155 بس، ودي الفرصة اللي بتخلي الـ service يقوم.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ brute force الأول.</b> نفس الـ delay للكل، وكل error بيتعاد، حتى <code>400</code> اللي هيفشل للأبد. الضرر مش في الـ complexity، دي O(المحاولات) في النسختين: الضرر إن الـ clients بيعيدوا في نفس اللحظة. الدعوى: الـ retries في أعلى tick بتساوي عدد الـ clients.</p>
+    <p><b>الحل النهائي.</b> exponential backoff مع full jitter: استنى وقت عشوائي بين 0 و <code>min(cap, base · 2^(attempt-1))</code>. مع rand ثابت 0.5 و base 100، الأوقات 50 وبعدها 100. الـ caller هو اللي بيدّي <code>isRetryable</code>، لأنه الوحيد اللي عارف الإعادة آمنة ولا لأ: POST من غير idempotency key مش آمن. الـ abort: افحص الـ signal قبل كل محاولة وابعته للـ sleep. الـ <code>Retry-After</code> حد أدنى، وأنا بزود jitter فوقه عشان ألف client اتقال لهم "ارجع بعد ثانيتين" ميرجعوش كلهم في نفس اللحظة.</p>
+    <p>الخلفية في <a href="../../08-Design-Patterns/lessons/22-retry-timeout-fallback.html">درس الـ retry والـ timeout والـ fallback</a> و<a href="../../10-System-Design/lessons/23-timeouts-retries-storms.html">درس الـ timeouts والـ retry storms</a>. والمهم هنا إن الـ <code>sleep</code> والـ <code>random</code> متحقنين: الـ test كله بيخلص فورًا وكل انتظار رقمه مظبوط.</p>
+    <p><b>المحاكاة.</b> 1,000 client وقعوا عند t=0 وبيعيدوا 3 مرات. الـ fixed delay والـ exponential العادي بيحطوا الـ 1,000 retry في نفس الـ tick بتاع 10 ms. أسوأ tick في الـ full jitter حوالي 155. مجموع الـ retries هو هو: اللي بيتغير هو الـ peak اللي الـ service الواقع لازم يستحمله، وده اللي بيحدد هيقوم ولا لأ.</p>
+    <p><b>الغلطة الشائعة:</b> تعيد على كل error من غير ما تميز: 422 هيفشل كل مرة، و POST من غير idempotency key ممكن يسحب من الكارت مرتين.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      أي call لـ Stripe أو provider خارجي: <code>retry(charge, { isRetryable, retryAfterMs })</code>، و <code>isRetryable</code> بترجع true لـ 429 و 503 بس، و <code>parseRetryAfter</code> بتقرا الـ header، مع <code>Idempotency-Key</code> ثابت لكل محاولة، والـ AbortSignal متوصل بالـ request عشان لو الـ client قفل، نوقف. وفي incident لما provider يرجع من العطل وعلى طول يقع تاني، دور على retries من غير jitter: دي الموجة اللي في الرسمة.
+    </div>
+  </section>
+
+  <table>
+    <tr><th>Criterion</th><th>Strong signal</th><th>Weak signal</th></tr>
+    <tr><td>Safety</td><td>Separates retryable from non-retryable, mentions idempotency</td><td>Retries every error</td></tr>
+    <tr><td>Backoff</td><td>Exponential, capped, full jitter, explains why</td><td>A fixed sleep, or exponential without jitter</td></tr>
+    <tr><td>Control</td><td>Abort stops the loop and the sleep</td><td>Keeps sleeping after the client left</td></tr>
+    <tr><td>Testability</td><td>Injected sleep and random, exact waits asserted</td><td>Real sleeps, or no timing test</td></tr>
+  </table>
+  <div class="ar-note">صف صف: <b>الأمان</b>: القوي بيفصل اللي ينفع يتعاد من اللي مينفعش وبيذكر الـ idempotency، والضعيف بيعيد كل error. <b>الـ backoff</b>: القوي exponential بسقف و full jitter وبيشرح ليه، والضعيف sleep ثابت أو exponential من غير jitter. <b>التحكم</b>: القوي الـ abort بيوقف الـ loop والـ sleep، والضعيف بيكمل نوم بعد ما الـ client مشي. <b>قابلية الاختبار</b>: القوي sleep و random متحقنين والأوقات متأكد منها بالظبط، والضعيف sleep حقيقي أو مفيش test للتوقيت.</div>
+
+  <div class="callout warn">
+    <b>Common mistake: no jitter</b>
+    Every client that failed together retries together, so the recovering service takes the full load at once, and fails again. The test passes and the outage doesn't end.
+    <div class="ar-note">الغلطة الشائعة: من غير jitter. كل الـ clients اللي وقعوا مع بعض بيعيدوا مع بعض، فالـ service اللي بيقوم بياخد الحمل كله مرة واحدة ويقع تاني. الـ test بيعدّي والـ outage مش بينتهي.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "When should you not retry?" → When it isn't safe: a non-idempotent write with no idempotency key. When it won't help: a 4xx that isn't 429. When you're out of budget: the total deadline has passed or the caller aborted. And when the whole system is overloaded, retries from many callers need a budget or they turn an outage into a storm.
+    <div class="ar-note">"إمتى متعملش retry؟" ← لما يكون مش آمن: write مش idempotent من غير idempotency key. ولما مش هيفيد: 4xx غير 429. ولما الميزانية تخلص: الـ deadline الكلي عدّى أو الـ caller عمل abort. ولما النظام كله overloaded، الـ retries من callers كتير محتاجة budget وإلا بتحوّل الـ outage لعاصفة.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>forEach</code> with async</b>
+<pre><code class="language-typescript">// الـ promises مش متشالة في حتة، والدالة بترجع قبل الشغل
+orders.forEach(async (order) =&gt; { await charge(order); });</code></pre></div>
+    <div class="good"><b>✅ <code>for...of</code>, or <code>Promise.all</code> with a limit</b>
+<pre><code class="language-typescript">// كل واحد متستني، وأي error بيوصل للـ caller
+for (const order of orders) await charge(order);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ ❌ بيخلص فورًا وصفر عمليات حصلت، والـ rejection بيبقى unhandled ويموّت الـ process. الـ ✅ بيستنى كل واحد والأخطاء بتطلع للـ caller. لو عايزهم مع بعض، <code>Promise.all</code> بحد أقصى زي الـ pool في الدرس اللي فات.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>.pipe</code> with no error flow</b>
+<pre><code class="language-typescript">// لو المصدر وقع، الوجهة بتفضل مفتوحة
+source.pipe(destination);</code></pre></div>
+    <div class="good"><b>✅ <code>pipeline</code></b>
+<pre><code class="language-typescript">// أي فشل بيقفل كل الـ streams ويرجع rejection
+await pipeline(source, destination);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ ❌: الـ run بيّن <code>destroyed = false</code> بعد ما المصدر وقع، يعني fd ضايع. الـ ✅: <code>destroyed = true</code> والـ error وصل للـ <code>await</code>.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>release</code> after the task</b>
+<pre><code class="language-typescript">// أول throw بيضيّع الـ permit للأبد
+await semaphore.acquire();
+await renderPdf(invoice);
+semaphore.release();</code></pre></div>
+    <div class="good"><b>✅ <code>withPermit</code>, release in <code>finally</code></b>
+<pre><code class="language-typescript">// الـ release مضمون مهما حصل جوه الـ task
+await semaphore.withPermit(() =&gt; renderPdf(invoice));</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ ❌: بعد 3 PDFs فاشلين الـ semaphore مليان permits ضايعة والنظام كله واقف. الـ ✅: الـ <code>finally</code> جوه <code>withPermit</code> بيرجع الـ permit في كل الحالات، و test الـ throw بيثبتها.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>await</code> between check and record</b>
+<pre><code class="language-typescript">// الـ await ده بيسيب callers تانيين يعدّوا نفس الفحص
+const used = await store.count(apiKey);
+if (used &gt;= limit) return false;
+await store.record(apiKey);</code></pre></div>
+    <div class="good"><b>✅ Synchronous, or atomic in the store</b>
+<pre><code class="language-typescript">// مفيش await بين الفحص والتسجيل، فمفيش interleaving
+if (log.length &gt;= limit) return false;
+log.push(now);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ ❌: 20 caller مع حد 5 طلعوا 20 عدّوا في الـ test. الـ ✅: 5 بس. ولو الـ store خارجي (Redis)، لازم عملية ذرية واحدة، لأن الـ read والـ write المنفصلين هما نفس الـ race على الشبكة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Exponential, no jitter</b>
+<pre><code class="language-typescript">// كل الـ clients بيرجعوا في نفس اللحظة
+await sleep(baseMs * 2 ** (attempt - 1));</code></pre></div>
+    <div class="good"><b>✅ Full jitter, capped</b>
+<pre><code class="language-typescript">// السقف بيتحسب الأول، والـ jitter بياخد أي رقم تحته
+const ceiling = Math.min(capMs, baseMs * 2 ** (attempt - 1));
+await sleep(Math.floor(random() * ceiling));</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ ❌: المحاكاة حطت 1,000 retry في نفس الـ 10 ms. الـ ✅: 155 في أسوأ tick لنفس الـ 3,000 retry، فالـ service عنده فرصة يقوم.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Two more predictions <span class="lvl lvl-1">🟢 easy</span></b>
+    Predict on paper, then run each as <code>.cjs</code> and <code>.mjs</code>: two <code>setImmediate</code>s with a promise inside the first, and an <code>async</code> function returning a value against <code>queueMicrotask</code>. 6 minutes.
+    <div class="ar-note">توقع على ورقة، وبعدين شغّل كل واحد كـ <code>.cjs</code> و <code>.mjs</code>: اتنين <code>setImmediate</code> جوه أولهم promise، ودالة <code>async</code> بترجّع قيمة قدام <code>queueMicrotask</code>. 6 دقايق.</div>
+<pre data-file="predict-7.mjs"><code class="language-javascript">// السؤال: الـ microtask بيتنفذ إمتى بين الـ immediates؟
+setImmediate(() =&gt; {
+  console.log("immediate-1");
+  Promise.resolve().then(() =&gt; console.log("promise"));
+});
+setImmediate(() =&gt; console.log("immediate-2"));</code></pre>
+<pre data-file="predict-8.mjs"><code class="language-javascript">// السؤال: return من async بيتقدّم على queueMicrotask ولا لأ؟
+async function loadInvoice() {
+  console.log("load: start");
+  return "inv_1";
+}
+loadInvoice().then((id) =&gt; console.log("then:", id));
+queueMicrotask(() =&gt; console.log("microtask"));
+console.log("sync");</code></pre>
+    <details><summary>Solution · الحل</summary>
+<pre><code class="language-plaintext">[ex-immediates]
+  cjs: immediate-1 &gt; promise &gt; immediate-2
+  mjs: immediate-1 &gt; promise &gt; immediate-2
+[ex-then-order]
+  cjs: load: start &gt; sync &gt; then: inv_1 &gt; microtask
+  mjs: load: start &gt; sync &gt; then: inv_1 &gt; microtask</code></pre>
+      <div class="ar-note">الأول: الـ microtasks بتتفضى بين الـ immediates، فالـ promise بيطلع قبل <code>immediate-2</code>. التاني: الـ async بيرجّع promise متحلل فالـ <code>then</code> بتتسجل في الـ queue قبل <code>queueMicrotask</code>، والترتيب هو: start ثم sync ثم then ثم microtask. والاتنين نفس الشيء في النوعين.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. <code>tryAcquire</code> <span class="lvl lvl-2">🟡 medium</span></b>
+    Add a non-blocking <code>tryAcquire(): boolean</code> to <code>Semaphore</code>. It must never jump ahead of a queued waiter, and you need a test proving that. 10 minutes.
+    <div class="ar-note">ضيف <code>tryAcquire(): boolean</code> من غير انتظار لـ <code>Semaphore</code>. لازم عمره ما يتقدم على waiter في الطابور، ومحتاج test يثبت ده. 10 دقايق.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="semaphore.ts"><code class="language-typescript">  // من غير انتظار: لو مفيش permit فاضي بنرجع false على طول
+  tryAcquire(): boolean {
+    if (this.permits === 0) return false;
+    this.permits--;
+    return true;
+  }</code></pre>
+      <div class="ar-note">مفيش محاولة خطف: الـ <code>release</code> بيسلّم الـ permit مباشرة لأول waiter ومش بيزوّد العداد، فالـ <code>permits</code> بتفضل 0. الـ test نجح: بعد الـ release، <code>tryAcquire()</code> رجّعت false والـ waiter اتخدم.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Cancel a blocked send <span class="lvl lvl-2">🟡 medium</span></b>
+    Give <code>Channel.send</code> an optional <code>AbortSignal</code>: a blocked sender can be cancelled, and its value is never delivered. Use the same lazy-cancel idea as the semaphore. 15 minutes.
+    <div class="ar-note">ضيف <code>AbortSignal</code> اختياري لـ <code>Channel.send</code>: الـ sender الواقف يقدر يتلغي وقيمته عمرها ما تتسلّم. استخدم نفس فكرة الإلغاء الكسول بتاعة الـ semaphore. 15 دقيقة.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="channel.ts"><code class="language-typescript">  // نفس فكرة الـ semaphore: المسح كسول، والـ sender الملغي بيتعدّى وقت الدور
+  private nextSender(): PendingSend&lt;T&gt; | undefined {
+    for (let sender = this.senders.shift(); sender; sender = this.senders.shift()) {
+      if (!sender.cancelled) return sender;
+    }
+    return undefined;
+  }
+
+  send(value: T, signal?: AbortSignal): Promise&lt;void&gt; {
+    if (signal?.aborted) return Promise.reject(signal.reason);
+    if (this.closed) return Promise.reject(new ChannelClosedError("send on a closed channel"));
+    const receiver = this.receivers.shift();
+    if (receiver) {
+      receiver({ value, done: false });
+      return Promise.resolve();
+    }
+    if (this.buffer.length &lt; this.capacity) {
+      this.buffer.push(value);
+      return Promise.resolve();
+    }
+    return new Promise&lt;void&gt;((resolve, reject) =&gt; {
+      const onAbort = () =&gt; {
+        pending.cancelled = true;
+        reject(signal?.reason);
+      };
+      const pending: PendingSend&lt;T&gt; = {
+        value,
+        cancelled: false,
+        reject,
+        resolve: () =&gt; {
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        },
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.senders.push(pending);
+    });
+  }</code></pre>
+      <div class="ar-note">الـ sender الملغي بيتعلّم <code>cancelled = true</code> وبيتعمل له reject، و <code>nextSender</code> بتعدّيه في الـ <code>receive</code> والـ <code>close</code>. الـ test: قيمة الـ sender الملغي عمرها ما طلعت من الـ receive، وأول قيمة بعده اتسلّمت عادي.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project: the real drill, on the clock <span class="lvl lvl-3">🔴 project</span></b>
+    Redo Parts 4 to 7 in <code>practical-coding/</code>: two sittings, two drills each, phone recording, no AI, no notes, this page closed. Part 1 again from memory on a new sitting, with snippets you write yourself. After each drill, log time, whether tests passed, and what you got stuck on. Then find one place in your side project or job codebase where one of these belongs (an unbounded queue, a <code>Promise.all</code> over a growing list, a retry without jitter) and replace it. Open the PR with the before/after numbers.
+    <div class="ar-note">أعد الأجزاء من 4 لـ 7 في <code>practical-coding/</code>: قعدتين، كل قعدة اتنين drills، والموبايل بيسجّل، من غير AI ومن غير notes والصفحة دي مقفولة. وفي قعدة تانية الجزء 1 من الذاكرة بـ snippets إنت كاتبها. بعد كل drill سجّل الوقت، والـ tests نجحت ولا لأ، واتزنقت فين. وبعدها دور على مكان واحد في مشروعك أو شغلك محتاج واحدة من دول (queue من غير حد، <code>Promise.all</code> على list بتكبر، retry من غير jitter) وبدّله، وافتح الـ PR بأرقام قبل وبعد.</div>
+    <details><summary>Hint · تلميح</summary>
+      Start where production already hurt you. A log line: <code>2026-11-15 | Semaphore | 26 min (budget 20) | tests: 4/6 | stuck: release in finally</code>.
+      <div class="ar-note">ابدأ بالمكان اللي production وجعك فيه فعلًا. سطر log: <code>2026-11-15 | Semaphore | 26 min (budget 20) | tests: 4/6 | stuck: release in finally</code>.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Output prediction: name the queues, walk them, ask CJS or ESM. CJS: tick before promise. ESM body: promise before tick.</li>
+    <li>Inside an I/O callback, <code>setImmediate</code> beats <code>setTimeout(0)</code> every time. From the main module, it isn't defined.</li>
+    <li>Streams: ignoring <code>write()</code> makes memory O(file). <code>pipeline</code> stays near <code>highWaterMark</code> and destroys all streams on error.</li>
+    <li>Async: never <code>forEach(async)</code>. Unhandled rejections exit with code 1. <code>return await</code> inside <code>try</code>. <code>Promise.all</code> doesn't cancel the rest.</li>
+    <li>Semaphore: count plus FIFO queue, hand off directly, release in <code>finally</code>, abort marks and skips.</li>
+    <li>Channel: buffer plus waiting senders and receivers. Close: buffer drains, senders error, receivers done.</li>
+    <li>Sliding log: pop expired from the front, amortized O(1). No <code>await</code> between check and record; across servers, one atomic operation.</li>
+    <li>Log against counter: exact and O(limit) per key, or 3 numbers and approximate.</li>
+    <li>Retry: full jitter, cap, retry only what's safe, abort, <code>Retry-After</code> as a floor plus jitter. Inject sleep and random.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>توقّع الـ output: سمّي الـ queues، وامشي عليها، واسأل CJS ولا ESM. الـ CJS: tick قبل promise. جسم الـ ESM: promise قبل tick.</li>
+      <li>جوه I/O callback، <code>setImmediate</code> بيكسب <code>setTimeout(0)</code> كل مرة. من الـ main module، مش متحدد.</li>
+      <li>الـ streams: تجاهل <code>write()</code> بيخلي الذاكرة O(الملف). الـ <code>pipeline</code> بيفضل قريب من <code>highWaterMark</code> وبيدمّر كل الـ streams عند الـ error.</li>
+      <li>الـ async: عمرك ما تعمل <code>forEach(async)</code>. الـ unhandled rejection بيخرج بـ code 1. <code>return await</code> جوه <code>try</code>. <code>Promise.all</code> مش بيلغي الباقي.</li>
+      <li>الـ semaphore: عداد وطابور FIFO، وتسليم مباشر، و release في <code>finally</code>، والـ abort بيعلّم وبيعدّي.</li>
+      <li>الـ channel: buffer و senders و receivers مستنيين. الـ close: الـ buffer بيخلص، والـ senders error، والـ receivers done.</li>
+      <li>الـ sliding log: شيل المنتهيين من الأول، amortized O(1). مفيش <code>await</code> بين الفحص والتسجيل؛ وعلى سيرفرات كتير عملية ذرية واحدة.</li>
+      <li>الـ log ضد الـ counter: دقيق و O(limit) لكل key، أو 3 أرقام وتقريبي.</li>
+      <li>الـ retry: full jitter، وسقف، وأعد بس على الآمن، و abort، و <code>Retry-After</code> حد أدنى وفوقه jitter. احقن الـ sleep والـ random.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 14 · 2.1 — Node-specific questions: event loop output prediction، streams، error handling، <code>async</code> pitfalls — كلها من قسم 04</label>
+    <label><input type="checkbox" data-key="r2"> 14 · 3.1 — Concurrency questions (Node): implement semaphore، producer/consumer، rate limiter بـ sliding window، retry with backoff — كلها بـ async/await صح</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://nodejs.org/en/learn/asynchronous-work/event-loop-timers-and-nexttick">Node.js: The event loop, timers and process.nextTick</a></li>
+    <li><a href="https://nodejs.org/en/learn/modules/backpressuring-in-streams">Node.js: Backpressuring in streams</a> and <a href="https://nodejs.org/api/stream.html">Stream API</a></li>
+    <li><a href="https://nodejs.org/api/process.html">Node.js docs: process and <code>unhandledRejection</code></a></li>
+    <li><a href="https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/">AWS Architecture Blog: Exponential Backoff and Jitter</a></li>
+    <li><a href="https://www.rfc-editor.org/rfc/rfc9110">RFC 9110: HTTP Semantics (Retry-After)</a></li>
+    <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal">MDN: AbortSignal</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <!-- ===== Prev / Next (use class="empty" on a span when there is no prev/next) ===== -->
+  <nav class="lesson-nav">
+    <a class="prev" href="./07-practical-coding-eight-utilities.html"><small>← Previous</small>07 · Practical Coding</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./09-debugging-code-review-lld-rounds.html"><small>Next →</small>09 · Debug, Review, LLD</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
