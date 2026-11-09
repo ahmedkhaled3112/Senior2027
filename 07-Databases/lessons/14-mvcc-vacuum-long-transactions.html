@@ -1,0 +1,2186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>MVCC, VACUUM &amp; Long Transactions — 07 Databases</title>
+<meta name="section" content="07-Databases">
+<meta name="level" content="🟡 → 🔴">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">07 · Databases</a></span>
+    <span>·</span>
+    <span>Lesson 14 / 43</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>MVCC, VACUUM &amp; Long Transactions</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 14 of 43 — 07 Databases</p>
+    <div class="meta">
+      <span class="chip">🟡 → 🔴 Intermediate to Advanced</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">PostgreSQL 18 · Node 22 · TypeScript 7</span>
+      <span class="chip">Prereq: lesson 13</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>07 · 2.4 — <b>MVCC في Postgres</b>: كل row له versions (xmin/xmax)، readers مش بيبلوكوا writers، وليه ده بيعمل dead tuples</li>
+        <li>07 · 2.4 — <code>VACUUM</code> و <code>autovacuum</code>: ليه مهم، bloat، <code>VACUUM FULL</code> (lock!)، transaction ID wraparound (كمفهوم)</li>
+        <li>07 · 2.4 — Long transactions وليه خطر (locks، bloat، replication)</li>
+        <li>07 · 3.1 — Vacuum tuning على الجداول الكبيرة، <code>autovacuum</code> per-table settings</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Row versions</a></li>
+      <li><a href="#p2">Part 2 — Dead tuples</a></li>
+      <li><a href="#p3">Part 3 — VACUUM</a></li>
+      <li><a href="#p4">Part 4 — autovacuum</a></li>
+      <li><a href="#p5">Part 5 — Wraparound</a></li>
+      <li><a href="#p6">Part 6 — Long transactions</a></li>
+      <li><a href="#p7">Part 7 — Tuning on big tables</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Postgres never updates a row in place, and that one design choice explains a whole family of production incidents: tables that keep growing with the same row count, queries that slow down for no visible reason, a forgotten <code>BEGIN</code> in a dashboard tab that stalls cleanup for the whole database, and the rare, famous outage where the database refuses all writes to protect itself from transaction ID wraparound. Sentry and Mailchimp both published that last one. This lesson shows the row versions directly in the page, then what cleans them, what stops the cleaning, and how to set it up on a table that's too big for the defaults. "What is MVCC and why does it need VACUUM?" is also exit test question 5 of this section.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>Postgres عمره ما بيعدّل row في مكانه، والقرار ده لوحده بيفسر عيلة كاملة من مشاكل الـ production: جداول بتكبر وعدد الصفوف زي ما هو، و queries بتبطأ من غير سبب باين، و<code>BEGIN</code> منسية في tab بتاع dashboard بتوقف التنضيف على الـ database كلها، و الـ outage النادر والمشهور لما الـ database ترفض كل الكتابة عشان تحمي نفسها من transaction ID wraparound. Sentry و Mailchimp الاتنين نشروا الأخيرة دي. الدرس ده بيوريك نسخ الـ row بعينك جوه الـ page، وبعدين مين بينضفها، وإيه اللي بيوقف التنضيف، وإزاي تظبطه على جدول أكبر من الـ defaults. و"إيه هو MVCC وليه بيحتاج VACUUM؟" هو كمان سؤال 5 في اختبار الخروج بتاع القسم.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Row versions <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — نسخ الـ row</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>MVCC</b>, Multi-Version Concurrency Control, means an <code>UPDATE</code> doesn't change a row. It writes a new <em>version</em> of the row, a tuple, and marks the old one as ended. Every tuple carries hidden columns you can select by name: <code>xmin</code>, the ID of the transaction that created it; <code>xmax</code>, the ID of the transaction that deleted or replaced it (0 if none); and <code>ctid</code>, its physical address as (page, item). In the first tables below, updating order 1 moves it from <code>(0,1)</code> to <code>(0,3)</code>, with a new <code>xmin</code>. The <code>pageinspect</code> extension reads the raw page, and the old version is still there, with <code>t_xmax</code> set and <code>t_ctid</code> pointing at its replacement.</p>
+    <p><b>Snapshots decide what you see.</b> A snapshot from <a href="./13-isolation-anomalies-retries.html">lesson 13</a> is really a list: which transactions had finished when it was taken. A version is visible to you if its creator committed before your snapshot and its deleter didn't. That's why <b>readers don't block writers</b>: a reader takes no lock on the row, it just picks the version its snapshot allows. In the run below, another session reads order 2 during an uncommitted update, isn't blocked, gets <code>pending</code>, and sees <code>xmax = 754</code> on that version, which means someone is replacing it right now. The writer sees its own new version in another <code>ctid</code>. The printed snapshot <code>754:754:</code> reads as xmin:xmax:in-progress, and any ID at or above its xmax is treated as not finished, which covers the writer's 754.</p>
+    <p><b>ROLLBACK undoes nothing.</b> The aborted version stays in the page, and the old version keeps its <code>xmax = 754</code>. Readers ignore both because the commit log says 754 aborted (<code>pg_xact_status</code>). So a rollback is instant, and it leaves garbage for later. InnoDB makes the opposite choice: it updates in place and moves old values to an undo log, which <a href="./29-pgvector-timescale-graph-mysql.html">lesson 29</a> contrasts. Every script here uses <code>labUrl()</code> from <a href="./13-isolation-anomalies-retries.html">lesson 13</a>, Part 1, so it refuses to run on anything but a throwaway database with its own port.</p>
+  </section>
+
+<pre class="diagram">
+  page 0 of table orders
+  ┌────────────────────────────────────────────────────────┐
+  │ item 1  xmin=752  xmax=753  ctid→(0,3)  'pending'  old │──┐
+  │ item 2  xmin=752  xmax=0    ctid→(0,2)  'pending'      │  │
+  │ item 3  xmin=753  xmax=0    ctid→(0,3)  'paid'     new │◀─┘
+  └────────────────────────────────────────────────────────┘
+
+  snapshot taken before 753 committed  → reads item 1
+  snapshot taken after  753 committed  → reads item 3
+  once no snapshot can need item 1     → it is a dead tuple
+</pre>
+  <div class="ar-note">الرسمة دي الـ page صفر من الجدول. item 1 هي النسخة القديمة من order 1: اتعملت في transaction رقم 752، وخلصت في 753، وبتشاور على النسخة الجديدة. item 3 هي النسخة الجديدة. item 2 هو order 2 ومتغيرش. أي snapshot اتاخدت قبل commit بتاع 753 بتقرا item 1، وأي snapshot بعده بتقرا item 3. ولما مفيش snapshot تقدر تحتاج item 1 خلاص، تبقى dead tuple.</div>
+
+<pre data-file="src/row-versions.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const client = new pg.Client({ connectionString: labUrl() });
+await client.connect();
+const other = new pg.Client({ connectionString: labUrl() });
+await other.connect();
+
+const print = (label: string, rows: unknown[]) =&gt; {
+  console.log(`\n-- ${label}`);
+  console.table(rows);
+};
+
+await client.query(`
+  CREATE EXTENSION IF NOT EXISTS pageinspect;
+  DROP TABLE IF EXISTS orders;
+  CREATE TABLE orders (id int PRIMARY KEY, status text NOT NULL);
+  INSERT INTO orders VALUES (1, 'pending'), (2, 'pending');
+`);
+
+// الأعمدة المخفية موجودة في كل جدول، بس لازم تطلبها بالاسم
+const versions = () =&gt; client.query("SELECT ctid, xmin, xmax, id, status FROM orders ORDER BY id");
+// الـ page نفسها: كل الـ tuples، حتى اللي الـ SELECT العادي مش شايفها
+const page = () =&gt; client.query(`
+  SELECT lp, lp_flags, t_xmin, t_xmax, t_ctid
+  FROM heap_page_items(get_raw_page('orders', 0))`);
+
+print("after INSERT", (await versions()).rows);
+
+await client.query("UPDATE orders SET status = 'paid' WHERE id = 1");
+print("after UPDATE of id 1: a new tuple with a new ctid and xmin", (await versions()).rows);
+print("the page still holds the old version", (await page()).rows);
+
+// قراءة وكتابة في نفس اللحظة: الـ writer لسه معملش COMMIT
+await client.query("BEGIN");
+const xid = (await client.query("SELECT pg_current_xact_id()::text AS xid")).rows[0].xid;
+await client.query("UPDATE orders SET status = 'shipped' WHERE id = 2");
+console.log(`\nwriter xid=${xid}, not committed yet`);
+
+const t0 = performance.now();
+const seen = await other.query("SELECT ctid, xmin, xmax, id, status FROM orders WHERE id = 2");
+const ms = performance.now() - t0;
+print("another session reads id 2 during the uncommitted UPDATE", seen.rows);
+console.log(`reader was not blocked: ≈${ms.toFixed(1)} ms`);
+print("the writer's own view", (await client.query("SELECT ctid, xmin, xmax, id, status FROM orders WHERE id = 2")).rows);
+
+// الـ snapshot: الـ xids اللي لسه شغالة، والـ writer واحد منهم
+const snap = await other.query("SELECT pg_current_snapshot()::text AS snapshot");
+console.log("other session's snapshot (xmin:xmax:in-progress):", snap.rows[0].snapshot);
+
+await client.query("ROLLBACK");
+print("after ROLLBACK: nothing is undone in place, xmax is just ignored", (await versions()).rows);
+print("the page now, with the aborted version still there", (await page()).rows);
+console.log("status of the rolled back xid:", (await client.query("SELECT pg_xact_status($1::xid8) AS s", [xid])).rows[0].s);
+
+await client.end();
+await other.end();
+</code></pre>
+<pre><code class="language-plaintext">-- after INSERT
+┌─────────┬─────────┬───────┬──────┬────┬───────────┐
+│ (index) │ ctid    │ xmin  │ xmax │ id │ status    │
+├─────────┼─────────┼───────┼──────┼────┼───────────┤
+│ 0       │ '(0,1)' │ '752' │ '0'  │ 1  │ 'pending' │
+│ 1       │ '(0,2)' │ '752' │ '0'  │ 2  │ 'pending' │
+└─────────┴─────────┴───────┴──────┴────┴───────────┘
+
+-- after UPDATE of id 1: a new tuple with a new ctid and xmin
+┌─────────┬─────────┬───────┬──────┬────┬───────────┐
+│ (index) │ ctid    │ xmin  │ xmax │ id │ status    │
+├─────────┼─────────┼───────┼──────┼────┼───────────┤
+│ 0       │ '(0,3)' │ '753' │ '0'  │ 1  │ 'paid'    │
+│ 1       │ '(0,2)' │ '752' │ '0'  │ 2  │ 'pending' │
+└─────────┴─────────┴───────┴──────┴────┴───────────┘
+
+-- the page still holds the old version
+┌─────────┬────┬──────────┬────────┬────────┬─────────┐
+│ (index) │ lp │ lp_flags │ t_xmin │ t_xmax │ t_ctid  │
+├─────────┼────┼──────────┼────────┼────────┼─────────┤
+│ 0       │ 1  │ 1        │ '752'  │ '753'  │ '(0,3)' │
+│ 1       │ 2  │ 1        │ '752'  │ '0'    │ '(0,2)' │
+│ 2       │ 3  │ 1        │ '753'  │ '0'    │ '(0,3)' │
+└─────────┴────┴──────────┴────────┴────────┴─────────┘
+
+writer xid=754, not committed yet
+
+-- another session reads id 2 during the uncommitted UPDATE
+┌─────────┬─────────┬───────┬───────┬────┬───────────┐
+│ (index) │ ctid    │ xmin  │ xmax  │ id │ status    │
+├─────────┼─────────┼───────┼───────┼────┼───────────┤
+│ 0       │ '(0,2)' │ '752' │ '754' │ 2  │ 'pending' │
+└─────────┴─────────┴───────┴───────┴────┴───────────┘
+reader was not blocked: ≈2.1 ms
+
+-- the writer's own view
+┌─────────┬─────────┬───────┬──────┬────┬───────────┐
+│ (index) │ ctid    │ xmin  │ xmax │ id │ status    │
+├─────────┼─────────┼───────┼──────┼────┼───────────┤
+│ 0       │ '(0,4)' │ '754' │ '0'  │ 2  │ 'shipped' │
+└─────────┴─────────┴───────┴──────┴────┴───────────┘
+other session's snapshot (xmin:xmax:in-progress): 754:754:
+
+-- after ROLLBACK: nothing is undone in place, xmax is just ignored
+┌─────────┬─────────┬───────┬───────┬────┬───────────┐
+│ (index) │ ctid    │ xmin  │ xmax  │ id │ status    │
+├─────────┼─────────┼───────┼───────┼────┼───────────┤
+│ 0       │ '(0,3)' │ '753' │ '0'   │ 1  │ 'paid'    │
+│ 1       │ '(0,2)' │ '752' │ '754' │ 2  │ 'pending' │
+└─────────┴─────────┴───────┴───────┴────┴───────────┘
+
+-- the page now, with the aborted version still there
+┌─────────┬────┬──────────┬────────┬────────┬─────────┐
+│ (index) │ lp │ lp_flags │ t_xmin │ t_xmax │ t_ctid  │
+├─────────┼────┼──────────┼────────┼────────┼─────────┤
+│ 0       │ 1  │ 1        │ '752'  │ '753'  │ '(0,3)' │
+│ 1       │ 2  │ 1        │ '752'  │ '754'  │ '(0,4)' │
+│ 2       │ 3  │ 1        │ '753'  │ '0'    │ '(0,3)' │
+│ 3       │ 4  │ 1        │ '754'  │ '0'    │ '(0,4)' │
+└─────────┴────┴──────────┴────────┴────────┴─────────┘
+status of the rolled back xid: aborted
+</code></pre>
+  <div class="ar-note">بالترتيب: بعد الـ INSERT الصفين في <code>(0,1)</code> و<code>(0,2)</code> بنفس الـ <code>xmin</code>. بعد الـ UPDATE، order 1 بقى في <code>(0,3)</code> بـ <code>xmin</code> جديد. الـ <code>heap_page_items</code> بتوري 3 tuples: القديمة لسه موجودة، و<code>t_xmax</code> عليها رقم الـ transaction، و<code>t_ctid</code> بيشاور على الجديدة. وبعدين writer مفتوح برقم xid معين: الـ session التاني قرا في ≈2 مللي ثانية من غير ما يقف، وشاف النسخة القديمة و<code>xmax</code> عليها رقم الـ writer، والـ writer نفسه شايف النسخة الجديدة. بعد الـ ROLLBACK مفيش حاجة اتشالت: الـ page فيها 4 tuples، والنسخة القديمة لسه عليها <code>xmax</code>، بس <code>pg_xact_status</code> بيقول <code>aborted</code> فالقراء بيتجاهلوه.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>MVCC</b> يعني Multi-Version Concurrency Control، ومعناها إن الـ <code>UPDATE</code> مبيغيرش الـ row. بيكتب <em>نسخة</em> جديدة منه اسمها tuple، وبيعلّم على القديمة إنها خلصت. كل tuple فيها أعمدة مخفية تقدر تطلبها بالاسم: <code>xmin</code> رقم الـ transaction اللي عملتها، و<code>xmax</code> رقم الـ transaction اللي مسحتها أو استبدلتها (صفر لو مفيش)، و<code>ctid</code> عنوانها الفعلي (page، item). في أول جدولين، تحديث order 1 نقله من <code>(0,1)</code> لـ <code>(0,3)</code> بـ <code>xmin</code> جديد. والـ extension اسمه <code>pageinspect</code> بيقرا الـ page الخام، والنسخة القديمة لسه موجودة، و<code>t_xmax</code> عليها رقم، و<code>t_ctid</code> بيشاور على البديلة.</p>
+    <p><b>الـ snapshots هي اللي بتقرر إنت تشوف إيه.</b> الـ snapshot من <a href="./13-isolation-anomalies-retries.html">درس 13</a> هي في الحقيقة قايمة: أنهي transactions كانت خلصت وقت ما اتاخدت. النسخة بتبقى ظاهرة ليك لو اللي عملها عمل commit قبل الـ snapshot بتاعتك، واللي مسحها لأ. وعشان كده <b>الـ readers مش بيوقفوا الـ writers</b>: الـ reader مبياخدش lock على الـ row، هو بس بيختار النسخة اللي الـ snapshot بتسمح بيها. في التشغيل فوق، session تاني قرا order 2 أثناء update لسه معملش commit، ومقفش، ورجعله <code>pending</code>، وشاف <code>xmax = 754</code> على النسخة دي، يعني حد بيستبدلها دلوقتي. والـ writer شايف نسخته الجديدة في <code>ctid</code> تاني. والـ snapshot المطبوعة <code>754:754:</code> بتتقري xmin:xmax:in-progress، وأي رقم عند الـ xmax بتاعها أو أكبر بيتعامل كأنه مخلصش، وده بيشمل 754 بتاع الـ writer.</p>
+    <p><b>الـ ROLLBACK مبيرجّعش حاجة.</b> النسخة الفاشلة بتفضل في الـ page، والقديمة بيفضل عليها <code>xmax = 754</code>. والقراء بيتجاهلوا الاتنين لأن الـ commit log بيقول إن 754 عملت abort (<code>pg_xact_status</code>). فالـ rollback فوري، وبيسيب زبالة لبعدين. و InnoDB بياخد الاختيار العكسي: بيعدّل في المكان وبينقل القيم القديمة لـ undo log، و<a href="./29-pgvector-timescale-graph-mysql.html">درس 29</a> بيقارن ده. وكل سكريبت هنا بيستخدم <code>labUrl()</code> من <a href="./13-isolation-anomalies-retries.html">درس 13</a>، الجزء 1، فبيرفض يشتغل على أي حاجة غير database مؤقتة على port خاص بيها.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      تقرير كبير شغال ساعة و<code>POST /orders</code> شغال عادي في نفس الوقت: ده MVCC، مش حظ. ولما تيجي تعمل debug لـ row غريب، <code>SELECT ctid, xmin, xmax, * FROM orders WHERE id = 1</code> بيقولك كتير: <code>xmax</code> مش صفر على نسخة شايفها معناها إن فيه transaction بتعدل فيه أو عملت rollback، و<code>ctid</code> بيتغير مع كل update، فمتستخدمهوش كـ id أبدًا. والـ <code>pageinspect</code> محتاج superuser، فاستخدمه في lab أو نسخة، مش على الـ production بتاع العميل.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question (exit test 5)</b>
+    "What is MVCC and why does it need VACUUM?" → Writers create new row versions rather than overwriting, each tagged with xmin and xmax, and each snapshot sees the versions valid for it, so readers and writers don't block each other. The cost is that old versions stay in the table after no snapshot can see them. VACUUM removes those dead tuples so the space can be reused, updates the visibility map, and freezes old rows so transaction IDs can wrap safely.
+    <div class="ar-note">"إيه هو MVCC وليه بيحتاج VACUUM؟" ← الـ writers بيعملوا نسخ جديدة بدل ما يكتبوا فوق القديم، وكل نسخة عليها xmin و xmax، وكل snapshot بتشوف النسخ الصالحة ليها، فالـ readers والـ writers مبيوقفوش بعض. التمن إن النسخ القديمة بتفضل في الجدول حتى بعد ما مفيش snapshot تقدر تشوفها. الـ VACUUM بيشيل الـ dead tuples دي عشان المساحة تتستخدم تاني، وبيحدّث الـ visibility map، وبيعمل freeze للصفوف القديمة عشان أرقام الـ transactions تقدر تلف بأمان.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Dead tuples <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ dead tuples</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A version that no snapshot can see anymore is a <b>dead tuple</b>. It takes the same space as a live one until VACUUM deals with it, and sequential scans still read past it. The numbers below come from a table with 1 million orders and autovacuum disabled so you can watch. One <code>UPDATE</code> of every row is really a million inserts: the heap goes from 73 MB to 146 MB and the indexes from 28 MB to 57 MB, because each new version needs index entries too. <code>n_dead_tup</code> in <code>pg_stat_user_tables</code> says 1,000,000 and <code>pgstattuple</code>'s <code>dead_tuple_percent</code> says 47.02%. After three updates the heap is 292 MB, four times the data. A plain VACUUM brings dead tuples to 0, and the file stays at 292 MB.</p>
+    <p>Two details bite people. A <b>no-op update</b> costs the same: <code>SET currency = currency</code> writes a million new versions, so add a filter like <code>WHERE currency IS DISTINCT FROM 'EGP'</code>, which rewrote 0 rows. And the <b>nightly full update</b> settles at roughly double the size if VACUUM runs between rounds, as the last lines show, because each night reuses the space the previous night freed.</p>
+    <p>That's why "UPDATE everything nightly" hurts. It costs far more than the rows suggest: all those versions go to the WAL and to every replica, indexes grow, and the cache fills with garbage. HOT updates reduce the index work when no indexed column changes and the page has room. Here <code>n_tup_hot_upd</code> stays near zero, 211 of 4,000,000 updates by the end, because the pages were packed full. <a href="./11-index-types-and-costs.html">Lesson 11</a> has HOT and <code>fillfactor</code> with measurements.</p>
+  </section>
+<pre data-file="src/dead-tuples.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const client = new pg.Client({ connectionString: labUrl() });
+await client.connect();
+
+await client.query("CREATE EXTENSION IF NOT EXISTS pgstattuple");
+await client.query(`
+  DROP TABLE IF EXISTS orders, orders_nightly;
+  CREATE TABLE orders (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id int NOT NULL,
+    status text NOT NULL,
+    total_cents bigint NOT NULL,
+    currency char(3) NOT NULL,
+    created_at timestamptz NOT NULL
+  );
+  INSERT INTO orders (tenant_id, status, total_cents, currency, created_at)
+  SELECT 1 + i % 200, 'delivered', 100 + i % 500000, 'EGP', timestamptz '2025-01-01' + i * interval '30 seconds'
+  FROM generate_series(1, 1000000) i;
+`);
+// بنقفل الـ autovacuum على الجدول ده بس عشان نشوف الأرقام قبل ما يتدخل
+await client.query("ALTER TABLE orders SET (autovacuum_enabled = false)");
+await client.query("CREATE INDEX orders_status_idx ON orders (status)");
+
+async function report(label: string) {
+  // الـ stats بتتبعت بتأخير: نضمن إن الـ session ده بعت عدّاداته
+  await client.query("SELECT pg_stat_force_next_flush()");
+  await new Promise((r) =&gt; setTimeout(r, 300));
+  const { rows } = await client.query(`
+    SELECT pg_size_pretty(pg_relation_size('orders')) AS heap,
+           pg_size_pretty(pg_indexes_size('orders')) AS indexes,
+           s.n_live_tup, s.n_dead_tup, s.n_tup_upd, s.n_tup_hot_upd,
+           (pgstattuple('orders')).dead_tuple_percent AS dead_pct
+    FROM pg_stat_user_tables s WHERE s.relname = 'orders'`);
+  console.log(label.padEnd(30), JSON.stringify(rows[0]));
+}
+
+await report("fresh, 1M rows");
+
+// تحديث كل الصفوف: تحت الغطا ده مليون INSERT لنسخة جديدة
+await client.query("UPDATE orders SET total_cents = total_cents + 1");
+await report("after UPDATE of every row");
+
+await client.query("UPDATE orders SET total_cents = total_cents + 1");
+await report("after a second UPDATE");
+
+await client.query("UPDATE orders SET total_cents = total_cents + 1");
+await report("after a third UPDATE");
+
+await client.query("VACUUM orders");
+await report("after plain VACUUM");
+
+// حتى لو القيمة متغيرتش، الـ UPDATE بيكتب نسخة جديدة برضه
+const noop = await client.query("UPDATE orders SET currency = currency");
+await report(`no-op UPDATE (${noop.rowCount} rows)`);
+await client.query("VACUUM orders");
+
+// الحل: اكتب بس الصفوف اللي هتتغير فعلًا
+const smart = await client.query("UPDATE orders SET currency = 'EGP' WHERE currency IS DISTINCT FROM 'EGP'");
+console.log("with IS DISTINCT FROM, rows rewritten:", smart.rowCount);
+
+// الـ UPDATE كل ليلة مع VACUUM بعده: الحجم بيثبت عند الضعف تقريبًا
+await client.query(`
+  CREATE TABLE orders_nightly (LIKE orders INCLUDING ALL) WITH (autovacuum_enabled = false);
+  INSERT INTO orders_nightly OVERRIDING SYSTEM VALUE SELECT * FROM orders;
+`);
+const nightlySize = async () =&gt; (await client.query("SELECT pg_size_pretty(pg_relation_size('orders_nightly')) AS s")).rows[0].s;
+console.log("orders_nightly fresh:", await nightlySize());
+for (let night = 1; night &lt;= 3; night++) {
+  await client.query("UPDATE orders_nightly SET total_cents = total_cents + 1");
+  await client.query("VACUUM orders_nightly");
+  console.log(`night ${night}, UPDATE then VACUUM:`, await nightlySize());
+}
+
+await client.end();
+</code></pre>
+<pre><code class="language-plaintext">fresh, 1M rows                 {"heap":"73 MB","indexes":"28 MB","n_live_tup":"1000000","n_dead_tup":"0","n_tup_upd":"0","n_tup_hot_upd":"0","dead_pct":0}
+after UPDATE of every row      {"heap":"146 MB","indexes":"57 MB","n_live_tup":"1000000","n_dead_tup":"1000000","n_tup_upd":"1000000","n_tup_hot_upd":"0","dead_pct":47.02}
+after a second UPDATE          {"heap":"219 MB","indexes":"64 MB","n_live_tup":"1000000","n_dead_tup":"2000000","n_tup_upd":"2000000","n_tup_hot_upd":"22","dead_pct":31.35}
+after a third UPDATE           {"heap":"292 MB","indexes":"77 MB","n_live_tup":"1000000","n_dead_tup":"3000000","n_tup_upd":"3000000","n_tup_hot_upd":"88","dead_pct":23.51}
+after plain VACUUM             {"heap":"292 MB","indexes":"77 MB","n_live_tup":"1000000","n_dead_tup":"0","n_tup_upd":"3000000","n_tup_hot_upd":"88","dead_pct":0}
+no-op UPDATE (1000000 rows)    {"heap":"292 MB","indexes":"89 MB","n_live_tup":"1000000","n_dead_tup":"1000000","n_tup_upd":"4000000","n_tup_hot_upd":"211","dead_pct":23.51}
+with IS DISTINCT FROM, rows rewritten: 0
+orders_nightly fresh: 73 MB
+night 1, UPDATE then VACUUM: 146 MB
+night 2, UPDATE then VACUUM: 146 MB
+night 3, UPDATE then VACUUM: 146 MB
+</code></pre>
+  <div class="ar-note">كل سطر: الحجم، وعدد الـ live والـ dead، وعدد الـ updates، وعدد الـ HOT منهم، ونسبة الـ dead. الجدول بيكبر مع كل update كامل، والـ VACUUM صفّر الـ dead من غير ما الحجم يتغير. الـ no-op update عمل مليون dead tuple برضه، بس الـ heap متغيرش لأنه استخدم المساحة اللي الـ VACUUM حررها. و<code>IS DISTINCT FROM</code> كتب صفر صفوف. وآخر 4 سطور: تحديث كامل كل ليلة مع VACUUM بعده، والحجم بيثبت.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>النسخة اللي مفيش snapshot تقدر تشوفها خلاص اسمها <b>dead tuple</b>. بتاخد نفس مساحة النسخة الحية لحد ما الـ VACUUM يتعامل معاها، والـ sequential scans بتعدي عليها برضه. الأرقام فوق من جدول فيه مليون order والـ autovacuum مقفول عشان تتفرج. <code>UPDATE</code> واحد لكل الصفوف هو في الحقيقة مليون insert: الـ heap بيروح من 73 MB لـ 146 MB والـ indexes من 28 MB لـ 57 MB، لأن كل نسخة جديدة محتاجة index entries كمان. <code>n_dead_tup</code> في <code>pg_stat_user_tables</code> بيقول 1,000,000، و<code>dead_tuple_percent</code> من <code>pgstattuple</code> بيقول 47.02%. وبعد 3 updates الـ heap بقى 292 MB، يعني 4 أضعاف الـ data. و VACUUM عادي بيصفّر الـ dead tuples، والملف بيفضل 292 MB.</p>
+    <p>فيه حاجتين بيوقعوا الناس. الـ <b>no-op update</b> بيكلف نفس التمن: <code>SET currency = currency</code> بيكتب مليون نسخة جديدة، فضيف فلتر زي <code>WHERE currency IS DISTINCT FROM 'EGP'</code>، وده كتب 0 صفوف. والـ <b>تحديث الكامل كل ليلة</b> بيثبت عند ضعف الحجم تقريبًا لو الـ VACUUM شغال بين الجولات، زي ما آخر سطور بتوري، لأن كل ليلة بتستخدم المساحة اللي الليلة اللي قبلها حررتها.</p>
+    <p>وعشان كده "UPDATE كل حاجة كل ليلة" بيوجع. بيكلف أكتر بكتير مما عدد الصفوف بيوحي: كل النسخ دي بتروح للـ WAL ولكل replica، والـ indexes بتكبر، والـ cache بيتملي زبالة. والـ HOT updates بتقلل شغل الـ index لما مفيش عمود عليه index بيتغير والـ page فيها مكان. هنا <code>n_tup_hot_upd</code> بيفضل قريب من الصفر، 211 من 4 مليون update في الآخر، لأن الـ pages كانت مليانة. و<a href="./11-index-types-and-costs.html">درس 11</a> فيه الـ HOT و<code>fillfactor</code> بقياسات.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      cron job كل ليلة بيعمل <code>UPDATE products SET is_available = compute(...)</code> على كل الصفوف، و99% منها مش بتتغير. الـ replica بدأ يتأخر كل ليلة الساعة 2، وسعر الـ storage بيزيد. الحل سطر واحد: <code>WHERE is_available IS DISTINCT FROM compute(...)</code>. ولو التغيير حقيقي وكبير، قسّمه batches بـ <code>id</code> وخلي بين كل batch و batch فرصة للـ vacuum. وبرضه: <code>order.save()</code> في ORM بيعمل update لكل الأعمدة غالبًا، حتى لو مفيش حاجة اتغيرت، فدور على ده في الـ code review.
+    </div>
+  </section>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — VACUUM <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ VACUUM</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Plain <code>VACUUM</code> does four jobs, and <code>VACUUM (VERBOSE)</code> reports all of them. It removes dead tuples and their index entries, records the free space for reuse, sets the <b>visibility map</b>, and freezes old rows (Part 5). It takes only <code>ShareUpdateExclusiveLock</code>, so reads and writes continue. The table below reads a real report line by line.</p>
+    <p><b>Space is freed for reuse, not returned to the OS.</b> In the run, updating half of a 500k table takes it from 33 MB to 49 MB. VACUUM leaves it at 49 MB, and running the same update again stays at 49 MB, because new versions land in the freed space. The exception is the <em>end of the table</em>: empty pages at the tail get truncated. Delete the last half and VACUUM brings 33 MB down to 16 MB. Delete the first half and it stays 33 MB. Keep one row at the very end and it also stays 33 MB, since one row is enough to pin the file's length.</p>
+    <p><b>The visibility map</b> marks pages where every tuple is visible to everyone. VACUUM skips those next time, and an <a href="./08-explain-scans-nodes.html">index-only scan</a> can trust the index without visiting the heap. That's why the same <code>count(id)</code> goes from <code>Heap Fetches: 150000</code> and 101,383 buffers to <code>Heap Fetches: 0</code> and 550 buffers after one VACUUM. If your "index-only" scan is slow, check how recently the table was vacuumed.</p>
+    <p><b><code>VACUUM FULL</code> rewrites the whole table</b> into a new file under <code>ACCESS EXCLUSIVE</code>: no reads, no writes, and it needs disk space for the copy while the old one still exists. In the run a reader of one row is blocked, <code>pg_blocking_pids</code> names the VACUUM FULL, and the heap goes from 65 MB to 6672 kB. On this small table the reader waited ≈1527 ms, and the wait grows with table size, so on a large table that's an outage. Use it only for a one-off after a huge delete, in a maintenance window. The alternatives: <code>pg_repack</code> rewrites online with only brief locks (not installed here, not run), and PostgreSQL 19's <code>REPACK</code> and <code>REPACK (CONCURRENTLY)</code> replace <code>VACUUM FULL</code> and <code>CLUSTER</code> according to its RC notes (19 isn't released, so not run either).</p>
+  </section>
+<pre data-file="src/vacuum-basics.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const client = new pg.Client({ connectionString: labUrl() });
+await client.connect();
+
+// الـ VACUUM VERBOSE بيطلّع تقريره كـ notice مش كـ rows
+const notices: string[] = [];
+client.on("notice", (n) =&gt; notices.push(n.message ?? ""));
+
+const seed = (table: string) =&gt; client.query(`
+  DROP TABLE IF EXISTS ${table};
+  CREATE TABLE ${table} (id int PRIMARY KEY, total_cents bigint NOT NULL, note text NOT NULL)
+    WITH (autovacuum_enabled = false);
+  INSERT INTO ${table} SELECT i, i, 'order number ' || i FROM generate_series(1, 500000) i;
+`);
+const size = async (table: string) =&gt;
+  (await client.query("SELECT pg_size_pretty(pg_relation_size($1::regclass)) AS s", [table])).rows[0].s as string;
+
+await client.query("CREATE EXTENSION IF NOT EXISTS pg_visibility");
+await seed("orders");
+await client.query("VACUUM orders");
+console.log("fresh 500k rows:", await size("orders"));
+
+await client.query("UPDATE orders SET total_cents = total_cents + 1 WHERE id % 2 = 0");
+console.log("after updating half:", await size("orders"));
+
+const vm = async () =&gt; (await client.query("SELECT all_visible, all_frozen FROM pg_visibility_map_summary('orders')")).rows[0];
+const heapFetches = async () =&gt; {
+  await client.query("SET enable_seqscan = off; SET enable_bitmapscan = off; SET max_parallel_workers_per_gather = 0");
+  const { rows } = await client.query("EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF) SELECT count(id) FROM orders WHERE id &lt;= 100000");
+  await client.query("RESET enable_seqscan; RESET enable_bitmapscan; RESET max_parallel_workers_per_gather");
+  const lines = rows.map((r) =&gt; r["QUERY PLAN"].trim());
+  return `${lines.find((l) =&gt; /Heap Fetches/.test(l))} | ${lines.find((l) =&gt; /Buffers/.test(l))}`;
+};
+console.log("visibility map before:", await vm());
+console.log("index-only scan before:", await heapFetches());
+
+// التقرير الحقيقي من الـ VACUUM
+notices.length = 0;
+await client.query("VACUUM (VERBOSE) orders");
+console.log("\n" + notices.join("\n") + "\n");
+
+console.log("heap after VACUUM:", await size("orders"));
+console.log("visibility map after:", await vm());
+console.log("index-only scan after:", await heapFetches());
+
+// الـ VACUUM حرر مكان جوه الـ pages: نفس الكتابة دلوقتي مش بتكبّر الملف
+await client.query("UPDATE orders SET total_cents = total_cents + 1 WHERE id % 2 = 0");
+console.log("\nsame UPDATE again, reusing the freed space:", await size("orders"));
+
+// المساحة بترجع للـ OS بس لو الـ pages الفاضية في آخر الملف
+await seed("tail");
+console.log("\ntail table:", await size("tail"));
+await client.query("DELETE FROM tail WHERE id &gt; 250000");
+await client.query("VACUUM tail");
+console.log("deleted the LAST half, VACUUM:", await size("tail"));
+
+await seed("head");
+await client.query("DELETE FROM head WHERE id &lt;= 250000");
+await client.query("VACUUM head");
+console.log("deleted the FIRST half, VACUUM:", await size("head"));
+
+// صف واحد في الآخر كفاية إنه يمنع الـ truncate
+await seed("pinned");
+await client.query("DELETE FROM pinned WHERE id &gt; 250000 AND id &lt; 500000");
+await client.query("VACUUM pinned");
+console.log("deleted the last half but kept the very last row, VACUUM:", await size("pinned"));
+
+await client.end();
+</code></pre>
+<pre><code class="language-plaintext">fresh 500k rows: 33 MB
+after updating half: 49 MB
+visibility map before: { all_visible: '0', all_frozen: '0' }
+index-only scan before: Heap Fetches: 150000 | Buffers: shared hit=101383
+
+vacuuming "postgres.public.orders"
+finished vacuuming "postgres.public.orders": index scans: 1
+pages: 0 removed, 6250 remain, 6250 scanned (100.00% of total), 0 eagerly scanned
+tuples: 199920 removed, 500000 remain, 0 are dead but not yet removable
+removable cutoff: 755, which was 0 XIDs old when operation ended
+frozen: 0 pages from table (0.00% of total) had 0 tuples frozen
+visibility map: 6250 pages set all-visible, 0 pages set all-frozen (0 were all-visible)
+index scan needed: 4167 pages from table (66.67% of total) had 250000 dead item identifiers removed
+index "orders_pkey": pages: 2745 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+avg read rate: 0.000 MB/s, avg write rate: 0.000 MB/s
+buffer usage: 19438 hits, 0 reads, 0 dirtied
+WAL usage: 16484 records, 0 full page images, 2567283 bytes, 0 buffers full
+system usage: CPU: user: 0.07 s, system: 0.01 s, elapsed: 0.10 s
+vacuuming "postgres.pg_toast.pg_toast_16393"
+finished vacuuming "postgres.pg_toast.pg_toast_16393": index scans: 0
+pages: 0 removed, 0 remain, 0 scanned (100.00% of total), 0 eagerly scanned
+tuples: 0 removed, 0 remain, 0 are dead but not yet removable
+removable cutoff: 755, which was 0 XIDs old when operation ended
+new relfrozenxid: 755, which is 1 XIDs ahead of previous value
+frozen: 0 pages from table (100.00% of total) had 0 tuples frozen
+visibility map: 0 pages set all-visible, 0 pages set all-frozen (0 were all-visible)
+index scan not needed: 0 pages from table (100.00% of total) had 0 dead item identifiers removed
+avg read rate: 0.000 MB/s, avg write rate: 0.000 MB/s
+buffer usage: 12 hits, 0 reads, 0 dirtied
+WAL usage: 1 records, 0 full page images, 258 bytes, 0 buffers full
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+
+heap after VACUUM: 49 MB
+visibility map after: { all_visible: '6250', all_frozen: '0' }
+index-only scan after: Heap Fetches: 0 | Buffers: shared hit=550
+
+same UPDATE again, reusing the freed space: 49 MB
+
+tail table: 33 MB
+deleted the LAST half, VACUUM: 16 MB
+deleted the FIRST half, VACUUM: 33 MB
+deleted the last half but kept the very last row, VACUUM: 33 MB
+</code></pre>
+  <div class="ar-note">أول سطور: الحجم وخريطة الرؤية قبل. وبعدين تقرير الـ VACUUM الحقيقي، بالإنجليزي زي ما Postgres بيطبعه، والجدول تحت بيشرحه سطر سطر (الجزء التاني بتاع <code>pg_toast</code> هو نفس التقرير لجدول الـ TOAST التابع). وبعده: الـ heap فضل 49 MB، والـ <code>Heap Fetches</code> بقت صفر. نفس الـ UPDATE تاني مكبّرش الملف. وآخر 4 سطور: مسح آخر النص صغّر الملف، ومسح أول النص لأ، وصف واحد في الآخر منع التصغير.</div>
+
+  <table>
+    <tr><th>Report line</th><th>What it tells you</th></tr>
+    <tr><td><code>index scans: 1</code></td><td>How many passes over all indexes. More than 1 means <code>maintenance_work_mem</code> filled up (Part 7).</td></tr>
+    <tr><td><code>pages: 0 removed, 6250 remain</code></td><td>Pages cut from the end of the file, and what's left.</td></tr>
+    <tr><td><code>tuples: N removed, 500000 remain, 0 are dead but not yet removable</code></td><td>The key line. A high last number means something is holding the horizon (Part 6).</td></tr>
+    <tr><td><code>removable cutoff: N, which was 0 XIDs old</code></td><td>The oldest snapshot it had to respect. Very old means a long transaction.</td></tr>
+    <tr><td><code>frozen: 0 pages</code></td><td>Rows frozen for wraparound (Part 5).</td></tr>
+    <tr><td><code>visibility map: 6250 pages set all-visible</code></td><td>What index-only scans and the next VACUUM gain.</td></tr>
+    <tr><td><code>index scan needed: … 250000 dead item identifiers removed</code></td><td>Dead pointers cleaned from the heap and indexes.</td></tr>
+    <tr><td><code>buffer usage</code>, <code>WAL usage</code>, <code>system usage</code></td><td>The I/O and time it cost.</td></tr>
+  </table>
+  <div class="ar-note">سطر سطر: <code>index scans</code> عدد المرات اللي عدى فيها على كل الـ indexes، وأكتر من 1 معناها إن <code>maintenance_work_mem</code> اتملت (الجزء 7). <code>pages</code> اللي اتشالت من آخر الملف واللي فضل. <code>tuples</code> أهم سطر: لو الرقم الأخير كبير يبقى فيه حاجة ماسكة الـ horizon (الجزء 6). <code>removable cutoff</code> أقدم snapshot لازم يحترمها، ولو قديم جدًا يبقى فيه transaction طويلة. <code>frozen</code> الصفوف اللي اتعمل لها freeze (الجزء 5). <code>visibility map</code> اللي كسبته الـ index-only scans والـ VACUUM الجاي. <code>index scan needed</code> الـ pointers الميتة اللي اتنضفت. وآخر 3 هما تكلفة الـ I/O والوقت. ولاحظ إن <code>tuples: removed</code> أقل من الـ 250000 pointer، لأن الـ index-only scan اللي قبله قرا pages فيها dead tuples ونضف جزء منها وهو ماشي (on-access pruning)، وساب الـ pointers للـ VACUUM.</div>
+
+<pre data-file="src/vacuum-full-lock.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const connect = async () =&gt; {
+  const c = new pg.Client({ connectionString: labUrl() });
+  await c.connect();
+  return c;
+};
+const maintenance = await connect();
+const reader = await connect();
+const watcher = await connect();
+
+const seed = async () =&gt; {
+  await maintenance.query(`
+    DROP TABLE IF EXISTS orders;
+    CREATE TABLE orders (id int PRIMARY KEY, total_cents bigint NOT NULL, note text NOT NULL)
+      WITH (autovacuum_enabled = false);
+    INSERT INTO orders SELECT i, i, 'order number ' || i FROM generate_series(1, 1000000) i;
+    DELETE FROM orders WHERE id % 10 &lt;&gt; 0;
+  `);
+};
+const size = async () =&gt; (await watcher.query("SELECT pg_size_pretty(pg_relation_size('orders')) AS s")).rows[0].s as string;
+
+async function observe(command: string) {
+  await seed();
+  const pid = (await maintenance.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number;
+  const readerPid = (await reader.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number;
+  console.log(`\n== ${command}: heap before ${await size()}`);
+
+  // الأمر الكبير شغال في الخلفية، وإحنا بنراقبه من connection تانية
+  const running = maintenance.query(command);
+  for (;;) {
+    const { rows } = await watcher.query("SELECT 1 FROM pg_locks WHERE pid = $1 AND relation = 'orders'::regclass AND granted", [pid]);
+    if (rows.length) break;
+  }
+  const lock = await watcher.query(
+    "SELECT mode FROM pg_locks WHERE pid = $1 AND relation = 'orders'::regclass AND granted", [pid]);
+
+  // القارئ بيحاول يقرا صف واحد في نفس اللحظة
+  const t0 = performance.now();
+  const read = reader.query("SELECT total_cents FROM orders WHERE id = 500000").then(() =&gt; performance.now() - t0);
+  await new Promise((r) =&gt; setTimeout(r, 50));
+  const blocked = await watcher.query(
+    `SELECT state, wait_event_type, wait_event, pg_blocking_pids(pid) AS blocked_by
+     FROM pg_stat_activity WHERE pid = $1`, [readerPid]);
+
+  console.log("lock held by the command:", lock.rows.map((r) =&gt; r.mode).join(", "));
+  console.log("reader 50 ms later:", JSON.stringify(blocked.rows[0]), `(command pid is ${pid})`);
+  const readMs = await read;
+  await running;
+  console.log(`reader finished after ≈${readMs.toFixed(0)} ms; heap after ${await size()}`);
+}
+
+await observe("VACUUM orders");
+await observe("VACUUM FULL orders");
+
+await Promise.all([maintenance.end(), reader.end(), watcher.end()]);
+</code></pre>
+<pre><code class="language-plaintext">== VACUUM orders: heap before 65 MB
+lock held by the command: ShareUpdateExclusiveLock
+reader 50 ms later: {"state":"idle","wait_event_type":"Client","wait_event":"ClientRead","blocked_by":[]} (command pid is 33312)
+reader finished after ≈15 ms; heap after 65 MB
+
+== VACUUM FULL orders: heap before 65 MB
+lock held by the command: AccessExclusiveLock
+reader 50 ms later: {"state":"active","wait_event_type":"Lock","wait_event":"relation","blocked_by":[33312]} (command pid is 33312)
+reader finished after ≈1527 ms; heap after 6672 kB
+</code></pre>
+  <div class="ar-note">نفس الجدول مرتين. الـ <code>VACUUM</code> العادي: lock اسمه <code>ShareUpdateExclusiveLock</code>، والقارئ خلص في مللي ثواني وحالته <code>idle</code> بعدها، والحجم متغيرش. الـ <code>VACUUM FULL</code>: lock اسمه <code>AccessExclusiveLock</code>، والقارئ واقف بـ <code>wait_event_type = Lock</code> و<code>blocked_by</code> فيه pid بتاع الـ VACUUM FULL، والحجم نزل من 65 MB لـ 6672 kB.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <code>VACUUM</code> العادي بيعمل 4 حاجات، و<code>VACUUM (VERBOSE)</code> بيقولك عليهم كلهم. بيشيل الـ dead tuples والـ index entries بتاعتها، وبيسجل المساحة الفاضية عشان تتستخدم تاني، وبيظبط الـ <b>visibility map</b>، وبيعمل freeze للصفوف القديمة (الجزء 5). وبياخد <code>ShareUpdateExclusiveLock</code> بس، فالقراءة والكتابة بيكملوا.</p>
+    <p><b>المساحة بتتحرر للاستخدام تاني، مش بترجع للـ OS.</b> في التشغيل، تحديث نص جدول فيه 500 ألف صف كبّره من 33 MB لـ 49 MB. الـ VACUUM سابه 49 MB، ونفس الـ update تاني فضل 49 MB، لأن النسخ الجديدة نزلت في المساحة المتحررة. الاستثناء هو <em>آخر الجدول</em>: الـ pages الفاضية في الآخر بتتقص. امسح آخر النص، والـ VACUUM بينزل 33 MB لـ 16 MB. امسح أول النص، ويفضل 33 MB. وسيب صف واحد في الآخر خالص ويفضل 33 MB برضه، لأن صف واحد كفاية يمسك طول الملف.</p>
+    <p><b>الـ visibility map</b> بتعلّم على الـ pages اللي كل tuple فيها ظاهرة للكل. الـ VACUUM بيعدّيها المرة الجاية، و<a href="./08-explain-scans-nodes.html">الـ index-only scan</a> يقدر يثق في الـ index من غير ما يروح للـ heap. وعشان كده نفس الـ <code>count(id)</code> راح من <code>Heap Fetches: 150000</code> و101,383 buffer لـ <code>Heap Fetches: 0</code> و550 buffer بعد VACUUM واحد. لو الـ "index-only" scan بتاعك بطيء، بص الجدول اتعمله vacuum إمتى.</p>
+    <p><b><code>VACUUM FULL</code> بيعيد كتابة الجدول كله</b> في ملف جديد تحت <code>ACCESS EXCLUSIVE</code>: مفيش قراءة ولا كتابة، ومحتاج مساحة ديسك للنسخة والقديمة لسه موجودة. في التشغيل، قارئ لصف واحد وقف، و<code>pg_blocking_pids</code> بيسمي الـ VACUUM FULL، والـ heap نزل من 65 MB لـ 6672 kB. على الجدول الصغير ده القارئ استنى ≈1527 مللي ثانية، والانتظار بيكبر مع حجم الجدول، فعلى جدول كبير ده outage. استخدمه بس مرة واحدة بعد delete ضخم في maintenance window. البدايل: <code>pg_repack</code> بيعيد الكتابة online بـ locks قصيرة (مش متسطب هنا ومتشغلش)، و<code>REPACK</code> و<code>REPACK (CONCURRENTLY)</code> في PostgreSQL 19 بيحلوا محل <code>VACUUM FULL</code> و<code>CLUSTER</code> حسب الـ RC notes بتاعته (19 لسه مطلعش، فمتشغلش برضه).</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      مسحت 80% من <code>audit_logs</code> والديسك لسه مليان، وزميلك بيقول "شغّل VACUUM FULL". اسأل الأول: الجدول ده هيتملي تاني؟ لو أيوة، VACUUM عادي كفاية والمساحة هتتستخدم. لو لأ والمساحة مطلوبة فعلًا، استخدم <code>pg_repack</code> أو اعمل window. ولو عايز تحذف كتير بانتظام، الحل partitions وتعمل <code>DROP</code> للـ partition (<a href="./24-partitioning.html">درس 24</a>)، مفيش dead tuples خالص. وأي <code>VACUUM FULL</code> في cron job على production اعتبره bug.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off</b>
+    Plain VACUUM keeps the table available and the file large, with space reused from inside. VACUUM FULL gives the disk back and takes the table offline. A table that will grow again doesn't need the disk back: the free space inside it is what future writes will use.
+    <div class="ar-note">الـ VACUUM العادي بيسيب الجدول شغال والملف كبير، والمساحة بتتستخدم من جوه. الـ VACUUM FULL بيرجّع الديسك وبيوقف الجدول. والجدول اللي هيكبر تاني مش محتاج الديسك يرجع: المساحة الفاضية جواه هي اللي الكتابة الجاية هتستخدمها.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — autovacuum <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ autovacuum</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A launcher wakes every <code>autovacuum_naptime</code> (60 s) and checks each table, with up to <code>autovacuum_max_workers</code> (3) running at once. A table is vacuumed when its dead tuples exceed this threshold, using the real defaults printed below:</p>
+    <p><code>min(autovacuum_vacuum_max_threshold, 50 + 0.2 × reltuples)</code></p>
+    <p>The cap, 100,000,000, is new in PG 18. Older posts show the formula without it. There's also an insert trigger, <code>1000 + 0.2 × reltuples × fraction not frozen</code>, so insert-only tables still get their visibility map and freezing, and an analyze trigger, <code>50 + 0.1 × reltuples</code>. PG 18 also adds <code>autovacuum_worker_slots</code> (16, needs a restart), so <code>autovacuum_max_workers</code> can now change with a reload, up to that number.</p>
+    <p>You can watch it work. With a 1-second naptime, updating 100,000 of 1M rows doesn't fire it, because that's under 200,050. After 150,000 more it starts, and <code>pg_stat_progress_vacuum</code> shows the phases: scanning heap, vacuuming indexes, vacuuming heap. It's also polite: it <b>yields to lock conflicts</b>. When <code>ALTER TABLE</code> needs a conflicting lock, the waiter cancels the autovacuum after <code>deadlock_timeout</code> (1 s), and the log says <code>canceling autovacuum task</code>. The docs warn about the flip side: commands that take conflicting locks regularly can keep autovacuum from ever finishing a table. The exception is an anti-wraparound run (Part 5).</p>
+    <p><b>The bad idea: <code>autovacuum = off</code> "to save I/O".</b> Below, the same queue-like workload runs on two clusters, then 500,000 new rows arrive. With autovacuum on: heap 27 MB, 0 dead tuples, and the planner knows there are 520,000 rows. With it off: heap 45 MB, 400,000 dead tuples, and the planner still thinks 20,000 rows, because autoanalyze is gone too. So it estimates <code>rows=1</code> for a query returning 500,000 and picks an Index Scan. A manual <code>VACUUM ANALYZE</code> fixes the plan, but the file stays large. <code>createLab</code> in this script and in Part 6 is my small helper around <code>initdb</code> and <code>pg_ctl</code>, which starts throwaway clusters on free ports. To run them yourself, start two clusters or containers on their own ports and connect by URL.</p>
+  </section>
+<pre data-file="src/autovacuum-settings.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const client = new pg.Client({ connectionString: labUrl() });
+await client.connect();
+
+const { rows } = await client.query(`
+  SELECT name, setting, unit, context FROM pg_settings
+  WHERE name IN (
+    'autovacuum', 'autovacuum_naptime', 'autovacuum_max_workers', 'autovacuum_worker_slots',
+    'autovacuum_vacuum_threshold', 'autovacuum_vacuum_scale_factor', 'autovacuum_vacuum_max_threshold',
+    'autovacuum_vacuum_insert_threshold', 'autovacuum_vacuum_insert_scale_factor',
+    'autovacuum_analyze_threshold', 'autovacuum_analyze_scale_factor',
+    'autovacuum_vacuum_cost_delay', 'autovacuum_vacuum_cost_limit',
+    'vacuum_cost_limit', 'vacuum_cost_delay', 'vacuum_cost_page_hit', 'vacuum_cost_page_miss', 'vacuum_cost_page_dirty',
+    'maintenance_work_mem', 'autovacuum_work_mem', 'log_autovacuum_min_duration', 'track_cost_delay_timing',
+    'autovacuum_freeze_max_age', 'autovacuum_multixact_freeze_max_age', 'vacuum_freeze_min_age', 'vacuum_freeze_table_age',
+    'vacuum_failsafe_age', 'vacuum_multixact_failsafe_age', 'old_snapshot_threshold',
+    'idle_in_transaction_session_timeout', 'transaction_timeout', 'statement_timeout', 'lock_timeout', 'deadlock_timeout',
+    'idle_replication_slot_timeout', 'max_slot_wal_keep_size', 'hot_standby_feedback', 'vacuum_truncate', 'vacuum_max_eager_freeze_failure_rate'
+  ) ORDER BY name`);
+for (const r of rows) console.log(`${r.name.padEnd(38)} ${String(r.setting).padEnd(12)} ${(r.unit ?? "").padEnd(4)} ${r.context}`);
+
+// الـ formula زي ما الـ docs بتقولها، بأرقام الإعدادات دي
+const dead = (n: number, threshold = 50, scale = 0.2, cap = 100_000_000) =&gt; Math.min(cap, threshold + scale * n);
+console.log("\nreltuples        dead tuples before autovacuum fires");
+for (const n of [1_000, 100_000, 1_000_000, 100_000_000, 1_000_000_000, 10_000_000_000]) {
+  console.log(`${String(n).padEnd(16)} ${dead(n)}  (no cap: ${50 + 0.2 * n})`);
+}
+
+await client.end();
+</code></pre>
+<pre><code class="language-plaintext">autovacuum                             on                sighup
+autovacuum_analyze_scale_factor        0.1               sighup
+autovacuum_analyze_threshold           50                sighup
+autovacuum_freeze_max_age              200000000         postmaster
+autovacuum_max_workers                 3                 sighup
+autovacuum_multixact_freeze_max_age    400000000         postmaster
+autovacuum_naptime                     60           s    sighup
+autovacuum_vacuum_cost_delay           2            ms   sighup
+autovacuum_vacuum_cost_limit           -1                sighup
+autovacuum_vacuum_insert_scale_factor  0.2               sighup
+autovacuum_vacuum_insert_threshold     1000              sighup
+autovacuum_vacuum_max_threshold        100000000         sighup
+autovacuum_vacuum_scale_factor         0.2               sighup
+autovacuum_vacuum_threshold            50                sighup
+autovacuum_work_mem                    -1           kB   sighup
+autovacuum_worker_slots                16                postmaster
+deadlock_timeout                       1000         ms   superuser
+hot_standby_feedback                   off               sighup
+idle_in_transaction_session_timeout    0            ms   user
+idle_replication_slot_timeout          0            s    sighup
+lock_timeout                           0            ms   user
+log_autovacuum_min_duration            600000       ms   sighup
+maintenance_work_mem                   65536        kB   user
+max_slot_wal_keep_size                 -1           MB   sighup
+statement_timeout                      0            ms   user
+track_cost_delay_timing                off               superuser
+transaction_timeout                    0            ms   user
+vacuum_cost_delay                      0            ms   user
+vacuum_cost_limit                      200               user
+vacuum_cost_page_dirty                 20                user
+vacuum_cost_page_hit                   1                 user
+vacuum_cost_page_miss                  2                 user
+vacuum_failsafe_age                    1600000000        user
+vacuum_freeze_min_age                  50000000          user
+vacuum_freeze_table_age                150000000         user
+vacuum_max_eager_freeze_failure_rate   0.03              user
+vacuum_multixact_failsafe_age          1600000000        user
+vacuum_truncate                        on                user
+
+reltuples        dead tuples before autovacuum fires
+1000             250  (no cap: 250)
+100000           20050  (no cap: 20050)
+1000000          200050  (no cap: 200050)
+100000000        20000050  (no cap: 20000050)
+1000000000       100000000  (no cap: 200000050)
+10000000000      100000000  (no cap: 2000000050)
+</code></pre>
+  <div class="ar-note">كل سطر اسم الإعداد، وقيمته الافتراضية الحقيقية في PG 18.4، ووحدته، وبيتغير إزاي (<code>sighup</code> يعني reload، و<code>postmaster</code> يعني restart، و<code>user</code> لكل session). الجدول في الآخر حساب الـ formula: 1000 صف بيحتاجوا 250 dead tuple، ومليون بيحتاجوا 200,050، ومليار كان هيحتاج 200 مليون بس الـ cap بيقفها عند 100 مليون.</div>
+<pre data-file="src/autovacuum-watch.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const connect = async () =&gt; {
+  const c = new pg.Client({ connectionString: labUrl() });
+  await c.connect();
+  return c;
+};
+const client = await connect();
+const watcher = await connect();
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+
+await client.query(`
+  DROP TABLE IF EXISTS orders;
+  CREATE TABLE orders (id int PRIMARY KEY, status text NOT NULL, total_cents bigint NOT NULL);
+  CREATE INDEX orders_status_idx ON orders (status);
+  INSERT INTO orders SELECT i, 'paid', i FROM generate_series(1, 1000000) i;
+`);
+
+const stats = async () =&gt; (await watcher.query(`
+  SELECT n_live_tup, n_dead_tup, autovacuum_count, last_autovacuum IS NOT NULL AS ran,
+         (SELECT reltuples::bigint FROM pg_class WHERE relname = 'orders') AS reltuples
+  FROM pg_stat_user_tables WHERE relname = 'orders'`)).rows[0];
+
+// بنستنى الـ autovacuum الأولاني بتاع الـ INSERT يخلص عشان reltuples تتحدث
+for (;;) {
+  const s = await stats();
+  if (Number(s.autovacuum_count) &gt;= 1 &amp;&amp; Number(s.reltuples) &gt; 900000) break;
+  await sleep(100);
+}
+const base = Number((await stats()).autovacuum_count);
+console.log("after the insert-triggered run:", JSON.stringify(await stats()));
+
+// 10%: أقل من الـ ⁦threshold (200,050)⁩. الـ autovacuum لازم يسيبه
+await client.query("UPDATE orders SET total_cents = total_cents + 1 WHERE id &lt;= 100000");
+await sleep(5000);
+let s = await stats();
+console.log("updated 100,000 rows, 5 s later:", JSON.stringify(s), Number(s.autovacuum_count) === base ? "→ not fired" : "→ fired");
+
+// كمان 150 ألف: كده عدّينا 200,050
+await client.query("UPDATE orders SET total_cents = total_cents + 1 WHERE id &gt; 100000 AND id &lt;= 250000");
+const t0 = performance.now();
+const phases = new Map&lt;string, number&gt;();
+let firstSeen: number | undefined;
+for (;;) {
+  const { rows } = await watcher.query(`
+    SELECT p.phase, p.heap_blks_total, p.heap_blks_scanned, p.index_vacuum_count, a.query
+    FROM pg_stat_progress_vacuum p JOIN pg_stat_activity a USING (pid)
+    WHERE p.relid = 'orders'::regclass`);
+  const row = rows[0];
+  if (row) {
+    firstSeen ??= performance.now() - t0;
+    if (!phases.has(row.phase)) {
+      phases.set(row.phase, performance.now() - t0);
+      console.log(`  ≈${String(Math.round(performance.now() - t0)).padStart(5)} ms  phase="${row.phase}" scanned=${row.heap_blks_scanned}/${row.heap_blks_total} index_passes=${row.index_vacuum_count} | ${row.query}`);
+    }
+  }
+  s = await stats();
+  if (Number(s.autovacuum_count) &gt; base) break;
+  if (performance.now() - t0 &gt; 60000) throw new Error("autovacuum didn't fire in 60 s");
+  await sleep(5);
+}
+console.log(`finished ≈${Math.round(performance.now() - t0)} ms after the UPDATE:`, JSON.stringify(s));
+
+await client.end();
+await watcher.end();
+</code></pre>
+<pre><code class="language-plaintext">after the insert-triggered run: {"n_live_tup":"1000000","n_dead_tup":"0","autovacuum_count":"1","ran":true,"reltuples":"1000000"}
+updated 100,000 rows, 5 s later: {"n_live_tup":"1000000","n_dead_tup":"100000","autovacuum_count":"1","ran":true,"reltuples":"1000000"} → not fired
+  ≈  415 ms  phase="scanning heap" scanned=207/7962 index_passes=0 | autovacuum: VACUUM ANALYZE public.orders
+  ≈  772 ms  phase="vacuuming indexes" scanned=7962/7962 index_passes=0 | autovacuum: VACUUM ANALYZE public.orders
+  ≈ 1301 ms  phase="vacuuming heap" scanned=7962/7962 index_passes=1 | autovacuum: VACUUM ANALYZE public.orders
+finished ≈1595 ms after the UPDATE: {"n_live_tup":"999933","n_dead_tup":"0","autovacuum_count":"2","ran":true,"reltuples":"999933"}
+</code></pre>
+  <div class="ar-note">أول سطر: الـ autovacuum اشتغل مرة بسبب الـ insert. 100 ألف dead tuple وبعد 5 ثواني: مشتغلش لأنهم أقل من 200,050. بعد 150 ألف كمان اشتغل، والسطور اللي فيها <code>phase</code> هي اللي شفناها من <code>pg_stat_progress_vacuum</code>: <code>scanning heap</code>، وبعدين <code>vacuuming indexes</code>، وبعدين <code>vacuuming heap</code>، و<code>autovacuum_count</code> بقى 2. الوقت بالـ مللي ثانية على جهاز عليه ضغط.</div>
+<pre data-file="src/autovacuum-yield.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const connect = async () =&gt; {
+  const c = new pg.Client({ connectionString: labUrl() });
+  await c.connect();
+  return c;
+};
+const client = await connect();
+const watcher = await connect();
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+
+await client.query(`
+  DROP TABLE IF EXISTS orders;
+  CREATE TABLE orders (id int PRIMARY KEY, total_cents bigint NOT NULL)
+    WITH (autovacuum_vacuum_cost_delay = 100, autovacuum_vacuum_cost_limit = 10);
+  INSERT INTO orders SELECT i, i FROM generate_series(1, 500000) i;
+  UPDATE orders SET total_cents = total_cents + 1;
+`);
+
+// الـ autovacuum هنا بطيء عن قصد (cost_delay كبير) عشان نلحقه وهو شغال
+let pid: number | undefined;
+let query = "";
+for (let i = 0; i &lt; 2000 &amp;&amp; !pid; i++) {
+  const { rows } = await watcher.query(`
+    SELECT a.pid, a.query FROM pg_stat_progress_vacuum p JOIN pg_stat_activity a USING (pid)
+    WHERE p.relid = 'orders'::regclass`);
+  if (rows[0]) ({ pid, query } = rows[0]);
+  else await sleep(20);
+}
+console.log("running:", query);
+
+// الـ ALTER TABLE عايز ACCESS EXCLUSIVE: بيتعارض مع الـ vacuum
+const t0 = performance.now();
+await client.query("ALTER TABLE orders ADD COLUMN note text");
+console.log(`ALTER TABLE finished after ≈${Math.round(performance.now() - t0)} ms (deadlock_timeout is 1 s)`);
+
+await client.end();
+await watcher.end();
+</code></pre>
+<pre><code class="language-plaintext">running: autovacuum: VACUUM ANALYZE public.orders
+ALTER TABLE finished after ≈1016 ms (deadlock_timeout is 1 s)
+</code></pre>
+<pre><code class="language-plaintext">2026-11-04 05:34:20.507 EET [31748] ERROR:  canceling autovacuum task
+</code></pre>
+  <div class="ar-note">الـ autovacuum كان شغال على <code>orders</code>، و<code>ALTER TABLE</code> خلص بعد حوالي ثانية، وده الـ <code>deadlock_timeout</code>. وسطر الـ log من السيرفر هو الدليل: <code>canceling autovacuum task</code>. يعني الـ DDL ماستناش الـ vacuum، بس الـ vacuum اتلغى والشغل اللي عمله ضاع جزء منه، وهيبدأ تاني بعدين.</div>
+<pre data-file="src/autovacuum-off.ts"><code class="language-typescript">import pg from "pg";
+import { createLab } from "../pg-cluster.mjs";
+
+// نفس الـ workload على cluster بـ autovacuum شغال وعلى cluster مقفول فيه
+const lab = await createLab({ baseDir: process.cwd() });
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+
+type Client = pg.Client;
+
+async function workload(c: Client) {
+  await c.query(`
+    CREATE TABLE jobs (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, tenant_id int NOT NULL, status text NOT NULL, attempts int NOT NULL DEFAULT 0);
+    CREATE INDEX jobs_status_idx ON jobs (status);
+    INSERT INTO jobs (tenant_id, status) SELECT i % 50, 'done' FROM generate_series(1, 20000) i;
+    ANALYZE jobs;
+  `);
+  // 40 دورة: كل دورة بتغيّر نص الجدول، زي queue شغالة طول اليوم
+  for (let round = 0; round &lt; 40; round++) {
+    await c.query(`UPDATE jobs SET attempts = attempts + 1, status = CASE WHEN status = 'done' THEN 'running' ELSE 'done' END WHERE id % 2 = ${round % 2}`);
+    await sleep(300);
+  }
+  // الجدول كبر فجأة 25 مرة، والمفروض الـ planner يعرف
+  await c.query(`INSERT INTO jobs (tenant_id, status) SELECT 7, 'pending' FROM generate_series(1, 500000) i`);
+  await sleep(4000);
+}
+
+async function report(label: string, c: Client) {
+  const { rows } = await c.query(`
+    SELECT pg_size_pretty(pg_relation_size('jobs')) AS heap,
+           pg_size_pretty(pg_indexes_size('jobs')) AS indexes,
+           s.n_live_tup, s.n_dead_tup, s.autovacuum_count, s.autoanalyze_count,
+           c.reltuples::bigint AS planner_thinks_rows
+    FROM pg_stat_user_tables s JOIN pg_class c ON c.oid = s.relid WHERE s.relname = 'jobs'`);
+  console.log(`\n== ${label}`);
+  console.log(JSON.stringify(rows[0]));
+  const plan = await c.query(`
+    EXPLAIN (ANALYZE, TIMING OFF, COSTS ON)
+    SELECT count(*) FROM jobs WHERE tenant_id = 7 AND status = 'pending'`);
+  const lines = plan.rows.map((r) =&gt; r["QUERY PLAN"] as string);
+  console.log(lines.filter((l) =&gt; /Scan|Execution Time/.test(l)).join("\n"));
+}
+
+try {
+  const on = await lab.cluster("on", { conf: "fsync=off\nautovacuum=on\nautovacuum_naptime=1" });
+  const off = await lab.cluster("off", { conf: "fsync=off\nautovacuum=off" });
+  const [a, b] = [await on.client(), await off.client()];
+  await Promise.all([workload(a), workload(b)]);
+  await report("autovacuum = on (naptime 1 s)", a);
+  await report("autovacuum = off", b);
+  // بعد ما نشغّل VACUUM ANALYZE بإيدينا: الخطة بتتصلح، والملف مبيصغرش
+  await b.query("VACUUM ANALYZE jobs");
+  await report("autovacuum = off, after a manual VACUUM ANALYZE", b);
+} finally {
+  await lab.stopAll();
+}
+</code></pre>
+<pre><code class="language-plaintext">== autovacuum = on (naptime 1 s)
+{"heap":"27 MB","indexes":"16 MB","n_live_tup":"520000","n_dead_tup":"0","autovacuum_count":"13","autoanalyze_count":"13","planner_thinks_rows":"520000"}
+              -&gt;  Parallel Seq Scan on jobs  (cost=0.00..6689.00 rows=200145 width=0) (actual rows=166666.67 loops=3)
+Execution Time: 38.849 ms
+
+== autovacuum = off
+{"heap":"45 MB","indexes":"18 MB","n_live_tup":"520000","n_dead_tup":"400000","autovacuum_count":"0","autoanalyze_count":"0","planner_thinks_rows":"20000"}
+  -&gt;  Index Scan using jobs_status_idx on jobs  (cost=0.42..4.45 rows=1 width=0) (actual rows=500000.00 loops=1)
+Execution Time: 46.574 ms
+
+== autovacuum = off, after a manual VACUUM ANALYZE
+{"heap":"45 MB","indexes":"18 MB","n_live_tup":"520000","n_dead_tup":"0","autovacuum_count":"0","autoanalyze_count":"0","planner_thinks_rows":"520000"}
+              -&gt;  Parallel Seq Scan on jobs  (cost=0.00..8973.00 rows=201090 width=0) (actual rows=166666.67 loops=3)
+Execution Time: 40.179 ms
+</code></pre>
+  <div class="ar-note"><code>createLab</code> في أول السكريبت helper صغير حوالين <code>initdb</code> و<code>pg_ctl</code> بيشغّل clusters مؤقتة على ports فاضية. سطر سطر: مع <code>autovacuum = on</code> الـ dead صفر، والـ planner عارف 520 ألف صف، واختار Parallel Seq Scan بتقدير قريب من الحقيقة. مع <code>off</code> الملف أكبر، و400 ألف dead tuple، والـ planner فاكر 20 ألف صف، فقدّر <code>rows=1</code> والحقيقة 500 ألف. بعد <code>VACUUM ANALYZE</code> يدوي: الخطة اتصلحت، والملف زي ما هو.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>فيه launcher بيصحى كل <code>autovacuum_naptime</code> (60 ثانية) ويبص على كل جدول، ولحد <code>autovacuum_max_workers</code> (3) شغالين في نفس الوقت. الجدول بيتعمله vacuum لما الـ dead tuples تعدي الحد ده، بالقيم الافتراضية الحقيقية اللي مطبوعة فوق:</p>
+    <p><code>min(autovacuum_vacuum_max_threshold, 50 + 0.2 × reltuples)</code></p>
+    <p>الـ cap (100,000,000) جديد في PG 18، والمقالات القديمة بتكتب الـ formula من غيره. وفيه كمان trigger للـ inserts، <code>1000 + 0.2 × reltuples × fraction not frozen</code>، عشان الجداول اللي بتاخد insert بس تاخد الـ visibility map والـ freezing بتوعها، و trigger للـ analyze، <code>50 + 0.1 × reltuples</code>. و PG 18 ضاف <code>autovacuum_worker_slots</code> (16، محتاج restart)، فـ <code>autovacuum_max_workers</code> بقى ينفع يتغير بـ reload لحد الرقم ده.</p>
+    <p>تقدر تتفرج عليه. بـ naptime ثانية واحدة، تحديث 100 ألف من مليون صف مش بيشغّله، لأن ده أقل من 200,050. وبعد 150 ألف كمان بيشتغل، و<code>pg_stat_progress_vacuum</code> بيوريك المراحل: scanning heap، وبعدين vacuuming indexes، وبعدين vacuuming heap. وهو مؤدب كمان: <b>بيتراجع لما يحصل تعارض locks</b>. لما <code>ALTER TABLE</code> يحتاج lock متعارض، اللي مستني بيلغي الـ autovacuum بعد <code>deadlock_timeout</code> (ثانية)، والـ log بيقول <code>canceling autovacuum task</code>. والـ docs بتحذر من الوجه التاني: الأوامر اللي بتاخد locks متعارضة بانتظام ممكن تمنع الـ autovacuum إنه يخلص الجدول أبدًا. والاستثناء هو الـ anti-wraparound (الجزء 5).</p>
+    <p><b>الفكرة الوحشة: <code>autovacuum = off</code> "عشان نوفر I/O".</b> فوق، نفس الشغل بتاع الـ queue اتشغل على clusterين، وبعدين جه 500 ألف صف جديد. والـ autovacuum شغال: الـ heap بقى 27 MB، وصفر dead tuples، والـ planner عارف إن فيه 520 ألف صف. ومقفول: الـ heap بقى 45 MB، و400 ألف dead tuple، والـ planner لسه فاكر 20 ألف صف، لأن الـ autoanalyze راح كمان. فبيقدّر <code>rows=1</code> لـ query بترجع 500 ألف، وبيختار Index Scan. والـ <code>VACUUM ANALYZE</code> اليدوي بيصلّح الخطة، بس الملف بيفضل كبير. و<code>createLab</code> في السكريبت ده وفي الجزء 6 helper صغير عملته حوالين <code>initdb</code> و<code>pg_ctl</code>، بيشغّل clusters مؤقتة على ports فاضية. ولو عايز تشغّلهم بنفسك، شغّل clusterين أو containerين على ports خاصة بيهم واتصل بالـ URL.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما query تبطأ فجأة على جدول بيتكتب فيه كتير، أول استعلام: <code>SELECT relname, n_live_tup, n_dead_tup, last_autovacuum, last_autoanalyze, autovacuum_count FROM pg_stat_user_tables ORDER BY n_dead_tup DESC LIMIT 10</code>. لو <code>last_autovacuum</code> قديم و<code>n_dead_tup</code> كبير، يبقى فيه حاجة بتمنعه: migration أو job بياخد locks باستمرار، أو transaction طويلة (الجزء 6). ولو حد في الفريق قال "الـ autovacuum بيبطّأ السيرفر، نقفله"، ده العكس: اقفله وهتدفع الضعف بعد أسبوع، ظبّطه لكل جدول بدل كده (الجزء 7).
+    </div>
+  </section>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Wraparound <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ wraparound</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Transaction IDs are 32-bit and compared in a circle: for any xid, about 2 billion IDs are "the past" and 2 billion are "the future". Only transactions that write consume one. If a row's <code>xmin</code> stayed un-frozen for 2 billion more transactions it would suddenly look like it's in the future, and the row would vanish. <b>Freezing</b> prevents that: VACUUM flags old rows as visible to everyone, regardless of their <code>xmin</code>. <code>age(datfrozenxid)</code> and <code>age(relfrozenxid)</code> tell you how close each database and table is, and they're the numbers to monitor.</p>
+    <p>When a table's age passes <code>autovacuum_freeze_max_age</code> (200,000,000), autovacuum runs on it <b>no matter what</b>: even with no dead tuples, and even with autovacuum disabled. To see it for real, the lab below sets that to its minimum of 100,000, disables autovacuum on the table, and burns 110,000 xids. A worker shows up labelled <code>(to prevent wraparound)</code>. This run <b>doesn't yield</b>: an <code>ALTER TABLE</code> with a 2.5 s <code>lock_timeout</code> fails with <code>55P03</code> and the worker stays. On a huge table that can last hours, and any DDL plus everything queued behind that DDL waits (<a href="./15-locks-deadlocks-advisory.html">lesson 15</a>). <code>pg_cancel_backend</code> does stop that worker, and the launcher sends a new one ≈309 ms later, so cancelling buys you nothing: plan DDL around it, or vacuum before the age arrives.</p>
+    <p>If it keeps failing, the ladder below is what follows. These stages come from the docs, and I didn't run them, since reaching them takes billions of transactions. This is a concept to know and a number to alert on, not something to fear daily. It has taken real companies down, though. <a href="https://blog.sentry.io/transaction-id-wraparound-in-postgres/">Sentry</a> was down for most of a US working day in July 2015. A shard of <a href="https://mailchimp.com/what-we-learned-from-the-recent-mandrill-outage/">Mailchimp's Mandrill</a> stopped accepting writes in February 2019: a ticket for monitoring was sitting in the backlog, the vacuum estimate reached 40 days, and they recovered by truncating two huge tables. Both are worth reading. Today's docs add that single-user mode is no longer needed or desirable: end old transactions, drop old slots, run plain <code>VACUUM</code>.</p>
+  </section>
+  <table>
+    <tr><th>Age or distance</th><th>Setting</th><th>What happens</th></tr>
+    <tr><td>150M</td><td><code>vacuum_freeze_table_age</code></td><td>The next VACUUM becomes aggressive: scans every page that isn't all-frozen</td></tr>
+    <tr><td>200M</td><td><code>autovacuum_freeze_max_age</code></td><td>Forced autovacuum, can't be displaced by lock conflicts (run below)</td></tr>
+    <tr><td>1.6B</td><td><code>vacuum_failsafe_age</code></td><td>Last resort: cost delay off, index vacuuming skipped</td></tr>
+    <tr><td>40M left</td><td>—</td><td><code>WARNING: database must be vacuumed within N transactions</code> (100M left in PG 19 per its RC notes)</td></tr>
+    <tr><td>3M left</td><td>—</td><td>Refuses new xids: <code>database is not accepting commands that assign new transaction IDs</code>. Read-only still works</td></tr>
+  </table>
+  <div class="ar-note">سطر سطر: عند 150 مليون الـ VACUUM الجاي بيبقى aggressive وبيعدي على كل page مش frozen. عند 200 مليون autovacuum إجباري مبيتلغيش بسبب تعارض locks، وده اللي شغّلناه تحت. عند 1.6 مليار آخر حل: بيوقف الـ cost delay وبيعدّي الـ index vacuuming. لما يفضل 40 مليون (100 مليون في PG 19 حسب الـ RC notes) بيبدأ يطلع warning. ولما يفضل 3 مليون بيرفض يدي xids جديدة، يعني الكتابة كلها واقفة والقراءة شغالة. المراحل دي من الـ docs ومتشغلتش هنا، لأنها محتاجة مليارات transactions.</div>
+<pre data-file="src/wraparound.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+// ده بيتشغّل على cluster فيه autovacuum_freeze_max_age = 100000، أقل قيمة مسموحة
+const connect = async () =&gt; {
+  const c = new pg.Client({ connectionString: labUrl() });
+  await c.connect();
+  return c;
+};
+const client = await connect();
+const watcher = await connect();
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+
+await client.query(`
+  CREATE TABLE orders (id int PRIMARY KEY, total_cents bigint NOT NULL)
+    WITH (autovacuum_enabled = false, autovacuum_vacuum_cost_delay = 100, autovacuum_vacuum_cost_limit = 10);
+  INSERT INTO orders SELECT i, i FROM generate_series(1, 300000) i;
+`);
+
+// استعلامات المراقبة الحقيقية: حطها في الـ dashboard بتاعك
+const DB_AGE = `
+  SELECT datname, age(datfrozenxid) AS xid_age, mxid_age(datminmxid) AS mxid_age,
+         round(100.0 * age(datfrozenxid) / current_setting('autovacuum_freeze_max_age')::int, 1) AS pct_of_freeze_max
+  FROM pg_database WHERE datallowconn ORDER BY 2 DESC`;
+const TABLE_AGE = `
+  SELECT c.oid::regclass::text AS table, age(c.relfrozenxid) AS xid_age,
+         pg_size_pretty(pg_table_size(c.oid)) AS size
+  FROM pg_class c WHERE c.relkind IN ('r', 'm') AND c.relnamespace = 'public'::regnamespace
+  ORDER BY 2 DESC LIMIT 3`;
+// بنحرق xids بسرعة: كل دورة transaction مستقلة ليها xid
+await client.query(`
+  DO $$ BEGIN
+    FOR i IN 1..110000 LOOP
+      PERFORM pg_current_xact_id();
+      COMMIT;
+    END LOOP;
+  END $$;`);
+console.log("burned 110,000 xids");
+console.table((await client.query(DB_AGE)).rows);
+console.table((await client.query(TABLE_AGE)).rows);
+
+// مفيش ولا dead tuple في الجدول، ومع كده الـ autovacuum لازم ييجي عشان الـ age بس
+let row: { pid: number; query: string } | undefined;
+for (let i = 0; i &lt; 3000 &amp;&amp; !row; i++) {
+  const { rows } = await watcher.query(`
+    SELECT a.pid, a.query FROM pg_stat_activity a
+    WHERE a.backend_type = 'autovacuum worker' AND a.query LIKE '%orders%'`);
+  row = rows[0];
+  if (!row) await sleep(20);
+}
+console.log("autovacuum worker:", row?.query);
+
+// الـ ALTER TABLE مش هيعرف يوقفه: بنسيبه ثانيتين بس بـ lock_timeout
+await client.query("SET lock_timeout = '2500ms'");
+const t0 = performance.now();
+try {
+  await client.query("ALTER TABLE orders ADD COLUMN note text");
+  console.log(`ALTER TABLE succeeded after ≈${Math.round(performance.now() - t0)} ms`);
+} catch (err) {
+  const e = err as pg.DatabaseError;
+  console.log(`ALTER TABLE after ≈${Math.round(performance.now() - t0)} ms: ${e.code} ${e.message}`);
+}
+await client.query("RESET lock_timeout");
+const stillRunning = await watcher.query("SELECT query FROM pg_stat_activity WHERE pid = $1", [row?.pid]);
+console.log("the worker is still there:", stillRunning.rows[0]?.query ?? "gone");
+
+// الـ cancel اليدوي بيوقف الـ worker الحالي، بس الـ launcher بيبعت غيره
+const cancelled = await watcher.query("SELECT pg_cancel_backend($1) AS ok", [row?.pid]);
+console.log("pg_cancel_backend:", cancelled.rows[0].ok);
+let again: { pid: number; query: string } | undefined;
+const t1 = performance.now();
+for (let i = 0; i &lt; 1500 &amp;&amp; !again; i++) {
+  const { rows } = await watcher.query(`
+    SELECT a.pid, a.query FROM pg_stat_activity a
+    WHERE a.backend_type = 'autovacuum worker' AND a.query LIKE '%orders%' AND a.pid &lt;&gt; $1`, [row?.pid]);
+  again = rows[0];
+  if (!again) await sleep(20);
+}
+console.log(`new worker ≈${Math.round(performance.now() - t1)} ms later:`, again?.query);
+// بنستنى الـ worker يخلص: الـ age لازم ينزل من غير ما نعمل حاجة
+for (let i = 0; i &lt; 6000; i++) {
+  const { rows } = await watcher.query("SELECT age(relfrozenxid) AS age FROM pg_class WHERE relname = 'orders'");
+  if (Number(rows[0].age) &lt; 1000) {
+    console.log("orders age once it finished:", rows[0].age);
+    break;
+  }
+  await sleep(50);
+}
+
+await client.end();
+await watcher.end();
+</code></pre>
+<pre><code class="language-plaintext">burned 110,000 xids
+┌─────────┬─────────────┬─────────┬──────────┬───────────────────┐
+│ (index) │ datname     │ xid_age │ mxid_age │ pct_of_freeze_max │
+├─────────┼─────────────┼─────────┼──────────┼───────────────────┤
+│ 0       │ 'postgres'  │ 110009  │ 0        │ '110.0'           │
+│ 1       │ 'template1' │ 110009  │ 0        │ '110.0'           │
+└─────────┴─────────────┴─────────┴──────────┴───────────────────┘
+┌─────────┬──────────┬─────────┬─────────┐
+│ (index) │ table    │ xid_age │ size    │
+├─────────┼──────────┼─────────┼─────────┤
+│ 0       │ 'orders' │ 110001  │ '13 MB' │
+└─────────┴──────────┴─────────┴─────────┘
+autovacuum worker: autovacuum: VACUUM ANALYZE public.orders (to prevent wraparound)
+ALTER TABLE after ≈2510 ms: 55P03 canceling statement due to lock timeout
+the worker is still there: autovacuum: VACUUM ANALYZE public.orders (to prevent wraparound)
+pg_cancel_backend: true
+new worker ≈309 ms later: autovacuum: VACUUM ANALYZE public.orders (to prevent wraparound)
+orders age once it finished: 0
+</code></pre>
+<pre><code class="language-plaintext">2026-11-04 05:35:26.645 EET [10964] LOG:  automatic aggressive vacuum to prevent wraparound of table "postgres.public.orders": index scans: 0
+	pages: 0 removed, 1622 remain, 1536 scanned (94.70% of total), 0 eagerly scanned
+	tuples: 0 removed, 299996 remain, 0 are dead but not yet removable
+	removable cutoff: 110765, which was 0 XIDs old when operation ended
+	new relfrozenxid: 110765, which is 110013 XIDs ahead of previous value
+	frozen: 1536 pages from table (94.70% of total) had 284090 tuples frozen
+	visibility map: 1536 pages set all-visible, 1536 pages set all-frozen (0 were all-visible)
+	index scan not needed: 0 pages from table (0.00% of total) had 0 dead item identifiers removed
+	avg read rate: 0.000 MB/s, avg write rate: 0.001 MB/s
+	buffer usage: 3124 hits, 0 reads, 3 dirtied
+	WAL usage: 3076 records, 0 full page images, 763763 bytes, 0 buffers full
+	system usage: CPU: user: 0.01 s, system: 0.01 s, elapsed: 34.62 s
+</code></pre>
+  <div class="ar-note">بعد حرق 110 آلاف xid: الـ <code>xid_age</code> عدّى الحد، و<code>pct_of_freeze_max</code> عدّى 100%. الجدول مفيهوش ولا dead tuple والـ autovacuum مقفول عليه، ومع كده جه worker مكتوب عليه <code>(to prevent wraparound)</code>. الـ <code>ALTER TABLE</code> فشل بـ 55P03 بعد الـ <code>lock_timeout</code>، والـ worker لسه موجود. <code>pg_cancel_backend</code> نجح، وبعد مدة قصيرة جه worker جديد لنفس الجدول. ولما خلص، الـ age نزل من غير ما نعمل حاجة. وسطر الـ log من السيرفر: <code>automatic aggressive vacuum to prevent wraparound</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>أرقام الـ transactions حجمها 32 bit وبتتقارن في دايرة: لأي xid، حوالي 2 مليار رقم يعتبروا "الماضي" و2 مليار "المستقبل". والـ transactions اللي بتكتب بس هي اللي بتستهلك رقم. لو <code>xmin</code> بتاع row فضل من غير freeze لمدة 2 مليار transaction كمان، هيبان فجأة إنه في المستقبل، والـ row هيختفي. الـ <b>freezing</b> بيمنع ده: الـ VACUUM بيعلّم الصفوف القديمة إنها ظاهرة للكل مهما كان الـ <code>xmin</code> بتاعها. و<code>age(datfrozenxid)</code> و<code>age(relfrozenxid)</code> بيقولولك كل database وجدول قربوا قد إيه، ودول الأرقام اللي تراقبها.</p>
+    <p>لما عمر الجدول يعدي <code>autovacuum_freeze_max_age</code> (200,000,000)، الـ autovacuum بيشتغل عليه <b>مهما كان</b>: حتى لو مفيش dead tuples، وحتى لو الـ autovacuum مقفول. عشان نشوفه بجد، الـ lab فوق بيخلي القيمة دي أقل حاجة مسموحة (100,000)، وبيقفل الـ autovacuum على الجدول، وبيحرق 110 آلاف xid. بيظهر worker مكتوب عليه <code>(to prevent wraparound)</code>. والتشغيلة دي <b>مبتتراجعش</b>: <code>ALTER TABLE</code> بـ <code>lock_timeout</code> ثانيتين ونص بيفشل بـ <code>55P03</code> والـ worker بيفضل. على جدول ضخم ده ممكن ياخد ساعات، وأي DDL وكل اللي واقف وراه بيستنى (<a href="./15-locks-deadlocks-advisory.html">درس 15</a>). و<code>pg_cancel_backend</code> بيوقف الـ worker فعلًا، والـ launcher بيبعت غيره بعد ≈309 مللي ثانية، فالإلغاء مش بيكسبك حاجة: خطط الـ DDL حواليه، أو اعمل vacuum قبل ما العمر يوصل.</p>
+    <p>ولو فضل يفشل، الجدول فوق هو اللي بيحصل بعد كده. المراحل دي من الـ docs ومشغلتهاش، لأن الوصول ليها محتاج مليارات transactions. ده concept تعرفه ورقم تعمل عليه alert، مش حاجة تخاف منها كل يوم. بس وقّعت شركات حقيقية. <a href="https://blog.sentry.io/transaction-id-wraparound-in-postgres/">Sentry</a> وقعت معظم يوم شغل أمريكي في يوليو 2015. و shard في <a href="https://mailchimp.com/what-we-learned-from-the-recent-mandrill-outage/">Mandrill بتاعة Mailchimp</a> بطّل يقبل كتابة في فبراير 2019: كانت فيه تذكرة للمراقبة قاعدة في الـ backlog، وتقدير الـ vacuum وصل 40 يوم، ورجعوا بإنهم عملوا truncate لجدولين ضخام. الاتنين يستاهلوا تقراهم. والـ docs النهاردة بتضيف إن الـ single-user mode مبقاش لازم ولا مطلوب: انهي الـ transactions القديمة، وامسح الـ slots القديمة، وشغّل <code>VACUUM</code> عادي.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      ضيف في الـ monitoring: <code>age(datfrozenxid)</code> لكل database و<code>mxid_age(datminmxid)</code>، وأكبر <code>age(relfrozenxid)</code> لكل جدول (الاستعلامين <code>DB_AGE</code> و<code>TABLE_AGE</code> فوق). نقطة بداية معقولة: warning عند 500 مليون، و page عند مليار، وعدّلها حسب معدل الكتابة عندك. وخد بالك: جدول كبير ممكن يجيله anti-wraparound فجأة في نص النهار ويوقف migration، فلو عندك جدول زي ده قرب من الحد، اعمله <code>VACUUM (FREEZE)</code> في وقت هادي قبل ما يوصل. وأي xid-heavy job (كل statement في transaction لوحدها) بيحرق الأرقام أسرع، فجمّعه في batches.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "What is transaction ID wraparound and how do you make sure it never takes you down?" → Xids are 32-bit and compared circularly, so rows must be frozen before they're 2 billion transactions old. Autovacuum forces this at <code>autovacuum_freeze_max_age</code>. If it can't keep up, Postgres eventually refuses new xids. I'd alert on <code>age(datfrozenxid)</code>, never disable autovacuum, kill long transactions and stale slots that hold it back, and keep big tables vacuumable with sensible per-table settings or partitions.
+    <div class="ar-note">"إيه هو الـ transaction ID wraparound وإزاي تضمن إنه ميوقعكش؟" ← الـ xids حجمها 32 bit وبتتقارن في دايرة، فالصفوف لازم تتعمل لها freeze قبل ما عمرها يوصل 2 مليار transaction. الـ autovacuum بيفرض ده عند <code>autovacuum_freeze_max_age</code>. ولو مقدرش يلحق، Postgres في الآخر بيرفض xids جديدة. هعمل alert على <code>age(datfrozenxid)</code>، ومش هقفل الـ autovacuum أبدًا، وهقتل الـ transactions الطويلة والـ slots القديمة اللي ماسكاه، وهخلي الجداول الكبيرة سهل تتعمل لها vacuum بإعدادات per-table أو partitions.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Long transactions <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ long transactions</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>VACUUM can only remove versions that no running transaction could need, and one old transaction holds that boundary, the <em>removable cutoff</em>, for the whole database. So one forgotten session can make every table bloat. Below, one session goes idle and another updates 100,000 rows twice. There's a nuance most articles skip, and I tested four kinds of "idle transaction":</p>
+    <ul>
+      <li><b>Read Committed, read then idle:</b> <code>backend_xmin</code> is empty, because the statement's snapshot ended with the statement, so VACUUM works normally. It still holds its table locks, and <a href="./15-locks-deadlocks-advisory.html">lesson 15</a> shows the queue that causes.</li>
+      <li><b>Read Committed, wrote then idle:</b> it has a <code>backend_xid</code>, and <b>200,000 dead tuples aren't removable</b>.</li>
+      <li><b>Repeatable Read, read then idle:</b> <code>backend_xmin</code> holds the horizon, and <b>200,000</b> again.</li>
+      <li><b>Read Committed with an open cursor:</b> the cursor keeps a snapshot, and <b>200,000</b> again.</li>
+    </ul>
+    <p>So look at both <code>backend_xid</code> and <code>backend_xmin</code>, as the docs recommend. As soon as the session ends, the same VACUUM removes all of them. The damage also reaches further: <b>locks</b> are held to the end, and <b>replicas</b> can do this to the primary. With <code>hot_standby_feedback = on</code>, a long report on a replica holds the primary's cleanup (100,000 dead tuples not removable in the run). Worse, a replica that dies with a physical slot leaves <code>xmin</code> frozen on the slot: 900,000 not removable and 191 MB of WAL retained until the slot is dropped. <code>max_slot_wal_keep_size</code> and <code>idle_replication_slot_timeout</code> limit this, and both are off by default. Prepared transactions do the same. <a href="./23-replication-read-replicas.html">Lesson 23</a> covers replication itself.</p>
+    <p><b>The classic Node version:</b> <code>BEGIN</code>, then an HTTP call to a payment API, then <code>COMMIT</code>. While the 2-second call runs, the connection shows <code>idle in transaction</code>, waiting on <code>ClientRead</code> and holding an xid, a row lock and a pool slot. Another write on the same order waits ≈983 ms. The fix is to move the call out: one short transaction before it, one after, with a status like <code>charging</code> so that a crash in between can be found and reconciled. That write then waits ≈1 ms.</p>
+    <p><b>Timeouts are the safety net</b>, with three different behaviours (real errors below). <code>idle_in_transaction_session_timeout</code> kills a session idle inside a transaction, <code>25P03</code>. <code>transaction_timeout</code>, new in PG 17, kills a transaction that runs too long overall even if each statement is quick, <code>25P04</code>. Both terminate the <em>connection</em>, so your client must have an <code>error</code> listener. <code>statement_timeout</code> only cancels the statement, <code>57014</code>, and the connection survives. All three default to 0, off. Set them per role rather than globally, so that migrations and admin sessions can use different values.</p>
+  </section>
+<pre data-file="src/long-tx.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const connect = async () =&gt; {
+  const c = new pg.Client({ connectionString: labUrl() });
+  await c.connect();
+  return c;
+};
+const worker = await connect();
+const sleeper = await connect();
+
+// بنقرا سطر الـ tuples من تقرير VACUUM VERBOSE، وده اللي فيه الأرقام
+const notices: string[] = [];
+worker.on("notice", (n) =&gt; notices.push(n.message ?? ""));
+
+async function vacuumReport() {
+  notices.length = 0;
+  await worker.query("VACUUM (VERBOSE) orders");
+  const text = notices.join("\n");
+  return {
+    tuples: text.match(/tuples: .*/)?.[0] ?? "?",
+    removableCutoff: text.match(/removable cutoff: .*/)?.[0] ?? "?",
+  };
+}
+
+const seed = async () =&gt; {
+  await worker.query(`
+    DROP TABLE IF EXISTS orders, audit;
+    CREATE TABLE orders (id int PRIMARY KEY, total_cents bigint NOT NULL) WITH (autovacuum_enabled = false);
+    CREATE TABLE audit (note text);
+    INSERT INTO orders SELECT i, i FROM generate_series(1, 100000) i;
+  `);
+  await worker.query("VACUUM orders");
+};
+
+// الاستعلام اللي بتفتحه أول ما تشك: مين أقدم transaction ومين ماسك الـ horizon
+const OLDEST = `
+  SELECT pid, state, wait_event, backend_xid, backend_xmin, age(backend_xmin) AS xmin_age,
+         round(extract(epoch FROM now() - xact_start)::numeric, 1) AS xact_age_s, left(query, 40) AS query
+  FROM pg_stat_activity
+  WHERE xact_start IS NOT NULL AND pid &lt;&gt; pg_backend_pid()
+  ORDER BY xact_start LIMIT 1`;
+
+// أربع طرق لـ ⁦"transaction⁩ نايمة⁦":⁩ مش كلهم بيمنعوا الـ VACUUM
+const variants: [string, string[]][] = [
+  ["READ COMMITTED, read then idle", ["BEGIN", "SELECT count(*) FROM orders"]],
+  ["READ COMMITTED, wrote then idle", ["BEGIN", "INSERT INTO audit VALUES ('x')"]],
+  ["REPEATABLE READ, read then idle", ["BEGIN ISOLATION LEVEL REPEATABLE READ", "SELECT count(*) FROM orders"]],
+  ["READ COMMITTED, open cursor", ["BEGIN", "DECLARE c CURSOR FOR SELECT * FROM orders", "FETCH 1 FROM c"]],
+];
+
+for (const [label, statements] of variants) {
+  await seed();
+  for (const s of statements) await sleeper.query(s);
+
+  // تحديث 100 ألف صف مرتين وإحنا سايبين الـ session النايم
+  await worker.query("UPDATE orders SET total_cents = total_cents + 1");
+  await worker.query("UPDATE orders SET total_cents = total_cents + 1");
+
+  console.log(`\n== ${label}`);
+  console.log(JSON.stringify((await worker.query(OLDEST)).rows[0]));
+  console.log("VACUUM:", (await vacuumReport()).tuples);
+
+  await sleeper.query("ROLLBACK");
+  console.log("after it ends, VACUUM:", (await vacuumReport()).tuples);
+}
+
+await worker.end();
+await sleeper.end();
+</code></pre>
+<pre><code class="language-plaintext">== READ COMMITTED, read then idle
+{"pid":13944,"state":"idle in transaction","wait_event":"ClientRead","backend_xid":null,"backend_xmin":null,"xmin_age":null,"xact_age_s":"0.8","query":"SELECT count(*) FROM orders"}
+VACUUM: tuples: 100000 removed, 100000 remain, 0 are dead but not yet removable
+after it ends, VACUUM: tuples: 0 removed, 100000 remain, 0 are dead but not yet removable
+
+== READ COMMITTED, wrote then idle
+{"pid":13944,"state":"idle in transaction","wait_event":"ClientRead","backend_xid":"756","backend_xmin":null,"xmin_age":null,"xact_age_s":"0.9","query":"INSERT INTO audit VALUES ('x')"}
+VACUUM: tuples: 0 removed, 300000 remain, 200000 are dead but not yet removable
+after it ends, VACUUM: tuples: 200000 removed, 100000 remain, 0 are dead but not yet removable
+
+== REPEATABLE READ, read then idle
+{"pid":13944,"state":"idle in transaction","wait_event":"ClientRead","backend_xid":null,"backend_xmin":"760","xmin_age":2,"xact_age_s":"0.8","query":"SELECT count(*) FROM orders"}
+VACUUM: tuples: 0 removed, 300000 remain, 200000 are dead but not yet removable
+after it ends, VACUUM: tuples: 200000 removed, 100000 remain, 0 are dead but not yet removable
+
+== READ COMMITTED, open cursor
+{"pid":13944,"state":"idle in transaction","wait_event":"ClientRead","backend_xid":null,"backend_xmin":"763","xmin_age":2,"xact_age_s":"1.0","query":"FETCH 1 FROM c"}
+VACUUM: tuples: 0 removed, 300000 remain, 200000 are dead but not yet removable
+after it ends, VACUUM: tuples: 200000 removed, 100000 remain, 0 are dead but not yet removable
+</code></pre>
+  <div class="ar-note">أربع حالات، وفي كل واحدة: السطر الأول من <code>pg_stat_activity</code>، وتقرير الـ VACUUM والـ session نايم، وتقريره بعد ما يخلص. الأولى: <code>backend_xid</code> و<code>backend_xmin</code> فاضيين، والـ VACUUM شغال عادي (<code>0 are dead but not yet removable</code>). التانية: <code>backend_xid</code> فيه رقم، و200,000 مش قابلين يتشالوا. التالتة: <code>backend_xmin</code> فيه رقم، ونفس الـ 200,000. الرابعة: الـ cursor ماسك <code>backend_xmin</code>، ونفس الـ 200,000. وفي الحالات دي كلها، بعد الـ <code>ROLLBACK</code> الـ VACUUM شال الـ 200,000. في الحالة الأولى الرقم <code>100000 removed</code> مش 200,000 لأن الـ UPDATE التاني نضف جزء وهو ماشي (on-access pruning).</div>
+
+<pre class="diagram">
+  primary                                     replica
+  ───────                                     ───────
+  VACUUM orders                               REPEATABLE READ report
+       │                                         │
+       ▼                                         ▼
+  removable cutoff = oldest of:            hot_standby_feedback = on
+    • backend_xmin / backend_xid   ◀───────  sends its xmin back
+    • pg_replication_slots.xmin    ◀───────  stored on the slot
+    • prepared transactions
+
+  replica dies → slot.xmin stays → cutoff stuck, WAL piles up
+</pre>
+  <div class="ar-note">الـ <code>removable cutoff</code> على الـ primary هو الأقدم بين 3 حاجات: <code>backend_xmin</code> و<code>backend_xid</code> بتوع الـ sessions، و<code>xmin</code> بتاع الـ replication slots، والـ prepared transactions. والـ replica اللي عليها <code>hot_standby_feedback = on</code> بتبعت الـ xmin بتاعها للـ primary، وبيتخزن على الـ slot. ولو الـ replica وقعت، الـ xmin بيفضل على الـ slot، فالـ cutoff واقف والـ WAL بيتراكم.</div>
+<pre data-file="src/replica-holds.ts"><code class="language-typescript">import pg from "pg";
+import { createLab } from "../pg-cluster.mjs";
+
+const lab = await createLab({ baseDir: process.cwd() });
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+const notices: string[] = [];
+
+try {
+  const primary = await lab.cluster("primary", { conf: "fsync=off\nautovacuum=off\nwal_level=replica" });
+  const c: pg.Client = await primary.client();
+  c.on("notice", (n) =&gt; notices.push(n.message ?? ""));
+  await c.query("SELECT pg_create_physical_replication_slot('reporting_slot')");
+  await c.query(`
+    CREATE TABLE orders (id int PRIMARY KEY, total_cents bigint NOT NULL);
+    INSERT INTO orders SELECT i, i FROM generate_series(1, 100000) i;
+  `);
+  await c.query("VACUUM orders");
+
+  const tuples = async () =&gt; {
+    notices.length = 0;
+    await c.query("VACUUM (VERBOSE) orders");
+    return notices.join("\n").match(/tuples: .*/)?.[0];
+  };
+  const slot = async () =&gt; (await c.query(`
+    SELECT slot_name, active, xmin, restart_lsn,
+           pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS wal_retained
+    FROM pg_replication_slots`)).rows[0];
+
+  // الـ replica بـ hot_standby_feedback: بتقول للـ ⁦primary "⁩فيه query عندي، متشيلش"
+  const replica = await lab.replicaOf(primary, "replica", {
+    conf: "hot_standby_feedback=on\nwal_receiver_status_interval=1\nprimary_slot_name='reporting_slot'",
+  });
+  const r: pg.Client = await replica.client();
+  await r.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+  await r.query("SELECT count(*) FROM orders");
+  await sleep(2500);
+
+  await c.query("UPDATE orders SET total_cents = total_cents + 1");
+  console.log("long report open on the replica");
+  console.log("primary's view of the slot:", JSON.stringify(await slot()));
+  console.log("primary VACUUM:", await tuples());
+
+  await r.query("COMMIT");
+  await sleep(2500);
+  console.log("\nreport finished, replica fed back");
+  console.log("primary VACUUM:", await tuples());
+
+  // الـ replica وقعت والـ slot فضل: الـ WAL بيتراكم، والـ xmin بتاعها بيفضل لو كانت ماسكة واحد
+  await r.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+  await r.query("SELECT count(*) FROM orders");
+  await sleep(2500);
+  await r.end();
+  replica.crash();
+  await c.query("UPDATE orders SET total_cents = total_cents + 1");
+  for (let i = 0; i &lt; 40; i++) await c.query("UPDATE orders SET total_cents = total_cents + 1 WHERE id &lt;= 20000");
+  console.log("\nreplica is gone, its slot stays");
+  console.log("slot:", JSON.stringify(await slot()));
+  console.log("primary VACUUM:", await tuples());
+
+  await c.query("SELECT pg_drop_replication_slot('reporting_slot')");
+  console.log("\nslot dropped");
+  console.log("primary VACUUM:", await tuples());
+} finally {
+  await lab.stopAll();
+}
+</code></pre>
+<pre><code class="language-plaintext">long report open on the replica
+primary's view of the slot: {"slot_name":"reporting_slot","active":true,"xmin":"753","restart_lsn":"0/5540000","wal_retained":"6958 kB"}
+primary VACUUM: tuples: 0 removed, 200000 remain, 100000 are dead but not yet removable
+
+report finished, replica fed back
+primary VACUUM: tuples: 100000 removed, 100000 remain, 0 are dead but not yet removable
+
+replica is gone, its slot stays
+slot: {"slot_name":"reporting_slot","active":false,"xmin":"754","restart_lsn":"0/5D0AC10","wal_retained":"191 MB"}
+primary VACUUM: tuples: 0 removed, 1000000 remain, 900000 are dead but not yet removable
+
+slot dropped
+primary VACUUM: tuples: 900000 removed, 100000 remain, 0 are dead but not yet removable
+</code></pre>
+  <div class="ar-note">تقرير مفتوح على الـ replica: الـ slot عليه <code>xmin</code>، و VACUUM على الـ primary مش قادر يشيل 100,000. بعد ما التقرير خلص اتشالوا. وبعدين الـ replica وقعت: الـ slot <code>active: false</code>، بس لسه عليه <code>xmin</code>، و900,000 مش قابلين يتشالوا، و<code>wal_retained</code> كبر. وبعد <code>pg_drop_replication_slot</code> اتشالوا كلهم.</div>
+<pre data-file="src/charge-http.ts"><code class="language-typescript">import http from "node:http";
+import type { AddressInfo } from "node:net";
+import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+// بديل payment API حقيقي: سيرفر محلي بياخد ثانيتين عشان يرد
+const provider = http.createServer((_req, res) =&gt; {
+  setTimeout(() =&gt; res.end(JSON.stringify({ ok: true })), 2000);
+});
+await new Promise&lt;void&gt;((resolve) =&gt; provider.listen(0, "127.0.0.1", resolve));
+const { port } = provider.address() as AddressInfo;
+const charge = async () =&gt; (await fetch(`http://127.0.0.1:${port}/charge`, { method: "POST" })).json();
+
+const pool = new pg.Pool({ connectionString: labUrl(), max: 5 });
+pool.on("error", () =&gt; {});
+await pool.query(`
+  DROP TABLE IF EXISTS orders;
+  CREATE TABLE orders (id int PRIMARY KEY, status text NOT NULL);
+  INSERT INTO orders VALUES (1, 'pending'), (2, 'pending');
+`);
+
+// ❌ الـ HTTP call جوه الـ transaction: الـ row lock والـ connection محجوزين طول المكالمة
+async function checkoutBad(orderId: number) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("UPDATE orders SET status = 'charging' WHERE id = $1", [orderId]);
+    await charge();
+    await client.query("UPDATE orders SET status = 'paid' WHERE id = $1", [orderId]);
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() =&gt; {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// ✅ فيه transaction قصيرة قبل المكالمة وواحدة بعدها، والمكالمة نفسها بره
+async function checkoutGood(orderId: number) {
+  await pool.query("UPDATE orders SET status = 'charging' WHERE id = $1 AND status = 'pending'", [orderId]);
+  await charge();
+  await pool.query("UPDATE orders SET status = 'paid' WHERE id = $1", [orderId]);
+}
+
+const WATCH = `
+  SELECT state, wait_event, round(extract(epoch FROM now() - xact_start)::numeric, 1) AS xact_age_s,
+         backend_xid IS NOT NULL AS has_xid, left(query, 45) AS last_query
+  FROM pg_stat_activity
+  WHERE datname = current_database() AND pid &lt;&gt; pg_backend_pid() AND state &lt;&gt; 'idle'`;
+
+async function scenario(name: string, checkout: (id: number) =&gt; Promise&lt;void&gt;) {
+  await pool.query("UPDATE orders SET status = 'pending'");
+  console.log(`\n== ${name}`);
+  const running = checkout(1);
+  await new Promise((r) =&gt; setTimeout(r, 1000));
+  console.log("1 s into the call:", JSON.stringify((await pool.query(WATCH)).rows));
+
+  // واحد تاني (admin أو webhook) عايز يكتب على نفس الـ order
+  const t0 = performance.now();
+  await pool.query("UPDATE orders SET status = status WHERE id = 1");
+  console.log(`another write on the same order waited ≈${Math.round(performance.now() - t0)} ms`);
+  await running;
+}
+
+await scenario("HTTP call inside the transaction", checkoutBad);
+await scenario("HTTP call between two short transactions", checkoutGood);
+
+await pool.end();
+provider.close();
+</code></pre>
+<pre><code class="language-plaintext">== HTTP call inside the transaction
+1 s into the call: [{"state":"idle in transaction","wait_event":"ClientRead","xact_age_s":"1.0","has_xid":true,"last_query":"UPDATE orders SET status = 'charging' WHERE i"}]
+another write on the same order waited ≈983 ms
+
+== HTTP call between two short transactions
+1 s into the call: []
+another write on the same order waited ≈1 ms
+</code></pre>
+  <div class="ar-note">في النسخة الغلط، بعد ثانية من المكالمة: الـ connection حالتها <code>idle in transaction</code>، ومستنية <code>ClientRead</code>، ومعاها xid. وكتابة تانية على نفس الـ order استنت لحد ما المكالمة خلصت. في النسخة الصح: مفيش ولا connection شغالة أثناء المكالمة (<code>[]</code>)، والكتابة التانية خلصت في مللي ثانية.</div>
+<pre data-file="src/timeouts.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const connect = async () =&gt; {
+  const c = new pg.Client({ connectionString: labUrl() });
+  // الـ timeout بيقفل الـ connection: من غير listener الـ process كله بيقع
+  c.on("error", (e) =&gt; console.log(`  client 'error' event: ${(e as pg.DatabaseError).code} ${e.message}`));
+  await c.connect();
+  return c;
+};
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+
+async function attempt(label: string, setting: string, body: (c: pg.Client) =&gt; Promise&lt;void&gt;) {
+  const c = await connect();
+  console.log(`\n== ${label}`);
+  try {
+    await c.query(setting);
+    await body(c);
+  } catch (err) {
+    const e = err as pg.DatabaseError;
+    console.log(`  query rejected: ${e.code ?? ""} ${e.message}`);
+  }
+  await c.end().catch(() =&gt; {});
+}
+
+// الـ session نايم جوه transaction أكتر من المسموح
+await attempt("idle_in_transaction_session_timeout", "SET idle_in_transaction_session_timeout = '300ms'", async (c) =&gt; {
+  await c.query("BEGIN");
+  await c.query("SELECT 1");
+  await sleep(800);
+  await c.query("SELECT 2");
+});
+
+// الـ transaction كلها أطول من المسموح، حتى لو كل statement سريع
+await attempt("transaction_timeout", "SET transaction_timeout = '500ms'", async (c) =&gt; {
+  await c.query("BEGIN");
+  for (let i = 0; i &lt; 20; i++) {
+    await c.query("SELECT pg_sleep(0.1)");
+  }
+  await c.query("COMMIT");
+});
+
+// حالة statement واحد طويل: الـ connection بتفضل عايشة والـ transaction بس بتفشل
+await attempt("statement_timeout", "SET statement_timeout = '300ms'", async (c) =&gt; {
+  await c.query("SELECT pg_sleep(5)").catch((e: pg.DatabaseError) =&gt; console.log(`  query rejected: ${e.code} ${e.message}`));
+  const { rows } = await c.query("SELECT 'connection still works' AS ok");
+  console.log(" ", rows[0].ok);
+});
+
+// ولو الـ error حصل وإحنا مش مستنيين query، الـ pool هو اللي بيطلع الـ event
+const pool = new pg.Pool({ connectionString: labUrl(), max: 2 });
+pool.on("error", (e) =&gt; console.log(`  pool 'error' event: ${(e as pg.DatabaseError).code} ${e.message}`));
+console.log("\n== defaults per role, the way you set them in production");
+await pool.query("CREATE ROLE app_user LOGIN");
+await pool.query(`ALTER ROLE app_user SET idle_in_transaction_session_timeout = '30s'`);
+await pool.query(`ALTER ROLE app_user SET statement_timeout = '15s'`);
+await pool.query(`ALTER ROLE app_user SET transaction_timeout = '60s'`);
+const { rows } = await pool.query(`SELECT rolconfig FROM pg_roles WHERE rolname = 'app_user'`);
+console.log(" ", JSON.stringify(rows[0].rolconfig));
+await pool.end();
+</code></pre>
+<pre><code class="language-plaintext">== idle_in_transaction_session_timeout
+  client 'error' event: 25P03 terminating connection due to idle-in-transaction timeout
+  client 'error' event: ECONNRESET read ECONNRESET
+  client 'error' event: undefined Connection terminated unexpectedly
+  query rejected:  Client has encountered a connection error and is not queryable
+
+== transaction_timeout
+  query rejected: 25P04 terminating connection due to transaction timeout
+
+== statement_timeout
+  query rejected: 57014 canceling statement due to statement timeout
+  connection still works
+
+== defaults per role, the way you set them in production
+  ["idle_in_transaction_session_timeout=30s","statement_timeout=15s","transaction_timeout=60s"]
+</code></pre>
+  <div class="ar-note">الأول: <code>25P03</code> والـ connection اتقفلت، وعشان كده الـ client بيطلّع <code>error</code> event، والـ query الجاية بتترفض. التاني: <code>25P04</code> بعد ما الـ transaction عدّت 500 مللي ثانية، رغم إن كل statement 100 مللي ثانية بس. التالت: <code>57014</code>، والـ connection لسه شغالة. وآخر سطر: القيم محفوظة على الـ role في <code>rolconfig</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ VACUUM يقدر يشيل بس النسخ اللي مفيش transaction شغالة ممكن تحتاجها، و transaction واحدة قديمة بتمسك الحد ده، الـ <em>removable cutoff</em>، على الـ database كلها. فـ session واحد منسي ممكن ينفخ كل الجداول. فوق، session بينام و session تاني بيعمل update لـ 100 ألف صف مرتين. وفيه تفصيلة معظم المقالات بتعدّيها، فجربت 4 أنواع من "transaction نايمة":</p>
+    <ul>
+      <li><b>Read Committed، قرا ونام:</b> <code>backend_xmin</code> فاضي، لأن الـ snapshot بتاعة الـ statement خلصت معاه، فالـ VACUUM شغال عادي. بس لسه ماسك الـ table locks بتاعته، و<a href="./15-locks-deadlocks-advisory.html">درس 15</a> بيوري الطابور اللي ده بيعمله.</li>
+      <li><b>Read Committed، كتب ونام:</b> عنده <code>backend_xid</code>، و<b>200,000 dead tuple مش قابلين يتشالوا</b>.</li>
+      <li><b>Repeatable Read، قرا ونام:</b> <code>backend_xmin</code> ماسك الـ horizon، و<b>200,000</b> تاني.</li>
+      <li><b>Read Committed مع cursor مفتوح:</b> الـ cursor ماسك snapshot، و<b>200,000</b> تاني.</li>
+    </ul>
+    <p>فبص على <code>backend_xid</code> و<code>backend_xmin</code> الاتنين، زي ما الـ docs بتنصح. وأول ما الـ session يخلص، نفس الـ VACUUM بيشيلهم كلهم. والضرر بيوصل لأبعد من كده: الـ <b>locks</b> بتفضل لحد الآخر، والـ <b>replicas</b> ممكن تعمل كده في الـ primary. بـ <code>hot_standby_feedback = on</code>، تقرير طويل على replica بيمسك تنضيف الـ primary (100 ألف dead tuple مش قابلين يتشالوا في التشغيل). والأوحش، replica تموت ومعاها physical slot بتسيب <code>xmin</code> متجمد على الـ slot: 900 ألف مش قابلين يتشالوا و191 MB من الـ WAL محجوزين لحد ما الـ slot يتمسح. <code>max_slot_wal_keep_size</code> و<code>idle_replication_slot_timeout</code> بيحددوا ده، والاتنين مقفولين افتراضيًا. والـ prepared transactions بتعمل نفس الحاجة. و<a href="./23-replication-read-replicas.html">درس 23</a> بيغطي الـ replication نفسه.</p>
+    <p><b>النسخة المشهورة في Node:</b> <code>BEGIN</code>، وبعدين HTTP call لـ payment API، وبعدين <code>COMMIT</code>. وأثناء المكالمة بتاعة الثانيتين، الـ connection بتبان <code>idle in transaction</code>، مستنية <code>ClientRead</code>، وماسكة xid و row lock ومكان في الـ pool. وكتابة تانية على نفس الـ order بتستنى ≈983 مللي ثانية. الحل تنقل المكالمة بره: transaction قصيرة قبلها وواحدة بعدها، مع status زي <code>charging</code> عشان لو حصل crash في النص تقدر تلاقيها وتصلحها. وساعتها الكتابة دي بتستنى ≈1 مللي ثانية.</p>
+    <p><b>الـ timeouts هي شبكة الأمان</b>، وليهم 3 سلوكيات مختلفة (الـ errors الحقيقية فوق). <code>idle_in_transaction_session_timeout</code> بيقتل session نايم جوه transaction، <code>25P03</code>. و<code>transaction_timeout</code>، الجديد في PG 17، بيقتل transaction طولت كلها حتى لو كل statement سريع، <code>25P04</code>. والاتنين بيقفلوا الـ <em>connection</em>، فلازم الـ client بتاعك يبقى عليه <code>error</code> listener. و<code>statement_timeout</code> بيلغي الـ statement بس، <code>57014</code>، والـ connection بتعيش. والتلاتة افتراضيًا 0 يعني مقفولين. حطهم per role مش global، عشان الـ migrations والـ admin sessions يبقى ليهم قيم مختلفة.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ disk بيكبر و<code>n_dead_tup</code> عالي رغم إن الـ autovacuum شغال، و<code>VACUUM VERBOSE</code> بيقول <code>dead but not yet removable</code>. دي بصمة الـ long transaction. افتح <code>pg_stat_activity</code> بالاستعلام <code>OLDEST</code> فوق وبص على أقدم <code>xact_start</code>، وبعدين <code>pg_replication_slots</code>، وبعدين <code>pg_prepared_xacts</code>. غالبًا هتلاقي tab في DBeaver حد سابه، أو worker واقف في HTTP call من غير timeout، أو slot لـ replica اتمسحت من شهور. وفي الـ code review: أي <code>await fetch</code> أو <code>await queue.publish</code> بين <code>BEGIN</code> و<code>COMMIT</code> ارفضه. وحط للـ app user: <code>ALTER ROLE app_user SET idle_in_transaction_session_timeout = '30s'</code>.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "The table keeps growing, autovacuum runs, and VACUUM VERBOSE reports many tuples 'dead but not yet removable'. What's happening?" → Something is holding the xmin horizon. I'd check, in order: the oldest <code>backend_xid</code>/<code>backend_xmin</code> in <code>pg_stat_activity</code>, including idle in transaction; <code>xmin</code> and <code>catalog_xmin</code> in <code>pg_replication_slots</code>; <code>hot_standby_feedback</code> on replicas; and <code>pg_prepared_xacts</code>. Then I'd end the holder, and add timeouts so it can't recur.
+    <div class="ar-note">"الجدول بيكبر، والـ autovacuum شغال، و VACUUM VERBOSE بيقول tuples كتير dead but not yet removable. إيه اللي بيحصل؟" ← فيه حاجة ماسكة الـ xmin horizon. هبص بالترتيب: أقدم <code>backend_xid</code> و<code>backend_xmin</code> في <code>pg_stat_activity</code> بما فيها idle in transaction، وبعدين <code>xmin</code> و<code>catalog_xmin</code> في <code>pg_replication_slots</code>، وبعدين <code>hot_standby_feedback</code> على الـ replicas، وبعدين <code>pg_prepared_xacts</code>. وبعدين أنهي اللي ماسك، وأضيف timeouts عشان ميتكررش.</div>
+  </div>
+
+  <!-- ===================== PART 7 ===================== -->
+  <h2 id="p7">Part 7 — Tuning on big tables <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 7 — الـ tuning على الجداول الكبيرة</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Percentages break at scale. At 1 billion rows, 20% means 200 million dead tuples before vacuum starts. PG 18's cap brings that to 100 million, which is better and still huge. So big or busy tables get their own settings: <code>ALTER TABLE orders SET (autovacuum_vacuum_scale_factor = 0.01, autovacuum_vacuum_threshold = 10000, autovacuum_vacuum_cost_limit = 2000)</code>. The proof below uses three identical tables of 500,000 rows and updates 5% of each. With the default threshold of 100,050, autovacuum doesn't fire in 20 s. The tuned table (15,000) fires ≈1.1 s later. A third table keeps scale 0.2 but sets PG 18's <code>autovacuum_vacuum_max_threshold = 20000</code>, and it fires too, ≈1.2 s later.</p>
+    <p><b>Cost-based delay</b> is the throttle. Each page VACUUM touches costs points: <code>vacuum_cost_page_hit</code> 1, <code>_miss</code> 2, <code>_dirty</code> 20. When the total reaches the limit (200) it sleeps for the delay. That's 2 ms for autovacuum and <b>0 for manual VACUUM</b>, so a manual run isn't throttled at all. That puts an upper bound of 10 dirtied pages per 2 ms, about 39 MB/s, shared across all workers. Raising the limit on one table is usually the right lever. The real numbers below use 1M dead tuples and 3 indexes: no throttle ≈0.4 s, 2 ms per 200 points ≈47.8 s, and 2 ms per 2000 points ≈4.5 s, so ten times the limit gave about ten times the speed. The pre-PG 12 default of 20 ms took ≈78 s, which isn't ten times the 2 ms run. That's probably Windows: timer granularity here makes a 2 ms sleep take much longer than asked, so on Linux expect the 2 ms run to be far quicker than this (not measured here). Trust the ratio between limits, not the seconds. <code>delay time</code> is the time spent sleeping. It appears when <code>track_cost_delay_timing</code> is on (new in PG 18, off by default), and it includes parallel workers, so it can exceed the elapsed time.</p>
+    <p><b><code>maintenance_work_mem</code></b> holds the IDs of dead tuples (<code>autovacuum_work_mem</code> = -1 means it uses the same value). When it fills, VACUUM must stop and scan <em>every index</em> before it can continue, so more indexes and less memory mean more passes. Look for <code>index scans:</code> in the report. In the run, 64 kB forced 6,370 passes (≈427 s), 256 kB forced 1,270 (≈92 s), and 1 MB needed one, the same as 64 MB. That 1 MB is enough here comes from VACUUM's new memory management in PG 17, and from my dead tuples sitting on adjacent pages; scattered ones need more. PG 17 also removed the old 1 GB limit. So 1 MB isn't a good setting. The point is that <code>index scans: N</code> above 1 means you're paying for full passes over every index, and more memory is the cheapest fix. Each autovacuum worker can use this much memory, so the total is multiplied by the number of workers.</p>
+    <p><b>See what it does:</b> <code>log_autovacuum_min_duration</code> defaults to 10 minutes, so short runs stay invisible. Set it lower (per table if needed) and you get lines like the real one below, with dead tuples, cutoff, I/O and time. <b>Structurally</b>, partitioning is the answer for tables this size: each partition is vacuumed on its own, old ones stay frozen and untouched, and retention is a <code>DROP</code> with no dead tuples at all (<a href="./24-partitioning.html">lesson 24</a>). Per its RC notes, PostgreSQL 19 adds parallel autovacuum for indexes (<code>autovacuum_max_parallel_workers</code>, per-table <code>autovacuum_parallel_workers</code>) and a scoring system for which table goes first. Neither is run here.</p>
+  </section>
+<pre data-file="src/per-table.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const connect = async () =&gt; {
+  const c = new pg.Client({ connectionString: labUrl() });
+  await c.connect();
+  return c;
+};
+const client = await connect();
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+
+const TABLES = ["orders_default", "orders_tuned", "orders_capped"];
+for (const t of TABLES) {
+  await client.query(`
+    CREATE TABLE ${t} (id int PRIMARY KEY, total_cents bigint NOT NULL);
+    INSERT INTO ${t} SELECT i, i FROM generate_series(1, 500000) i;
+  `);
+}
+
+const stats = async () =&gt; (await client.query(`
+  SELECT s.relname, s.n_dead_tup, s.autovacuum_count, c.reltuples::bigint AS reltuples, c.reloptions
+  FROM pg_stat_user_tables s JOIN pg_class c ON c.oid = s.relid
+  WHERE s.relname = ANY($1) ORDER BY s.relname`, [TABLES])).rows;
+
+// بنستنى الـ autovacuum بتاع الـ INSERT يخلص على التلاتة عشان reltuples تبقى صح
+for (;;) {
+  const rows = await stats();
+  if (rows.every((r) =&gt; Number(r.autovacuum_count) &gt;= 1 &amp;&amp; Number(r.reltuples) &gt; 400000)) break;
+  await sleep(200);
+}
+
+// الإعدادات بتاعة الجدول الكبير: threshold أقل بكتير، و vacuum أسرع لما يشتغل
+await client.query(`
+  ALTER TABLE orders_tuned SET (
+    autovacuum_vacuum_scale_factor = 0.01,
+    autovacuum_vacuum_threshold = 10000,
+    autovacuum_vacuum_cost_limit = 2000
+  )`);
+// الجدول التالت: scale فضل 0.2، بس الـ cap بتاع PG 18 محطوط عليه
+await client.query("ALTER TABLE orders_capped SET (autovacuum_vacuum_max_threshold = 20000)");
+
+const base = new Map((await stats()).map((r) =&gt; [r.relname as string, Number(r.autovacuum_count)]));
+console.log("thresholds on 500,000 rows:");
+console.log("  orders_default  50 + 0.2 × 500000     = 100050");
+console.log("  orders_tuned    10000 + 0.01 × 500000 = 15000");
+console.log("  orders_capped   min(20000, 100050)    = 20000");
+
+// 5% بس من الجدول اتغير: 25 ألف dead tuple في كل جدول
+for (const t of TABLES) await client.query(`UPDATE ${t} SET total_cents = total_cents + 1 WHERE id &lt;= 25000`);
+const t0 = performance.now();
+const fired = new Map&lt;string, number&gt;();
+while (performance.now() - t0 &lt; 20000) {
+  for (const r of await stats()) {
+    if (Number(r.autovacuum_count) &gt; base.get(r.relname)! &amp;&amp; !fired.has(r.relname)) {
+      fired.set(r.relname, performance.now() - t0);
+    }
+  }
+  if (fired.size === TABLES.length) break;
+  await sleep(100);
+}
+console.log("\nafter updating 25,000 rows (5%) in each, watched for 20 s:");
+for (const r of await stats()) {
+  const at = fired.get(r.relname);
+  console.log(`  ${String(r.relname).padEnd(15)} n_dead_tup=${String(r.n_dead_tup).padStart(6)}  ${at ? `autovacuum fired ≈${(at / 1000).toFixed(1)} s later` : "autovacuum did not fire"}`);
+}
+console.log("\nreloptions:", JSON.stringify((await stats()).find((r) =&gt; r.relname === "orders_tuned").reloptions));
+
+await client.end();
+</code></pre>
+<pre><code class="language-plaintext">thresholds on 500,000 rows:
+  orders_default  50 + 0.2 × 500000     = 100050
+  orders_tuned    10000 + 0.01 × 500000 = 15000
+  orders_capped   min(20000, 100050)    = 20000
+
+after updating 25,000 rows (5%) in each, watched for 20 s:
+  orders_capped   n_dead_tup=     0  autovacuum fired ≈1.2 s later
+  orders_default  n_dead_tup= 25000  autovacuum did not fire
+  orders_tuned    n_dead_tup=     0  autovacuum fired ≈1.1 s later
+
+reloptions: ["autovacuum_vacuum_scale_factor=0.01","autovacuum_vacuum_threshold=10000","autovacuum_vacuum_cost_limit=2000"]
+</code></pre>
+<pre><code class="language-plaintext">2026-11-04 05:27:33.558 EET [32944] LOG:  automatic vacuum of table "postgres.public.orders_tuned": index scans: 0
+	pages: 0 removed, 2703 remain, 2703 scanned (100.00% of total), 0 eagerly scanned
+	tuples: 0 removed, 500000 remain, 0 are dead but not yet removable
+	removable cutoff: 766, which was 1 XIDs old when operation ended
+	frozen: 0 pages from table (0.00% of total) had 0 tuples frozen
+	visibility map: 2703 pages set all-visible, 0 pages set all-frozen (0 were all-visible)
+	index scan not needed: 0 pages from table (0.00% of total) had 0 dead item identifiers removed
+	avg read rate: 0.000 MB/s, avg write rate: 0.070 MB/s
+	buffer usage: 5457 hits, 0 reads, 4 dirtied
+	WAL usage: 2707 records, 0 full page images, 159867 bytes, 9 buffers full
+	system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.44 s
+</code></pre>
+  <div class="ar-note">3 جداول بنفس الحجم وكل واحد اتغير فيه 25 ألف صف. <code>orders_default</code>: الحد 100,050 فمشتغلش في 20 ثانية، و<code>n_dead_tup</code> لسه 25 ألف. <code>orders_tuned</code>: الحد 15 ألف فاشتغل بسرعة. <code>orders_capped</code>: الـ cap بتاع PG 18 عند 20 ألف فاشتغل برضه. وآخر سطر الـ <code>reloptions</code> المتخزنة، وتحته بداية سطور الـ log من السيرفر.</div>
+<pre data-file="src/vacuum-cost-mem.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const client = new pg.Client({ connectionString: labUrl() });
+await client.connect();
+const notices: string[] = [];
+client.on("notice", (n) =&gt; notices.push(n.message ?? ""));
+
+async function seedDirty() {
+  await client.query(`
+    DROP TABLE IF EXISTS orders;
+    CREATE TABLE orders (id int PRIMARY KEY, tenant_id int NOT NULL, status text NOT NULL, total_cents bigint NOT NULL)
+      WITH (autovacuum_enabled = false);
+    INSERT INTO orders SELECT i, i % 200, 'paid', i FROM generate_series(1, 1000000) i;
+    CREATE INDEX orders_tenant_idx ON orders (tenant_id);
+    CREATE INDEX orders_status_idx ON orders (status);
+  `);
+  await client.query("VACUUM orders");
+  await client.query("UPDATE orders SET total_cents = total_cents + 1");
+  await client.query("CHECKPOINT");
+}
+
+async function vacuum(label: string, settings: string) {
+  await seedDirty();
+  await client.query(settings);
+  notices.length = 0;
+  const t0 = performance.now();
+  await client.query("VACUUM (VERBOSE) orders");
+  const ms = performance.now() - t0;
+  const text = notices.join("\n");
+  const pick = (re: RegExp) =&gt; text.match(re)?.[0] ?? "?";
+  console.log(`${label.padEnd(42)} ≈${(ms / 1000).toFixed(1).padStart(5)} s  ${pick(/index scans: \d+/)}  ${pick(/delay time: [\d.]+ ms/)}`);
+  await client.query("RESET ALL");
+}
+
+console.log("1M dead tuples, 3 indexes");
+// الـ VACUUM اليدوي مبيعملش throttle، الـ autovacuum بيعمل
+await vacuum("no throttle (manual default), 64 MB", "SET track_cost_delay_timing = on; SET vacuum_cost_delay = 0; SET maintenance_work_mem = '64MB'");
+await vacuum("autovacuum's default: 2 ms per 200 cost", "SET track_cost_delay_timing = on; SET vacuum_cost_delay = '2ms'; SET vacuum_cost_limit = 200; SET maintenance_work_mem = '64MB'");
+await vacuum("the old default: 20 ms per 200 cost", "SET track_cost_delay_timing = on; SET vacuum_cost_delay = '20ms'; SET vacuum_cost_limit = 200; SET maintenance_work_mem = '64MB'");
+await vacuum("tuned: 2 ms per 2000 cost", "SET track_cost_delay_timing = on; SET vacuum_cost_delay = '2ms'; SET vacuum_cost_limit = 2000; SET maintenance_work_mem = '64MB'");
+
+// لما الـ memory بتتملى بـ dead tuple ids، لازم يعدي على كل الـ indexes كام مرة
+console.log("\nmaintenance_work_mem and index passes, no throttle");
+for (const mem of ["64kB", "256kB", "1MB", "64MB"]) {
+  await vacuum(`maintenance_work_mem = ${mem}`, `SET vacuum_cost_delay = 0; SET maintenance_work_mem = '${mem}'`);
+}
+
+await client.end();
+</code></pre>
+<pre><code class="language-plaintext">1M dead tuples, 3 indexes
+no throttle (manual default), 64 MB        ≈  0.4 s  index scans: 1  delay time: 0.000 ms
+autovacuum's default: 2 ms per 200 cost    ≈ 47.8 s  index scans: 1  delay time: 52699.047 ms
+the old default: 20 ms per 200 cost        ≈ 78.0 s  index scans: 1  delay time: 92412.490 ms
+tuned: 2 ms per 2000 cost                  ≈  4.5 s  index scans: 1  delay time: 4996.269 ms
+
+maintenance_work_mem and index passes, no throttle
+maintenance_work_mem = 64kB                ≈427.2 s  index scans: 6370  ?
+maintenance_work_mem = 256kB               ≈ 92.0 s  index scans: 1270  ?
+maintenance_work_mem = 1MB                 ≈  7.5 s  index scans: 1  ?
+maintenance_work_mem = 64MB                ≈  0.7 s  index scans: 1  ?
+</code></pre>
+  <div class="ar-note">أول 4 سطور: نفس الجدول بمليون dead tuple و3 indexes وبإعدادات فرملة مختلفة، وآخر عمود هو وقت النوم. من غير فرملة ≈0.4 ثانية، وبالـ default بتاع الـ autovacuum ≈47.8 ثانية، وبالـ default القديم ≈78 ثانية، وبالـ limit 2000 ≈4.5 ثانية. المجموعة التانية: <code>index scans</code> عدد المرات اللي عدى فيها على كل الـ indexes: 6370 عند 64kB، و1270 عند 256kB، ومرة واحدة من 1MB وفوق. و<code>?</code> في آخر السطر معناها إن عدّاد النوم مكانش مفتوح في المجموعة دي. الجهاز Windows وعليه ضغط، و fsync مقفول، فخد النسب مش الثواني.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>النسب المئوية بتبوظ على الـ scale. عند مليار صف، 20% يعني 200 مليون dead tuple قبل ما الـ vacuum يبدأ. والـ cap بتاع PG 18 بينزلها لـ 100 مليون، أحسن بس لسه ضخم. فالجداول الكبيرة أو المشغولة بتاخد إعدادات لوحدها: <code>ALTER TABLE orders SET (autovacuum_vacuum_scale_factor = 0.01, autovacuum_vacuum_threshold = 10000, autovacuum_vacuum_cost_limit = 2000)</code>. الإثبات فوق بـ 3 جداول متطابقة فيها 500 ألف صف، واتغير 5% من كل واحد. بالحد الافتراضي 100,050 الـ autovacuum مشتغلش في 20 ثانية. والجدول المظبوط (15 ألف) اشتغل بعد ≈1.1 ثانية. والجدول التالت سايب scale 0.2 بس حاطط <code>autovacuum_vacuum_max_threshold = 20000</code> بتاع PG 18، واشتغل برضه بعد ≈1.2 ثانية.</p>
+    <p>الـ <b>cost-based delay</b> هو الفرملة. كل page بيلمسها الـ VACUUM ليها نقط: <code>vacuum_cost_page_hit</code> بـ 1، و<code>_miss</code> بـ 2، و<code>_dirty</code> بـ 20. لما المجموع يوصل الحد (200) بينام مدة الـ delay. دي 2 مللي ثانية للـ autovacuum و<b>صفر للـ VACUUM اليدوي</b>، يعني اليدوي مفيهوش فرملة خالص. وده بيحط سقف 10 pages متوسخة كل 2 مللي ثانية، يعني حوالي 39 MB في الثانية، موزعين على كل الـ workers. وزيادة الـ limit على جدول واحد غالبًا هو الحل الصح. الأرقام الحقيقية تحت على مليون dead tuple و3 indexes: من غير فرملة ≈0.4 ثانية، وبـ 2 مللي ثانية لكل 200 نقطة ≈47.8 ثانية، وبـ 2 مللي ثانية لكل 2000 نقطة ≈4.5 ثانية، يعني 10 أضعاف الـ limit ادت حوالي 10 أضعاف السرعة. والـ default القديم قبل PG 12 (20 مللي ثانية) خد ≈78 ثانية، ومش 10 أضعاف الـ 2 مللي ثانية، وده غالبًا تأثير Windows: دقة الـ timer هنا بتخلي نوم الـ 2 مللي ثانية ياخد أكتر بكتير مما طلبت. فعلى Linux توقّع إن تشغيلة الـ 2 مللي ثانية تبقى أسرع بكتير من كده (متقاسش هنا). ثق في النسبة بين الـ limits، مش في الثواني. و<code>delay time</code> هو وقت النوم، بيطلع لو <code>track_cost_delay_timing</code> شغال (جديد في PG 18 ومقفول افتراضيًا)، وبيشمل الـ parallel workers، فممكن يعدّي الوقت الكلي.</p>
+    <p>الـ <b><code>maintenance_work_mem</code></b> بتشيل أرقام الـ dead tuples (<code>autovacuum_work_mem</code> = -1 يعني نفس القيمة). لما تتملي، الـ VACUUM لازم يقف ويعدي على <em>كل index</em> قبل ما يكمل، فـ indexes أكتر و memory أقل يعني مرور أكتر. دور على <code>index scans:</code> في التقرير. في التشغيل، 64 kB عمل 6370 مرور (≈427 ثانية)، و256 kB عمل 1270 (≈92 ثانية)، و1 MB احتاج مرور واحد زي 64 MB. وإن 1 MB كفاية هنا سببه الـ memory management الجديد للـ VACUUM في PG 17، وإن الـ dead tuples بتاعتي جنب بعض في pages متتالية، والمتفرقة هتحتاج أكتر. وكمان PG 17 شال حد الـ 1 GB القديم. يعني الفكرة مش إن 1 MB إعداد كويس: الفكرة إن <code>index scans: N</code> أكبر من 1 معناها إنك بتدفع مرور كامل على كل الـ indexes، والـ memory الزيادة أرخص حل. وكل autovacuum worker ممكن ياخد القيمة دي، فالإجمالي مضروب في عدد الـ workers.</p>
+    <p><b>شوف بيعمل إيه:</b> <code>log_autovacuum_min_duration</code> افتراضيًا 10 دقايق، فالتشغيلات القصيرة مبتبانش. نزّله (per table لو عايز) وهتاخد سطور زي الحقيقية اللي فوق، فيها الـ dead tuples والـ cutoff والـ I/O والوقت. و<b>من ناحية التصميم</b>، الـ partitioning هو الإجابة لجداول بالحجم ده: كل partition بيتعمله vacuum لوحده، والقديمة بتفضل frozen ومحدش بيلمسها، والـ retention بقى <code>DROP</code> من غير dead tuples خالص (<a href="./24-partitioning.html">درس 24</a>). وحسب الـ RC notes، PostgreSQL 19 بيضيف parallel autovacuum للـ indexes (<code>autovacuum_max_parallel_workers</code>، و<code>autovacuum_parallel_workers</code> لكل جدول) ونظام scoring يقرر أنهي جدول الأول. والاتنين متشغلوش هنا.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      جدول <code>orders</code> وصل 300 مليون صف، و <code>n_dead_tup</code> بيوصل 60 مليون قبل كل autovacuum، والـ queries بتبطأ قبل ما يشتغل بيوم. شغّل <code>ALTER TABLE orders SET (autovacuum_vacuum_scale_factor = 0.01, autovacuum_vacuum_threshold = 10000, autovacuum_vacuum_cost_limit = 2000)</code>، وراقب <code>log_autovacuum_min_duration = '1s'</code> لمدة أسبوع: الـ vacuum بقى أقصر بكتير لأنه بيلاقي شغل أقل كل مرة. وجدول queue صغير بيتحدث طول اليوم؟ <code>scale_factor = 0</code> و<code>threshold</code> ثابت، زي التمرين 3 تحت.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off</b>
+    Vacuuming more often spends I/O now, in small runs. Vacuuming rarely saves I/O now and pays later: bloat, slower scans, stale visibility, then one huge vacuum at the worst time. On large tables, small and frequent almost always wins, as long as you watch disk and replica lag while you raise the limits.
+    <div class="ar-note">الـ vacuum الأكتر بيصرف I/O دلوقتي على تشغيلات صغيرة. والـ vacuum القليل بيوفر I/O دلوقتي وبتدفع بعدين: bloat، و scans أبطأ، و visibility map قديمة، وبعدين vacuum ضخم في أوحش وقت. على الجداول الكبيرة، الصغير والمتكرر تقريبًا دايمًا بيكسب، بشرط تراقب الديسك وتأخر الـ replica وإنت بتعلّي الحدود.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Disabling autovacuum</b>
+<pre><code class="language-sql">-- بيقفل الـ vacuum والـ analyze مع بعض، والـ bloat بيبدأ من بكرة
+ALTER SYSTEM SET autovacuum = off;</code></pre></div>
+    <div class="good"><b>✅ Tuning it per table</b>
+<pre><code class="language-sql">-- الجدول المشغول بياخد vacuum أصغر وأكتر
+ALTER TABLE orders SET (
+  autovacuum_vacuum_scale_factor = 0.01,
+  autovacuum_vacuum_threshold = 10000,
+  autovacuum_vacuum_cost_limit = 2000
+);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>لو الـ autovacuum مأثر على الأداء، المشكلة غالبًا إنه بيشتغل قليل فبيلاقي شغل كتير. قفله بيخلي الملف أكبر (45 MB ضد 27 MB في الجزء 4) والـ planner أعمى، والـ anti-wraparound هيشتغل برضه في الآخر. الصح تخليه يشتغل بدري وعلى شغل أقل.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ An HTTP call inside a transaction</b>
+<pre><code class="language-typescript">await tx.query("BEGIN");
+await tx.query(MARK_CHARGING, [id]);
+// الـ row lock والـ connection والـ xid محجوزين طول المكالمة
+await charge();
+await tx.query(MARK_PAID, [id]);
+await tx.query("COMMIT");</code></pre></div>
+    <div class="good"><b>✅ Two short transactions around it</b>
+<pre><code class="language-typescript">await pool.query(MARK_CHARGING, [id]);
+// مفيش حاجة محجوزة في الـ database هنا
+await charge({ idempotencyKey: id });
+await pool.query(MARK_PAID, [id]);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>في الغلط، لو الـ provider بطيء، كل request ماسك connection و row lock و xid، فالـ pool بيخلص والـ VACUUM بيقف. في الصح مفيش حاجة محجوزة أثناء المكالمة. والـ status <code>charging</code> مع idempotency key بيخلوك تعرف تتعامل لو حصل crash في النص: job بيدور على الطلبات اللي واقفة في <code>charging</code> ويسأل الـ provider.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ VACUUM FULL on a schedule</b>
+<pre><code class="language-bash"># بيوقف كل قراءة وكتابة على الجدول كل ليلة
+0 3 * * * psql -p 5433 -c 'VACUUM FULL orders'</code></pre></div>
+    <div class="good"><b>✅ Find what makes the bloat</b>
+<pre><code class="language-sql">-- مين بيكتب كتير، ومين ماسك الـ cleanup؟
+SELECT relname, n_dead_tup, last_autovacuum
+FROM pg_stat_user_tables ORDER BY n_dead_tup DESC LIMIT 10;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <code>VACUUM FULL</code> بياخد <code>ACCESS EXCLUSIVE</code>: في الجزء 3 قارئ لصف واحد استنى لحد ما خلص، وده على جدول صغير. ولو الجدول هيكبر تاني، بتدفع التمن كل ليلة على الفاضي. دور على السبب: no-op updates، أو transaction طويلة، أو autovacuum متأخر. وكمان، لو محتاج تصغّر مرة واحدة، <code>pg_repack</code> (مشغلتوش هنا) أو <code>REPACK</code> في 19.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Updating rows that don't change</b>
+<pre><code class="language-sql">-- مليون نسخة جديدة حتى لو القيمة زي ما هي
+UPDATE orders SET currency = 'EGP';</code></pre></div>
+    <div class="good"><b>✅ Filtering them out</b>
+<pre><code class="language-sql">-- بيكتب الصفوف اللي هتتغير فعلًا بس، وبيتعامل صح مع NULL
+UPDATE orders SET currency = 'EGP'
+WHERE currency IS DISTINCT FROM 'EGP';</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>Postgres مبيقارنش القيمة القديمة بالجديدة قبل ما يكتب، فكل صف الـ <code>WHERE</code> اختاره بياخد نسخة جديدة. في الجزء 2 الـ no-op عمل مليون dead tuple، والفلتر كتب صفر. و<code>IS DISTINCT FROM</code> أحسن من <code>&lt;&gt;</code> لأنه بيتعامل مع NULL صح.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A timeout with no error listener</b>
+<pre><code class="language-typescript">const pool = new pg.Pool({ connectionString: url });
+// الـ timeout بيقفل connection نايمة في الـ pool، والـ process بيقع
+await pool.query("SELECT 1");</code></pre></div>
+    <div class="good"><b>✅ Handle the connection dying</b>
+<pre><code class="language-typescript">const pool = new pg.Pool({ connectionString: url });
+// الـ pool بيشيل الـ connection الميتة وإحنا بنسجل بس
+pool.on("error", (err) =&gt; log.warn({ err }, "idle client died"));</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><code>idle_in_transaction_session_timeout</code> و<code>transaction_timeout</code> بيقفلوا الـ connection نفسها، زي ما شفت في الجزء 6. ولو مفيش listener على <code>error</code>، الـ <code>EventEmitter</code> بيرمي الـ error والـ process كله بيقع. فأول ما تضيف الـ timeouts دي، اتأكد من الـ listener، وإن الـ retry عندك فاهم إن الـ connection راحت (<a href="../../04-NodeJS/lessons/19-databases-from-node.html">درس 19 في 04-Node</a>).</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Watch one row become four <span class="lvl lvl-1">🟢 easy</span></b>
+    Create <code>invoices</code> with one row, update its status three times, and print <code>heap_page_items</code>. Predict how many tuples you'll see. Run <code>VACUUM</code> and print it again. Which <code>ctid</code> does the live row have now, and did it move?
+    <div class="ar-note">اعمل جدول <code>invoices</code> فيه صف واحد، وغيّر الـ status بتاعه 3 مرات، واطبع <code>heap_page_items</code>. توقّع هتشوف كام tuple. شغّل <code>VACUUM</code> واطبعها تاني. الـ row الحي بقى في أنهي <code>ctid</code>، واتحرك ولا لأ؟</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-versions.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const client = new pg.Client({ connectionString: labUrl() });
+await client.connect();
+
+await client.query(`
+  CREATE EXTENSION IF NOT EXISTS pageinspect;
+  DROP TABLE IF EXISTS invoices;
+  CREATE TABLE invoices (id int PRIMARY KEY, status text NOT NULL);
+  INSERT INTO invoices VALUES (1, 'draft');
+`);
+
+// قيم lp_flags: الرقم 1 يعني normal، و0 يعني unused، و2 يعني redirect، و3 يعني dead
+const page = async (label: string) =&gt; {
+  const { rows } = await client.query(`
+    SELECT lp, lp_flags, t_xmin, t_xmax, t_ctid
+    FROM heap_page_items(get_raw_page('invoices', 0))`);
+  console.log(`\n-- ${label}`);
+  console.table(rows);
+};
+
+for (const status of ["sent", "paid", "archived"]) {
+  await client.query("UPDATE invoices SET status = $1 WHERE id = 1", [status]);
+}
+await page("3 updates later: 4 versions of one logical row");
+console.log((await client.query("SELECT ctid, xmin, status FROM invoices")).rows[0]);
+
+await client.query("VACUUM invoices");
+await page("after VACUUM");
+console.log((await client.query("SELECT ctid, xmin, status FROM invoices")).rows[0]);
+
+await client.end();
+</code></pre>
+<pre><code class="language-plaintext">-- 3 updates later: 4 versions of one logical row
+┌─────────┬────┬──────────┬────────┬────────┬─────────┐
+│ (index) │ lp │ lp_flags │ t_xmin │ t_xmax │ t_ctid  │
+├─────────┼────┼──────────┼────────┼────────┼─────────┤
+│ 0       │ 1  │ 1        │ '752'  │ '753'  │ '(0,2)' │
+│ 1       │ 2  │ 1        │ '753'  │ '754'  │ '(0,3)' │
+│ 2       │ 3  │ 1        │ '754'  │ '755'  │ '(0,4)' │
+│ 3       │ 4  │ 1        │ '755'  │ '0'    │ '(0,4)' │
+└─────────┴────┴──────────┴────────┴────────┴─────────┘
+{ ctid: '(0,4)', xmin: '755', status: 'archived' }
+
+-- after VACUUM
+┌─────────┬────┬──────────┬────────┬────────┬─────────┐
+│ (index) │ lp │ lp_flags │ t_xmin │ t_xmax │ t_ctid  │
+├─────────┼────┼──────────┼────────┼────────┼─────────┤
+│ 0       │ 1  │ 2        │ null   │ null   │ null    │
+│ 1       │ 2  │ 0        │ null   │ null   │ null    │
+│ 2       │ 3  │ 0        │ null   │ null   │ null    │
+│ 3       │ 4  │ 1        │ '755'  │ '0'    │ '(0,4)' │
+└─────────┴────┴──────────┴────────┴────────┴─────────┘
+{ ctid: '(0,4)', xmin: '755', status: 'archived' }
+</code></pre>
+      <div class="ar-note">4 نسخ لصف واحد منطقي، وكل واحدة بتشاور على اللي بعدها. بعد الـ VACUUM: الـ row الحي لسه في <code>(0,4)</code> ومتحركش. item 1 بقى <code>lp_flags = 2</code> يعني redirect بيشاور على 4، عشان الـ index لسه بيشاور على item 1، ودي سلسلة HOT. و item 2 و3 بقوا <code>0</code> يعني unused وجاهزين يتستخدموا.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Catch the session holding cleanup <span class="lvl lvl-2">🟡 medium</span></b>
+    Open a Repeatable Read transaction in one session and leave it. Update a table from another, and confirm VACUUM reports dead tuples it can't remove. Find the holder from <code>pg_stat_activity</code>, end it with <code>pg_terminate_backend</code>, and show that the same VACUUM now removes them.
+    <div class="ar-note">افتح transaction بـ Repeatable Read في session وسيبها. اعمل update لجدول من session تاني، واتأكد إن VACUUM بيقول فيه dead tuples مش قادر يشيلها. لقط اللي ماسك من <code>pg_stat_activity</code>، وانهيه بـ <code>pg_terminate_backend</code>، ووريني إن نفس الـ VACUUM بيشيلهم دلوقتي.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-blocker.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const connect = async () =&gt; {
+  const c = new pg.Client({ connectionString: labUrl() });
+  c.on("error", () =&gt; {});
+  await c.connect();
+  return c;
+};
+const [admin, forgotten] = [await connect(), await connect()];
+const notices: string[] = [];
+admin.on("notice", (n) =&gt; notices.push(n.message ?? ""));
+
+await admin.query(`
+  DROP TABLE IF EXISTS sessions;
+  CREATE TABLE sessions (id int PRIMARY KEY, last_seen_at timestamptz NOT NULL) WITH (autovacuum_enabled = false);
+  INSERT INTO sessions SELECT i, now() FROM generate_series(1, 50000) i;
+`);
+
+// الـ tab اللي حد سابه مفتوح: transaction بـ snapshot ومش بتعمل حاجة
+await forgotten.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+await forgotten.query("SELECT count(*) FROM sessions");
+
+await admin.query("UPDATE sessions SET last_seen_at = now()");
+const tuples = async () =&gt; {
+  notices.length = 0;
+  await admin.query("VACUUM (VERBOSE) sessions");
+  return notices.join("\n").match(/tuples: .*/)?.[0];
+};
+console.log("before:", await tuples());
+
+// لقط اللي ماسك الـ horizon: أقدم backend_xmin
+const { rows } = await admin.query(`
+  SELECT pid, state, age(backend_xmin) AS xmin_age
+  FROM pg_stat_activity
+  WHERE backend_xmin IS NOT NULL AND pid &lt;&gt; pg_backend_pid()
+  ORDER BY age(backend_xmin) DESC LIMIT 1`);
+console.log("holder:", { state: rows[0].state, xmin_age: rows[0].xmin_age });
+
+await admin.query("SELECT pg_terminate_backend($1)", [rows[0].pid]);
+// الإنهاء مش فوري: بنستنى لحد ما الـ backend يختفي من pg_stat_activity
+for (;;) {
+  const alive = await admin.query("SELECT 1 FROM pg_stat_activity WHERE pid = $1", [rows[0].pid]);
+  if (alive.rowCount === 0) break;
+  await new Promise((r) =&gt; setTimeout(r, 20));
+}
+console.log("after terminate:", await tuples());
+
+await admin.end();
+</code></pre>
+<pre><code class="language-plaintext">before: tuples: 0 removed, 100000 remain, 50000 are dead but not yet removable
+holder: { state: 'idle in transaction', xmin_age: 1 }
+after terminate: tuples: 50000 removed, 50000 remain, 0 are dead but not yet removable
+</code></pre>
+      <div class="ar-note">قبل: 50 ألف dead مش قابلين يتشالوا. اللي ماسك حالته <code>idle in transaction</code>. بعد الإنهاء: اتشالوا الـ 50 ألف. في production اتأكد الأول مين الـ session ده قبل ما تقتله، وقتل الـ backend بيعمل rollback لشغله.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Tune a queue table <span class="lvl lvl-3">🔴 hard</span></b>
+    A <code>jobs</code> table of 200,000 rows gets 5,000 updates in each round. Run the same churn on a default table and on one you tune, with <code>autovacuum_naptime = 1</code> on a lab cluster. Compare peak <code>n_dead_tup</code>, autovacuum runs and HOT percentage. What would you set in production, and what would you watch?
+    <div class="ar-note">جدول <code>jobs</code> فيه 200 ألف صف، وكل جولة بتعمل 5000 update. شغّل نفس الشغل على جدول بالـ defaults وجدول إنت ظبطته، بـ <code>autovacuum_naptime = 1</code> على lab cluster. قارن أعلى <code>n_dead_tup</code>، وعدد مرات الـ autovacuum، ونسبة الـ HOT. هتحط إيه في production، وهتراقب إيه؟</div>
+    <details><summary>Hint · تلميح</summary>
+      For a table of fixed size with constant churn, a percentage is the wrong unit: use <code>scale_factor = 0</code> with a fixed threshold. <code>fillfactor</code> leaves room for HOT updates.
+      <div class="ar-note">لجدول حجمه ثابت وشغله مستمر، النسبة المئوية وحدة غلط: استخدم <code>scale_factor = 0</code> مع threshold ثابت. و<code>fillfactor</code> بيسيب مكان للـ HOT updates.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-queue-tuning.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const client = new pg.Client({ connectionString: labUrl() });
+await client.connect();
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+
+const seed = (table: string, withOptions: string) =&gt; client.query(`
+  CREATE TABLE ${table} (id int PRIMARY KEY, status text NOT NULL, attempts int NOT NULL DEFAULT 0, note text NOT NULL) ${withOptions};
+  INSERT INTO ${table} SELECT i, 'done', 0, repeat('x', 100) FROM generate_series(1, 200000) i;
+`);
+await seed("jobs_default", "");
+// الإعدادات المقترحة لجدول queue: threshold ثابت صغير، و scale صفر، ومساحة فاضية في كل page
+await seed("jobs_tuned", `WITH (
+  autovacuum_vacuum_scale_factor = 0,
+  autovacuum_vacuum_threshold = 2000,
+  autovacuum_vacuum_cost_limit = 2000,
+  fillfactor = 80
+)`);
+await client.query("ANALYZE jobs_default; ANALYZE jobs_tuned");
+
+// نفس الـ churn بالظبط على الجدولين: 30 جولة، كل جولة بتغيّر 5000 صف
+const peak = new Map&lt;string, number&gt;();
+for (let round = 0; round &lt; 30; round++) {
+  const start = 1 + (round * 5000) % 150000;
+  for (const t of ["jobs_default", "jobs_tuned"]) {
+    await client.query(`UPDATE ${t} SET attempts = attempts + 1 WHERE id BETWEEN $1 AND $2`, [start, start + 4999]);
+  }
+  await sleep(500);
+  const { rows } = await client.query(`
+    SELECT relname, n_dead_tup FROM pg_stat_user_tables WHERE relname LIKE 'jobs_%'`);
+  for (const r of rows) peak.set(r.relname, Math.max(peak.get(r.relname) ?? 0, Number(r.n_dead_tup)));
+}
+const { rows } = await client.query(`
+  SELECT s.relname, s.autovacuum_count, s.n_tup_upd, s.n_tup_hot_upd, pg_size_pretty(pg_relation_size(s.relid)) AS heap
+  FROM pg_stat_user_tables s WHERE s.relname LIKE 'jobs_%' ORDER BY 1`);
+for (const r of rows) {
+  const hot = ((Number(r.n_tup_hot_upd) / Number(r.n_tup_upd)) * 100).toFixed(0);
+  console.log(`${r.relname.padEnd(13)} heap=${r.heap.padEnd(7)} peak dead=${String(peak.get(r.relname)).padStart(6)} autovacuum runs=${r.autovacuum_count} HOT=${hot}%`);
+}
+await client.end();
+</code></pre>
+<pre><code class="language-plaintext">jobs_default  heap=38 MB   peak dead= 50000 autovacuum runs=4 HOT=0%
+jobs_tuned    heap=38 MB   peak dead= 14996 autovacuum runs=14 HOT=25%
+</code></pre>
+      <div class="ar-note">نفس الـ churn على الجدولين. بالـ defaults: أعلى <code>n_dead_tup</code> وصل 50 ألف، و4 تشغيلات autovacuum، و HOT صفر. والمظبوط: أعلى حاجة ≈15 ألف، و14 تشغيلة أصغر، و HOT 25% بفضل الـ <code>fillfactor</code>. والـ heap هو هو 38 MB، مع إن الـ <code>fillfactor</code> بيبدأ بملف أكبر: المساحة اللي سبناها اتستخدمت بدل ما الملف يكبر. في production حط <code>scale_factor = 0</code> و threshold ثابت حسب معدل الشغل، وراقب <code>n_dead_tup</code> و<code>last_autovacuum</code> وتأخر الـ replica.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project: put it on the dashboard <span class="lvl lvl-3">🔴 project</span></b>
+    In your side project: set <code>statement_timeout</code>, <code>idle_in_transaction_session_timeout</code> and <code>transaction_timeout</code> on the app role, add an <code>error</code> listener on the pool, and search your code for anything awaited between <code>BEGIN</code> and <code>COMMIT</code> that isn't a query. Then add a <code>/admin/db-health</code> endpoint that returns the oldest transaction age, the top 5 tables by <code>n_dead_tup</code>, <code>age(datfrozenxid)</code> and slots that aren't active.
+    <div class="ar-note">في مشروعك الجانبي: حط <code>statement_timeout</code> و<code>idle_in_transaction_session_timeout</code> و<code>transaction_timeout</code> على الـ role بتاع الـ app، وضيف <code>error</code> listener على الـ pool، ودور في الكود على أي حاجة فيها await بين <code>BEGIN</code> و<code>COMMIT</code> ومش query. وبعدين ضيف endpoint اسمه <code>/admin/db-health</code> يرجّع عمر أقدم transaction، وأعلى 5 جداول في <code>n_dead_tup</code>، و<code>age(datfrozenxid)</code>، والـ slots اللي مش active.</div>
+    <details><summary>Hint · تلميح</summary>
+      Every query you need is in this lesson: <code>OLDEST</code> in Part 6, <code>DB_AGE</code> in Part 5, and the <code>pg_replication_slots</code> query in Part 6. Protect the endpoint, since it exposes internals, and give it a role with <code>pg_monitor</code> rather than a superuser.
+      <div class="ar-note">كل الاستعلامات اللي محتاجها في الدرس ده: <code>OLDEST</code> في الجزء 6، و<code>DB_AGE</code> في الجزء 5، واستعلام <code>pg_replication_slots</code> في الجزء 6. احمي الـ endpoint لأنه بيكشف تفاصيل داخلية، وخليه يستخدم role عليه <code>pg_monitor</code> مش superuser.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li><code>UPDATE</code> = new tuple + old one marked. <code>xmin</code> created it, <code>xmax</code> ended it, <code>ctid</code> is where it is. Snapshots pick the version, so readers and writers don't block each other.</li>
+    <li>Rollback removes nothing: aborted versions are garbage too. A no-op update still writes a version, so filter with <code>IS DISTINCT FROM</code>.</li>
+    <li>Plain <code>VACUUM</code>: removes dead tuples, reuses space inside the file, truncates only the tail, sets the visibility map, freezes. <code>ShareUpdateExclusiveLock</code>.</li>
+    <li><code>VACUUM FULL</code>: rewrites the table under <code>ACCESS EXCLUSIVE</code> and needs disk for the copy. One-offs only. Alternatives: <code>pg_repack</code>, and <code>REPACK</code> in 19.</li>
+    <li>autovacuum fires at <code>min(100M, 50 + 0.2 × rows)</code> dead tuples, or <code>1000 + 0.2 × rows × unfrozen</code> inserts, and yields to lock conflicts after <code>deadlock_timeout</code>.</li>
+    <li><code>autovacuum = off</code> also kills autoanalyze: more bloat and blind plans.</li>
+    <li>Wraparound: 32-bit xids. Monitor <code>age(datfrozenxid)</code>. Past <code>autovacuum_freeze_max_age</code> (200M) a forced run comes, doesn't yield to DDL, and comes back if cancelled. 3M left means no new xids.</li>
+    <li><code>dead but not yet removable</code> = something holds the horizon: <code>backend_xid</code>/<code>backend_xmin</code>, slot <code>xmin</code>, replica feedback, prepared transactions.</li>
+    <li>A Read Committed session that only read doesn't hold the horizon. One that wrote, Repeatable Read, or an open cursor does.</li>
+    <li>Never <code>await</code> HTTP between <code>BEGIN</code> and <code>COMMIT</code>. Set <code>idle_in_transaction_session_timeout</code> (25P03), <code>transaction_timeout</code> (25P04), <code>statement_timeout</code> (57014) per role. The first two close the connection, so add an <code>error</code> listener.</li>
+    <li>Big tables: per-table scale, threshold, cost limit, or PG 18's <code>autovacuum_vacuum_max_threshold</code>. Log with <code>log_autovacuum_min_duration</code>. Partition when the table outgrows that.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ <code>UPDATE</code> يعني tuple جديدة والقديمة عليها علامة. <code>xmin</code> اللي عملها، و<code>xmax</code> اللي نهّاها، و<code>ctid</code> مكانها. والـ snapshots بتختار النسخة، فالـ readers والـ writers مبيوقفوش بعض.</li>
+      <li>الـ rollback مبيشيلش حاجة: النسخ الفاشلة زبالة برضه. والـ no-op update بيكتب نسخة برضه، ففلتر بـ <code>IS DISTINCT FROM</code>.</li>
+      <li><code>VACUUM</code> العادي: بيشيل الـ dead tuples، وبيعيد استخدام المساحة جوه الملف، وبيقص من الآخر بس، وبيظبط الـ visibility map، وبيعمل freeze. وبياخد <code>ShareUpdateExclusiveLock</code>.</li>
+      <li><code>VACUUM FULL</code>: بيعيد كتابة الجدول تحت <code>ACCESS EXCLUSIVE</code> ومحتاج ديسك للنسخة. لمرة واحدة بس. والبدايل: <code>pg_repack</code>، و<code>REPACK</code> في 19.</li>
+      <li>الـ autovacuum بيشتغل عند <code>min(100M, 50 + 0.2 × rows)</code> dead tuple، أو <code>1000 + 0.2 × rows × unfrozen</code> insert، وبيتراجع قدام تعارض الـ locks بعد <code>deadlock_timeout</code>.</li>
+      <li><code>autovacuum = off</code> بيقتل الـ autoanalyze كمان: bloat أكتر وخطط عمياء.</li>
+      <li>الـ wraparound: الـ xids حجمها 32 bit. راقب <code>age(datfrozenxid)</code>. بعد <code>autovacuum_freeze_max_age</code> (200 مليون) بييجي تشغيل إجباري، مبيتراجعش قدام الـ DDL، ولو لغيته بيرجع. ولما يفضل 3 مليون مفيش xids جديدة.</li>
+      <li><code>dead but not yet removable</code> يعني فيه حاجة ماسكة الـ horizon: <code>backend_xid</code> أو <code>backend_xmin</code>، أو <code>xmin</code> بتاع slot، أو feedback من replica، أو prepared transactions.</li>
+      <li>session على Read Committed قرا بس مبيمسكش الـ horizon. واللي كتب، أو Repeatable Read، أو cursor مفتوح بيمسكوه.</li>
+      <li>متعملش <code>await</code> لـ HTTP بين <code>BEGIN</code> و<code>COMMIT</code> أبدًا. حط <code>idle_in_transaction_session_timeout</code> (25P03) و<code>transaction_timeout</code> (25P04) و<code>statement_timeout</code> (57014) per role. وأول اتنين بيقفلوا الـ connection، فضيف <code>error</code> listener.</li>
+      <li>الجداول الكبيرة: scale و threshold و cost limit لكل جدول، أو <code>autovacuum_vacuum_max_threshold</code> بتاع PG 18. وسجّل بـ <code>log_autovacuum_min_duration</code>. وقسّم partitions لما الجدول يكبر عن كده.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 07 · 2.4 — <b>MVCC في Postgres</b>: كل row له versions (xmin/xmax)، readers مش بيبلوكوا writers، وليه ده بيعمل dead tuples</label>
+    <label><input type="checkbox" data-key="r2"> 07 · 2.4 — <code>VACUUM</code> و <code>autovacuum</code>: ليه مهم، bloat، <code>VACUUM FULL</code> (lock!)، transaction ID wraparound (كمفهوم)</label>
+    <label><input type="checkbox" data-key="r3"> 07 · 2.4 — Long transactions وليه خطر (locks، bloat، replication)</label>
+    <label><input type="checkbox" data-key="r4"> 07 · 3.1 — Vacuum tuning على الجداول الكبيرة، <code>autovacuum</code> per-table settings</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.postgresql.org/docs/current/routine-vacuuming.html">PostgreSQL docs — Routine Vacuuming (formulas, freezing, wraparound)</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/runtime-config-vacuum.html">PostgreSQL docs — Vacuuming settings (cost delay, freeze ages, failsafe)</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/runtime-config-client.html">PostgreSQL docs — Client settings (statement, transaction and idle timeouts)</a></li>
+    <li><a href="https://blog.sentry.io/transaction-id-wraparound-in-postgres/">Sentry — Transaction ID Wraparound in Postgres (2015)</a></li>
+    <li><a href="https://mailchimp.com/what-we-learned-from-the-recent-mandrill-outage/">Mailchimp — What we learned from the recent Mandrill outage (2019)</a></li>
+    <li><a href="https://www.postgresql.org/docs/19/release-19.html">PostgreSQL 19 release notes (RC, not yet released)</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./13-isolation-anomalies-retries.html"><small>← Previous</small>13 · Isolation</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./15-locks-deadlocks-advisory.html"><small>Next →</small>15 · Locks &amp; Deadlocks</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

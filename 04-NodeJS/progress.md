@@ -1,7 +1,7 @@
 <!-- AUTO:START -->
 # 04 — Node.js — Progress
 
-> آخر تحديث: 2026-11-04 · شغّل `node _tools/update-progress.js` بعد أي تعديل.
+> آخر تحديث: 2026-11-09 · شغّل `node _tools/update-progress.js` بعد أي تعديل.
 
 **الإجمالي:** 0 / 190 بند · **0%**
 

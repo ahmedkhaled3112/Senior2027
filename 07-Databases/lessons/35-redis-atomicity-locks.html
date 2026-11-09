@@ -1,0 +1,1900 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Redis Atomicity &amp; Distributed Locks — 07 Databases</title>
+<meta name="section" content="07-Databases">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">07 · Databases</a></span>
+    <span>·</span>
+    <span>Lesson 35 / 43</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Redis Atomicity &amp; Distributed Locks</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 35 of 43 — 07 Databases</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Redis 8.10 · PostgreSQL 18 · Node 22 · TypeScript 7</span>
+      <span class="chip">Prereq: lesson 34 · lesson 15 · 04-Node lesson 21</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>07 · 2.9 — Atomic operations: <code>INCR</code>، <code>MULTI/EXEC</code>، Lua scripting</li>
+        <li>07 · 2.9 — Distributed lock: <code>SET NX PX</code>، release بـ Lua script، <b>Redlock وحدوده</b> (Kleppmann's critique — fencing tokens)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — INCR vs a race</a></li>
+      <li><a href="#p2">Part 2 — MULTI/EXEC &amp; WATCH</a></li>
+      <li><a href="#p3">Part 3 — Lua scripts and what they cost</a></li>
+      <li><a href="#p4">Part 4 — Lock basics, DELEX &amp; a renewing lease</a></li>
+      <li><a href="#p5">Part 5 — Why locks lie: fencing tokens</a></li>
+      <li><a href="#p6">Part 6 — Redlock &amp; when to use what</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Redis is where teams keep the numbers that many requests fight over: stock counts, quotas, one-time coupons, and the locks that stop a cron job from running twice. Each command is atomic, and that fact misleads people into thinking their <em>code</em> is. In this lesson 50 concurrent increments end at <code>1</code>, a <code>MULTI</code> with a failed command keeps the writes around it, a small Lua loop stops every client on the server, and a lock that looks correct lets two workers issue the same month's invoices. Every one of those is a real run. "How would you build a distributed lock?" is also a favourite senior interview question, because the first answer almost everyone gives is the bug in Part 5.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ Redis هو المكان اللي الفرق بتحط فيه الأرقام اللي requests كتير بتتخانق عليها: المخزون، والـ quotas، والكوبونات اللي تتستخدم مرة واحدة، والـ locks اللي بتمنع cron job يشتغل مرتين. كل command لوحده atomic، والمعلومة دي بتخدع الناس فيفتكروا إن <em>الكود</em> بتاعهم atomic. في الدرس ده 50 زيادة في نفس اللحظة بيخلصوا على <code>1</code>، و<code>MULTI</code> فيها command فشل بتسيب الكتابات اللي حواليه زي ما هي، و loop صغير في Lua بيوقّف كل الـ clients على الـ server، و lock شكله مظبوط بيخلي اتنين workers يطلّعوا فواتير نفس الشهر. وكل ده runs حقيقية. وكمان "هتبني distributed lock إزاي؟" من الأسئلة المفضلة في interviews السنيور، لأن أول إجابة بيقولها تقريبًا كل الناس هي نفسها الـ bug اللي في الجزء 5.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — INCR vs a race <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الـ INCR ضد الـ race</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><a href="./34-redis-foundations.html">Lesson 34</a> showed that Redis executes commands one at a time. That's the whole basis of its atomicity: nothing can run in the middle of an <code>INCR</code>. (I/O threads can read and write sockets, but per the docs, command execution stays serial.) The guarantee stops at the command boundary, though. <code>GET</code> followed by <code>SET</code> is two commands with a network round trip between them, and other clients' commands land in that gap. It's the lost update from <a href="./13-isolation-anomalies-retries.html">lesson 13</a>, with the read and the write living in your Node code.</p>
+    <p>The run below sends 50 requests over 5 connections, standing in for 5 app instances. Fired together, every request reads nil before anyone writes, so the counter ends at <b>1</b>. Spread over 50 ms, which is closer to real traffic, it still loses most of them. <code>INCR</code> gets 50 every time, because the read, the add and the write are one command.</p>
+    <p>So the first rule is: if a read-modify-write can be one command, make it one command. Redis has a family of them. <code>HINCRBY</code> increments a field inside a hash. <code>SET ... NX</code> has exactly one winner. <code>GETDEL</code> has exactly one reader, which is what a one-time code needs.</p>
+    <p>Single commands stop being enough once the decision depends on the value. <code>DECR</code> has no floor: 10 buyers against a stock of 3 drive the key to <code>-7</code>. Treating a negative reply as "sold out" does give the right number of sales, and some systems stop there. But now the key lies to everyone who reads it, a restock of 5 leaves it at <code>-2</code> and sells nothing, and the usual repair, an <code>INCR</code> on rejection, is a second command that a crash can skip. You need "decrement only if enough is left" as one unit, and that's the next two parts.</p>
+  </section>
+
+<pre class="diagram">
+ conn A   GET views -&gt; 0                  SET views 1
+ conn B        GET views -&gt; 0                  SET views 1
+ ------------------------------------------------------------&gt; time
+ Each command is atomic. B's GET still lands between A's two commands.
+ 2 requests, views = 1
+
+ conn A   INCR views -&gt; 1
+ conn B        INCR views -&gt; 2
+ ------------------------------------------------------------&gt; time
+ Read + add + write are one command. Nothing fits between them.
+ 2 requests, views = 2
+</pre>
+  <div class="ar-note">فوق: الـ connection A بيقرا صفر، وقبل ما يكتب الـ connection B بيقرا صفر برضه، فالاتنين بيكتبوا 1 والنتيجة 1 لطلبين. كل command لوحده atomic، بس الـ GET بتاع B دخل بين أمرين A. تحت: الـ INCR بيعمل القراءة والزيادة والكتابة في command واحد، فمفيش مكان حد يدخل فيه، والنتيجة 2.</div>
+
+<pre data-file="setup.sh"><code class="language-bash"># تلات instances مؤقتة على ports خاصة بيك: متشغلش أي سكريبت من دول على الـ 6379 بتاعك
+redis-server --port 6390 --save "" --appendonly no &amp;
+redis-server --port 6391 --save "" --appendonly no &amp;
+redis-server --port 6392 --save "" --appendonly no &amp;
+
+# المشروع لازم يبقى ESM عشان node يشغّل الـ ⁦.ts⁩ مباشرة
+npm init -y &amp;&amp; npm pkg set type=module &amp;&amp; npm i ioredis pg
+
+# أي سكريبت بياخد الـ port من هنا، ولو نسيته بيرفض يشتغل
+REDIS_PORT=6390 node src/p1-incr-race.ts
+
+# الجزء 4 و5 محتاجين Postgres مؤقت، زي معمل درس 01، بـ port صريح برضه
+REDIS_PORT=6390 DATABASE_URL="postgres://app@127.0.0.1:55432/postgres" node src/p5-double-run.ts
+
+# الجزء 6 بيستخدم التلات instances
+R1=6390 R2=6391 R3=6392 node src/p6-redlock.ts
+</code></pre>
+<pre data-file="src/lab.ts"><code class="language-typescript">import { Redis } from "ioredis";
+
+// السكريبتات دي بتمسح keys، فلازم تشتغل على Redis مؤقت بـ port صريح بس
+export function labPort(name = "REDIS_PORT"): number {
+  const raw = process.env[name] ?? "";
+  const port = Number(raw);
+  // لو الـ port فاضي، الـ client بيرجع للـ 6379 لوحده: يعني Redis الحقيقي بتاعك
+  if (!/^\d+$/.test(raw) || port &lt; 1024 || port &gt; 65535 || [6379, 5432, 27017].includes(port)) {
+    throw new Error(`refusing port "${raw}": set ${name} to a throwaway instance`);
+  }
+  return port;
+}
+
+// كل app instance ليها connection خاص بيها، زي الواقع
+export const connect = (port = labPort()) =&gt; new Redis({ host: "127.0.0.1", port });
+export const sleep = (ms: number) =&gt; new Promise&lt;void&gt;((r) =&gt; setTimeout(r, ms));</code></pre>
+<pre data-file="src/p1-incr-race.ts"><code class="language-typescript">import { connect, sleep } from "./lab.ts";
+
+const KEY = "views:product:42";
+const conns = Array.from({ length: 5 }, () =&gt; connect());
+const pick = (i: number) =&gt; conns[i % conns.length]!;
+
+// ❌ قراءة في round trip وكتابة في round trip تاني: أي حد ممكن يدخل في النص
+async function getThenSet(spreadMs: number) {
+  await conns[0]!.del(KEY);
+  await Promise.all(
+    Array.from({ length: 50 }, async (_, i) =&gt; {
+      await sleep(Math.random() * spreadMs);
+      const current = Number((await pick(i).get(KEY)) ?? 0);
+      await pick(i).set(KEY, current + 1);
+    }),
+  );
+  return conns[0]!.get(KEY);
+}
+console.log("GET then SET, all at once     →", await getThenSet(0));
+console.log("GET then SET, spread on 50 ms →", await getThenSet(50));
+
+// ✅ الـ INCR أمر واحد: Redis بينفذ الأوامر واحد ورا التاني على thread واحد
+await conns[0]!.del(KEY);
+await Promise.all(Array.from({ length: 50 }, (_, i) =&gt; pick(i).incr(KEY)));
+console.log("INCR,         all at once     →", await conns[0]!.get(KEY));
+
+conns.forEach((c) =&gt; c.disconnect());</code></pre>
+<pre><code class="language-plaintext">GET then SET, all at once     → 1
+GET then SET, spread on 50 ms → 7
+INCR,         all at once     → 50</code></pre>
+  <div class="ar-note">نفس الـ 50 request. لما اتبعتوا مع بعض الناتج 1، لأن كلهم قروا nil قبل ما حد يكتب. ولما اتوزعوا على 50 ms لسه بيضيع أغلبهم، والرقم بيتغير من run للتاني. والـ <code>INCR</code> بيطلّع 50 كل مرة.</div>
+
+<pre data-file="src/p1-atomic-family.ts"><code class="language-typescript">import { connect } from "./lab.ts";
+
+const r = connect();
+await r.del("cart:9", "lock:job", "otp:user:7", "stock:sku-1");
+
+// عدّاد جوه hash: الأمر كله atomic على الـ field ده بس
+console.log("HINCRBY qty  →", await r.hincrby("cart:9", "sku-1", 2));
+console.log("HINCRBY qty  →", await r.hincrby("cart:9", "sku-1", 3));
+
+// الـ NX معناها "لو مش موجود بس⁦":⁩ حد واحد بس بيكسب
+console.log("SET NX first →", await r.set("lock:job", "worker-a", "EX", 30, "NX"));
+console.log("SET NX next  →", await r.set("lock:job", "worker-b", "EX", 30, "NX"));
+
+// اقرا وامسح في خطوة واحدة: الـ OTP مينفعش يتستخدم مرتين
+await r.set("otp:user:7", "493021", "EX", 300);
+const [a, b] = await Promise.all([r.getdel("otp:user:7"), r.getdel("otp:user:7")]);
+console.log("GETDEL twice →", a, b);
+
+// ❌ الـ DECR مبيعرفش حاجة عن "المخزون خلص⁦":⁩ بينزل تحت الصفر عادي
+await r.set("stock:sku-1", 3);
+const replies = await Promise.all(Array.from({ length: 10 }, () =&gt; r.decr("stock:sku-1")));
+console.log("DECR replies →", replies.join(" "));
+console.log("sold         →", replies.filter((n) =&gt; n &gt;= 0).length, "stock now", await r.get("stock:sku-1"));
+
+r.disconnect();</code></pre>
+<pre><code class="language-plaintext">HINCRBY qty  → 2
+HINCRBY qty  → 5
+SET NX first → OK
+SET NX next  → null
+GETDEL twice → 493021 null
+DECR replies → 2 1 0 -1 -2 -3 -4 -5 -6 -7
+sold         → 3 stock now -7</code></pre>
+  <div class="ar-note">الـ <code>HINCRBY</code> زوّد الـ field من 2 لـ 5. الـ <code>SET NX</code> رجّع <code>OK</code> للأول و<code>null</code> للتاني. الـ <code>GETDEL</code> الاتنين في نفس اللحظة: واحد خد الكود والتاني <code>null</code>. وآخر سطرين هما المشكلة: 3 بس اتباعوا (ودي صح)، بس الـ key بقى <code>-7</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><a href="./34-redis-foundations.html">درس 34</a> وراك إن Redis بينفذ الأوامر واحد ورا التاني. وده أساس الـ atomicity كله: مفيش حاجة تقدر تشتغل في نص <code>INCR</code>. (الـ I/O threads ممكن تقرا وتكتب على الـ sockets، بس حسب الـ docs تنفيذ الأوامر نفسه بيفضل واحد ورا التاني.) الضمان ده بيقف عند حدود الـ command. يعني <code>GET</code> وبعده <code>SET</code> دول أمرين بينهم network round trip، وأوامر الـ clients التانية بتدخل في النص. وده نفس الـ lost update بتاع <a href="./13-isolation-anomalies-retries.html">درس 13</a>، بس القراءة والكتابة عايشين في كود Node بتاعك.</p>
+    <p>الـ run اللي فوق بيبعت 50 request على 5 connections، زي 5 app instances. لما يتبعتوا مع بعض كل request بيقرا nil قبل ما حد يكتب، فالعداد بيخلص على <b>1</b>. ولما يتوزعوا على 50 ms، وده أقرب للـ traffic الحقيقي، لسه بيضيع أغلبهم. والـ <code>INCR</code> بيجيب 50 كل مرة، لأن القراءة والزيادة والكتابة command واحد.</p>
+    <p>فالقاعدة الأولى: لو الـ read-modify-write ممكن يتعمل في command واحد، اعمله في command واحد. وRedis عنده عيلة كاملة من ده. الـ <code>HINCRBY</code> بيزوّد field جوه hash. الـ <code>SET ... NX</code> ليه فايز واحد بالظبط. الـ <code>GETDEL</code> ليه قارئ واحد بالظبط، وده اللي الكود اللي بيتستخدم مرة واحدة محتاجه.</p>
+    <p>الأوامر المنفردة بتبطّل تكفي أول ما القرار يعتمد على القيمة. الـ <code>DECR</code> ملوش حد أدنى: 10 buyers على مخزون 3 بينزّلوا الـ key لـ <code>-7</code>. لو اعتبرت الرد السالب معناه "خلص"، عدد المبيعات هيطلع صح، وفيه أنظمة بتقف لحد هنا. بس دلوقتي الـ key بيكدب على أي حد بيقراه، وrestock بـ 5 قطع بيخليه <code>-2</code> ومبيبيعش حاجة، والتصليح المعتاد، <code>INCR</code> لما ترفض، ده command تاني ممكن crash يفوّته. إنت محتاج "انقص بس لو فيه كفاية" كوحدة واحدة، وده موضوع الجزئين الجايين.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عدّاد مشاهدات المنتج أو الـ API quota بتاع الـ tenant: <code>INCR</code> مباشرة، مش قراءة الرقم في Node وزيادته. كود الـ OTP أو كوبون بيتستخدم مرة: <code>GETDEL</code> عشان لو المستخدم داس مرتين أو جه retry، واحد بس ياخده. ولو شفت في code review سطر <code>const n = await redis.get(key)</code> وبعده <code>redis.set(key, n + 1)</code>، ده الـ bug بتاع الـ 1 من 50 بالظبط. والغلطة الشائعة هنا إنك تقول "Redis single-threaded يبقى مفيش race": الـ race مش جوه Redis، الـ race في المسافة بين أمرين بتوعك.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Redis is single-threaded, so why would incrementing a counter from Node ever lose updates?" → Single-threaded execution makes each <em>command</em> atomic. A <code>GET</code> plus a <code>SET</code> are two commands, with a round trip in between where other clients run. Use <code>INCR</code>, or a script if the logic is conditional.
+    <div class="ar-note">"الـ Redis single-threaded، يبقى زيادة عداد من Node ممكن تضيّع updates ليه أصلًا؟" ← التنفيذ على thread واحد بيخلي كل <em>command</em> atomic. لكن <code>GET</code> و<code>SET</code> أمرين، بينهم round trip بتشتغل فيه أوامر clients تانية. استخدم <code>INCR</code>، أو script لو المنطق فيه شرط.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — MULTI/EXEC &amp; WATCH <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ MULTI/EXEC والـ WATCH</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><code>MULTI</code> starts queueing commands and <code>EXEC</code> runs the whole queue with nothing interleaved. That's isolation, and it's where the resemblance to a SQL transaction ends, because <b>there is no rollback</b>. In the run below the middle command fails with <code>WRONGTYPE</code> and the commands on both sides of it stay applied. <code>exec()</code> in ioredis doesn't reject for this: it resolves with <code>[err, value]</code> pairs, so unless you read them, the failure is silent. The Redis docs give their reason plainly: rollbacks would have a significant impact on its simplicity and performance. A command rejected while queueing is different: a wrong argument count gives <code>EXECABORT</code> and nothing runs.</p>
+    <p>Don't confuse it with pipelining from <a href="./34-redis-foundations.html#p6">lesson 34</a>. A pipeline saves round trips and promises nothing about ordering against other clients. The next run moves money between two keys while a reader checks the total. With one transfer per pipeline nothing looked wrong, because both commands arrived in one socket read, and that's luck rather than a contract. With 5000 transfers per batch the reader saw money missing, while <code>MULTI</code> never showed it. The flip side is that a big <code>MULTI</code> stops every other client for its whole run.</p>
+    <p>Inside <code>MULTI</code> a command only replies <code>QUEUED</code>, so you can't branch on a value, and "reserve only if enough stock" can't be written. <code>WATCH</code> solves that optimistically: watch the key, read it, decide, then <code>MULTI</code>/<code>EXEC</code>. If the key changed after the <code>WATCH</code>, <code>EXEC</code> returns <code>null</code> and nothing runs, so you retry. Across 20 buyers and 5 items nobody oversold, and it took about 100 attempts for 20 buyers, roughly 5× the work. That's the cost of optimism under contention. It's the same idea as the version column in <a href="./16-concurrency-patterns-skip-locked.html">lesson 16</a>, as the table below shows.</p>
+    <p>The trap specific to Node: <code>WATCH</code> belongs to the <b>connection</b>, and most apps share a single client across all requests. In the last run another request's <code>EXEC</code> on that shared connection clears the first request's <code>WATCH</code>, so a conflict goes undetected and stock reaches <code>-1</code>. <code>WATCH</code> needs a dedicated connection for its whole read-decide-write, so one from a small pool or a <code>duplicate()</code> per operation, which is a real cost. Scripts in Part 3 avoid it.</p>
+  </section>
+
+<pre data-file="src/p2-multi-no-rollback.ts"><code class="language-typescript">import { connect } from "./lab.ts";
+
+const r = connect();
+await r.del("wallet:1", "wallet:1:history", "audit:count");
+await r.set("wallet:1:history", "not-a-list");
+
+// كل الأوامر بتتحط في طابور، وبتتنفذ مع بعض عند الـ EXEC: مفيش حاجة تدخل بينهم
+const replies = await r
+  .multi()
+  .incrby("wallet:1", 100)
+  // الغلطة هنا: الـ key ده string مش list، فالأمر هيفشل وقت التنفيذ
+  .lpush("wallet:1:history", "credit:100")
+  .incr("audit:count")
+  .exec();
+
+console.log("EXEC replies:");
+for (const [err, value] of replies!) console.log("  ", err ? `ERR ${err.message}` : value);
+// ❌ مفيش rollback: الأمر اللي قبل الغلطة واللي بعدها الاتنين اتنفذوا
+console.log("wallet:1    =", await r.get("wallet:1"));
+console.log("audit:count =", await r.get("audit:count"));
+
+// الغلطة وقت الـ queue مختلفة: أمر غلط في الـ syntax بيلغي الـ transaction كلها
+await r.del("wallet:2");
+const results = await r.pipeline([["multi"], ["incrby", "wallet:2", "100"], ["incrby", "wallet:2"], ["exec"]]).exec();
+for (const [err, value] of results!) console.log("  ", err ? `ERR ${err.message}` : value);
+console.log("wallet:2    =", await r.get("wallet:2"));
+
+r.disconnect();</code></pre>
+<pre><code class="language-plaintext">EXEC replies:
+   100
+   ERR WRONGTYPE Operation against a key holding the wrong kind of value
+   1
+wallet:1    = 100
+audit:count = 1
+   OK
+   QUEUED
+   ERR ERR wrong number of arguments for 'incrby' command
+   ERR EXECABORT Transaction discarded because of previous errors.
+wallet:2    = null</code></pre>
+  <div class="ar-note">أول جزء: الردود 100 ثم <code>WRONGTYPE</code> ثم 1، والـ <code>wallet:1</code> بقى 100 والـ <code>audit:count</code> بقى 1. يعني الأمر اللي قبل الغلطة واللي بعدها اتنفذوا. تاني جزء: غلطة في عدد الـ arguments وقت الـ queue، فالـ <code>EXEC</code> رد <code>EXECABORT</code>، والـ <code>wallet:2</code> لسه <code>null</code>.</div>
+
+<pre data-file="src/p2-multi-vs-pipeline.ts"><code class="language-typescript">import { connect } from "./lab.ts";
+
+const writer = connect();
+const reader = connect();
+const A = "balance:a";
+const B = "balance:b";
+
+// قارئ بيقرا الرصيدين في أمر واحد طول ما التحويلات شغالة: المجموع لازم يفضل 1000000
+async function run(mode: "pipeline" | "multi", pairsPerBatch: number) {
+  await writer.mset(A, 1_000_000, B, 0);
+  let done = false;
+  let reads = 0;
+  let torn = 0;
+  const scan = (async () =&gt; {
+    while (!done) {
+      const [a, b] = await reader.mget(A, B);
+      reads++;
+      if (Number(a) + Number(b) !== 1_000_000) torn++;
+    }
+  })();
+  for (let batch = 0; batch &lt; 20; batch++) {
+    const b = mode === "multi" ? writer.multi() : writer.pipeline();
+    for (let i = 0; i &lt; pairsPerBatch; i++) b.decrby(A, 1).incrby(B, 1);
+    await b.exec();
+  }
+  done = true;
+  await scan;
+  console.log(`${mode.padEnd(8)} batch of ${String(pairsPerBatch).padStart(4)} transfers: ${reads} reads, ${torn} saw money missing`);
+}
+
+await run("pipeline", 1);
+await run("pipeline", 5000);
+await run("multi", 5000);
+writer.disconnect();
+reader.disconnect();</code></pre>
+<pre><code class="language-plaintext">pipeline batch of    1 transfers: 21 reads, 0 saw money missing
+pipeline batch of 5000 transfers: 145 reads, 49 saw money missing
+multi    batch of 5000 transfers: 146 reads, 0 saw money missing</code></pre>
+  <div class="ar-note">الـ pipeline الصغير ماشي من غير مشاكل بالصدفة، لأن الأمرين وصلوا في قراءة واحدة من الـ socket. الـ pipeline الكبير: القارئ شاف فلوس ناقصة في جزء من القراءات. الـ <code>MULTI</code> بنفس الحجم: صفر. الأرقام بتتغير من run للتاني، والصفر بتاع الـ <code>MULTI</code> هو الضمان.</div>
+
+<pre data-file="src/p2-watch-retry.ts"><code class="language-typescript">import type { Redis } from "ioredis";
+import { connect } from "./lab.ts";
+
+const STOCK = "stock:sku-1";
+
+// الـ WATCH بيتربط بالـ connection نفسها: كل buyer لازم يبقى له connection خاص
+async function reserve(conn: Redis, qty: number, maxAttempts = 50) {
+  for (let attempt = 1; attempt &lt;= maxAttempts; attempt++) {
+    await conn.watch(STOCK);
+    const stock = Number(await conn.get(STOCK));
+    if (stock &lt; qty) {
+      await conn.unwatch();
+      return { status: "out_of_stock" as const, attempt };
+    }
+    // لو حد غيّر الـ key بعد الـ WATCH، الـ EXEC بترجع null ومفيش حاجة بتتنفذ
+    const replies = await conn.multi().decrby(STOCK, qty).exec();
+    if (replies !== null) return { status: "reserved" as const, attempt };
+  }
+  return { status: "gave_up" as const, attempt: maxAttempts };
+}
+
+const buyers = Array.from({ length: 20 }, () =&gt; connect());
+
+// الأول تعارض واحد بإيدنا، عشان تشوف الـ null بعينك
+await buyers[0]!.set(STOCK, 5);
+await buyers[0]!.watch(STOCK);
+await buyers[1]!.decr(STOCK);
+console.log("EXEC after a conflict →", await buyers[0]!.multi().decrby(STOCK, 1).exec());
+console.log("stock untouched by it →", await buyers[1]!.get(STOCK));
+
+// ودلوقتي 20 buyer مع بعض على 5 قطع
+await buyers[0]!.set(STOCK, 5);
+const results = await Promise.all(buyers.map((c) =&gt; reserve(c, 1)));
+
+const count = (s: string) =&gt; results.filter((x) =&gt; x.status === s).length;
+const attempts = results.map((x) =&gt; x.attempt);
+console.log("reserved      :", count("reserved"));
+console.log("out_of_stock  :", count("out_of_stock"));
+console.log("gave_up       :", count("gave_up"));
+console.log("stock left    :", await buyers[0]!.get(STOCK));
+console.log("total attempts:", attempts.reduce((a, b) =&gt; a + b, 0), "for 20 buyers, worst", Math.max(...attempts));
+buyers.forEach((c) =&gt; c.disconnect());</code></pre>
+<pre><code class="language-plaintext">EXEC after a conflict → null
+stock untouched by it → 4
+reserved      : 5
+out_of_stock  : 15
+gave_up       : 0
+stock left    : 0
+total attempts: 96 for 20 buyers, worst 6</code></pre>
+  <div class="ar-note">أول سطرين: تعارض واحد بإيدنا، فالـ <code>EXEC</code> رجّع <code>null</code>، والمخزون 4 يعني الخصم بتاعه متنفذش. بعد كده: خمسة اتحجزوا بالظبط، و15 اترفضوا، ومحدش استسلم، والمخزون صفر. بس مجموع المحاولات حوالي 100 لعشرين buyer، يعني كل واحد في المتوسط عمل 5 محاولات، وأسوأ واحد عمل 6. ده اللي الـ optimistic بيكلّفه لما الزحمة عالية.</div>
+
+<pre data-file="src/p2-watch-shared.ts"><code class="language-typescript">import { connect, sleep } from "./lab.ts";
+
+const shared = connect();
+const other = connect();
+await shared.set("stock:sku-2", 1);
+
+// ده الـ request الأول: عمل WATCH وبيستنى حاجة بطيئة (الـ DB مثلًا) قبل الـ MULTI
+await shared.watch("stock:sku-2");
+const stock = Number(await shared.get("stock:sku-2"));
+await sleep(20);
+
+// ❌ ده request تاني خالص، على نفس الـ connection: الـ EXEC بتاعته بتلغي الـ WATCH بتاع الأول
+await shared.multi().incr("orders:count").exec();
+
+// في نفس الوقت فيه instance تانية باعت آخر قطعة
+await other.decr("stock:sku-2");
+
+// الـ request الأول بيكمل: المفروض ياخد null، بس الـ WATCH بتاعه راح
+const replies = await shared.multi().decrby("stock:sku-2", 1).exec();
+console.log("first request saw stock", stock);
+console.log("EXEC replies →", JSON.stringify(replies));
+console.log("stock now    →", await shared.get("stock:sku-2"));
+shared.disconnect();
+other.disconnect();</code></pre>
+<pre><code class="language-plaintext">first request saw stock 1
+EXEC replies → [[null,-1]]
+stock now    → -1</code></pre>
+  <div class="ar-note">الـ <code>EXEC</code> المفروض يرجّع <code>null</code> لأن الـ key اتغير، بس رجّع رد عادي بـ <code>-1</code>. السبب إن <code>EXEC</code> بتاع request تاني على نفس الـ connection مسح الـ <code>WATCH</code>، فالمخزون نزل تحت الصفر من غير أي error.</div>
+
+  <table>
+    <tr><th></th><th><code>WATCH</code> + <code>MULTI</code></th><th>Postgres version column (lesson 16)</th></tr>
+    <tr><td>Conflict shows up as</td><td><code>EXEC</code> returns <code>null</code></td><td><code>UPDATE ... WHERE version = $n</code> gives <code>rowCount</code> 0</td></tr>
+    <tr><td>What's protected</td><td>Any watched key, even by an unrelated writer</td><td>The one row</td></tr>
+    <tr><td>Failed command</td><td>The others stay applied</td><td>Whole transaction rolls back</td></tr>
+    <tr><td>Connection</td><td>Dedicated from <code>WATCH</code> to <code>EXEC</code></td><td>Any pooled connection, nothing held between read and write</td></tr>
+    <tr><td>Retry loop</td><td>Yours</td><td>Yours</td></tr>
+  </table>
+  <div class="ar-note">سطر سطر: التعارض بيبان في Redis لما <code>EXEC</code> يرجّع <code>null</code>، وفي Postgres لما الـ <code>UPDATE</code> بشرط الـ version يرجّع <code>rowCount</code> بصفر. الحماية في Redis على أي key متراقب حتى لو اللي غيّره ملوش علاقة، وفي Postgres على الـ row نفسه بس. لو command فشل في Redis الباقي بيفضل متنفذ، وفي Postgres الـ transaction كلها بترجع. في Redis لازم connection مخصوص من الـ <code>WATCH</code> للـ <code>EXEC</code>، وفي Postgres أي connection من الـ pool ومفيش حاجة محجوزة بين القراءة والكتابة. والـ retry loop في الحالتين عليك إنت.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <code>MULTI</code> بيبدأ يحط الأوامر في طابور، والـ <code>EXEC</code> بينفذ الطابور كله من غير ما حاجة تدخل في النص. ده isolation، وهنا الشبه بـ SQL transaction بيخلص، لأن <b>مفيش rollback</b>. في الـ run الأمر اللي في النص فشل بـ <code>WRONGTYPE</code>، والأوامر اللي على جنبيه فضلوا متنفذين. والـ <code>exec()</code> في ioredis مش بيعمل reject هنا: بيرجّع أزواج <code>[err, value]</code>، فلو مقريتهاش الفشل بيعدّي في صمت. والـ docs بتاعة Redis بتقول السبب صريح: الـ rollback هيأثر جامد على بساطته وأدائه. الأمر اللي بيترفض وقت الـ queue حاجة تانية: عدد arguments غلط بيدي <code>EXECABORT</code> ومفيش حاجة بتتنفذ.</p>
+    <p>متخلطش بينه وبين الـ pipelining بتاع <a href="./34-redis-foundations.html#p6">درس 34</a>. الـ pipeline بيوفر round trips ومش بيوعد بحاجة قدام الـ clients التانية. الـ run التاني بينقل فلوس بين اتنين keys والقارئ بيراجع المجموع. مع تحويل واحد في كل pipeline مفيش حاجة بانت غلط، لأن الأمرين وصلوا في قراءة واحدة من الـ socket، وده حظ مش عقد. مع 5000 تحويل في الـ batch القارئ شاف فلوس ناقصة، والـ <code>MULTI</code> عمره ما بيّنها. والوش التاني إن <code>MULTI</code> كبير بيوقّف كل الـ clients التانية طول مدة تنفيذه.</p>
+    <p>جوه الـ <code>MULTI</code> الأمر بيرد <code>QUEUED</code> بس، فمتقدرش تعمل شرط على قيمة، و"احجز بس لو فيه مخزون" مش هتتكتب. الـ <code>WATCH</code> بيحل ده بطريقة optimistic: راقب الـ key، اقراه، قرر، وبعدين <code>MULTI</code>/<code>EXEC</code>. لو الـ key اتغير بعد الـ <code>WATCH</code>، الـ <code>EXEC</code> بيرجّع <code>null</code> ومفيش حاجة بتتنفذ، فتعيد. مع 20 buyer و5 قطع محدش باع زيادة، وخد حوالي 100 محاولة لـ 20 buyer، يعني حوالي 5 أضعاف الشغل. ده تمن التفاؤل لما الزحمة تعلى. وهي نفس فكرة الـ version column في <a href="./16-concurrency-patterns-skip-locked.html">درس 16</a>، زي ما الجدول موضح.</p>
+    <p>الفخ الخاص بـ Node: الـ <code>WATCH</code> ملك الـ <b>connection</b>، وأغلب الـ apps بتشارك client واحد بين كل الـ requests. في آخر run الـ <code>EXEC</code> بتاع request تاني على نفس الـ connection مسح الـ <code>WATCH</code> بتاع الأول، فالتعارض عدّى من غير ما حد ياخد باله والمخزون بقى <code>-1</code>. الـ <code>WATCH</code> محتاج connection مخصوص طول الـ read-decide-write، يعني واحد من pool صغير أو <code>duplicate()</code> لكل عملية، وده تمن حقيقي. والـ scripts في الجزء 3 بتريّحك من ده.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ <code>MULTI</code> مكانه الطبيعي لما عايز أوامر تتطبق مع بعض ومن غير ما حد يشوف نصها، زي <code>HSET</code> لـ session و<code>EXPIRE</code> و<code>SADD</code> للـ index بتاع المستخدم، أو تعديل leaderboard وعداد مع بعض. والشرط اللي معتمد على قيمة، زي حجز كوبون محدود العدد في flash sale، روح لـ Lua. لو شفت في code review <code>await tx.exec()</code> والنتيجة مش بتتقري، اسأل: لو أمر من دول فشل مين هيعرف؟ والغلطة الشائعة: <code>WATCH</code> على الـ client المشترك بتاع الـ app كله، وده بيشتغل في الـ tests وبيبيع زيادة في production.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Does <code>MULTI</code>/<code>EXEC</code> give you ACID?" → It gives isolation: nothing interleaves. It gives no rollback: a command that fails at runtime leaves the others applied. It gives no durability beyond your persistence settings. Conditional logic needs <code>WATCH</code> with a retry loop, or a script.
+    <div class="ar-note">"الـ <code>MULTI</code>/<code>EXEC</code> بيدّيك ACID؟" ← بيدّيك isolation: مفيش حاجة بتدخل في النص. مفيش rollback: الأمر اللي بيفشل وقت التنفيذ بيسيب الباقي متطبق. ومفيش durability أكتر من إعدادات الـ persistence عندك. والمنطق اللي فيه شرط محتاج <code>WATCH</code> مع retry loop، أو script.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Lua scripts and what they cost <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ Lua scripts وتمنها</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><code>EVAL</code> runs a Lua script as one atomic unit: no other client's command runs until it returns, and unlike <code>MULTI</code> it can read a value and branch. That makes "decrement only if enough is left" one step. In the run, 100 concurrent requests on a stock of 30 give exactly 30 reservations, 70 rejections and a stock of 0, with no retry loop and no dedicated connection. <code>EVALSHA</code> sends the script's SHA-1 instead of its text. The script cache isn't durable (restart, failover, <code>SCRIPT FLUSH</code>), so you can get <code>NOSCRIPT</code> at any time and have to resend. ioredis's <code>defineCommand</code> does that fallback for you, as the <code>defined</code> line of the run shows after a flush.</p>
+    <p>Two rules for writing scripts. Pass every key through <code>KEYS</code> and never build a key name inside the script, because Redis Cluster routes a script by its declared keys and they must all hash to one slot (Cluster isn't run here: <a href="./38-running-redis.html">lesson 38</a>). And an error partway through doesn't undo earlier writes, the same as <code>MULTI</code>, so do all the checks before the first write.</p>
+    <p><b>The cost is that a script blocks the server.</b> Every client waits, even for a <code>PING</code> on an unrelated connection: the run below shows the wait matching the script's duration. <code>lua-time-limit</code> (default 5000 ms, also named <code>busy-reply-threshold</code>) doesn't stop a script. After that time Redis starts answering everyone with <code>BUSY</code> and accepts <code>SCRIPT KILL</code>. If the script has already written something, even that is refused with <code>UNKILLABLE</code>, because killing it would leave half its writes in place. <code>CONFIG SET</code> is refused too, and the only way out left is <code>SHUTDOWN NOSAVE</code>, which loses everything unsaved. So: no unbounded loops, small bounded work only, and watch <code>SLOWLOG</code>.</p>
+    <p>One surprise from writing this lesson: <code>TIME</code> is frozen for the whole script. It returned the same value before and after a 100-million-iteration loop, so my first "wait 400 ms" loop never finished and the server went <code>BUSY</code>. You can't sleep in a script, which is correct, but the failure is nasty.</p>
+    <p><b>Functions</b> are the managed form. <code>FUNCTION LOAD</code> registers a named library on the server, <code>FCALL</code> calls it by name, it survives <code>SCRIPT FLUSH</code> (real), and per the docs it's persisted and replicated with the dataset. A <code>no-writes</code> flag lets <code>FCALL_RO</code> run it, and <code>FCALL_RO</code> refuses anything else. The price is that server-side code now has a deploy story of its own. For one service, <code>defineCommand</code> is simpler. When several services share the same logic, functions keep them from carrying copies.</p>
+  </section>
+
+<pre data-file="src/p3-reserve-lua.ts"><code class="language-typescript">import { createHash } from "node:crypto";
+import { connect } from "./lab.ts";
+
+// السكريبت كله بيتنفذ ككتلة واحدة: الفحص والخصم مفيش حاجة تدخل بينهم
+const RESERVE = `
+local stock = tonumber(redis.call("GET", KEYS[1]) or "0")
+local qty = tonumber(ARGV[1])
+if stock &lt; qty then
+  return -1
+end
+return redis.call("DECRBY", KEYS[1], qty)`;
+
+const conns = Array.from({ length: 10 }, () =&gt; connect());
+const r = conns[0]!;
+await r.set("stock:sku-1", 30);
+
+// (1) الـ EVAL العادي: 100 request بيجروا على 30 قطعة بس
+const replies = await Promise.all(
+  Array.from({ length: 100 }, (_, i) =&gt; conns[i % 10]!.eval(RESERVE, 1, "stock:sku-1", 1) as Promise&lt;number&gt;),
+);
+console.log("reserved:", replies.filter((n) =&gt; n &gt;= 0).length, "rejected:", replies.filter((n) =&gt; n === -1).length);
+console.log("stock   :", await r.get("stock:sku-1"));
+
+// (2) الـ EVALSHA: بتبعت الـ hash بدل النص كله، وده أوفر على الشبكة
+const sha = createHash("sha1").update(RESERVE).digest("hex");
+console.log("sha     :", sha === (await r.script("LOAD", RESERVE)));
+await r.set("stock:sku-1", 5);
+console.log("EVALSHA :", await r.evalsha(sha, 1, "stock:sku-1", 2));
+
+// لكن الـ cache بتاع السكريبتات مش مضمون: بيتمسح مع restart أو SCRIPT FLUSH
+await r.script("FLUSH");
+await r.evalsha(sha, 1, "stock:sku-1", 2).catch((e: Error) =&gt; console.log("after flush:", e.message));
+
+// (3) الـ defineCommand في ioredis بيجرب EVALSHA ولو NOSCRIPT بيرجع يبعت النص لوحده
+r.defineCommand("reserve", { numberOfKeys: 1, lua: RESERVE });
+const typed = r as typeof r &amp; { reserve(key: string, qty: number): Promise&lt;number&gt; };
+await r.script("FLUSH");
+console.log("defined :", await typed.reserve("stock:sku-1", 2));
+
+// (4) الـ error في نص السكريبت مش بيرجّع اللي اتكتب قبله: زي MULTI بالظبط
+await r.del("audit:last", "wallet:1:history");
+await r.set("wallet:1:history", "not-a-list");
+const HALF = `
+redis.call("SET", KEYS[1], "charged")
+redis.call("LPUSH", KEYS[2], "charge")
+return "finished"`;
+await r.eval(HALF, 2, "audit:last", "wallet:1:history").catch((e: Error) =&gt; console.log("error   :", e.message.split(" script:")[0]));
+console.log("kept    :", await r.get("audit:last"));
+
+conns.forEach((c) =&gt; c.disconnect());</code></pre>
+<pre><code class="language-plaintext">reserved: 30 rejected: 70
+stock   : 0
+sha     : true
+EVALSHA : 3
+after flush: NOSCRIPT No matching script. Please use EVAL.
+defined : 1
+error   : WRONGTYPE Operation against a key holding the wrong kind of value
+kept    : charged</code></pre>
+  <div class="ar-note">تلاتين اتحجزوا، و70 اترفضوا، والمخزون صفر مش سالب. الـ <code>EVALSHA</code> اشتغل، وبعد <code>SCRIPT FLUSH</code> رجّع <code>NOSCRIPT</code>، والـ <code>defineCommand</code> عالجها لوحده ورجّع نتيجة. وآخر سطرين: الـ script فشل في النص، والكتابة اللي قبل الغلطة فضلت موجودة، يعني مفيش rollback هنا برضه.</div>
+
+<pre data-file="src/p3-lua-blocks.ts"><code class="language-typescript">import { connect, sleep } from "./lab.ts";
+
+const app = connect();
+const admin = connect();
+const other = connect();
+const say = (label: string, value: unknown) =&gt; console.log(label.padEnd(12), "→", value);
+const msg = (e: Error) =&gt; e.message;
+
+// (1) سكريبت "صغير" بيحسب بس، مفيهوش ولا key: أي client تاني بيستنى حتى لو PING
+const BUSY = `local x = 0 for i = 1, tonumber(ARGV[1]) do x = x + i end return "done"`;
+const start = performance.now();
+const running = app.eval(BUSY, 0, 300_000_000).then(() =&gt; performance.now() - start);
+await sleep(20);
+const before = performance.now();
+await other.ping();
+const pingMs = performance.now() - before;
+const scriptMs = await running;
+say("script", `took ≈${Math.round(scriptMs)} ms`);
+say("PING", `waited ≈${Math.round(pingMs)} ms`);
+
+// (2) فخ: الـ TIME جوه السكريبت متجمد، فـ loop بيستنى الوقت يعدّي مش هيخلص أبدًا
+const frozen = await app.eval(
+  `local a = redis.call("TIME") for i = 1, 100000000 do end local b = redis.call("TIME") return {a[1], a[2], b[1], b[2]}`,
+  0,
+);
+say("TIME twice", JSON.stringify(frozen));
+
+// (3) سكريبت loop مبيخلصش: بعد lua-time-limit الـ server بيرد BUSY على الكل
+await admin.config("SET", "lua-time-limit", "300");
+const forever = app.eval(`local i = 0 while true do i = i + 1 end`, 0).catch(msg);
+await sleep(600);
+say("PING", await other.ping().catch(msg));
+say("GET", await other.get("orders:count").catch(msg));
+say("SCRIPT KILL", await admin.script("KILL"));
+say("script got", await forever);
+say("PING", await other.ping());
+
+// (4) سكريبت كتب حاجة قبل الـ loop: مينفعش يتقتل، عشان ميسيبش الـ data نص نص
+const wrote = app.eval(`redis.call("SET", "half:done", "1") while true do end`, 0).catch(msg);
+await sleep(600);
+say("SCRIPT KILL", await admin.script("KILL").catch(msg));
+say("PING", await other.ping().catch(msg));
+void wrote;
+await admin.config("SET", "lua-time-limit", "5000").catch((e: Error) =&gt; say("CONFIG SET", e.message));
+// الحل الوحيد الباقي: تقفل الـ server نفسه، وكل اللي مش محفوظ بيضيع
+[app, admin, other].forEach((c) =&gt; c.on("error", () =&gt; {}));
+void admin.call("SHUTDOWN", "NOSAVE").catch(() =&gt; {});
+await sleep(200);
+say("server", "stopped with SHUTDOWN NOSAVE");
+process.exit(0);</code></pre>
+<pre><code class="language-plaintext">script       → took ≈2703 ms
+PING         → waited ≈2681 ms
+TIME twice   → ["1793765236","50747","1793765236","50747"]
+PING         → BUSY Redis is busy running a script. You can only call SCRIPT KILL or SHUTDOWN NOSAVE.
+GET          → BUSY Redis is busy running a script. You can only call SCRIPT KILL or SHUTDOWN NOSAVE.
+SCRIPT KILL  → OK
+script got   → ERR Script killed by user with SCRIPT KILL... script: 3fcf51a9b854b8f66cb8685600b0d7df968f4398, on @user_script:1.
+PING         → PONG
+SCRIPT KILL  → UNKILLABLE Sorry the script already executed write commands against the dataset. You can either wait the script termination or kill the server in a hard way using the SHUTDOWN NOSAVE command.
+PING         → BUSY Redis is busy running a script. You can only call SCRIPT KILL or SHUTDOWN NOSAVE.
+CONFIG SET   → BUSY Redis is busy running a script. You can only call SCRIPT KILL or SHUTDOWN NOSAVE.
+server       → stopped with SHUTDOWN NOSAVE</code></pre>
+  <div class="ar-note">الـ <code>PING</code> استنى نفس مدة الـ script تقريبًا. الـ <code>TIME</code> اترجّع بنفس القيمة مرتين رغم الـ loop الطويل. بعد <code>lua-time-limit</code> أي أمر بياخد <code>BUSY</code>، والـ <code>SCRIPT KILL</code> قتل الـ script اللي مكتبش حاجة والـ server رجع يرد <code>PONG</code>. أما الـ script اللي كتب فرد <code>UNKILLABLE</code>، والـ <code>CONFIG SET</code> نفسه اترفض، ومفضلش غير <code>SHUTDOWN NOSAVE</code>.</div>
+
+<pre data-file="src/p3-functions.ts"><code class="language-typescript">import { connect } from "./lab.ts";
+
+const r = connect();
+await r.call("FUNCTION", "FLUSH");
+
+// الـ library ليها اسم وبتتسجل على الـ server: مش محتاج كل app يبعت النص أو يتابع الـ sha
+const LIBRARY = `#!lua name=inventory
+local function reserve(keys, args)
+  local stock = tonumber(redis.call("GET", keys[1]) or "0")
+  local qty = tonumber(args[1])
+  if stock &lt; qty then return -1 end
+  return redis.call("DECRBY", keys[1], qty)
+end
+local function peek(keys)
+  return tonumber(redis.call("GET", keys[1]) or "0")
+end
+redis.register_function("reserve", reserve)
+redis.register_function{ function_name = "peek", callback = peek, flags = { "no-writes" } }
+`;
+console.log("LOAD      →", await r.call("FUNCTION", "LOAD", "REPLACE", LIBRARY));
+await r.set("stock:sku-1", 5);
+console.log("FCALL     →", await r.call("FCALL", "reserve", 1, "stock:sku-1", 2));
+console.log("FCALL     →", await r.call("FCALL", "reserve", 1, "stock:sku-1", 9));
+console.log("FCALL_RO  →", await r.call("FCALL_RO", "peek", 1, "stock:sku-1"));
+await r.call("FCALL_RO", "reserve", 1, "stock:sku-1", 1).catch((e: Error) =&gt; console.log("FCALL_RO  →", e.message));
+
+// مفيش SCRIPT FLUSH يمسحها: بتفضل موجودة، وبتتحفظ مع الـ RDB وبتتنقل للـ replicas
+await r.script("FLUSH");
+console.log("after SCRIPT FLUSH →", await r.call("FCALL", "reserve", 1, "stock:sku-1", 1));
+const list = (await r.call("FUNCTION", "LIST", "LIBRARYNAME", "inventory")) as unknown[][];
+console.log("library   →", list[0]![1], "functions:", (list[0]![5] as unknown[][]).map((f) =&gt; f[1]).join(", "));
+r.disconnect();</code></pre>
+<pre><code class="language-plaintext">LOAD      → inventory
+FCALL     → 3
+FCALL     → -1
+FCALL_RO  → 3
+FCALL_RO  → ERR Can not execute a script with write flag using *_ro command.
+after SCRIPT FLUSH → 2
+library   → inventory functions: peek, reserve</code></pre>
+  <div class="ar-note">الـ library اتسجلت باسم <code>inventory</code>. الـ <code>FCALL</code> خصم 2 من 5 فبقى 3، وبعدين رجّع <code>-1</code> لما طلبنا 9. الـ <code>FCALL_RO</code> اشتغل مع <code>peek</code> ورفض <code>reserve</code> لأنها بتكتب. وبعد <code>SCRIPT FLUSH</code> الـ function لسه موجودة، و<code>FUNCTION LIST</code> بيعرض اسمها.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <code>EVAL</code> بيشغّل Lua script كوحدة atomic واحدة: مفيش أمر من أي client تاني بيشتغل لحد ما يخلص، وعلى عكس <code>MULTI</code> يقدر يقرا قيمة ويعمل شرط عليها. فـ"انقص بس لو فيه كفاية" بقت خطوة واحدة. في الـ run، 100 request في نفس اللحظة على مخزون 30 طلّعوا 30 حجز بالظبط و70 رفض ومخزون صفر، من غير retry loop ومن غير connection مخصوص. الـ <code>EVALSHA</code> بيبعت الـ SHA-1 بتاع الـ script بدل نصه. الـ cache بتاع الـ scripts مش durable (restart أو failover أو <code>SCRIPT FLUSH</code>)، فممكن تاخد <code>NOSCRIPT</code> في أي وقت ولازم تبعت النص تاني. والـ <code>defineCommand</code> في ioredis بيعمل الـ fallback ده لوحده، زي ما بيبان بعد الـ flush.</p>
+    <p>قاعدتين في كتابة الـ scripts. عدّي كل key عن طريق <code>KEYS</code> ومتركبش اسم key جوه الـ script، لأن Redis Cluster بيوجّه الـ script حسب الـ keys المعلنة ولازم كلها تقع في slot واحد (الـ Cluster متشغلش هنا: <a href="./38-running-redis.html">درس 38</a>). والـ error في النص مش بيلغي الكتابات اللي قبله، زي <code>MULTI</code> بالظبط، فاعمل كل الفحوصات قبل أول كتابة.</p>
+    <p><b>التمن إن الـ script بيوقف الـ server.</b> كل الـ clients بتستنى، حتى <code>PING</code> على connection ملوش علاقة: الـ run بيبيّن إن الانتظار قد مدة الـ script. والـ <code>lua-time-limit</code> (الافتراضي 5000 ms، واسمه كمان <code>busy-reply-threshold</code>) مش بيوقف الـ script. بعد الوقت ده Redis بيبدأ يرد على الكل بـ <code>BUSY</code> وبيقبل <code>SCRIPT KILL</code>. ولو الـ script كان كتب حاجة، حتى ده بيترفض بـ <code>UNKILLABLE</code>، لأن قتله هيسيب نص الكتابات مطبّقة. و<code>CONFIG SET</code> نفسه بيترفض، والمخرج الوحيد الباقي <code>SHUTDOWN NOSAVE</code>، وده بيضيّع كل اللي مش محفوظ. يعني: مفيش loops ملهاش نهاية، شغل صغير ومحدود بس، وراقب <code>SLOWLOG</code>.</p>
+    <p>مفاجأة طلعت وأنا بكتب الدرس: الـ <code>TIME</code> متجمد طول الـ script. رجّع نفس القيمة قبل وبعد loop فيه 100 مليون لفة، فأول loop كتبته عشان "يستنى 400 ms" مخلصش خالص والـ server دخل <code>BUSY</code>. متقدرش تعمل sleep جوه script، وده صح، بس الفشل وحش.</p>
+    <p>الـ <b>Functions</b> هي الشكل المُدار. الـ <code>FUNCTION LOAD</code> بيسجل library باسم على الـ server، والـ <code>FCALL</code> بينادي عليها بالاسم، وبتعيش بعد <code>SCRIPT FLUSH</code> (جرّبناها)، وحسب الـ docs بتتحفظ وتتعمل لها replication مع الـ data. وفلاج <code>no-writes</code> بيخلي <code>FCALL_RO</code> يشغّلها، و<code>FCALL_RO</code> بيرفض أي حاجة غيرها. التمن إن الكود اللي على الـ server بقى له deploy بتاعه. لو service واحدة، <code>defineCommand</code> أبسط. ولو كذا service بتشارك نفس المنطق، الـ functions بتمنع كل واحدة تشيل نسخة.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      حجز المخزون في flash sale، وحد استخدام الكوبون، والـ rate limiter في <a href="./36-caching-sessions-rate-limits.html">الدرس الجاي</a>: كلهم "اقرا، قرر، اكتب" على keys قليلة، فـ Lua مناسب جدًا وبيشيل عنك الـ retries. أما لو حد كتب script بيلف على كل الـ keys بتاعة tenant عشان يحسب report، ده هيوقف الـ server على الكل. في incident: لو الـ alerts كلها بتقول <code>BUSY</code>، بص الأول على <code>SCRIPT KILL</code>، ولو رد <code>UNKILLABLE</code> اعرف إن قرارك دلوقتي بين الاستنى وبين الـ data اللي مش محفوظة. والغلطة الشائعة إنك تكتب <code>"stock:" .. ARGV[1]</code> جوه الـ script: بيشتغل على instance واحدة وبيقع على Cluster.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: which atomic tool?</b>
+    One command when it exists (<code>INCR</code>, <code>SET NX</code>, <code>GETDEL</code>). <code>MULTI</code> for several writes with no decision. A script for read-decide-write, which is nearly always better than <code>WATCH</code> on Redis because it needs no retries or dedicated connection, at the price of blocking the server while it runs. Keep <code>WATCH</code> for when the decision needs data from outside Redis, since a script can't call your database.
+    <div class="ar-note">أمر واحد لو موجود (<code>INCR</code>، <code>SET NX</code>، <code>GETDEL</code>). <code>MULTI</code> لكذا كتابة من غير قرار. و script للـ read-decide-write، وده غالبًا أحسن من <code>WATCH</code> على Redis لأنه مش محتاج retries ولا connection مخصوص، والتمن إنه بيوقف الـ server وهو شغال. سيب <code>WATCH</code> للحالة اللي القرار فيها محتاج data من بره Redis، لأن الـ script مش هيقدر يكلم الـ database بتاعتك.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Lock basics, DELEX &amp; a renewing lease <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — أساسيات الـ lock والـ DELEX و lease بيتجدد</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><a href="../../04-NodeJS/lessons/21-redis-patterns-caching.html#p3">04-Node lesson 21 part 3</a> built the basic lock, so here's the short version. <code>SET lock:invoice-run token NX PX 30000</code> is one atomic command: it returns <code>OK</code> to the winner, <code>null</code> to everyone else, and the expiry means a crashed holder can't block the job forever. The value is a unique token per acquisition. A plain <code>DEL</code> to release is the classic bug: A's lock expires while A is still working, B takes it, A finishes and deletes <em>B's</em> lock, and C walks in while B still believes it holds the lock.</p>
+    <p>Release has to be compare-and-delete. <b>What changed:</b> the README says a Lua script, which still works everywhere and is the portable form. Redis 8.4 added <code>DELEX key IFEQ token</code>, tested below: wrong token gives 0, right token gives 1. Extending has a Lua-free form too, <code>SET key token IFEQ token PX ttl</code>, which keeps the value and sets a new expiry only if you still own it. ioredis has no method for these yet, so you use <code>redis.call</code>. node-redis 6.3 has <code>client.delEx</code>, also tested. Valkey went a different way: its docs list <code>DELIFEQ key value</code>, not run here. If your hosting might not be Redis 8.4+, keep the Lua form, or check with <code>COMMAND INFO</code> as the script does.</p>
+    <p>Choosing a TTL is a dilemma. Too long, and a crashed holder blocks the job for the whole TTL. Too short, and a slow holder loses the lock mid-work. A <b>renewing lease</b> resolves it with a short TTL and a timer that extends it every TTL/3 while the process is alive. Below, a 900 ms job holds a 300 ms lease through several renewals and B stays out, and a crash would free the lock within 300 ms. When a renewal finds the key gone, it aborts an <code>AbortSignal</code>. The work has to check that signal between steps, because aborting doesn't stop anything by itself. A limit you should hold on to for Part 5: that timer runs on the event loop.</p>
+    <p>If your data is already in Postgres, compare this with an <a href="./15-locks-deadlocks-advisory.html">advisory lock</a>. It's tied to the session, so there's no TTL to tune and no renewal: when the connection closes it's gone, a few milliseconds later in the run. The cost is a connection held for the whole job.</p>
+  </section>
+
+<pre data-file="src/p4-lock-basics.ts"><code class="language-typescript">import { connect, sleep } from "./lab.ts";
+
+const r = connect();
+const LOCK = "lock:invoice-run";
+await r.del(LOCK);
+
+// (1) الـ SET NX PX أمر واحد: الـ key والـ expiry بيتعملوا مع بعض
+console.log("A SET NX PX     →", await r.set(LOCK, "token-a", "PX", 30_000, "NX"));
+console.log("B SET NX PX     →", await r.set(LOCK, "token-b", "PX", 30_000, "NX"));
+await r.del(LOCK);
+
+// ⁦(2) ❌⁩ الـ DEL العادي: الـ lock بتاع A خلص وهو لسه شغال، و B أخده
+await r.set(LOCK, "token-a", "PX", 100, "NX");
+await sleep(150);
+console.log("B after expiry  →", await r.set(LOCK, "token-b", "PX", 30_000, "NX"));
+console.log("A plain DEL     →", await r.del(LOCK), "(that was B's lock)");
+console.log("C SET NX PX     →", await r.set(LOCK, "token-c", "PX", 30_000, "NX"));
+console.log("owner now       →", await r.get(LOCK), "while B still thinks it holds it");
+await r.del(LOCK);
+
+// (3) الطريقة الـ portable: Lua بيقارن وبيمسح ككتلة واحدة، وشغال على أي نسخة
+const RELEASE = `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+end
+return 0`;
+await r.set(LOCK, "token-b", "PX", 30_000);
+console.log("Lua wrong token →", await r.eval(RELEASE, 1, LOCK, "token-a"));
+console.log("Lua right token →", await r.eval(RELEASE, 1, LOCK, "token-b"));
+
+// (4) من غير Lua على ⁦Redis 8.4+⁩: الـ ioredis ملوش method ليها لسه، فبنستخدم call
+await r.set(LOCK, "token-b", "PX", 30_000);
+console.log("DELEX wrong     →", await r.call("DELEX", LOCK, "IFEQ", "token-a"));
+console.log("DELEX right     →", await r.call("DELEX", LOCK, "IFEQ", "token-b"));
+
+// (5) تمديد الـ lock من غير Lua: اكتب نفس القيمة بـ TTL جديد لو لسه بتاعك
+await r.set(LOCK, "token-b", "PX", 1_000);
+console.log("IFEQ extend bad →", await r.call("SET", LOCK, "token-b", "IFEQ", "token-a", "PX", 30_000));
+console.log("PTTL ≈          →", Math.round((await r.pttl(LOCK)) / 1000), "s");
+console.log("IFEQ extend ok  →", await r.call("SET", LOCK, "token-b", "IFEQ", "token-b", "PX", 30_000));
+console.log("PTTL ≈          →", Math.round((await r.pttl(LOCK)) / 1000), "s");
+await r.del(LOCK);
+
+// (6) قبل ما تعتمد عليها: اسأل الـ server هل الأمر موجود ولا لأ
+const supports = async (name: string) =&gt; {
+  const [info] = (await r.call("COMMAND", "INFO", name)) as unknown[];
+  return info !== null &amp;&amp; info !== undefined;
+};
+console.log("has DELEX       →", await supports("delex"));
+console.log("has DELIFEQ     →", await supports("delifeq"));
+r.disconnect();</code></pre>
+<pre><code class="language-plaintext">A SET NX PX     → OK
+B SET NX PX     → null
+B after expiry  → OK
+A plain DEL     → 1 (that was B's lock)
+C SET NX PX     → OK
+owner now       → token-c while B still thinks it holds it
+Lua wrong token → 0
+Lua right token → 1
+DELEX wrong     → 0
+DELEX right     → 1
+IFEQ extend bad → null
+PTTL ≈          → 1 s
+IFEQ extend ok  → OK
+PTTL ≈          → 30 s
+has DELEX       → true
+has DELIFEQ     → false</code></pre>
+  <div class="ar-note">الـ <code>SET NX PX</code> رجّع <code>OK</code> وبعدين <code>null</code>. بعد ما lock بتاع A خلص، B أخده، والـ <code>DEL</code> بتاع A مسح lock بتاع B، و C أخده: B لسه فاكر إنه ماسكه. الـ Lua والـ <code>DELEX</code> الاتنين رجّعوا 0 للـ token الغلط و1 للصح. الـ <code>SET ... IFEQ</code> بالـ token الغلط رجّع <code>null</code> والـ TTL فضل ثانية، وبالـ token الصح رجّع <code>OK</code> والـ TTL بقى 30 ثانية. وفي الآخر الـ server ده عنده <code>DELEX</code> ومعندوش <code>DELIFEQ</code>.</div>
+
+<pre data-file="src/p4-node-redis.ts"><code class="language-typescript">import { createClient } from "redis";
+import { labPort } from "./lab.ts";
+
+const client = createClient({ socket: { host: "127.0.0.1", port: labPort() } });
+await client.connect();
+const LOCK = "lock:invoice-run";
+
+// الـ node-redis فيها method جاهزة، فمش محتاج تكتب اسم الأمر بإيدك
+console.log("SET NX PX  →", await client.set(LOCK, "token-b", { condition: "NX", expiration: { type: "PX", value: 30_000 } }));
+console.log("delEx bad  →", await client.delEx(LOCK, { condition: "IFEQ", matchValue: "token-a" }));
+console.log("delEx good →", await client.delEx(LOCK, { condition: "IFEQ", matchValue: "token-b" }));
+await client.close();</code></pre>
+<pre><code class="language-plaintext">SET NX PX  → OK
+delEx bad  → 0
+delEx good → 1</code></pre>
+  <div class="ar-note">نفس الفكرة بـ node-redis: الـ <code>delEx</code> موجودة كـ method جاهزة، وبترجّع 0 للـ token الغلط و1 للصح.</div>
+
+<pre data-file="src/lease.ts"><code class="language-typescript">import { randomUUID } from "node:crypto";
+import type { Redis } from "ioredis";
+
+export interface Lease {
+  token: string;
+  // الإشارة دي بتتعمل abort لما الـ watchdog يكتشف إن الـ lock راح
+  signal: AbortSignal;
+  renewals(): number;
+  release(): Promise&lt;boolean&gt;;
+}
+
+// ده lease بيتجدد لوحده طول ما الـ process عايش والـ event loop شغال
+export async function acquireLease(redis: Redis, key: string, ttlMs: number): Promise&lt;Lease | null&gt; {
+  const token = randomUUID();
+  const got = await redis.set(key, token, "PX", ttlMs, "NX");
+  if (got !== "OK") return null;
+
+  const lost = new AbortController();
+  let renewals = 0;
+  // التجديد كل ثلث الـ TTL: كده محاولتين ممكن يفشلوا قبل ما الـ lock يخلص
+  const timer = setInterval(async () =&gt; {
+    try {
+      const ok = await redis.call("SET", key, token, "IFEQ", token, "PX", ttlMs);
+      if (ok === "OK") renewals++;
+      else lost.abort(new Error("lease lost: key gone or owned by someone else"));
+    } catch (err) {
+      // لو Redis مش بيرد مش عارفين الـ lock لسه موجود ولا لأ، فنعتبره راح
+      lost.abort(err);
+    }
+    if (lost.signal.aborted) clearInterval(timer);
+  }, Math.floor(ttlMs / 3));
+  timer.unref();
+
+  return {
+    token,
+    signal: lost.signal,
+    renewals: () =&gt; renewals,
+    release: async () =&gt; {
+      clearInterval(timer);
+      return (await redis.call("DELEX", key, "IFEQ", token)) === 1;
+    },
+  };
+}</code></pre>
+<pre data-file="src/p4-watchdog.ts"><code class="language-typescript">import { connect, sleep } from "./lab.ts";
+import { acquireLease } from "./lease.ts";
+
+const a = connect();
+const b = connect();
+const LOCK = "lock:invoice-run";
+await a.del(LOCK);
+
+// (1) شغل بياخد 900 ms والـ TTL بتاع الـ lock 300 ms بس
+const lease = await acquireLease(a, LOCK, 300);
+if (!lease) throw new Error("expected to win");
+await sleep(600);
+console.log("t≈600 ms, B tries  →", await acquireLease(b, LOCK, 300));
+await sleep(300);
+console.log("t≈900 ms, renewals →", lease.renewals(), "aborted", lease.signal.aborted);
+console.log("release            →", await lease.release());
+const second = await acquireLease(b, LOCK, 300);
+console.log("B after release    →", second ? "acquired" : "refused");
+await second?.release();
+
+// (2) حد مسح الـ ⁦lock (⁩أو Redis عمل restart): الـ watchdog بيكتشف في التجديد الجاي
+const fragile = await acquireLease(a, LOCK, 300);
+if (!fragile) throw new Error("expected to win");
+await b.del(LOCK);
+await sleep(200);
+console.log("after key vanished →", "aborted", fragile.signal.aborted, "-", (fragile.signal.reason as Error).message);
+
+// الشغل نفسه لازم يبص على الإشارة بين كل خطوة والتانية: الـ abort لوحده مش بيوقف حاجة
+try {
+  for (const customer of ["cust-1", "cust-2"]) {
+    fragile.signal.throwIfAborted();
+    console.log("billing", customer);
+  }
+} catch (err) {
+  console.log("stopped before billing:", (err as Error).message);
+}
+a.disconnect();
+b.disconnect();</code></pre>
+<pre><code class="language-plaintext">t≈600 ms, B tries  → null
+t≈900 ms, renewals → 8 aborted false
+release            → true
+B after release    → acquired
+after key vanished → aborted true - lease lost: key gone or owned by someone else
+stopped before billing: lease lost: key gone or owned by someone else</code></pre>
+  <div class="ar-note">شغل 900 ms على lease عمره 300 ms: الـ watchdog جدده كذا مرة، و B اترفض، وبعد الـ release الـ B أخده. وتاني جزء: حد مسح الـ key، فالتجديد الجاي اكتشف إنه راح وعمل abort، والـ loop وقف قبل ما يحاسب أي عميل.</div>
+
+<pre data-file="src/lab-pg.ts"><code class="language-typescript">// نفس القاعدة بتاعة Redis: من غير port صريح الـ driver بيرجع للـ 5432، يعني الـ database الحقيقية بتاعتك
+export function labUrl(): string {
+  const raw = process.env.DATABASE_URL ?? "";
+  const port = URL.canParse(raw) ? new URL(raw).port : "";
+  if (!/^\d+$/.test(port) || Number(port) &lt; 1024 || [5432, 6379, 27017].includes(Number(port))) {
+    throw new Error(`refusing port "${port}": set DATABASE_URL to a throwaway database on its own port`);
+  }
+  return raw;
+}</code></pre>
+<pre data-file="src/p4-advisory.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-pg.ts";
+
+const url = labUrl();
+const INVOICE_RUN = 202610;
+const a = new pg.Client({ connectionString: url });
+const b = new pg.Client({ connectionString: url });
+a.on("error", () =&gt; {});
+await a.connect();
+await b.connect();
+
+const tryLock = async (c: pg.Client) =&gt;
+  (await c.query&lt;{ ok: boolean }&gt;("select pg_try_advisory_lock($1) as ok", [INVOICE_RUN])).rows[0]!.ok;
+
+console.log("A pg_try_advisory_lock →", await tryLock(a));
+console.log("B pg_try_advisory_lock →", await tryLock(b));
+
+// الـ process بتاع A مات: الـ connection اتقفلت، والـ lock اتساب فورًا من غير ما حد يستنى TTL
+const t0 = performance.now();
+await a.end();
+let got = false;
+while (!got) got = await tryLock(b);
+console.log(`B got it ≈${Math.round(performance.now() - t0)} ms after A's connection closed`);
+await b.end();</code></pre>
+<pre><code class="language-plaintext">A pg_try_advisory_lock → true
+B pg_try_advisory_lock → false
+B got it ≈5 ms after A's connection closed</code></pre>
+  <div class="ar-note">الـ A خد الـ advisory lock والـ B رجّع <code>false</code>. أول ما الـ connection بتاعة A اتقفلت، B خده بعد كام ms بس، من غير أي TTL يستناه.</div>
+
+  <table>
+    <tr><th></th><th>Redis lease</th><th>Postgres advisory lock</th></tr>
+    <tr><td>Holder crashes</td><td>Wait out the TTL</td><td>Released when the session ends. A dead peer whose socket hasn't closed lasts until TCP keepalive notices</td></tr>
+    <tr><td>Holder is slow</td><td>TTL can expire: two holders</td><td>Holds as long as the session lives</td></tr>
+    <tr><td>Renewal</td><td>Your code</td><td>None</td></tr>
+    <tr><td>Connection</td><td>Any</td><td>One held for the job (session lock) or a transaction (xact lock)</td></tr>
+    <tr><td>PgBouncer transaction mode</td><td>Not relevant</td><td>Session locks break, use the xact form (from its docs, not run here)</td></tr>
+    <tr><td>New infrastructure</td><td>Redis</td><td>None if Postgres is already your data</td></tr>
+  </table>
+  <div class="ar-note">سطر سطر: لو الـ holder وقع، في Redis لازم تستنى الـ TTL، وفي Postgres الـ lock بيتساب لما الـ session تخلص، وطرف ميت الـ socket بتاعه لسه مفتوح بيفضل لحد ما TCP keepalive يكتشفه. لو الـ holder بطيء، في Redis الـ TTL ممكن يخلص فيبقى فيه اتنين ماسكين، وفي Postgres بيفضل ماسك طول ما الـ session عايشة. التجديد في Redis كود عليك، وفي Postgres مش محتاج. في Redis أي connection، وفي Postgres connection محجوز طول الشغل (session lock) أو transaction (xact lock). مع PgBouncer في transaction mode الـ session locks بتبوظ فاستخدم الـ xact (من الـ docs بتاعته، متشغلش هنا). وRedis محتاج infrastructure إضافية لو مش عندك، و Postgres مفيهوش جديد لو هو أصلًا الـ data بتاعتك.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><a href="../../04-NodeJS/lessons/21-redis-patterns-caching.html#p3">الجزء 3 من درس 04-Node رقم 21</a> بنى الـ lock الأساسي، فده الملخص. الـ <code>SET lock:invoice-run token NX PX 30000</code> أمر atomic واحد: بيرجّع <code>OK</code> للفايز و<code>null</code> للباقي، والـ expiry معناه إن holder وقع مش هيقفل الـ job للأبد. والقيمة token فريد لكل مرة تاخد فيها الـ lock. والـ <code>DEL</code> العادي في الـ release هو الـ bug المشهور: lock بتاع A بيخلص وهو لسه شغال، B بياخده، A بيخلص ويمسح lock بتاع <em>B</em>، و C بيدخل و B لسه فاكر إنه ماسكه.</p>
+    <p>الـ release لازم يبقى compare-and-delete. <b>إيه اللي اتغير:</b> الـ README بيقول Lua script، وده لسه شغال في كل حتة وهو الشكل الـ portable. Redis 8.4 ضاف <code>DELEX key IFEQ token</code>، وجرّبناه: الـ token الغلط بيدي 0 والصح بيدي 1. والتمديد ليه شكل من غير Lua برضه، <code>SET key token IFEQ token PX ttl</code>، بيسيب القيمة زي ما هي ويحط expiry جديد لو لسه بتاعك. الـ ioredis ملوش method لده لسه، فبتستخدم <code>redis.call</code>. الـ node-redis 6.3 عنده <code>client.delEx</code>، وجرّبناها برضه. الـ Valkey راح في طريق تاني: الـ docs بتاعته فيها <code>DELIFEQ key value</code>، ومتشغلش هنا. لو الـ hosting بتاعك ممكن ميبقاش Redis 8.4+، خليك على Lua، أو اسأل بـ <code>COMMAND INFO</code> زي السكريبت.</p>
+    <p>اختيار الـ TTL ورطة. طويل: holder وقع بيقفل الـ job طول الـ TTL. قصير: holder بطيء بيضيّع الـ lock في نص الشغل. الـ <b>lease اللي بيتجدد</b> بيحلها بـ TTL قصير و timer بيمدده كل TTL/3 طول ما الـ process عايش. تحت، job مدته 900 ms ماسك lease عمره 300 ms عن طريق كذا تجديد و B بره، ولو حصل crash الـ lock بيتساب خلال 300 ms. ولما التجديد يلاقي الـ key مش موجود، بيعمل abort لـ <code>AbortSignal</code>. والشغل لازم يبص على الإشارة دي بين كل خطوة والتانية، لأن الـ abort لوحده مش بيوقف حاجة. وخلي بالك من حد مهم للجزء 5: الـ timer ده شغال على الـ event loop.</p>
+    <p>لو الـ data بتاعتك أصلًا في Postgres، قارن ده بـ <a href="./15-locks-deadlocks-advisory.html">advisory lock</a>. مربوط بالـ session، فمفيش TTL تظبطه ولا تجديد: أول ما الـ connection تتقفل بيروح، وفي الـ run بعدها بكام ms بس. والتمن connection محجوز طول الـ job.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عندك 3 pods وكلهم فيهم cron بيطلّع فواتير الشهر أو بيبعت daily digest: الـ pod اللي ياخد الـ lock هو اللي يشتغل. لو الـ job مدته معروفة وقصيرة: <code>SET NX PX</code> و compare-and-delete. لو مدته مش معروفة زي export كبير: lease بـ watchdog، مع <code>signal.throwIfAborted()</code> بين الـ batches. ولو الـ job أصلًا بيقرا ويكتب في Postgres بس: advisory lock أبسط ومش محتاج Redis. والغلطة الشائعة: <code>finally { await redis.del(lockKey) }</code>، وده تقريبًا في كل tutorial، وبيمسح lock حد تاني لما الشغل يطوّل عن الـ TTL.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks: renewing forever</b>
+    A watchdog that keeps renewing while the job is stuck on a hung HTTP call holds the lock indefinitely, and you've rebuilt the "no TTL" bug with extra steps. Give the job its own deadline and stop renewing when it passes.
+    <div class="ar-note">الـ watchdog اللي بيفضل يجدد والـ job واقف على HTTP call متعلق بيمسك الـ lock لأجل غير مسمى، وكده إنت رجعت لـ bug "مفيش TTL" بخطوات زيادة. ادّي الـ job نفسه deadline خاص بيه، ووقف التجديد لما يعدّيها.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Why locks lie: fencing tokens <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — ليه الـ locks بتكدب: الـ fencing tokens</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A lease is a promise with an expiry, and the holder can't feel time pass. A stop-the-world GC, a starved CPU, a migrated VM, or a slow network under the write itself can all put the holder past its TTL with no signal at all. In the run below, two <em>separate</em> Node processes share one lock. A takes a 400 ms lock and freezes its whole event loop for 1500 ms with <code>Atomics.wait</code>, a stand-in for a long GC pause. B acquires the expired lock and writes the invoices. A wakes up, has no idea, and writes them again: <b>6 invoices for 3 customers</b>, and no error anywhere.</p>
+    <p>The tools from Part 4 don't help. The watchdog lives in the frozen process, so it never fired. Checking "do I still hold it?" before the write doesn't help either, because the pause can land right after that check. No client-side code closes this gap, whichever lock service you use.</p>
+    <p>The fix, from <a href="https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html">Kleppmann's article</a>, moves the check to where the write happens. Each acquisition gets a <b>fencing token</b>, a number that only goes up, and the storage refuses any token older than one it has already seen: <code>UPDATE invoice_runs SET fence = $1 ... WHERE fence &lt; $1</code>. In the rerun B writes with fence 2, and when A wakes with fence 1 it gets <b><code>rowCount</code> 0</b> on real Postgres and rolls back. Now there are 3 invoices. His central point is that <b>the storage must take part</b>. A lock on its own can't protect a resource that doesn't check.</p>
+    <p>Three details matter in practice. Issue the token in the same atomic step as the lock, as <code>fence.ts</code> does in one script: otherwise A could acquire, pause, lose the lock to B who increments, then increment after B and end up with the <em>higher</em> token. A Redis counter is only as durable as Redis, so a failover can move it backwards, and new holders then get refused until it catches up. That's safe but stuck, and a Postgres sequence avoids it when Postgres is the storage. And a fence <b>orders writers but doesn't deduplicate</b>: in the second run, stale A writes <em>before</em> B has written anything, so nothing has told the table to refuse fence 1, both are accepted and there are 6 invoices again. A unique key on <code>(period, customer_id)</code> brings it to 3.</p>
+    <p>Look at that last result honestly. If your storage is Postgres, the unique constraint was the real protection, and the lock just saves wasted work. That's the conclusion to carry into Part 6. For a system that can't compare a number, like a payment provider, pass an idempotency key instead (<a href="../../09-Software-Architecture/lessons/23-caching-concurrency-idempotency.html">section 09 lesson 23</a>).</p>
+  </section>
+
+<pre class="diagram">
+ lock service     fence 1 to A        TTL ends   fence 2 to B
+                       |                 |            |
+ worker A   acquire ---+--[ GC pause ...............................]-- write(fence 1)
+ worker B                                     acquire-+-- write(fence 2)
+                                                             |              |
+ storage                                               accept: 2 &gt; 0   refuse: 1 &lt; 2
+ ----------------------------------------------------------------------------------&gt; time
+ Without a check in storage, both writes land and nothing reports it.
+</pre>
+  <div class="ar-note">الزمن ماشي من الشمال لليمين. الـ A بياخد الـ lock ومعاه fence 1، وبعدين يقف في GC pause. الـ TTL بيخلص والـ B بياخد الـ lock ومعاه fence 2 ويكتب: التخزين بيقبل لأن 2 أكبر من صفر. الـ A بيصحى ويحاول يكتب بـ fence 1: التخزين بيرفض لأن 1 أصغر من 2. ولو التخزين مش بيفحص، الكتابتين بيعدّوا ومحدش هيبلّغ بحاجة.</div>
+
+<pre data-file="src/fence.ts"><code class="language-typescript">import { randomUUID } from "node:crypto";
+import type { Redis } from "ioredis";
+
+// الـ lock والعدّاد في script واحد: الـ token لازم يطلع في نفس لحظة أخد الـ lock
+// الـ ⁦{}⁩ بتخلي الـ keys الاتنين في نفس الـ hash slot، عشان ده يشتغل على Cluster
+const ACQUIRE = `
+if redis.call("SET", KEYS[1], ARGV[1], "NX", "PX", ARGV[2]) then
+  return redis.call("INCR", KEYS[2])
+end
+return 0`;
+
+export interface FencedLease {
+  owner: string;
+  fence: number;
+}
+
+export async function acquireFenced(redis: Redis, name: string, ttlMs: number): Promise&lt;FencedLease | null&gt; {
+  const owner = randomUUID();
+  const fence = (await redis.eval(ACQUIRE, 2, `{${name}}:lock`, `{${name}}:fence`, owner, ttlMs)) as number;
+  return fence === 0 ? null : { owner, fence };
+}</code></pre>
+<pre data-file="src/p5-worker.ts"><code class="language-typescript">import pg from "pg";
+import { connect, sleep } from "./lab.ts";
+import { labUrl } from "./lab-pg.ts";
+import { acquireFenced } from "./fence.ts";
+
+const [name, pauseMs, mode] = process.argv.slice(2) as [string, string, "plain" | "fenced"];
+const T0 = Number(process.env.T0);
+const log = (msg: string) =&gt; console.log(`${Date.now() - T0} ${name} ${msg}`);
+
+const redis = connect();
+const db = new pg.Client({ connectionString: labUrl() });
+await db.connect();
+
+const RUN = "invoice-run:2026-10";
+const CUSTOMERS = [1, 2, 3];
+
+// استنى لحد ما تاخد الـ lock: TTL 400 ms بس عشان الـ demo يخلص بسرعة
+let lease = await acquireFenced(redis, RUN, 400);
+while (!lease) {
+  await sleep(20);
+  lease = await acquireFenced(redis, RUN, 400);
+}
+log(`acquired lock, fence ${lease.fence}`);
+
+// ده واقف بجد: الـ event loop كله متجمد، زي GC طويل أو VM اتعملها freeze
+// وأي watchdog في نفس الـ process مبيشتغلش خلال الوقفة دي
+if (Number(pauseMs) &gt; 0) {
+  log(`paused for ${pauseMs} ms (stand-in for a GC pause)`);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(pauseMs));
+  log("woke up, still believes it holds the lock");
+}
+
+if (mode === "plain") {
+  // ❌ مفيش أي فحص عند الكتابة: الـ lock هو الحماية الوحيدة
+  for (const customer of CUSTOMERS) {
+    await db.query("insert into invoices(period, customer_id, written_by) values ('2026-10', $1, $2)", [customer, name]);
+  }
+  log("wrote 3 invoices");
+} else {
+  // ✅ التخزين نفسه هو اللي بيحكم: الـ token القديم مش بيعدّي
+  await db.query("begin");
+  const { rowCount } = await db.query(
+    "update invoice_runs set fence = $1, run_by = $2 where period = '2026-10' and fence &lt; $1",
+    [lease.fence, name],
+  );
+  if (rowCount === 0) {
+    await db.query("rollback");
+    log(`write REFUSED, rowCount 0 for fence ${lease.fence}`);
+  } else {
+    for (const customer of CUSTOMERS) {
+      await db.query("insert into invoices(period, customer_id, written_by) values ('2026-10', $1, $2)", [customer, name]);
+    }
+    await db.query("commit");
+    log(`wrote 3 invoices, rowCount ${rowCount} for fence ${lease.fence}`);
+  }
+}
+
+await db.end();
+redis.disconnect();</code></pre>
+<pre data-file="src/p5-double-run.ts"><code class="language-typescript">import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import pg from "pg";
+import { connect, sleep } from "./lab.ts";
+import { labUrl } from "./lab-pg.ts";
+
+const redis = connect();
+const db = new pg.Client({ connectionString: labUrl() });
+await db.connect();
+
+await db.query(`
+  drop table if exists invoices, invoice_runs;
+  create table invoices(id bigint generated always as identity primary key, period text not null, customer_id int not null, written_by text not null);
+  create table invoice_runs(period text primary key, fence bigint not null default 0, run_by text);
+  insert into invoice_runs(period) values ('2026-10');`);
+
+// كل worker ده process منفصل بجد: الوقفة في A مش بتوقف B
+function worker(name: string, pauseMs: number, mode: string, t0: number) {
+  return new Promise&lt;string[]&gt;((resolve, reject) =&gt; {
+    const script = fileURLToPath(new URL("./p5-worker.ts", import.meta.url));
+    const child = spawn(process.execPath, [script, name, String(pauseMs), mode], {
+      env: { ...process.env, T0: String(t0), NODE_NO_WARNINGS: "1" },
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    let out = "";
+    child.stdout.on("data", (d) =&gt; (out += d));
+    child.on("error", reject);
+    child.on("close", () =&gt; resolve(out.trim().split("\n")));
+  });
+}
+
+async function scenario(mode: "plain" | "fenced") {
+  await redis.del("{invoice-run:2026-10}:lock", "{invoice-run:2026-10}:fence");
+  await db.query("truncate invoices; update invoice_runs set fence = 0, run_by = null");
+  const t0 = Date.now();
+  const a = worker("A", 1500, mode, t0);
+  // نضمن إن A أخد الـ lock الأول
+  while (!(await redis.exists("{invoice-run:2026-10}:lock"))) await sleep(5);
+  const b = worker("B", 0, mode, t0);
+  const lines = (await Promise.all([a, b])).flat();
+  lines.sort((x, y) =&gt; parseInt(x) - parseInt(y));
+  console.log(`--- ${mode}`);
+  for (const line of lines) {
+    const [ms, ...rest] = line.split(" ");
+    console.log(`t≈${String(Math.round(Number(ms) / 50) * 50).padStart(4)} ms  ${rest.join(" ")}`);
+  }
+  const { rows } = await db.query&lt;{ written_by: string; n: string }&gt;(
+    "select written_by, count(*) n from invoices group by written_by order by written_by",
+  );
+  console.log("invoices:", rows.map((r) =&gt; `${r.written_by}=${r.n}`).join(" "), "(3 customers)");
+}
+
+await scenario("plain");
+await scenario("fenced");
+await db.end();
+redis.disconnect();</code></pre>
+<pre><code class="language-plaintext">--- plain
+t≈ 250 ms  A acquired lock, fence 1
+t≈ 250 ms  A paused for 1500 ms (stand-in for a GC pause)
+t≈ 650 ms  B acquired lock, fence 2
+t≈ 650 ms  B wrote 3 invoices
+t≈1750 ms  A woke up, still believes it holds the lock
+t≈1750 ms  A wrote 3 invoices
+invoices: A=3 B=3 (3 customers)
+--- fenced
+t≈ 300 ms  A acquired lock, fence 1
+t≈ 300 ms  A paused for 1500 ms (stand-in for a GC pause)
+t≈ 750 ms  B acquired lock, fence 2
+t≈ 750 ms  B wrote 3 invoices, rowCount 1 for fence 2
+t≈1800 ms  A woke up, still believes it holds the lock
+t≈1800 ms  A write REFUSED, rowCount 0 for fence 1
+invoices: B=3 (3 customers)</code></pre>
+  <div class="ar-note">في الـ <code>plain</code>: الـ A خد الـ lock ووقف، و B خده بعد ما الـ TTL خلص وكتب 3 فواتير، و A صحي وكتب 3 كمان: 6 فواتير لـ 3 عملاء. في الـ <code>fenced</code> نفس الترتيب، بس A خد <code>rowCount 0</code> ومكتبش حاجة، فالفواتير 3 بس. الأوقات من بداية تشغيل الـ processes، وفيها وقت إقلاع Node.</div>
+
+<pre data-file="src/p5-fence-gap.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-pg.ts";
+
+const db = new pg.Client({ connectionString: labUrl() });
+await db.connect();
+
+await db.query(`
+  drop table if exists invoices, invoice_runs;
+  create table invoices(period text not null, customer_id int not null, written_by text not null);
+  create table invoice_runs(period text primary key, fence bigint not null default 0);
+  insert into invoice_runs(period) values ('2026-10');`);
+
+async function run(fence: number, who: string, insertSql: string) {
+  await db.query("begin");
+  const { rowCount } = await db.query("update invoice_runs set fence = $1 where period = '2026-10' and fence &lt; $1", [fence]);
+  if (rowCount === 0) {
+    await db.query("rollback");
+    return `${who} fence ${fence}: refused`;
+  }
+  let inserted = 0;
+  for (const customer of [1, 2, 3]) {
+    inserted += (await db.query(insertSql, [customer, who])).rowCount ?? 0;
+  }
+  await db.query("commit");
+  return `${who} fence ${fence}: accepted, ${inserted} new invoices`;
+}
+
+const count = async () =&gt; (await db.query("select count(*)::int n from invoices")).rows[0].n as number;
+const PLAIN = "insert into invoices values ('2026-10', $1, $2)";
+
+// الترتيب هنا: B أخد الـ lock بس لسه مكتبش، و A الصحي من الوقفة كتب الأول
+// الـ fence 1 أكبر من اللي الـ table شافه لسه (صفر)، فمفيش حاجة تخليها ترفضه
+console.log(await run(1, "A", PLAIN));
+console.log(await run(2, "B", PLAIN));
+console.log("invoices without a unique key →", await count());
+
+// الحل: الـ fence بيرتب الكتابات، لكن منع التكرار شغلة الـ unique constraint
+await db.query(`truncate invoices; update invoice_runs set fence = 0;
+  alter table invoices add constraint one_invoice_per_period unique (period, customer_id);`);
+const IDEMPOTENT = "insert into invoices values ('2026-10', $1, $2) on conflict (period, customer_id) do nothing";
+console.log(await run(1, "A", IDEMPOTENT));
+console.log(await run(2, "B", IDEMPOTENT));
+console.log("invoices with the unique key  →", await count());
+await db.end();</code></pre>
+<pre><code class="language-plaintext">A fence 1: accepted, 3 new invoices
+B fence 2: accepted, 3 new invoices
+invoices without a unique key → 6
+A fence 1: accepted, 3 new invoices
+B fence 2: accepted, 0 new invoices
+invoices with the unique key  → 3</code></pre>
+  <div class="ar-note">هنا الـ A القديم كتب قبل ما B يكتب، فالـ table لسه مشافش غير صفر وقبلت الاتنين: 6 فواتير رغم الـ fencing. ومع الـ unique constraint تاني واحد اتقبل بس بصفر فواتير جديدة، والمجموع 3.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ lease وعد ليه تاريخ انتهاء، والـ holder مش حاسس بالوقت وهو بيعدّي. GC بيوقف كل حاجة، أو CPU مزنوق، أو VM بتتنقل، أو شبكة بطيئة تحت الكتابة نفسها: كل دول ممكن يعدّوا بالـ holder الـ TTL من غير أي إشارة. في الـ run، اتنين Node processes <em>منفصلين</em> بيتشاركوا lock واحد. الـ A بياخد lock عمره 400 ms وبيجمّد الـ event loop كله 1500 ms بـ <code>Atomics.wait</code>، مكان GC pause طويل. الـ B بياخد الـ lock اللي خلص ويكتب الفواتير. الـ A بيصحى، مش عارف حاجة، ويكتبهم تاني: <b>6 فواتير لـ 3 عملاء</b>، ومن غير ولا error.</p>
+    <p>أدوات الجزء 4 مش بتساعد. الـ watchdog عايش جوه الـ process المتجمد، فعمره ما اشتغل. وسؤال "لسه ماسكه؟" قبل الكتابة مش بيحل، لأن الوقفة ممكن تيجي بعد الفحص ده على طول. مفيش كود عند الـ client يقفل الفجوة دي، مهما كان الـ lock service اللي بتستخدمه.</p>
+    <p>الحل، من <a href="https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html">مقالة Kleppmann</a>، بينقل الفحص للمكان اللي الكتابة بتحصل فيه. كل مرة تاخد الـ lock بتاخد معاه <b>fencing token</b>، رقم بيزيد بس، والتخزين بيرفض أي token أقدم من اللي شافه: <code>UPDATE invoice_runs SET fence = $1 ... WHERE fence &lt; $1</code>. في الإعادة B كتب بـ fence 2، ولما A صحي بـ fence 1 خد <b><code>rowCount</code> بصفر</b> على Postgres حقيقي وعمل rollback. دلوقتي 3 فواتير. نقطته الأساسية إن <b>التخزين لازم يشارك</b>. الـ lock لوحده مش هيحمي مورد مش بيفحص.</p>
+    <p>تلات تفاصيل مهمة في الشغل. اطلع الـ token في نفس الخطوة الـ atomic بتاعة الـ lock، زي <code>fence.ts</code> في script واحد: غير كده A ممكن ياخد الـ lock، يقف، B ياخده ويزوّد، وبعدين A يزوّد بعده ويطلع معاه الـ token <em>الأكبر</em>. وعدّاد Redis durable قد Redis بس، فـ failover ممكن يرجّعه لورا، وساعتها الـ holders الجداد بيترفضوا لحد ما يلحق. وده آمن بس واقف، و Postgres sequence بيحلها لو Postgres هو التخزين. والـ fence <b>بيرتب الكتّاب ومش بيمنع التكرار</b>: في تاني run، الـ A القديم كتب <em>قبل</em> ما B يكتب أي حاجة، فمحدش قال للـ table ترفض fence 1، والاتنين اتقبلوا و6 فواتير تاني. والـ unique key على <code>(period, customer_id)</code> بيرجّعها 3.</p>
+    <p>بص للنتيجة الأخيرة بأمانة. لو التخزين بتاعك Postgres، الـ unique constraint هو الحماية الحقيقية، والـ lock بيوفر شغل ضايع بس. وده الاستنتاج اللي هتاخده للجزء 6. ولو نظام مش بيقدر يقارن رقم، زي شركة دفع، ابعتله idempotency key بدل كده (<a href="../../09-Software-Architecture/lessons/23-caching-concurrency-idempotency.html">درس 23 في القسم 09</a>).</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ job الشهري بتاع الفواتير: ضيف unique على <code>(customer_id, period)</code> الأول، وده لوحده بيمنع الفاتورة المكررة حتى لو الـ lock كدب. لو فيه worker بيكتب ملف في S3 أو صف في table حالة (report_runs، sync_state) ومينفعش الأقدم يكتب فوق الأحدث، حط عمود <code>fence</code> واكتب بشرطه. وفي post-mortem لو لقيت "الـ job اشتغل مرتين رغم الـ lock"، بص على الـ GC logs والـ CPU throttling في الوقت ده: Kubernetes لما يعمل throttle لـ pod بيبان بالظبط زي الوقفة دي. والغلطة الشائعة إنك تفتكر الـ watchdog حل المشكلة، وهو واقف مع الـ process.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Your lock uses a TTL and a watchdog. Can two workers still run at once?" → Yes. A long pause freezes the watchdog too, the TTL passes, and a second worker enters. The first wakes and writes. Only the resource can stop that, by checking a fencing token or a unique constraint. So design the write to be safe, and treat the lock as an optimisation.
+    <div class="ar-note">"الـ lock بتاعك فيه TTL و watchdog. ممكن اتنين workers يشتغلوا مع بعض برضه؟" ← أيوه. الوقفة الطويلة بتجمّد الـ watchdog كمان، والـ TTL بيخلص، و worker تاني بيدخل. الأول بيصحى ويكتب. المورد نفسه بس هو اللي يقدر يمنع ده، بفحص fencing token أو unique constraint. فصمم الكتابة تبقى آمنة، واعتبر الـ lock تحسين.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Redlock &amp; when to use what <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ Redlock وتستخدم إيه إمتى</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>First, the problem Redlock exists for. Redis replication is asynchronous: the primary replies <code>OK</code> before the replica has the write. To show that deterministically, the next script puts a small TCP proxy between the two and stalls it, which is exactly what a slow link looks like. The lock exists on the primary and not on the replica, and <code>WAIT 1 200</code> reports 0 replicas. Promote the replica and B gets the same lock, so two workers hold it. (<code>CLIENT PAUSE</code> wasn't needed: the stalled proxy reproduces it every time. The replication link takes a few seconds to come up because of <code>repl-diskless-sync-delay</code>, 5 by default, so the script waits for it.)</p>
+    <p><b>The algorithm</b>, from <a href="https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/">the Redis docs</a>: run N independent masters with no replication between them. Note the time, send <code>SET key token NX PX ttl</code> to all with a short per-instance timeout, then note the time again. You hold the lock only if a majority (N/2 + 1) said yes <em>and</em> time is left: <code>validity = ttl - elapsed - drift</code>. Otherwise release on all of them, including the ones that seemed to fail, since the reply may be what got lost. <code>redlock.ts</code> is about 50 lines over 3 local instances, and it's <b>a teaching version, happy path only</b>. The npm <code>redlock</code> package's latest release is still <code>5.0.0-beta.2</code> from 2022, so check a library's state before you depend on it.</p>
+    <p>It works as described: 3 of 3 wins, a second client is refused, one instance down still wins on 2 of 3, and two down is refused with the partial lock cleaned up. Its safety rests on assumptions, though. In step 4 of the run, E locks r1 and r2 while it can't reach r3. Then r1 comes back empty after a restart with no persistence (<code>FLUSHALL</code> stands in for that here), and F gets r1 and r3. <b>Two holders</b>, each with a valid majority. The docs know about this and require <code>fsync=always</code> or a delayed restart longer than the TTL, which is the operational price.</p>
+    <p><b>Kleppmann's critique, stated fairly.</b> First ask what the lock is for. For <em>efficiency</em>, a single Redis is simpler and cheaper, and Redlock's extra instances buy little. For <em>correctness</em>, Redlock isn't enough, for two reasons: it produces no fencing token, since its random value doesn't increase, and its safety depends on timing, meaning keys expiring on time, network delay small against the TTL, and pauses shorter than the TTL. His example is a clock jump on one of five nodes, which lets a second client form a majority. For correctness he recommends a consensus system with fencing, like ZooKeeper.</p>
+    <p><b>antirez's reply, stated fairly.</b> If your store can check tokens and resolve races, you barely need a strong lock, and locks matter most exactly when you have no other control over the resource. The random token can also drive a check-and-set on stores that can't compare numbers. Redlock doesn't need synchronized clocks, only processes that count time at about the same rate with a bounded error, and clock jumps are an operational matter: slew rather than step, and he agreed a monotonic clock API was worth adopting. A pause <em>during</em> acquisition is caught by the second time check, and a pause <em>after</em> it affects every auto-release lock, not Redlock alone.</p>
+    <p>They agree on more than the argument suggests: no lock with an expiry can stop a paused client on its own. Whichever side you find stronger, the practical rule holds up either way, and it's in the table below. Theory, leases and consensus options continue in <a href="../../10-System-Design/lessons/33-distributed-locks-fencing.html">section 10 lesson 33</a>.</p>
+  </section>
+
+<pre class="diagram">
+ Single primary with async replica          Redlock, N = 3 independent masters
+
+ A: SET lock NX -&gt; OK                       A: r1 OK   r2 OK   r3 unreachable
+ primary  [lock=A] --x--&gt; replica [empty]      2 of 3 = majority, A holds it
+ primary dies, replica promoted
+ B: SET lock NX -&gt; OK  (replica was empty)  r1 restarts empty, no persistence
+                                            F: r1 OK   r2 no   r3 OK
+ A and B both hold the lock                 2 of 3 = majority, F holds it too
+
+ Fix depends on what the lock protects, not on adding instances.
+</pre>
+  <div class="ar-note">الشمال: primary و replica بـ replication غير متزامن. الـ A خد الـ lock على الـ primary، والـ replica لسه فاضي، والـ primary وقع، فالـ replica اترقى و B خد الـ lock. الاتنين ماسكينه. اليمين: Redlock بتلات instances. الـ A خد r1 و r2 وده أغلبية. r1 رجع فاضي بعد restart من غير persistence، فـ F خد r1 و r3، وده أغلبية كمان، فالاتنين ماسكينه. والحل بيعتمد على الـ lock بيحمي إيه، مش على زيادة instances.</div>
+
+<pre data-file="src/p6-failover.ts"><code class="language-typescript">import net from "node:net";
+import { Redis } from "ioredis";
+import { labPort, sleep } from "./lab.ts";
+
+// بروكسي بسيط بين الـ replica والـ primary: بنقدر نعطل الـ stream زي شبكة بطيئة بالظبط
+function replicationLink(primaryPort: number) {
+  let stalled = false;
+  const held: (() =&gt; void)[] = [];
+  const server = net.createServer((fromReplica) =&gt; {
+    const toPrimary = net.connect(primaryPort, "127.0.0.1");
+    const pipe = (src: net.Socket, dst: net.Socket) =&gt;
+      src.on("data", (chunk) =&gt; {
+        if (stalled) held.push(() =&gt; dst.write(chunk));
+        else dst.write(chunk);
+      });
+    pipe(fromReplica, toPrimary);
+    pipe(toPrimary, fromReplica);
+    for (const s of [fromReplica, toPrimary]) s.on("error", () =&gt; {});
+  });
+  return new Promise&lt;{ port: number; stall(): void; close(): void }&gt;((res) =&gt;
+    server.listen(0, "127.0.0.1", () =&gt;
+      res({
+        port: (server.address() as net.AddressInfo).port,
+        stall: () =&gt; (stalled = true),
+        close: () =&gt; server.close(),
+      }),
+    ),
+  );
+}
+
+const primary = new Redis({ host: "127.0.0.1", port: labPort("R1") });
+const replica = new Redis({ host: "127.0.0.1", port: labPort("R2") });
+await primary.del("lock:invoice-run", "order:1");
+await replica.replicaof("NO", "ONE");
+await replica.del("lock:invoice-run", "order:1");
+
+const link = await replicationLink(labPort("R1"));
+await replica.replicaof("127.0.0.1", link.port);
+
+// الـ link بياخد حوالي 5 ثواني بسبب repl-diskless-sync-delay
+const t0 = Date.now();
+while (!/master_link_status:up/.test(await replica.info("replication"))) await sleep(100);
+console.log(`replica link up after ≈${Math.round((Date.now() - t0) / 1000)} s`);
+
+// الأول نتأكد إن الـ replication شغال فعلًا
+await primary.set("order:1", "paid");
+console.log("WAIT 1 500 before stall     →", await primary.wait(1, 500));
+console.log("replica sees order:1        →", await replica.get("order:1"));
+
+// دلوقتي الشبكة بين الاتنين بطّأت: الـ replication مش بيوصل
+link.stall();
+console.log("worker A SET NX PX          →", await primary.set("lock:invoice-run", "token-a", "PX", 30_000, "NX"));
+console.log("primary has lock            →", await primary.get("lock:invoice-run"));
+console.log("replica has lock            →", await replica.get("lock:invoice-run"));
+console.log("WAIT 1 200 after the lock   →", await primary.wait(1, 200));
+
+// الـ primary وقع، والـ replica اترقّى
+await replica.replicaof("NO", "ONE");
+console.log("promoted replica role       →", (await replica.role())[0]);
+console.log("worker B SET NX PX          →", await replica.set("lock:invoice-run", "token-b", "PX", 30_000, "NX"));
+console.log("A believes token-a, new primary says →", await replica.get("lock:invoice-run"));
+
+await replica.del("lock:invoice-run");
+await primary.del("lock:invoice-run");
+link.close();
+primary.disconnect();
+replica.disconnect();
+process.exit(0);</code></pre>
+<pre><code class="language-plaintext">replica link up after ≈4 s
+WAIT 1 500 before stall     → 1
+replica sees order:1        → paid
+worker A SET NX PX          → OK
+primary has lock            → token-a
+replica has lock            → null
+WAIT 1 200 after the lock   → 0
+promoted replica role       → master
+worker B SET NX PX          → OK
+A believes token-a, new primary says → token-b</code></pre>
+  <div class="ar-note">الـ link قام بعد كام ثانية. الـ <code>WAIT</code> قبل التعطيل رجّع 1 والـ replica شاف <code>paid</code>. بعد التعطيل الـ primary عنده الـ lock والـ replica <code>null</code> و<code>WAIT</code> رجّع 0. بعد الترقية B خد الـ lock بـ <code>OK</code>، و A لسه فاكر إنه ماسكه والـ primary الجديد بيقول <code>token-b</code>.</div>
+
+<pre data-file="src/redlock.ts"><code class="language-typescript">import { randomUUID } from "node:crypto";
+import type { Redis } from "ioredis";
+
+// تنبيه: ده تطبيق للتعليم بس، عشان تشوف الخطوات. في production استخدم مكتبة معروفة
+const RELEASE = `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+end
+return 0`;
+
+export interface RedlockLease {
+  token: string;
+  // الوقت الباقي اللي نقدر نعتبر الـ lock فيه صالح
+  validityMs: number;
+  acquiredOn: number;
+  release(): Promise&lt;void&gt;;
+}
+
+// هامش انحراف الساعات: الـ docs بتقول كام ms بس، وهنا مختارينه 1% من الـ TTL زائد 2 ms
+const driftMs = (ttlMs: number) =&gt; Math.round(ttlMs * 0.01) + 2;
+
+export async function redlock(instances: Redis[], key: string, ttlMs: number): Promise&lt;RedlockLease | null&gt; {
+  const token = randomUUID();
+  const quorum = Math.floor(instances.length / 2) + 1;
+  const start = performance.now();
+
+  // بنحاول على الكل بالتوازي: كل instance مستقلة ومعندهاش replica ولا cluster
+  const replies = await Promise.allSettled(instances.map((r) =&gt; r.set(key, token, "PX", ttlMs, "NX")));
+  const acquiredOn = replies.filter((x) =&gt; x.status === "fulfilled" &amp;&amp; x.value === "OK").length;
+
+  const elapsed = performance.now() - start;
+  const validityMs = ttlMs - elapsed - driftMs(ttlMs);
+
+  const release = async () =&gt; {
+    // بنفك من الكل حتى اللي فشل: يمكن الأمر وصل والرد هو اللي ضاع
+    await Promise.allSettled(instances.map((r) =&gt; r.eval(RELEASE, 1, key, token)));
+  };
+
+  // الشرطين لازم يتحققوا: أغلبية، وفاضل وقت صالح بعد ما خلصنا الجولة
+  if (acquiredOn &lt; quorum || validityMs &lt;= 0) {
+    await release();
+    return null;
+  }
+  return { token, validityMs, acquiredOn, release };
+}</code></pre>
+<pre data-file="src/p6-redlock.ts"><code class="language-typescript">import net from "node:net";
+import { Redis } from "ioredis";
+import { labPort } from "./lab.ts";
+import { redlock } from "./redlock.ts";
+
+// ثلاث instances مستقلة، وكل client بيفشل بسرعة بدل ما يستنى
+const client = (port: number) =&gt; {
+  const r = new Redis({
+    host: "127.0.0.1",
+    port,
+    commandTimeout: 50,
+    maxRetriesPerRequest: 0,
+    enableOfflineQueue: false,
+    retryStrategy: () =&gt; 1000,
+    lazyConnect: true,
+  });
+  r.on("error", () =&gt; {});
+  return r;
+};
+const up = async (r: Redis) =&gt; {
+  await r.connect().catch(() =&gt; {});
+  return r;
+};
+const r1 = await up(client(labPort("R1")));
+const r2 = await up(client(labPort("R2")));
+const r3 = await up(client(labPort("R3")));
+
+// مكان مفيش حد سامع عليه: كده client شايف instance واقعة أو مقطوعة عنه
+const freePort = await new Promise&lt;number&gt;((res) =&gt; {
+  const s = net.createServer().listen(0, "127.0.0.1", () =&gt; {
+    const { port } = s.address() as net.AddressInfo;
+    s.close(() =&gt; res(port));
+  });
+});
+const dead = client(freePort);
+const dead2 = client(freePort);
+
+const KEY = "lock:invoice-run";
+const all = [r1, r2, r3];
+await Promise.all(all.map((r) =&gt; r.del(KEY)));
+const show = (who: string, l: { acquiredOn: number; validityMs: number } | null) =&gt;
+  console.log(who.padEnd(34), "→", l ? `won on ${l.acquiredOn}/3, validity ≈${Math.round(l.validityMs / 10) * 10} ms` : "refused");
+
+// (1) المسار السعيد
+const a = await redlock(all, KEY, 2000);
+show("A, all 3 up", a);
+show("B, while A holds", await redlock(all, KEY, 2000));
+await a?.release();
+
+// (2) لو instance واحدة واقعة: لسه فيه أغلبية
+const c = await redlock([r1, r2, dead], KEY, 2000);
+show("C, 1 of 3 down", c);
+await c?.release();
+
+// (3) اتنين واقعين: مفيش أغلبية، والـ client بيفك اللي أخده
+show("D, 2 of 3 down", await redlock([r1, dead, dead2], KEY, 2000));
+console.log("r1 after D gave up".padEnd(34), "→", await r1.get(KEY));
+
+// (4) لو instance عملت restart من غير persistence: الضمان بيتكسر
+const e = await redlock([r1, r2, dead], KEY, 5000);
+show("E, r3 unreachable from E", e);
+// الـ FLUSHALL هنا واقف مكان crash و restart لـ instance مفيهاش persistence: بترجع فاضية
+await r1.flushall();
+const f = await redlock(all, KEY, 5000);
+show("F, after r1 came back empty", f);
+console.log("both hold the lock?".padEnd(34), "→", Boolean(e &amp;&amp; f));
+
+await Promise.all(all.map((r) =&gt; r.del(KEY)));
+[r1, r2, r3, dead, dead2].forEach((r) =&gt; r.disconnect());</code></pre>
+<pre><code class="language-plaintext">A, all 3 up                        → won on 3/3, validity ≈1980 ms
+B, while A holds                   → refused
+C, 1 of 3 down                     → won on 2/3, validity ≈1980 ms
+D, 2 of 3 down                     → refused
+r1 after D gave up                 → null
+E, r3 unreachable from E           → won on 2/3, validity ≈4950 ms
+F, after r1 came back empty        → won on 2/3, validity ≈4950 ms
+both hold the lock?                → true</code></pre>
+  <div class="ar-note">الـ A كسب على 3 من 3 و B اترفض. الـ C كسب على 2 من 3 و instance واقعة. الـ D اترفض بـ instance واحدة، والـ <code>null</code> معناها إنه فك الـ lock الجزئي. وآخر 3 سطور: E كسب على 2، و r1 رجع فاضي، و F كسب على 2، والاتنين ماسكين الـ lock في نفس الوقت.</div>
+
+  <table>
+    <tr><th>Situation</th><th>If two run at once</th><th>Use</th></tr>
+    <tr><td>Report cron, cache rebuild, digest email</td><td>Wasted work, maybe a duplicate email</td><td>One Redis: <code>SET NX PX</code>, compare-and-delete</td></tr>
+    <tr><td>Same, unknown duration</td><td>Wasted work</td><td>Add a renewing lease with a job deadline</td></tr>
+    <tr><td>Everything lives in Postgres</td><td>Depends on the job</td><td>Advisory lock, no new moving part</td></tr>
+    <tr><td>Charge a card, issue an invoice</td><td>Lost money</td><td>Unique constraint and idempotency key. A lock is optional</td></tr>
+    <tr><td>Stale write must not overwrite new data</td><td>Corruption</td><td>Fencing token checked by the storage</td></tr>
+    <tr><td>Strong lock, and the storage can't check anything</td><td>Real damage</td><td>Consensus service (ZooKeeper, etcd; not run here), and an idempotent downstream</td></tr>
+    <tr><td>Lock must survive losing one Redis</td><td>Wasted work, rarely</td><td>Redlock, treated as an efficiency lock, with restart rules</td></tr>
+  </table>
+  <div class="ar-note">سطر سطر: cron للتقارير أو إعادة بناء cache أو digest، لو اشتغلوا مرتين هتخسر شغل وممكن إيميل مكرر: Redis واحد بـ <code>SET NX PX</code> و compare-and-delete كفاية. نفس الكلام لو المدة مش معروفة: ضيف lease بيتجدد مع deadline للـ job. لو كل حاجة في Postgres: advisory lock ومفيش حاجة جديدة تتدار. خصم من كارت أو إصدار فاتورة، الخسارة فلوس: unique constraint و idempotency key، والـ lock اختياري. كتابة قديمة مينفعش تكتب فوق جديدة، الخسارة corruption: fencing token بيفحصه التخزين. lock قوي والتخزين مش بيفحص حاجة، الضرر حقيقي: consensus service زي ZooKeeper أو etcd (متشغلوش هنا) و downstream يقبل التكرار. ولو الـ lock لازم يعيش بعد خسارة Redis واحد، والخسارة شغل ضايع نادر: Redlock، على إنه efficiency lock، مع قواعد الـ restart.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الأول المشكلة اللي Redlock اتعمل عشانها. الـ replication في Redis غير متزامن: الـ primary بيرد <code>OK</code> قبل ما الـ replica يوصله الكتابة. عشان نبيّن ده كل مرة بنفس الشكل، السكريبت بيحط TCP proxy صغير بين الاتنين وبيعطله، وده بالظبط شكل link بطيء. الـ lock موجود على الـ primary ومش موجود على الـ replica، و<code>WAIT 1 200</code> بيقول 0 replicas. رقّي الـ replica و B ياخد نفس الـ lock، فاتنين workers ماسكينه. (مكناش محتاجين <code>CLIENT PAUSE</code>: الـ proxy المعطل بيعمل المشكلة كل مرة. والـ replication link بياخد كام ثانية عشان يقوم بسبب <code>repl-diskless-sync-delay</code>، والافتراضي بتاعه 5، فالسكريبت بيستناه.)</p>
+    <p><b>الخوارزمية</b>، من <a href="https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/">docs بتاعة Redis</a>: شغّل N masters مستقلين من غير replication بينهم. سجل الوقت، ابعت <code>SET key token NX PX ttl</code> للكل بـ timeout قصير لكل instance، وسجل الوقت تاني. إنت ماسك الـ lock بس لو الأغلبية (N/2 + 1) قالت أيوه <em>وكمان</em> فيه وقت باقي: <code>validity = ttl - elapsed - drift</code>. غير كده فك من الكل، حتى اللي شكله فشل، لأن يمكن الرد هو اللي ضاع. الـ <code>redlock.ts</code> حوالي 50 سطر على 3 instances محلية، وهو <b>نسخة تعليمية، للـ happy path بس</b>. وآخر إصدار من package <code>redlock</code> على npm لسه <code>5.0.0-beta.2</code> من 2022، فشوف حالة المكتبة قبل ما تعتمد عليها.</p>
+    <p>بتشتغل زي ما هي موصوفة: 3 من 3 بتكسب، و client تاني بيترفض، و instance واقعة لسه بتكسب بـ 2 من 3، واتنين واقعين بيترفض وبيتنضف الـ lock الجزئي. بس الأمان معتمد على افتراضات. في الخطوة 4 من الـ run، E قفل r1 و r2 ومش واصل لـ r3. وبعدين r1 رجع فاضي بعد restart من غير persistence (الـ <code>FLUSHALL</code> واقف مكان ده هنا)، و F خد r1 و r3. <b>اتنين ماسكين</b>، وكل واحد معاه أغلبية صحيحة. الـ docs عارفة ده وبتطلب <code>fsync=always</code> أو restart متأخر أطول من الـ TTL، وده التمن التشغيلي.</p>
+    <p><b>نقد Kleppmann، بإنصاف.</b> الأول اسأل الـ lock عشان إيه. لو لـ <em>efficiency</em>، Redis واحد أبسط وأرخص، والـ instances الزيادة في Redlock مش بتجيب كتير. ولو لـ <em>correctness</em>، Redlock مش كفاية لسببين: مبيطلّعش fencing token لأن القيمة العشوائية مش بتزيد، وأمانه معتمد على التوقيت، يعني الـ keys تنتهي في وقتها، وتأخير الشبكة صغير مقارنة بالـ TTL، والوقفات أقصر من الـ TTL. ومثاله clock jump على node من خمسة، فـ client تاني يقدر يكوّن أغلبية. وللـ correctness بينصح بـ consensus system مع fencing زي ZooKeeper.</p>
+    <p><b>رد antirez، بإنصاف.</b> لو الـ store بتاعك بيقدر يفحص tokens ويحل الـ races، إنت مش محتاج lock قوي أصلًا، والـ locks مهمة بالذات لما ميبقاش عندك أي تحكم تاني في المورد. والـ token العشوائي كمان يقدر يشغّل check-and-set على stores مش بتقارن أرقام. والـ Redlock مش محتاج ساعات متزامنة، بس processes بتعد الوقت بنفس السرعة تقريبًا بخطأ محدود، والـ clock jumps موضوع تشغيلي: slew مش step، ووافق إن monotonic clock API يستاهل يتعمل. الوقفة <em>أثناء</em> أخد الـ lock بيمسكها فحص الوقت التاني، والوقفة <em>بعده</em> بتأثر على كل lock بـ auto-release، مش Redlock لوحده.</p>
+    <p>هما متفقين على حاجات أكتر مما الخناقة بتوحي: مفيش lock بـ expiry يقدر لوحده يوقف client واقف. وأيًا كان رأيك مع مين، القاعدة العملية ثابتة وموجودة في الجدول. والنظرية والـ leases وخيارات الـ consensus بتكمل في <a href="../../10-System-Design/lessons/33-distributed-locks-fencing.html">درس 33 في القسم 10</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما حد في الفريق يقترح "نعمل Redlock عشان الدفع يبقى آمن"، ده مكان السؤال الصح: لو اتنين دخلوا، إيه اللي يحصل؟ لو خسارة فلوس، الحل في Postgres: unique على <code>idempotency_key</code>، و Redlock مش هيغيّر ده. ولو managed Redis بـ replica و failover تلقائي، عامل الـ lock بتاعك على إنه ممكن يضيع في الـ failover، وخلي الضرر محدود. وفي design review اكتب في الـ doc جملة واحدة: "الـ lock ده efficiency ولا correctness؟"، وده لوحده بيوفر نقاش ساعة. والغلطة الشائعة إنك تضيف instances وتفتكر إنك كده زودت الأمان، وأنت لسه من غير fencing.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Design a lock so a nightly invoice job can't double-bill." → Make the invariant a database constraint first: unique <code>(customer_id, period)</code>. Then add <code>SET NX PX</code> with a unique token, compare-and-delete release, and a lease if the duration is unknown, purely to avoid wasted work. Say why the lock can't be the safety mechanism: a paused holder and failover both break it. Mention fencing for storage that can compare, and Redlock only with its assumptions stated.
+    <div class="ar-note">"صمم lock يمنع job الفواتير الليلي إنه يحاسب مرتين." ← خلي الشرط constraint في الـ database الأول: unique على <code>(customer_id, period)</code>. بعد كده ضيف <code>SET NX PX</code> بـ token فريد، و release بـ compare-and-delete، و lease لو المدة مش معروفة، وده بس عشان متضيعش شغل. وقول ليه الـ lock مينفعش يبقى آلية الأمان: holder واقف و failover الاتنين بيكسروه. واذكر الـ fencing للتخزين اللي بيقدر يقارن، و Redlock بس مع ذكر افتراضاته.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+  <div class="compare">
+    <div class="bad"><b>❌ Trusting <code>DECR</code> to stop at zero</b>
+<pre><code class="language-typescript">const left = await redis.decr("stock:sku-1");
+if (left &lt; 0) {
+  // التصليح أمر تاني، و crash هنا بيسيب الرقم غلط
+  await redis.incr("stock:sku-1");
+  throw new OutOfStock();
+}</code></pre></div>
+    <div class="good"><b>✅ Check and decrement as one script</b>
+<pre><code class="language-typescript">// الفحص والخصم كتلة واحدة: الرقم عمره ما بينزل تحت الصفر
+const left = await redis.eval(RESERVE, 1, "stock:sku-1", 1);
+if (left === -1) throw new OutOfStock();</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>DECR</code> ملوش حد أدنى، فالـ key بينزل لـ <code>-7</code> تحت الزحمة، وأي حد بيقراه في اللحظة دي بيشوف رقم غلط، والـ <code>INCR</code> بتاع التصليح ممكن ميتنفذش لو الـ process مات. ✅ الـ script بيفحص ويخصم في خطوة واحدة، فالرقم صح دايمًا ومفيش حاجة تتصلح.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Ignoring <code>exec()</code>'s replies</b>
+<pre><code class="language-typescript">// مش هيرمي error حتى لو أمر من دول فشل
+await redis.multi().incrby("wallet:1", 100).lpush("wallet:1:history", "credit").exec();
+return { ok: true };</code></pre></div>
+    <div class="good"><b>✅ Read every reply</b>
+<pre><code class="language-typescript">const replies = await redis.multi().incrby("wallet:1", 100).lpush("wallet:1:history", "credit").exec();
+// كل رد زوج من error وقيمة، و null معناها الـ WATCH فشل
+const failed = replies?.find(([err]) =&gt; err);
+if (!replies || failed) throw new Error("wallet update incomplete");</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>exec()</code> في ioredis بتنجح حتى لو أمر جواها فشل، فالكود بيرجّع <code>ok</code> والـ history ناقصة. ✅ اقرا كل رد، وتعامل مع <code>null</code> كمان. وخد بالك إن قراية الردود بتخليك تعرف إن فيه مشكلة بس، مش بترجّع اللي اتنفذ، لأن مفيش rollback.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>WATCH</code> on the app's shared client</b>
+<pre><code class="language-typescript">// الـ client ده متشارك بين كل الـ requests
+await redis.watch(key);
+const stock = Number(await redis.get(key));
+await redis.multi().decrby(key, 1).exec();</code></pre></div>
+    <div class="good"><b>✅ A script, or a dedicated connection</b>
+<pre><code class="language-typescript">// مش محتاج connection خاص ولا retries
+const left = await redis.eval(RESERVE, 1, key, 1);
+
+// ولو لازم WATCH: connection ليه لوحده
+const tx = redis.duplicate();
+await tx.watch(key);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>WATCH</code> مربوط بالـ connection، فأي <code>EXEC</code> من request تاني على نفس الـ client بيمسحه، وفي الـ run المخزون وصل <code>-1</code>. ✅ الـ script بيريّحك من الموضوع. ولو لازم <code>WATCH</code>، خلي له connection خاص، وافتكر إن <code>duplicate()</code> بيفتح socket جديد، فمتعملهاش لكل request من غير pool.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Releasing with plain <code>DEL</code></b>
+<pre><code class="language-typescript">try {
+  await runInvoices();
+} finally {
+  // لو الـ lock خلص، ده بيمسح lock حد تاني
+  await redis.del("lock:invoice-run");
+}</code></pre></div>
+    <div class="good"><b>✅ Compare-and-delete</b>
+<pre><code class="language-typescript">try {
+  await runInvoices();
+} finally {
+  // بيمسح بس لو الـ token لسه بتاعي: ⁦Redis 8.4+⁩ أو Lua
+  await redis.call("DELEX", "lock:invoice-run", "IFEQ", token);
+}</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>DEL</code> مش بيسأل الـ lock بتاع مين، فلو الشغل طوّل عن الـ TTL بتمسح lock الـ worker اللي بعدك، وتالت يدخل وهو لسه شغال. ✅ الـ <code>DELEX</code> أو Lua بيقارن الـ token ويمسح كخطوة واحدة. وعلى Valkey أو نسخة أقدم من Redis 8.4 استخدم الـ Lua.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ The lock is the only protection</b>
+<pre><code class="language-sql">-- لو الـ lock كدب مرة، الفاتورة بتتكرر في صمت
+insert into invoices(period, customer_id, total)
+values ('2026-10', $1, $2);</code></pre></div>
+    <div class="good"><b>✅ The database enforces the rule</b>
+<pre><code class="language-sql">-- الشرط في الـ database: حتى لو اتنين دخلوا، صف واحد بس
+alter table invoices
+  add constraint one_invoice_per_period unique (period, customer_id);
+
+insert into invoices(period, customer_id, total)
+values ('2026-10', $1, $2)
+on conflict (period, customer_id) do nothing;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ lock ممكن يكدب: holder واقف، أو failover، أو restart. ولو هو الحماية الوحيدة، الفاتورة بتتكرر ومفيش error. ✅ الـ unique constraint بيحمي حتى لو الـ lock فشل، وزي ما شفنا في الجزء 5 رجّع 6 فواتير لـ 3. والـ lock بيفضل مفيد بس عشان ميبقاش فيه شغل ضايع.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. One-time coupon <span class="lvl lvl-1">🟢 easy</span></b>
+    Give one coupon to 20 concurrent redeemers over 5 connections. Count the winners with <code>GET</code> then <code>DEL</code>, then with <code>GETDEL</code>.
+    <div class="ar-note">ادّي كوبون واحد لـ 20 واحد في نفس اللحظة على 5 connections. عد الفايزين مرة بـ <code>GET</code> وبعده <code>DEL</code>، ومرة بـ <code>GETDEL</code>.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex1-coupon.ts"><code class="language-typescript">import { connect } from "./lab.ts";
+
+const conns = Array.from({ length: 5 }, () =&gt; connect());
+const KEY = "coupon:WELCOME50";
+
+async function redeemAll(redeem: (i: number) =&gt; Promise&lt;string | null&gt;) {
+  await conns[0]!.set(KEY, "50-percent-off");
+  const results = await Promise.all(Array.from({ length: 20 }, (_, i) =&gt; redeem(i)));
+  return results.filter((v) =&gt; v !== null).length;
+}
+
+// الطريقة الغلط: قراءة ومسح في أمرين، فكذا واحد بيقرا القيمة قبل ما حد يمسحها
+const racy = await redeemAll(async (i) =&gt; {
+  const c = conns[i % 5]!;
+  const value = await c.get(KEY);
+  if (value !== null) await c.del(KEY);
+  return value;
+});
+console.log("GET then DEL winners →", racy);
+
+// الطريقة الصح: الـ GETDEL أمر واحد، فواحد بس بياخد القيمة
+const atomic = await redeemAll((i) =&gt; conns[i % 5]!.getdel(KEY));
+console.log("GETDEL winners       →", atomic);
+conns.forEach((c) =&gt; c.disconnect());</code></pre>
+<pre><code class="language-plaintext">GET then DEL winners → 20
+GETDEL winners       → 1</code></pre>
+      <div class="ar-note">العشرين كسبوا بالطريقة الأولى لأن كلهم قروا القيمة قبل أي مسح، وواحد بس بالـ <code>GETDEL</code>.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. All-or-nothing cart <span class="lvl lvl-2">🟡 medium</span></b>
+    Write a script that reserves a cart of several SKUs: either all quantities are taken or none. Start with 10 routers and 15 cables, send 50 concurrent carts of 1 router + 2 cables, and prove no cart was half reserved. Keep the keys cluster-safe.
+    <div class="ar-note">اكتب script بيحجز cart فيها كذا منتج: يا كل الكميات تتاخد يا مفيش. ابدأ بـ 10 routers و15 cable، وابعت 50 cart في نفس اللحظة كل واحدة فيها router واحد و2 cable، واثبت إن مفيش cart اتحجزت نص حجز. وخلي الـ keys تشتغل على Cluster.</div>
+    <details><summary>Hint · تلميح</summary>
+      Loop twice: one pass that only checks, then one that writes. Remember there's no rollback. A hash tag like <code>{warehouse:1}</code> puts the keys in one slot.
+      <div class="ar-note">لف مرتين: مرة بتفحص بس، ومرة بتكتب. وافتكر إن مفيش rollback. والـ hash tag زي <code>{warehouse:1}</code> بيحط الـ keys في slot واحد.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex2-cart-reserve.ts"><code class="language-typescript">import { connect } from "./lab.ts";
+
+// الأول بنفحص الكل من غير ما نكتب حاجة، وبعدين نخصم: يا كله يا مفيش
+const RESERVE_CART = `
+for i, key in ipairs(KEYS) do
+  if tonumber(redis.call("GET", key) or "0") &lt; tonumber(ARGV[i]) then
+    return 0
+  end
+end
+for i, key in ipairs(KEYS) do
+  redis.call("DECRBY", key, ARGV[i])
+end
+return 1`;
+
+const conns = Array.from({ length: 5 }, () =&gt; connect());
+// الـ hash tag بيخلي كل منتجات الـ warehouse في نفس الـ slot، عشان السكريبت يشتغل على Cluster
+const ROUTER = "{warehouse:1}:stock:router";
+const CABLE = "{warehouse:1}:stock:cable";
+await conns[0]!.mset(ROUTER, 10, CABLE, 15);
+
+// كل cart فيها router واحد و 2 cable: الـ cable هيخلص الأول عند 7 carts
+const replies = await Promise.all(
+  Array.from({ length: 50 }, (_, i) =&gt; conns[i % 5]!.eval(RESERVE_CART, 2, ROUTER, CABLE, 1, 2)),
+);
+console.log("carts reserved →", replies.filter((n) =&gt; n === 1).length);
+console.log("router left    →", await conns[0]!.get(ROUTER));
+console.log("cable left     →", await conns[0]!.get(CABLE));
+conns.forEach((c) =&gt; c.disconnect());</code></pre>
+<pre><code class="language-plaintext">carts reserved → 7
+router left    → 3
+cable left     → 1</code></pre>
+      <div class="ar-note">سبعة carts اتحجزوا لأن الـ cable بيخلص الأول (7 × 2 = 14 من 15). فاضل 3 routers و1 cable، وده مطابق بالظبط للحساب، يعني مفيش حجز نص نص.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. Two writes under one fence <span class="lvl lvl-3">🔴 hard</span></b>
+    A holder writes twice under one lease. Show that <code>fence &lt; $1</code> refuses its own second write. Change the check so the holder can continue while an older token stays refused, and prove both.
+    <div class="ar-note">الـ holder بيكتب مرتين تحت lease واحد. وريني إن <code>fence &lt; $1</code> بيرفض تاني كتابة بتاعته هو. غيّر الشرط بحيث الـ holder يكمل والـ token الأقدم يفضل مرفوض، واثبت الاتنين.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex3-fence-two-writes.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-pg.ts";
+
+const db = new pg.Client({ connectionString: labUrl() });
+await db.connect();
+await db.query(`
+  drop table if exists invoice_runs;
+  create table invoice_runs(period text primary key, fence bigint not null default 0, step text);
+  insert into invoice_runs(period) values ('2026-10');`);
+
+const step = (op: "&lt;" | "&lt;=", fence: number, name: string) =&gt;
+  db.query(`update invoice_runs set fence = $1, step = $2 where period = '2026-10' and fence ${op} $1`, [fence, name]);
+
+// بالـ &lt; الـ holder نفسه بيترفض في تاني كتابة، لأن الـ fence بتاعه بقى مساوي للي في الـ table
+console.log("&lt; , fence 1, step 1 → rowCount", (await step("&lt;", 1, "billed")).rowCount);
+console.log("&lt; , fence 1, step 2 → rowCount", (await step("&lt;", 1, "emailed")).rowCount);
+
+await db.query("update invoice_runs set fence = 0, step = null");
+
+// بالـ ⁦&lt;=⁩ نفس الـ holder يكتب براحته، والأقدم منه لسه مرفوض
+console.log("&lt;=, fence 1, step 1 → rowCount", (await step("&lt;=", 1, "billed")).rowCount);
+console.log("&lt;=, fence 1, step 2 → rowCount", (await step("&lt;=", 1, "emailed")).rowCount);
+console.log("&lt;=, fence 2, step 1 → rowCount", (await step("&lt;=", 2, "billed")).rowCount);
+console.log("&lt;=, stale fence 1   → rowCount", (await step("&lt;=", 1, "emailed")).rowCount);
+await db.end();</code></pre>
+<pre><code class="language-plaintext">&lt; , fence 1, step 1 → rowCount 1
+&lt; , fence 1, step 2 → rowCount 0
+&lt;=, fence 1, step 1 → rowCount 1
+&lt;=, fence 1, step 2 → rowCount 1
+&lt;=, fence 2, step 1 → rowCount 1
+&lt;=, stale fence 1   → rowCount 0</code></pre>
+      <div class="ar-note">بالـ <code>&lt;</code> تاني كتابة رجّعت 0. بالـ <code>&lt;=</code> الـ holder كتب مرتين، والـ fence 2 اتقبل، وبعدها الـ fence 1 القديم اترفض بـ 0.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project: audit your locks <span class="lvl lvl-3">🔴 project</span></b>
+    List every lock in your side project or work codebase, and write one line for each: efficiency or correctness? If two ran at once, what happens? For each correctness one, add the database constraint or fencing check that keeps it safe when the lock fails, then replace any plain <code>DEL</code> with compare-and-delete.
+    <div class="ar-note">اعمل قايمة بكل lock في مشروعك الجانبي أو في كود الشغل، واكتب لكل واحد سطر: efficiency ولا correctness؟ ولو اتنين اشتغلوا مع بعض إيه اللي يحصل؟ ولكل واحد correctness، ضيف الـ constraint أو فحص الـ fencing اللي يحميه لما الـ lock يفشل، وبعدين بدّل أي <code>DEL</code> عادي بـ compare-and-delete.</div>
+    <details><summary>Hint · تلميح</summary>
+      Search for <code>NX</code>, <code>setnx</code>, <code>redlock</code>, <code>pg_advisory</code>. To test one, freeze a worker with <code>Atomics.wait</code> past its TTL, as in Part 5.
+      <div class="ar-note">دوّر على <code>NX</code> و<code>setnx</code> و<code>redlock</code> و<code>pg_advisory</code>. وعشان تختبر واحد، جمّد worker بـ <code>Atomics.wait</code> لوقت أطول من الـ TTL، زي الجزء 5.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Each command is atomic. Your sequence of commands isn't: <code>GET</code> + <code>SET</code> lost 49 of 50.</li>
+    <li>Prefer one command: <code>INCR</code>, <code>HINCRBY</code>, <code>SET NX</code>, <code>GETDEL</code>. <code>DECR</code> has no floor.</li>
+    <li><code>MULTI</code>/<code>EXEC</code>: nothing interleaves, <b>no rollback</b>, and ioredis's <code>exec()</code> doesn't reject for a failed command, so read the replies.</li>
+    <li>A pipeline saves round trips and isn't isolation. A big <code>MULTI</code> stops everyone while it runs.</li>
+    <li><code>WATCH</code> is optimistic and per connection: <code>EXEC</code> gives <code>null</code> on conflict, and a shared client silently loses it.</li>
+    <li>Lua is atomic and can branch, and it blocks the whole server. <code>BUSY</code> after <code>lua-time-limit</code>, <code>SCRIPT KILL</code> unless it wrote, then only <code>SHUTDOWN NOSAVE</code>. <code>TIME</code> is frozen inside a script. Declare keys in <code>KEYS</code>. Errors don't undo earlier writes.</li>
+    <li><code>EVALSHA</code> can give <code>NOSCRIPT</code> any time. <code>FUNCTION LOAD</code> + <code>FCALL</code> for shared, managed logic.</li>
+    <li>Lock: <code>SET key token NX PX ttl</code>. Release: Lua or <code>DELEX key IFEQ token</code> (Redis 8.4+; Valkey has <code>DELIFEQ</code>). Never plain <code>DEL</code>.</li>
+    <li>A lease with a watchdog fixes unknown durations, not pauses, because the watchdog freezes with the process.</li>
+    <li>Fencing: a rising token from the same atomic step, checked by the <b>storage</b>. It orders writers and doesn't deduplicate, so add a unique key.</li>
+    <li>Async replication can lose a lock on failover. Redlock needs a majority plus timing and restart assumptions, and gives no fencing token.</li>
+    <li>First question for any lock: efficiency or correctness? Correctness belongs in a database constraint.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>كل command لوحده atomic. سلسلة الأوامر بتاعتك لأ: <code>GET</code> و<code>SET</code> ضيّعوا 49 من 50.</li>
+      <li>فضّل أمر واحد: <code>INCR</code>، <code>HINCRBY</code>، <code>SET NX</code>، <code>GETDEL</code>. والـ <code>DECR</code> ملوش حد أدنى.</li>
+      <li>الـ <code>MULTI</code>/<code>EXEC</code>: مفيش حاجة بتدخل في النص، و<b>مفيش rollback</b>، و<code>exec()</code> في ioredis مش بيعمل reject لو أمر فشل، فاقرا الردود.</li>
+      <li>الـ pipeline بيوفر round trips ومش isolation. والـ <code>MULTI</code> الكبير بيوقف الكل وهو شغال.</li>
+      <li>الـ <code>WATCH</code> optimistic ومربوط بالـ connection: <code>EXEC</code> بيرجّع <code>null</code> عند التعارض، والـ client المشترك بيضيّعه في صمت.</li>
+      <li>الـ Lua atomic وبيعرف يعمل شرط، وبيوقف الـ server كله. <code>BUSY</code> بعد <code>lua-time-limit</code>، و<code>SCRIPT KILL</code> إلا لو كتب، وبعدها <code>SHUTDOWN NOSAVE</code> بس. الـ <code>TIME</code> متجمد جوه الـ script. أعلن الـ keys في <code>KEYS</code>. والـ errors مش بتلغي الكتابات اللي قبلها.</li>
+      <li>الـ <code>EVALSHA</code> ممكن يدي <code>NOSCRIPT</code> في أي وقت. و<code>FUNCTION LOAD</code> مع <code>FCALL</code> للمنطق المشترك المُدار.</li>
+      <li>الـ lock: <code>SET key token NX PX ttl</code>. الـ release: Lua أو <code>DELEX key IFEQ token</code> (Redis 8.4+، والـ Valkey عنده <code>DELIFEQ</code>). وأبدًا مش <code>DEL</code> عادي.</li>
+      <li>الـ lease بـ watchdog بيحل المدة المش معروفة، مش الوقفات، لأن الـ watchdog بيتجمد مع الـ process.</li>
+      <li>الـ fencing: token بيزيد من نفس الخطوة الـ atomic، و<b>التخزين</b> هو اللي بيفحصه. بيرتب الكتّاب ومش بيمنع التكرار، فضيف unique key.</li>
+      <li>الـ async replication ممكن يضيّع lock في الـ failover. والـ Redlock محتاج أغلبية مع افتراضات توقيت و restart، ومبيدّيش fencing token.</li>
+      <li>أول سؤال لأي lock: efficiency ولا correctness؟ والـ correctness مكانها constraint في الـ database.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 07 · 2.9 — Atomic operations: <code>INCR</code>، <code>MULTI/EXEC</code>، Lua scripting</label>
+    <label><input type="checkbox" data-key="r2"> 07 · 2.9 — Distributed lock: <code>SET NX PX</code>، release بـ Lua script، <b>Redlock وحدوده</b> (Kleppmann's critique — fencing tokens)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html">Martin Kleppmann — How to do distributed locking</a></li>
+    <li><a href="https://antirez.com/news/101">antirez — Is Redlock safe?</a></li>
+    <li><a href="https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/">Redis docs — Distributed locks with Redis</a></li>
+    <li><a href="https://redis.io/docs/latest/develop/using-commands/transactions/">Redis docs — Transactions</a></li>
+    <li><a href="https://redis.io/docs/latest/develop/programmability/eval-intro/">Redis docs — Scripting with Lua</a> · <a href="https://redis.io/docs/latest/develop/programmability/functions-intro/">Functions</a></li>
+    <li><a href="https://redis.io/docs/latest/commands/delex/">Redis docs — DELEX</a> · <a href="https://valkey.io/commands/delifeq/">Valkey docs — DELIFEQ</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <!-- ===== Prev / Next (use class="empty" on a span when there is no prev/next) ===== -->
+  <nav class="lesson-nav">
+    <a class="prev" href="./34-redis-foundations.html"><small>← Previous</small>34 · Redis Foundations</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./36-caching-sessions-rate-limits.html"><small>Next →</small>36 · Caching &amp; Limits</a>
+  </nav>
+
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

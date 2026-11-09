@@ -1,0 +1,2266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Safe Schema Changes: Tooling, Lock Timeouts &amp; Concurrent Indexes — 07 Databases</title>
+<meta name="section" content="07-Databases">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">07 · Databases</a></span>
+    <span>·</span>
+    <span>Lesson 17 / 43</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+  <header>
+    <h1>Safe Schema Changes: Tooling, Lock Timeouts &amp; Concurrent Indexes</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 17 of 43 — Databases</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">PostgreSQL 18 · Node 22 · TypeScript 7</span>
+      <span class="chip">Prereq: Lesson 15 (locks)</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>07 · 2.5 — Migration tooling: versioned، forward-only غالبًا، في الـ CI/CD كخطوة منفصلة قبل الـ deploy</li>
+        <li>07 · 2.5 — <code>CREATE INDEX CONCURRENTLY</code> (مش بيبلوك الـ writes — بس مينفعش جوه transaction)</li>
+        <li>07 · 2.5 — إضافة عمود بـ <code>NOT NULL</code> + <code>DEFAULT</code> على جدول كبير (PG 11+ سريع للـ constant default)</li>
+        <li>07 · 2.5 — <code>lock_timeout</code> و <code>statement_timeout</code> في الـ migrations عشان متوقّعش production</li>
+        <li>07 · 2.5 — إضافة FK على جدول كبير: <code>NOT VALID</code> ثم <code>VALIDATE CONSTRAINT</code></li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Migration tooling</a></li>
+      <li><a href="#p2">Part 2 — lock_timeout &amp; statement_timeout</a></li>
+      <li><a href="#p3">Part 3 — CREATE INDEX CONCURRENTLY</a></li>
+      <li><a href="#p4">Part 4 — Adding a column</a></li>
+      <li><a href="#p5">Part 5 — NOT NULL on an existing column</a></li>
+      <li><a href="#p6">Part 6 — Foreign keys</a></li>
+      <li><a href="#p7">Part 7 — The safe-vs-dangerous sheet</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A one-line <code>ALTER TABLE</code> that passes on your laptop can stop every request on a production table. The SQL is correct. What hurts is the lock it takes, how long it holds that lock and who queues behind it. This lesson measures each common change under live traffic on 1M rows, then gives you the safe recipe. It also answers exit-test question 4: how do you add an index to 100M rows with no downtime? <a href="./18-expand-contract.html">Lesson 18</a> covers the second half of that question, changing a column's type.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><code>ALTER TABLE</code> من سطر واحد بيعدّي على جهازك عادي، وممكن يوقّف كل الـ requests على جدول في production. الـ SQL نفسه صح. اللي بيوجع هو الـ lock اللي بياخده، وبيمسكه قد إيه، ومين بيقف وراه في الطابور. الدرس ده بيقيس كل تغيير مشهور تحت traffic حقيقي على مليون صف، وبعدين يديك الطريقة الآمنة. وكمان بيجاوب على سؤال 4 من اختبار الخروج: إزاي تضيف index على 100M صف من غير downtime؟ والنص التاني من السؤال، تغيير نوع عمود، في <a href="./18-expand-contract.html">درس 18</a>.</p>
+  </section>
+
+  <div class="callout ok">
+    <b>How the numbers were taken</b>
+    Every output below comes from a real run on PostgreSQL 18.4 with <code>fsync</code> on and autovacuum at its defaults, on a Windows machine that other jobs were loading. Timings are marked ≈ or are single runs, and they moved by 2x or more between runs. Trust the pattern (stall vs no stall, rewrite vs no rewrite, the lock mode), not the exact millisecond. To run the scripts yourself, point <code>DATABASE_URL</code> at the lab from <a href="./01-lab-psql-compose-gui.html">lesson 01</a> with its shop seed at 1M orders, and use a fresh copy per script, because they change the schema. Check that variable first: when it's empty, <code>pg</code> silently connects to the default port on localhost, and these scripts alter and drop tables.
+    <div class="ar-note">كل output تحت جاي من تشغيل حقيقي على PostgreSQL 18.4 و<code>fsync</code> شغال والـ autovacuum على الـ defaults، على جهاز Windows عليه شغل تاني بيحمّله. الأوقات متعلّمة بـ ≈ أو من تشغيلة واحدة، وكانت بتتغيّر الضعف أو أكتر من تشغيلة للتانية. فثق في الشكل العام (فيه وقفة ولا لأ، فيه rewrite ولا لأ، نوع الـ lock)، مش في الـ millisecond بالظبط. ولو عايز تشغّل الـ scripts بنفسك، خلّي <code>DATABASE_URL</code> يشاور على الـ lab بتاع <a href="./01-lab-psql-compose-gui.html">درس 01</a> بالـ shop seed على مليون order، واستخدم نسخة نضيفة لكل script لأنهم بيغيّروا الـ schema. واتأكد من المتغير ده الأول: لو فاضي، <code>pg</code> بيتوصل بالـ default port على localhost من غير ما يقولك، والـ scripts دي بتعدّل وبتمسح جداول.</div>
+  </div>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Migration tooling <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — أدوات الـ migrations</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>Versioned files and one tracking table.</strong> Each schema change is a file with a sortable name, committed to the repo. The tool records what it applied in a table (<code>pgmigrations</code> here), so every environment gets the same changes in the same order, and a second run does nothing. SQL typed by hand into production is how staging and production drift apart.</p>
+    <p><strong>Forward-only in practice.</strong> Tools offer <code>down</code>, but <a href="../../04-NodeJS/lessons/20-orms-n-plus-1-migrations.html#p5">Node lesson 20, part 5</a> showed that a <code>down</code> brings the column back and not the data in it. Once real traffic has written to the new shape, rolling the schema back loses writes. When a migration is wrong, you ship a new migration that moves forward. In node-pg-migrate, <code>export const down = false</code> says so explicitly, and a <code>.sql</code> file with no down section behaves the same way.</p>
+    <p><strong>node-pg-migrate 9.0, run for real.</strong> You write the SQL yourself. Drizzle Kit is the generated alternative, with the same tracking idea, where the SQL comes from a schema diff: its setup is in <a href="../../04-NodeJS/lessons/20-orms-n-plus-1-migrations.html#p5">that same part</a>, so it isn't repeated here. The output below shows five behaviours you need to know: a repeat run is a no-op; a <code>CONCURRENTLY</code> file needs <code>pgm.noTransaction()</code>; a second runner fails at once on the advisory lock (<code>--advisory-lock-mode wait</code> makes it queue); an older file merged late is refused; and <strong>all pending files share one transaction by default</strong>, which matters a lot in Part 6.</p>
+  </section>
+
+<pre data-file="migrations/1730000000001_add-coupon-code.sql"><code class="language-sql">-- Up Migration
+-- الـ lock_timeout هنا عشان الـ ALTER ميوقفش الـ traffic لو فيه transaction نايمة
+SET LOCAL lock_timeout = '2s';
+ALTER TABLE orders ADD COLUMN coupon_code text;</code></pre>
+<pre data-file="migrations/1730000000002_index-coupon-code.mjs"><code class="language-javascript">// الملف ده JS مش SQL، لأن noTransaction محتاج pgm: الـ CIC مينفعش جوه transaction
+export const up = (pgm) =&gt; {
+  pgm.noTransaction();
+  pgm.createIndex("orders", "coupon_code", {
+    name: "orders_coupon_code_idx",
+    concurrently: true,
+    where: "coupon_code IS NOT NULL",
+  });
+};
+
+// الـ down متعطّل بقصد: forward-only، ولو فيه مشكلة بنكتب migration جديدة
+export const down = false;</code></pre>
+
+<pre><code class="language-bash"># التثبيت: الأداة نفسها و pg، والاتنين dev dependencies في مشروع الـ migrations
+npm i -D node-pg-migrate pg
+# التشغيل: الأداة بتقرا DATABASE_URL وبتطبّق كل اللي لسه ماتطبقش
+npx node-pg-migrate up --migrations-dir migrations
+</code></pre>
+
+<pre data-file="l17/p1-tool.ts"><code class="language-typescript">// السكريبت ده بيشغّل node-pg-migrate الحقيقي من الـ CLI في كل السيناريوهات اللي تهمنا
+import { spawn } from "node:child_process";
+import { copyFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import pg from "pg";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const bin = resolve(here, "../node_modules/node-pg-migrate/bin/node-pg-migrate.js");
+const dir = join(here, "mig-run");
+rmSync(dir, { recursive: true, force: true });
+mkdirSync(dir);
+
+function cli(...args: string[]): Promise&lt;{ code: number; out: string }&gt; {
+  return new Promise((res) =&gt; {
+    const p = spawn(process.execPath, [bin, ...args, "-m", dir, "--no-verbose"], { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    p.stdout.on("data", (d) =&gt; (out += d));
+    p.stderr.on("data", (d) =&gt; (out += d));
+    p.on("exit", (code) =&gt; res({ code: code ?? 1, out }));
+  });
+}
+const show = (title: string, r: { code: number; out: string }) =&gt; {
+  console.log(`--- ${title} (exit ${r.code})`);
+  const lines = r.out.split("\n").map((l) =&gt; l.trimEnd()).filter(Boolean);
+  for (const l of lines.filter((l) =&gt; !/^\s+at |^Node\.js|^\s*\^|^\s*$/.test(l)).slice(0, 8)) console.log(l.slice(0, 110));
+};
+const add = (name: string) =&gt; copyFileSync(join(here, "mig", name), join(dir, name));
+
+// الخطوة 1: أول migrations: عمود في SQL، و index في ملف JS من غير transaction
+add("1730000000001_add-coupon-code.sql");
+add("1730000000002_index-coupon-code.mjs");
+show("up", await cli("up"));
+
+const c = new pg.Client({ connectionString: process.env.DATABASE_URL });
+await c.connect();
+const history = await c.query("SELECT id, name, to_char(run_on, 'YYYY-MM-DD') AS run_on FROM pgmigrations ORDER BY id");
+console.log(history.rows);
+
+// الخطوة 2: تشغيله تاني مش بيعمل حاجة
+show("up again", await cli("up"));
+
+// الخطوة 3: CIC في ملف SQL عادي: الـ tool حاطط كل حاجة في transaction
+add("1730000000003_bad-cic.sql");
+show("CIC in a plain .sql file", await cli("up"));
+rmSync(join(dir, "1730000000003_bad-cic.sql"));
+
+// الخطوة 4: اتنين runners في نفس اللحظة، الـ advisory lock بيمنع التاني
+add("1730000000004_slow.sql");
+const [first, second] = await Promise.all([cli("up"), new Promise&lt;{ code: number; out: string }&gt;((r) =&gt; setTimeout(() =&gt; cli("up").then(r), 300))]);
+show("runner 1", first);
+show("runner 2", second);
+
+// الخطوة 5: migration بـ timestamp أقدم وصلت متأخر من branch تاني
+writeFileSync(join(dir, "1730000000000_from-old-branch.sql"), "-- Up Migration\nSELECT 1;\n");
+show("older file merged late", await cli("up"));
+rmSync(join(dir, "1730000000000_from-old-branch.sql"));
+
+// الخطوة 6: ملفين مستنيين في نفس الـ run: هل هما في نفس الـ transaction؟
+const logTx = (tag: string) =&gt; `-- Up Migration
+INSERT INTO tx_log VALUES ('${tag}', txid_current());
+`;
+await c.query("CREATE TABLE tx_log (tag text, xid bigint)");
+writeFileSync(join(dir, "1730000000005_a.sql"), logTx("run1-a"));
+writeFileSync(join(dir, "1730000000006_b.sql"), logTx("run1-b"));
+await cli("up");
+writeFileSync(join(dir, "1730000000007_c.sql"), logTx("run2-c"));
+writeFileSync(join(dir, "1730000000008_d.sql"), logTx("run2-d"));
+await cli("up", "--no-single-transaction");
+const tx = await c.query("SELECT tag, count(*) OVER (PARTITION BY xid)::int AS rows_in_same_tx FROM tx_log ORDER BY tag");
+console.log("--- transaction grouping");
+console.log(tx.rows.map((r) =&gt; `${r.tag}: ${r.rows_in_same_tx}`).join("  "));
+
+// الخطوة 7: ملف من غير down
+show("down on a forward-only file", await cli("down"));
+await c.end();</code></pre>
+<pre><code class="language-plaintext">--- up (exit 0)
+&gt; Migrating files:
+&gt; - 1730000000001_add-coupon-code
+&gt; - 1730000000002_index-coupon-code
+### MIGRATION 1730000000001_add-coupon-code (UP) ###
+### MIGRATION 1730000000002_index-coupon-code (UP) ###
+#&gt; WARNING: Need to break single transaction! &lt;
+Migrations complete!
+[
+  {
+    id: 1,
+    name: '1730000000001_add-coupon-code',
+    run_on: '2026-11-04'
+  },
+  {
+    id: 2,
+    name: '1730000000002_index-coupon-code',
+    run_on: '2026-11-04'
+  }
+]
+--- up again (exit 0)
+No migrations to run!
+Migrations complete!
+--- CIC in a plain .sql file (exit 1)
+&gt; Migrating files:
+&gt; - 1730000000003_bad-cic
+### MIGRATION 1730000000003_bad-cic (UP) ###
+Error executing:
+-- Up Migration
+CREATE INDEX CONCURRENTLY orders_status_idx ON orders (status);
+;
+error: CREATE INDEX CONCURRENTLY cannot run inside a transaction block
+--- runner 1 (exit 0)
+&gt; Migrating files:
+&gt; - 1730000000004_slow
+### MIGRATION 1730000000004_slow (UP) ###
+Migrations complete!
+--- runner 2 (exit 1)
+Failed to release migration lock
+Error: Another migration is already running. Advisory lock mode is set to 'fail'.
+--- older file merged late (exit 1)
+Error: Not run migration 1730000000000_from-old-branch is preceding already run migration 1730000000001_add-co
+--- transaction grouping
+run1-a: 2  run1-b: 2  run2-c: 1  run2-d: 1
+--- down on a forward-only file (exit 1)
+&gt; Migrating files:
+&gt; - 1730000000008_d
+&gt; Rolling back attempted migration ...
+Error: User has disabled down migration on file: 1730000000008_d</code></pre>
+  <div class="ar-note">نقرا النتيجة بالترتيب. <code>up</code> طبّق الملفين وطبع تحذير <code>Need to break single transaction</code> لأن ملف الـ index طلب يشتغل بره الـ transaction، و<code>pgmigrations</code> سجّل الاتنين. <code>up again</code> قال <code>No migrations to run</code>. الـ CIC في ملف <code>.sql</code> عادي وقع لأن الأداة حطته جوه transaction. الـ <code>runner 2</code> وقع فورًا لأن الـ advisory lock مع <code>runner 1</code> (وسطر <code>Failed to release migration lock</code> اللي قبله جاي من الـ cleanup بتاع نفس الـ runner). الملف الأقدم اللي وصل متأخر اترفض. و<code>transaction grouping</code> بيبيّن إن <code>run1-a</code> و<code>run1-b</code> كانوا في transaction واحدة بالـ default، و<code>run2-c</code> و<code>run2-d</code> كل واحد لوحده مع <code>--no-single-transaction</code>. وآخر حاجة: <code>down</code> مرفوض على ملف من غير down.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>A separate step before the deploy.</strong> Pipeline order: lint, then migrate in one job, then roll out the code. <a href="../../04-NodeJS/lessons/20-orms-n-plus-1-migrations.html#p6">Node lesson 20, part 6</a> showed why not on app boot (a double-applied <code>total * 100</code>) and the advisory lock against concurrent runners, and <a href="../../04-NodeJS/lessons/33-deployment-serverless-edge.html#p5">Node lesson 33, part 5</a> covers the rollout. Use a direct connection for this job, not PgBouncer in transaction mode, because the advisory lock and session <code>SET</code>s need one stable session (<a href="./22-pooling-pgbouncer-prepared.html">lesson 22</a>; PgBouncer isn't run here).</p>
+    <p><strong>The rule that makes rolling deploys work: the old code must run on the new schema.</strong> The migration lands first, while the previous version still serves traffic. So test each migration against the old code's queries. This script does that, and the fourth row is the sneaky one: the migration succeeds, reads work, and old inserts start failing.</p>
+  </section>
+
+<pre data-file="l17/p1-old-code.ts"><code class="language-typescript">// السكريبت ده بيشغّل queries الكود القديم بعد كل migration: هل الـ v1 لسه شغال؟
+import pg from "pg";
+
+const c = new pg.Client({ connectionString: process.env.DATABASE_URL });
+await c.connect();
+
+// الكود القديم v1: عارف عمودين بس، ومسمعش عن أي تغيير
+const v1Insert = "INSERT INTO invoices (customer_name, total) VALUES ('Mona', 100)";
+const v1Select = "SELECT customer_name, total FROM invoices LIMIT 1";
+
+const migrations = [
+  ["ADD COLUMN coupon text"],
+  ["ADD COLUMN channel text NOT NULL DEFAULT 'web'"],
+  ["ADD COLUMN paid_by text NOT NULL"],
+  ["ADD COLUMN paid_by text NOT NULL DEFAULT 'card'", "ALTER COLUMN paid_by DROP DEFAULT"],
+  ["RENAME COLUMN customer_name TO full_name"],
+  ["DROP COLUMN total"],
+];
+
+for (const steps of migrations) {
+  // كل تجربة بتبدأ من جدول نضيف فيه صف واحد
+  await c.query("DROP TABLE IF EXISTS invoices");
+  await c.query("CREATE TABLE invoices (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, customer_name text, total int)");
+  await c.query(v1Insert);
+  let applied = "applied";
+  for (const s of steps) {
+    await c.query(`ALTER TABLE invoices ${s}`).catch((e) =&gt; { applied = `FAILED ${e.code}`; });
+  }
+  const ok = applied === "applied";
+  const write = ok ? await c.query(v1Insert).then(() =&gt; "ok", (e) =&gt; e.code) : "-";
+  const read = ok ? await c.query(v1Select).then(() =&gt; "ok", (e) =&gt; e.code) : "-";
+  console.log(`${applied.padEnd(13)} v1 write=${write.padEnd(6)} v1 read=${read.padEnd(6)} ${steps.join(" + ")}`);
+}
+await c.end();</code></pre>
+<pre><code class="language-plaintext">applied       v1 write=ok     v1 read=ok     ADD COLUMN coupon text
+applied       v1 write=ok     v1 read=ok     ADD COLUMN channel text NOT NULL DEFAULT 'web'
+FAILED 23502  v1 write=-      v1 read=-      ADD COLUMN paid_by text NOT NULL
+applied       v1 write=23502  v1 read=ok     ADD COLUMN paid_by text NOT NULL DEFAULT 'card' + ALTER COLUMN paid_by DROP DEFAULT
+applied       v1 write=42703  v1 read=42703  RENAME COLUMN customer_name TO full_name
+applied       v1 write=42703  v1 read=42703  DROP COLUMN total</code></pre>
+  <div class="ar-note">صف صف. <code>ADD COLUMN coupon</code>: الكود القديم شغال. <code>NOT NULL DEFAULT 'web'</code>: شغال، لأن الـ default بيملا العمود من غير ما v1 يعرف عنه حاجة. <code>NOT NULL</code> من غير default: الـ migration نفسها وقعت بـ <code>23502</code> لأن الجدول فيه صفوف. الصف الرابع هو الخبيث: ضفنا default عشان الـ migration تعدّي، وشلناه بعدها، فالـ migration نجحت والقراءة شغالة، بس أي <code>INSERT</code> من v1 بقى يقع بـ <code>23502</code>. والـ rename والـ drop بيكسروا v1 فورًا بـ <code>42703</code>، وده موضوع <a href="./18-expand-contract.html">درس 18</a>.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>Transaction wrapping.</strong> Wrapping a migration in a transaction is a real gift: if step 3 fails, steps 1 and 2 disappear. But some statements refuse to run inside one, and they're the ones you need for big tables. A file containing any of them needs <code>noTransaction</code>, and then a failure can leave partial work, so keep those files to one statement each. <code>ALTER TYPE ... ADD VALUE</code> is a special case: it's allowed in a transaction, but the new value can't be used until commit.</p>
+  </section>
+
+<pre data-file="l17/p1-cant-wrap.ts"><code class="language-typescript">// السكريبت ده بيجرب كل statement جوه transaction، وبيطبع الـ error الحقيقي
+import pg from "pg";
+
+const c = new pg.Client({ connectionString: process.env.DATABASE_URL });
+await c.connect();
+
+await c.query("CREATE TYPE invoice_state AS ENUM ('new', 'paid')");
+await c.query("CREATE TABLE invoices (id bigint PRIMARY KEY, state invoice_state, total int)");
+await c.query("CREATE INDEX invoices_total_idx ON invoices (total)");
+
+const statements = [
+  "CREATE INDEX CONCURRENTLY invoices_state_idx ON invoices (state)",
+  "DROP INDEX CONCURRENTLY invoices_total_idx",
+  "REINDEX INDEX CONCURRENTLY invoices_total_idx",
+  "VACUUM invoices",
+  "CREATE DATABASE reports",
+  "ALTER SYSTEM SET work_mem = '8MB'",
+];
+
+for (const sql of statements) {
+  await c.query("BEGIN");
+  await c.query(sql).then(
+    () =&gt; console.log("ok   ", sql),
+    (e) =&gt; console.log(e.code, e.message),
+  );
+  await c.query("ROLLBACK");
+}
+
+// الحالة الخاصة: ADD VALUE بيعدّي جوه transaction، بس القيمة متتستخدمش قبل الـ COMMIT
+await c.query("BEGIN");
+await c.query("ALTER TYPE invoice_state ADD VALUE 'refunded'");
+console.log("ok    ALTER TYPE ... ADD VALUE inside a transaction");
+await c.query("INSERT INTO invoices VALUES (1, 'refunded', 10)").catch((e) =&gt; console.log(e.code, e.message));
+await c.query("ROLLBACK");
+await c.end();</code></pre>
+<pre><code class="language-plaintext">25001 CREATE INDEX CONCURRENTLY cannot run inside a transaction block
+25001 DROP INDEX CONCURRENTLY cannot run inside a transaction block
+25001 REINDEX CONCURRENTLY cannot run inside a transaction block
+25001 VACUUM cannot run inside a transaction block
+25001 CREATE DATABASE cannot run inside a transaction block
+25001 ALTER SYSTEM cannot run inside a transaction block
+ok    ALTER TYPE ... ADD VALUE inside a transaction
+55P04 unsafe use of new value "refunded" of enum type invoice_state</code></pre>
+  <div class="ar-note">كلهم وقعوا بنفس الكود <code>25001</code>: الـ <code>CONCURRENTLY</code> بأنواعه التلاتة، و<code>VACUUM</code>، و<code>CREATE DATABASE</code>، و<code>ALTER SYSTEM</code>. والاستثناء <code>ADD VALUE</code>: عدّى جوه الـ transaction، بس استخدام القيمة الجديدة قبل الـ COMMIT وقع بـ <code>55P04</code>.</div>
+
+  <div class="callout warn">
+    <b>Not run here: Squawk, the migration linter, and the CI job.</b>
+    Squawk reads your SQL files and flags this lesson's traps in CI. The rule names below are from its docs, and it's an external binary, so I didn't run it. Pick up a rule for each trap: <code>require-concurrent-index-creation</code>, <code>ban-concurrent-index-creation-in-transaction</code>, <code>adding-field-with-default</code>, <code>adding-not-nullable-field</code>, <code>adding-foreign-key-constraint</code>, <code>constraint-missing-not-valid</code>, <code>changing-column-type</code>, <code>renaming-column</code>, <code>require-lock-timeout</code>. Exercise 3 builds a tiny version you can run.
+    <div class="ar-note">Squawk بيقرا ملفات الـ SQL وبيمسك الفخاخ بتاعة الدرس ده في الـ CI. أسماء الـ rules اللي فوق من الـ docs بتاعته، وهو binary خارجي فمشغّلتوش هنا. كل فخ ليه rule: الـ index من غير concurrently، والـ concurrently جوه transaction، والـ default الـ volatile، والـ <code>SET NOT NULL</code>، والـ FK، والـ constraint من غير <code>NOT VALID</code>، وتغيير النوع، والـ rename، وغياب <code>lock_timeout</code>. وتمرين 3 بيبني نسخة صغيرة تقدر تشغّلها بنفسك.</div>
+  </div>
+
+<pre data-file=".squawk.toml"><code class="language-ini"># مش متجرب هنا: الإعداد من الـ docs بتاعة Squawk
+pg_version = "18.0"
+# الأداة بتلف كل ملف في transaction، فخليه يحكم على الملفات على الأساس ده
+assume_in_transaction = true
+</code></pre>
+
+<pre data-file=".github/workflows/deploy.yml"><code class="language-yaml"># مش متجرب هنا: شكل الـ pipeline، الـ lint الأول، وبعده الـ migrate، وبعده الـ deploy
+jobs:
+  lint-migrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npx squawk-cli migrations/*.sql
+  migrate:
+    needs: lint-migrations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      # الـ URL ده connection مباشرة، مش عن طريق PgBouncer في transaction mode
+      - run: npx node-pg-migrate up --migrations-dir migrations
+        env:
+          DATABASE_URL: ${{ secrets.MIGRATIONS_DATABASE_URL }}
+  deploy:
+    needs: migrate
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./deploy.sh
+</code></pre>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><strong>ملفات بـ versions وجدول تتبّع واحد.</strong> كل تغيير في الـ schema ملف باسم بيترتب، متسجّل في الـ repo. الأداة بتسجّل اللي طبّقته في جدول (هنا <code>pgmigrations</code>)، فكل environment بياخد نفس التغييرات بنفس الترتيب، وتشغيلها تاني مبيعملش حاجة. والـ SQL اللي بيتكتب بالإيد على production هو السبب إن staging و production يبعدوا عن بعض.</p>
+    <p><strong>Forward-only في الواقع.</strong> الأدوات بتديك <code>down</code>، بس <a href="../../04-NodeJS/lessons/20-orms-n-plus-1-migrations.html#p5">درس 20 جزء 5 في Node</a> وراك إن الـ <code>down</code> بيرجّع العمود مش الـ data اللي كانت فيه. وأول ما الـ traffic الحقيقي يكتب بالشكل الجديد، الرجوع في الـ schema بيضيّع writes. فلو الـ migration غلط، بتطلّع migration جديدة لقدام. في node-pg-migrate، <code>export const down = false</code> بتقول ده صراحةً، وملف <code>.sql</code> من غير down section بيتصرف نفس التصرف.</p>
+    <p><strong>node-pg-migrate 9.0 شغال بجد.</strong> إنت اللي بتكتب الـ SQL. و Drizzle Kit هو البديل اللي بيولّد: نفس فكرة التتبّع، بس الـ SQL جاي من diff للـ schema، والـ setup بتاعه في <a href="../../04-NodeJS/lessons/20-orms-n-plus-1-migrations.html#p5">نفس الجزء</a> فمش هنكرره. والـ output بيوريك 5 سلوكيات لازم تعرفها: التشغيل التاني مبيعملش حاجة؛ ملف الـ <code>CONCURRENTLY</code> محتاج <code>pgm.noTransaction()</code>؛ الـ runner التاني بيقع فورًا على الـ advisory lock (و<code>--advisory-lock-mode wait</code> بتخليه يستنى)؛ الملف الأقدم اللي اتعمله merge متأخر بيترفض؛ و<strong>كل الملفات المستنية بتتحط في transaction واحدة by default</strong>، ودي هتفرق جدًا في Part 6.</p>
+    <p><strong>خطوة لوحدها قبل الـ deploy.</strong> ترتيب الـ pipeline: lint، وبعده migrate في job واحدة، وبعده rollout للكود. <a href="../../04-NodeJS/lessons/20-orms-n-plus-1-migrations.html#p6">درس 20 جزء 6 في Node</a> وراك ليه مش وقت boot الـ app (الـ <code>total * 100</code> اللي اتطبق مرتين)، والـ advisory lock ضد الـ runners اللي بيشتغلوا مع بعض، و<a href="../../04-NodeJS/lessons/33-deployment-serverless-edge.html#p5">درس 33 جزء 5</a> بيغطي الـ rollout. واستخدم connection مباشرة للـ job دي، مش PgBouncer في transaction mode، لأن الـ advisory lock والـ <code>SET</code> بتوع الـ session محتاجين session ثابتة (<a href="./22-pooling-pgbouncer-prepared.html">درس 22</a>، و PgBouncer مش متشغل هنا).</p>
+    <p><strong>القاعدة اللي بتخلّي الـ rolling deploy يشتغل: الكود القديم لازم يشتغل على الـ schema الجديد.</strong> الـ migration بتنزل الأول، والإصدار اللي قبلها لسه بيخدم الـ traffic. فاختبر كل migration ضد queries الكود القديم. الـ script بيعمل ده، والصف الرابع هو الخبيث: الـ migration نجحت، والقراءة شغالة، والـ inserts القديمة بدأت تقع.</p>
+    <p><strong>الـ transaction حوالين الـ migration.</strong> دي نعمة حقيقية: لو الخطوة 3 وقعت، الخطوتين 1 و2 بيختفوا. بس فيه statements بترفض تشتغل جوه transaction، وهي بالظبط اللي بتحتاجها مع الجداول الكبيرة. أي ملف فيه واحدة منهم محتاج <code>noTransaction</code>، وساعتها الفشل ممكن يسيب شغل ناقص، فخلّي الملفات دي statement واحد بس. و<code>ALTER TYPE ... ADD VALUE</code> حالة خاصة: مسموح جوه transaction، بس القيمة الجديدة متتستخدمش قبل الـ commit.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما تراجع pull request فيه migration، اسأل سؤالين قبل ما تقرا أي حاجة تانية: "الكود اللي شغال دلوقتي هيفضل شغال بعد الملف ده؟" و"الملف ده هيتنفذ مع ملفات تانية في نفس الـ transaction؟". ولو الـ deploy بتاعك بيعمل <code>migrate</code> جوه boot الـ container، انقله لـ job لوحدها قبل الـ rollout. الغلطة الشائعة: تضيف <code>NOT NULL</code> بـ default وتشيل الـ default في نفس الـ deploy، فالـ CI أخضر وأول <code>INSERT</code> من الـ pods القديمة يقع.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: hand-written SQL vs a generated diff</b>
+    A generated diff keeps types and schema in sync and saves typing, but it knows the schema and not your table's size: it will happily write <code>CREATE INDEX</code> without <code>CONCURRENTLY</code>. Hand-written files give you full control of locks and take more discipline to keep in step with the code. Either way, a human reads the SQL before it reaches production.
+    <div class="ar-note">الـ diff المتولّد بيخلّي الـ types والـ schema متزامنين وبيوفر كتابة، بس هو عارف الـ schema مش حجم الجدول بتاعك: هيكتب <code>CREATE INDEX</code> من غير <code>CONCURRENTLY</code> عادي جدًا. والملفات المكتوبة بالإيد بتديك تحكم كامل في الـ locks، ومحتاجة التزام أكتر عشان تفضل ماشية مع الكود. وفي الحالتين، لازم بني آدم يقرا الـ SQL قبل ما يوصل production.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — lock_timeout &amp; statement_timeout <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ lock_timeout والـ statement_timeout</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>The outage from <a href="./15-locks-deadlocks-advisory.html#p2">lesson 15</a>, now with the fix.</strong> One idle transaction holds a weak <code>AccessShareLock</code>. <code>ALTER TABLE</code> needs <code>AccessExclusiveLock</code>, so it waits. Every later reader needs a lock that conflicts with the <em>waiting</em> ALTER, so it queues behind it. The ALTER itself would take about a millisecond, and the table is down anyway. This script runs that against a pool of 20 connections at 50 requests a second, first with no timeout and then with <code>lock_timeout = '500ms'</code>.</p>
+  </section>
+
+<pre class="diagram">
+                 time ------------------------------------------------&gt;
+
+ idle tx         [ AccessShare held ............................. COMMIT ]
+ ALTER TABLE            [ waiting for AccessExclusive ................. ][run]
+ reader 1                    [ queued behind the ALTER ................ ][ok]
+ reader 2                       [ queued behind the ALTER ............. ][ok]
+ reader 3..N                       [ queued, pool exhausted ........... ][ok]
+
+ with lock_timeout = 500ms:
+
+ ALTER TABLE            [ waiting ][55P03, gives up]
+ readers                     [wait][ok] [ok] [ok] [ok]  traffic flows again
+</pre>
+  <div class="ar-note">فوق: الـ transaction النايمة ماسكة lock ضعيف، والـ ALTER مستني، وكل الـ readers واقفين ورا الـ ALTER، مش ورا الـ transaction، لحد ما الـ pool يخلص ويفضل الكل مستني الـ COMMIT. تحت: مع <code>lock_timeout</code> الـ ALTER بيستسلم بعد 500ms بـ <code>55P03</code>، فالـ readers بيعدّوا بعد وقفة قصيرة والـ traffic بيرجع.</div>
+
+<pre data-file="l17/p2-outage.ts"><code class="language-typescript">// السيناريو: transaction واحدة نايمة، و ALTER مستني، وكل الـ readers واقفين وراه
+import pg from "pg";
+import { sleep } from "./traffic.ts";
+
+const url = process.env.DATABASE_URL;
+const mk = async () =&gt; {
+  const c = new pg.Client({ connectionString: url });
+  c.on("error", () =&gt; {});
+  await c.connect();
+  return c;
+};
+const [blocker, ddl, watcher] = [await mk(), await mk(), await mk()];
+
+async function scenario(title: string, lockTimeout: string, commitAfterMs: number): Promise&lt;void&gt; {
+  console.log(`--- ${title}`);
+  // الـ pool ده زي الـ API: 20 connection بس، و 50 request في الثانية
+  const pool = new pg.Pool({ connectionString: url, max: 20 });
+  pool.on("error", () =&gt; {});
+  let on = true;
+  const latencies: number[] = [];
+  const inFlight = new Set&lt;Promise&lt;void&gt;&gt;();
+  const traffic = (async () =&gt; {
+    while (on) {
+      const t0 = performance.now();
+      const p: Promise&lt;void&gt; = pool
+        .query("SELECT status FROM orders WHERE id = $1", [1 + Math.floor(Math.random() * 300_000)])
+        .then(() =&gt; void latencies.push(performance.now() - t0))
+        .finally(() =&gt; void inFlight.delete(p));
+      inFlight.add(p);
+      await sleep(20);
+    }
+  })();
+
+  // أصل المشكلة: BEGIN وقراءة واحدة، وبعدين الـ app نام، فالـ AccessShareLock فضل ماسك
+  await blocker.query("BEGIN");
+  await blocker.query("SELECT count(*) FROM orders WHERE id = 1");
+  await sleep(300);
+
+  await ddl.query(`SET lock_timeout = '${lockTimeout}'`);
+  const t0 = performance.now();
+  let ddlResult = "";
+  const alter = ddl.query("ALTER TABLE orders ADD COLUMN coupon_code text").then(
+    () =&gt; { ddlResult = `ALTER ok at ${Math.round(performance.now() - t0)} ms`; },
+    (e) =&gt; { ddlResult = `ALTER failed at ${Math.round(performance.now() - t0)} ms: ${e.code} ${e.message}`; },
+  );
+  setTimeout(() =&gt; void blocker.query("COMMIT"), commitAfterMs);
+
+  // الـ watcher بيعدّ مين واقف على lock دلوقتي، ومين مستني connection من الـ pool
+  for (let i = 0; i &lt; 6; i++) {
+    await sleep(500);
+    const { rows } = await watcher.query(
+      "SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()",
+    );
+    console.log(`t=${String(Math.round(performance.now() - t0)).padStart(4)} ms  on a lock: ${String(rows[0].n).padStart(2)}  queued in pool: ${String(pool.waitingCount).padStart(3)}`);
+  }
+  await alter;
+  await sleep(200);
+  on = false;
+  await traffic;
+  await Promise.all(inFlight);
+  const sorted = [...latencies].sort((a, b) =&gt; a - b);
+  console.log(ddlResult);
+  console.log(`requests: ${sorted.length}  p50: ${Math.round(sorted[sorted.length &gt;&gt; 1]!)} ms  max: ${Math.round(sorted.at(-1)!)} ms`);
+  await pool.end();
+  await watcher.query("ALTER TABLE orders DROP COLUMN IF EXISTS coupon_code");
+}
+
+await scenario("A: no lock_timeout, the blocker commits after 2.5 s", "0", 2500);
+await scenario("B: lock_timeout = 500ms, same blocker", "500ms", 2500);
+await Promise.all([blocker.end(), ddl.end(), watcher.end()]);</code></pre>
+<pre><code class="language-plaintext">--- A: no lock_timeout, the blocker commits after 2.5 s
+t= 554 ms  on a lock: 16  queued in pool:   0
+t=1065 ms  on a lock: 21  queued in pool:  15
+t=1578 ms  on a lock: 21  queued in pool:  32
+t=2091 ms  on a lock: 21  queued in pool:  48
+t=2604 ms  on a lock:  0  queued in pool:   0
+t=3114 ms  on a lock:  0  queued in pool:   0
+ALTER ok at 2516 ms
+requests: 122  p50: 685 ms  max: 2507 ms
+--- B: lock_timeout = 500ms, same blocker
+t= 505 ms  on a lock: 14  queued in pool:   0
+t=1019 ms  on a lock:  0  queued in pool:   0
+t=1534 ms  on a lock:  0  queued in pool:   0
+t=2049 ms  on a lock:  0  queued in pool:   0
+t=2561 ms  on a lock:  0  queued in pool:   0
+t=3073 ms  on a lock:  0  queued in pool:   0
+ALTER failed at 505 ms: 55P03 canceling statement due to lock timeout
+requests: 119  p50: 1 ms  max: 490 ms</code></pre>
+  <div class="ar-note">في A: عدد الواقفين على lock طلع لـ 21 (20 reader والـ ALTER)، وطابور الـ pool كبر لـ 48، وكل حاجة فكّت بس لما الـ blocker عمل COMMIT بعد 2.5 ثانية: الـ p50 بقى ≈685 ms والـ max ≈2507 ms. وفي production مفيش حد هيعمل COMMIT لوحده، فالوقفة بتفضل لحد ما بني آدم يتدخل. في B: الـ ALTER وقع عند ≈505 ms بـ <code>55P03</code>، والـ p50 رجع 1 ms، وأسوأ request ≈490 ms. يعني <code>lock_timeout</code> هو أقصى وقفة إنت موافق تعملها في كل محاولة.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>Failing fast is half the fix; retrying is the other half.</strong> <code>lock_timeout</code> is the maximum stall you accept per attempt, so a shorter value means a smaller stall and more retries. The wrapper below uses <code>SET LOCAL</code>, so the setting dies with the transaction. It retries only on <code>55P03</code>, because any other error means the migration itself is wrong. It backs off exponentially with jitter, and it gives up after a fixed number of attempts, so the pipeline fails loudly instead of hammering the table. A second connection asks <code>pg_blocking_pids()</code> who's in the way, halfway through each wait, because after the timeout nobody is waiting any more. The timeline: the blocker holds for 4 s, and the DDL lands on attempt 5.</p>
+  </section>
+
+<pre data-file="l17/safe-ddl.ts"><code class="language-typescript">// الملف ده الـ wrapper: جرّب الـ DDL بـ lock_timeout قصير، ولو فشل سيب الـ traffic يعدّي وجرّب تاني
+import pg from "pg";
+
+export type RetryOptions = {
+  lockTimeoutMs?: number;
+  maxAttempts?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  log?: (msg: string) =&gt; void;
+};
+
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+
+// الـ function دي بتجاوب: مين ماسك الـ lock اللي الـ pid ده مستنيه؟
+async function findBlockers(watcher: pg.Client, pid: number): Promise&lt;string[]&gt; {
+  const { rows } = await watcher.query(
+    `SELECT pid, state, application_name AS app, round(extract(epoch FROM now() - xact_start)) AS age_s, left(query, 50) AS query
+       FROM pg_stat_activity WHERE pid = ANY (pg_blocking_pids($1))`,
+    [pid],
+  );
+  return rows.map((r) =&gt; `${r.app || "?"} (${r.state}, ${r.age_s}s) last="${r.query}"`);
+}
+
+export async function runDdlWithRetry(url: string, statements: string[], opts: RetryOptions = {}): Promise&lt;number&gt; {
+  const { lockTimeoutMs = 1000, maxAttempts = 8, baseDelayMs = 250, maxDelayMs = 5000, log = console.log } = opts;
+  const client = new pg.Client({ connectionString: url, application_name: "migrator" });
+  const watcher = new pg.Client({ connectionString: url, application_name: "migrator-watch" });
+  await Promise.all([client.connect(), watcher.connect()]);
+  const { rows: [{ pid }] } = await client.query("SELECT pg_backend_pid() AS pid");
+  const t0 = performance.now();
+  const at = () =&gt; `t=${String(Math.round(performance.now() - t0)).padStart(5)} ms`;
+  try {
+    for (let attempt = 1; attempt &lt;= maxAttempts; attempt++) {
+      // بنسأل عن الـ blocker في نص مدة الانتظار، لأن بعد الـ timeout مبقاش فيه حد مستني
+      const probe = setTimeout(() =&gt; {
+        void findBlockers(watcher, pid).then((b) =&gt; {
+          if (b.length) log(`${at()} blocked by ${b.join(" | ")}`);
+        });
+      }, lockTimeoutMs / 2);
+      try {
+        await client.query("BEGIN");
+        // الـ SET LOCAL بيموت مع الـ transaction، فمش هيتسرّب لأي حاجة بعده
+        await client.query(`SET LOCAL lock_timeout = ${lockTimeoutMs}`);
+        for (const sql of statements) await client.query(sql);
+        await client.query("COMMIT");
+        log(`${at()} attempt ${attempt}: done`);
+        return attempt;
+      } catch (e) {
+        await client.query("ROLLBACK");
+        // أي error غير 55P03 معناه الـ migration نفسها غلط، والـ retry مش هيصلّحها
+        if ((e as { code?: string }).code !== "55P03") throw e;
+        const delay = Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
+        const jittered = Math.round(delay / 2 + Math.random() * (delay / 2));
+        log(`${at()} attempt ${attempt}: 55P03, traffic released, sleeping ${jittered} ms`);
+        await sleep(jittered);
+      } finally {
+        clearTimeout(probe);
+      }
+    }
+    throw new Error(`gave up after ${maxAttempts} attempts`);
+  } finally {
+    await Promise.all([client.end(), watcher.end()]);
+  }
+}</code></pre>
+<pre data-file="l17/p2-retry.ts"><code class="language-typescript">// التجربة: الـ blocker ماسك 4 ثواني، والـ wrapper بيحاول لحد ما ينجح، والـ traffic شغال طول الوقت
+import pg from "pg";
+import { runDdlWithRetry } from "./safe-ddl.ts";
+import { sleep, startTraffic } from "./traffic.ts";
+
+const url = process.env.DATABASE_URL!;
+const blocker = new pg.Client({ connectionString: url, application_name: "report-script" });
+await blocker.connect();
+await blocker.query("BEGIN");
+await blocker.query("SELECT count(*) FROM orders WHERE id = 1");
+
+const traffic = await startTraffic(url);
+await sleep(300);
+
+setTimeout(() =&gt; {
+  console.log("           the blocker commits now");
+  void blocker.query("COMMIT");
+}, 4000);
+
+await runDdlWithRetry(url, ["ALTER TABLE orders ADD COLUMN coupon_code text"], { lockTimeoutMs: 500 });
+await sleep(300);
+const { write, read } = await traffic.stop();
+console.log("writes:", write);
+console.log("reads :", read);
+await blocker.end();</code></pre>
+<pre><code class="language-plaintext">t=  289 ms blocked by report-script (idle in transaction, 1s) last="SELECT count(*) FROM orders WHERE id = 1"
+t=  507 ms attempt 1: 55P03, traffic released, sleeping 202 ms
+t=  972 ms blocked by report-script (idle in transaction, 1s) last="SELECT count(*) FROM orders WHERE id = 1"
+t= 1222 ms attempt 2: 55P03, traffic released, sleeping 430 ms
+t= 1924 ms blocked by report-script (idle in transaction, 2s) last="SELECT count(*) FROM orders WHERE id = 1"
+t= 2170 ms attempt 3: 55P03, traffic released, sleeping 656 ms
+t= 3161 ms blocked by report-script (idle in transaction, 4s) last="SELECT count(*) FROM orders WHERE id = 1"
+t= 3387 ms attempt 4: 55P03, traffic released, sleeping 1465 ms
+           the blocker commits now
+t= 4864 ms attempt 5: done
+writes: { ops: 460, errors: 0, maxMs: 747, p99Ms: 501 }
+reads : { ops: 579, errors: 0, maxMs: 583, p99Ms: 500 }</code></pre>
+  <div class="ar-note">كل محاولة استنت ≈500 ms، وقبل ما تفشل طبعت مين الـ blocker: <code>report-script</code> وحالته <code>idle in transaction</code> وآخر query ليه. بعد كل فشل، الـ traffic بيعدّي، والانتظار بيكبر (202 ثم 430 ثم 656 ثم 1465 ms). الـ blocker عمل COMMIT عند ≈4 ثواني، والمحاولة الخامسة نجحت عند ≈4.9 ثانية. وفي الآخر: 0 errors، والـ p99 ≈500 ms للـ writes والـ reads، يعني قد الـ <code>lock_timeout</code>، مش قد مدة الـ blocker. وأسوأ write ≈747 ms وأسوأ read ≈583 ms.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong><code>statement_timeout</code> is a different clock.</strong> <code>lock_timeout</code> applies to each lock acquisition. <code>statement_timeout</code> covers the whole statement, including time spent waiting for locks. Use it as a safety net on DDL that should be instant. Don't use it to bound a long data step: when it fires, the entire statement rolls back and nothing is saved, as the last lines show. A long <code>UPDATE</code> in a migration needs batching instead, which is <a href="./18-expand-contract.html#p4">lesson 18, part 4</a>. Set it to 0 for long, safe commands like <code>CREATE INDEX CONCURRENTLY</code> and <code>VALIDATE CONSTRAINT</code>.</p>
+    <p><strong>Find the blocker first, then decide whether to kill it.</strong> <code>pg_cancel_backend</code> cancels a running query, so it does nothing to a transaction that's idle: the run below shows it reports <code>true</code> and the session stays <code>idle in transaction</code>. <code>pg_terminate_backend</code> closes the session and rolls back. <a href="./15-locks-deadlocks-advisory.html#p3">Lesson 15, part 3</a> has the blocking-tree query, and <code>idle_in_transaction_session_timeout</code> (<a href="./14-mvcc-vacuum-long-transactions.html#p6">lesson 14</a>) stops most of these from ever existing. Turn on <code>log_lock_waits</code> too: it's off in 18 (on by default in 19 according to its RC notes, not run here).</p>
+  </section>
+
+<pre data-file="l17/p2-timeouts.ts"><code class="language-typescript">// التجربة: الفرق بين lock_timeout و statement_timeout، وإزاي تقرر تقتل مين
+import pg from "pg";
+
+const url = process.env.DATABASE_URL;
+const mk = async (app: string) =&gt; {
+  const c = new pg.Client({ connectionString: url, application_name: app });
+  c.on("error", () =&gt; {});
+  await c.connect();
+  return c;
+};
+const [a, blocker, admin] = [await mk("migrator"), await mk("orders-api"), await mk("admin")];
+
+// الحالة 1: الـ statement_timeout بيعدّ وقت الانتظار على الـ lock كمان
+await blocker.query("BEGIN; SELECT count(*) FROM orders WHERE id = 1");
+await a.query("SET statement_timeout = '700ms'");
+await a.query("ALTER TABLE orders ADD COLUMN c1 int").catch((e) =&gt;
+  console.log("waiting DDL + statement_timeout:", e.code, e.message),
+);
+await a.query("SET statement_timeout = 0");
+
+// الحالة 2: الـ cancel مبيأثرش على transaction نايمة، لأن مفيش query شغالة أصلًا
+const { rows: [{ pid }] } = await blocker.query("SELECT pg_backend_pid() AS pid");
+const cancel = await admin.query("SELECT pg_cancel_backend($1) AS sent", [pid]);
+await new Promise((r) =&gt; setTimeout(r, 200));
+const state1 = await admin.query("SELECT state FROM pg_stat_activity WHERE pid = $1", [pid]);
+console.log("pg_cancel_backend sent:", cancel.rows[0].sent, "-&gt; state is still:", state1.rows[0].state);
+
+// الحالة 3: الـ terminate بيقفل الـ connection كلها، والـ ROLLBACK بيحصل لوحده
+const term = await admin.query("SELECT pg_terminate_backend($1) AS sent", [pid]);
+await new Promise((r) =&gt; setTimeout(r, 200));
+const state2 = await admin.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid = $1", [pid]);
+console.log("pg_terminate_backend sent:", term.rows[0].sent, "-&gt; sessions left with that pid:", state2.rows[0].n);
+
+// الحالة 4: خطوة data طويلة بـ statement_timeout: بتتلغي كلها ومفيش صف بيتحفظ
+await a.query("ALTER TABLE orders ADD COLUMN channel text");
+await a.query("SET statement_timeout = '300ms'");
+const t0 = performance.now();
+await a.query("UPDATE orders SET channel = 'web' WHERE channel IS NULL").catch((e) =&gt;
+  console.log(`data step at ${Math.round(performance.now() - t0)} ms:`, e.code, e.message),
+);
+await a.query("SET statement_timeout = 0");
+const filled = await a.query("SELECT count(*)::int AS filled FROM orders WHERE channel IS NOT NULL");
+console.log("rows saved by that UPDATE:", filled.rows[0].filled);
+await Promise.all([a.end(), admin.end()]);</code></pre>
+<pre><code class="language-plaintext">waiting DDL + statement_timeout: 57014 canceling statement due to statement timeout
+pg_cancel_backend sent: true -&gt; state is still: idle in transaction
+pg_terminate_backend sent: true -&gt; sessions left with that pid: 0
+data step at 302 ms: 57014 canceling statement due to statement timeout
+rows saved by that UPDATE: 0</code></pre>
+  <div class="ar-note">السطر الأول: DDL واقف على lock، والـ <code>statement_timeout</code> فرقع بـ <code>57014</code>، يعني وقت الانتظار محسوب. التاني: <code>pg_cancel_backend</code> رجّع <code>true</code> والـ session لسه <code>idle in transaction</code>، يعني مفيش حاجة حصلت. التالت: <code>pg_terminate_backend</code> قفل الـ session وعدد الـ sessions بالـ pid ده بقى 0. الرابع والخامس: <code>UPDATE</code> طويل اتلغى عند ≈302 ms، وعدد الصفوف اللي اتحفظت 0.</div>
+
+  <table>
+    <thead><tr><th>Blocker you found</th><th>Decision</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><code>idle in transaction</code> for minutes, from an app</td><td>Terminate, then file a bug</td><td>It's doing no work; only uncommitted changes roll back</td></tr>
+      <tr><td>Active report or <code>pg_dump</code></td><td>Wait or reschedule the migration</td><td>Killing it loses hours of work or a backup</td></tr>
+      <tr><td>Normal autovacuum</td><td>Leave it</td><td>It yields to a conflicting lock request by itself</td></tr>
+      <tr><td>Anti-wraparound autovacuum</td><td>Never kill it, retry later</td><td>It doesn't yield, and it exists to prevent a worse outage</td></tr>
+      <tr><td>Short OLTP transactions</td><td>Keep retrying</td><td>A gap will appear within a few attempts</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">صف صف. <b>transaction نايمة من app بقالها دقايق:</b> اعملها terminate وافتح bug، لأنها مش بتعمل حاجة والـ rollback بيضيّع اللي ماتعملوش commit بس. <b>report شغال أو <code>pg_dump</code>:</b> استنى أو أجّل الـ migration، لأن قتله بيضيّع ساعات شغل أو backup. <b>autovacuum عادي:</b> سيبه، هو بيتنازل لوحده لما حد يطلب lock متعارض. <b>autovacuum ضد الـ wraparound:</b> متقتلوش أبدًا وجرّب بعدين، لأنه مش بيتنازل وموجود عشان يمنع outage أكبر. <b>transactions قصيرة عادية:</b> كمّل retry، وهتلاقي فرصة في كام محاولة.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><strong>الـ outage بتاع <a href="./15-locks-deadlocks-advisory.html#p2">درس 15</a>، والمرة دي بالحل.</strong> transaction نايمة ماسكة <code>AccessShareLock</code> ضعيف. الـ <code>ALTER TABLE</code> محتاج <code>AccessExclusiveLock</code> فبيستنى. وأي reader بعده محتاج lock بيتعارض مع الـ ALTER <em>المستني</em>، فبيقف وراه. الـ ALTER نفسه هياخد حوالي millisecond، والجدول واقع برضه. الـ script بيعمل ده على pool فيه 20 connection و 50 request في الثانية، مرة من غير timeout، ومرة بـ <code>lock_timeout = '500ms'</code>.</p>
+    <p><strong>الفشل السريع نص الحل، والـ retry نصه التاني.</strong> <code>lock_timeout</code> هو أقصى وقفة موافق عليها في المحاولة الواحدة، فالقيمة الأقصر معناها وقفة أصغر و retries أكتر. الـ wrapper بيستخدم <code>SET LOCAL</code> عشان الإعداد يموت مع الـ transaction. وبيعمل retry على <code>55P03</code> بس، لأن أي error تاني معناه الـ migration نفسها غلط. وبيزوّد الانتظار exponential مع jitter، وبيستسلم بعد عدد محاولات ثابت، فالـ pipeline يقع بصوت عالي بدل ما يفضل يخبط في الجدول. و connection تانية بتسأل <code>pg_blocking_pids()</code> مين واقف في السكة، في نص كل انتظار، لأن بعد الـ timeout مبقاش فيه حد مستني. والـ timeline: الـ blocker ماسك 4 ثواني، والـ DDL نجح في المحاولة الخامسة.</p>
+    <p><strong><code>statement_timeout</code> ساعة تانية خالص.</strong> <code>lock_timeout</code> بينطبق على كل محاولة أخد lock. و<code>statement_timeout</code> بيغطي الـ statement كله، ومعاه وقت الانتظار على الـ locks. استخدمه كشبكة أمان على DDL المفروض يبقى لحظي. ومتستخدمهوش عشان تحدد وقت خطوة data طويلة: لما يفرقع، الـ statement كله بيترجع ومفيش حاجة بتتحفظ، زي ما آخر سطور بتوضح. الـ <code>UPDATE</code> الطويل في migration محتاج batches، ودي في <a href="./18-expand-contract.html#p4">درس 18 جزء 4</a>. وخليه 0 للأوامر الطويلة الآمنة زي <code>CREATE INDEX CONCURRENTLY</code> و<code>VALIDATE CONSTRAINT</code>.</p>
+    <p><strong>لاقي الـ blocker الأول، وبعدين قرر تقتله ولا لأ.</strong> <code>pg_cancel_backend</code> بيلغي query شغالة، فمبيعملش حاجة لـ transaction نايمة: التشغيل بيوضح إنه بيرجّع <code>true</code> والـ session بتفضل <code>idle in transaction</code>. و<code>pg_terminate_backend</code> بيقفل الـ session ويعمل rollback. <a href="./15-locks-deadlocks-advisory.html#p3">درس 15 جزء 3</a> فيه query شجرة الـ blocking، و<code>idle_in_transaction_session_timeout</code> (<a href="./14-mvcc-vacuum-long-transactions.html#p6">درس 14</a>) بيمنع معظم الحالات دي من الأساس. وشغّل <code>log_lock_waits</code> كمان: مقفول في 18 (وشغال by default في 19 حسب الـ RC notes، ومش متشغل هنا).</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ <code>runDdlWithRetry</code> ده يتحط في مشروع الـ migrations كما هو، أو على الأقل أول سطر في أي ملف migration يبقى <code>SET LOCAL lock_timeout = '2s'</code>، ولو فشل الـ job يتعاد. وساعة ما الـ pipeline يقع بـ <code>55P03</code>، الـ log بيقولك اسم الـ app اللي ماسك الـ lock، زي <code>report-script</code>، فتروح تصلّحه بدل ما تخمّن. الغلطة الشائعة: تحط <code>lock_timeout</code> كبير زي 30 ثانية، وساعتها كل محاولة بتوقّف الـ API 30 ثانية.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Adding a nullable column took the API down for two minutes, though the ALTER itself takes a millisecond. Why, and how do you stop it happening again?" → The ALTER waited for AccessExclusive behind a long or idle transaction, and every new query queued behind the waiting ALTER. Fix: <code>lock_timeout</code> of a second or two with retries and backoff, find the blocker with <code>pg_blocking_pids()</code>, and set <code>idle_in_transaction_session_timeout</code>.
+    <div class="ar-note">"إضافة عمود nullable وقّعت الـ API دقيقتين، مع إن الـ ALTER نفسه بياخد millisecond. ليه، وإزاي تمنع ده؟" ← الـ ALTER استنى <code>AccessExclusive</code> ورا transaction طويلة أو نايمة، وكل query جديدة وقفت ورا الـ ALTER المستني. الحل: <code>lock_timeout</code> ثانية أو اتنين مع retries و backoff، ولاقي الـ blocker بـ <code>pg_blocking_pids()</code>، وظبّط <code>idle_in_transaction_session_timeout</code>.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — CREATE INDEX CONCURRENTLY <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ CREATE INDEX CONCURRENTLY</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>This is exit-test question 4.</strong> A plain <code>CREATE INDEX</code> holds a <code>ShareLock</code> for the whole build: reads continue, and every <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code> waits. <code>CONCURRENTLY</code> takes <code>ShareUpdateExclusiveLock</code>, which doesn't conflict with writes. The price: it scans the table twice and has to wait for older transactions, so on a big table it takes longer. The script builds the same index both ways, three rounds each, under the same traffic. It reads <code>pg_stat_progress_create_index</code> live, and it samples what the writers are waiting on, which is the real proof: with a plain build they wait on a lock, and with <code>CONCURRENTLY</code> they only wait on the disk.</p>
+  </section>
+
+<pre data-file="l17/p3-cic.ts"><code class="language-typescript">// المقارنة: CREATE INDEX العادي ضد CONCURRENTLY، بنفس الـ traffic، وعلى نفس الـ 1M صف
+import pg from "pg";
+import { sleep, startTraffic } from "./traffic.ts";
+
+const url = process.env.DATABASE_URL!;
+const admin = new pg.Client({ connectionString: url });
+const builder = new pg.Client({ connectionString: url });
+await Promise.all([admin.connect(), builder.connect()]);
+
+async function measure(sql: string, showPhases = false): Promise&lt;void&gt; {
+  const traffic = await startTraffic(url);
+  await sleep(500);
+  const phases = new Set&lt;string&gt;();
+  const waits = new Map&lt;string, number&gt;();
+  const t0 = performance.now();
+  // الـ watcher ده بيقرا المرحلة الحالية، والـ writers مستنيين إيه: lock ولا disk؟
+  const timer = setInterval(async () =&gt; {
+    const { rows } = await admin.query(`
+      SELECT (SELECT phase FROM pg_stat_progress_create_index LIMIT 1) AS phase,
+             (SELECT tuples_done || '/' || tuples_total FROM pg_stat_progress_create_index LIMIT 1) AS tuples,
+             (SELECT array_agg(wait_event_type || ':' || wait_event) FROM pg_stat_activity
+               WHERE state = 'active' AND query LIKE 'INSERT INTO orders%' AND wait_event IS NOT NULL) AS writers`);
+    const { phase, tuples, writers } = rows[0];
+    if (showPhases &amp;&amp; phase &amp;&amp; !phases.has(phase)) {
+      phases.add(phase);
+      console.log(`  t=${String(Math.round(performance.now() - t0)).padStart(5)} ms  ${phase}  (${tuples})`);
+    }
+    for (const w of writers ?? []) waits.set(w, (waits.get(w) ?? 0) + 1);
+  }, 50);
+  await builder.query(sql);
+  const ms = Math.round(performance.now() - t0);
+  clearInterval(timer);
+  await sleep(300);
+  const { write, read } = await traffic.stop();
+  const seen = [...waits].sort((a, b) =&gt; b[1] - a[1]).map(([w, n]) =&gt; `${w} x${n}`).join(", ") || "none";
+  console.log(sql);
+  console.log(`  build ${ms} ms | writes: ${write.ops} ops, max stall ${write.maxMs} ms, errors ${write.errors} | reads: ${read.ops} ops, max stall ${read.maxMs} ms`);
+  console.log(`  writers were waiting on: ${seen}`);
+}
+
+// كل نوع 3 مرات بالتبادل، لأن تشغيلة واحدة على جهاز عليه حمل مش دليل
+for (let round = 1; round &lt;= 3; round++) {
+  await measure("CREATE INDEX orders_customer_idx ON orders (customer_id)");
+  await admin.query("DROP INDEX orders_customer_idx");
+  await measure("CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id)", round === 3);
+  await admin.query("DROP INDEX orders_customer_idx");
+}
+await Promise.all([admin.end(), builder.end()]);</code></pre>
+<pre><code class="language-plaintext">CREATE INDEX orders_customer_idx ON orders (customer_id)
+  build 482 ms | writes: 113 ops, max stall 474 ms, errors 0 | reads: 173 ops, max stall 12 ms
+  writers were waiting on: Lock:relation x14
+CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id)
+  build 565 ms | writes: 184 ops, max stall 12 ms, errors 0 | reads: 210 ops, max stall 3 ms
+  writers were waiting on: LWLock:WALWrite x4, IO:WalWrite x4
+CREATE INDEX orders_customer_idx ON orders (customer_id)
+  build 773 ms | writes: 110 ops, max stall 762 ms, errors 0 | reads: 209 ops, max stall 3 ms
+  writers were waiting on: Lock:relation x24
+CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id)
+  build 694 ms | writes: 145 ops, max stall 247 ms, errors 0 | reads: 218 ops, max stall 4 ms
+  writers were waiting on: IO:WalWrite x7, LWLock:WALWrite x7
+CREATE INDEX orders_customer_idx ON orders (customer_id)
+  build 986 ms | writes: 110 ops, max stall 989 ms, errors 0 | reads: 239 ops, max stall 3 ms
+  writers were waiting on: Lock:relation x30
+  t=   64 ms  building index: scanning table  (0/0)
+  t=  374 ms  building index: sorting live tuples  (0/1000732)
+  t=  436 ms  building index: loading tuples in tree  (416052/1000732)
+  t=  546 ms  index validation: sorting tuples  (0/0)
+CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id)
+  build 728 ms | writes: 202 ops, max stall 12 ms, errors 0 | reads: 207 ops, max stall 3 ms
+  writers were waiting on: IO:WalWrite x2, LWLock:WALWrite x1</code></pre>
+  <div class="ar-note">الـ index العادي في التلات جولات: البناء ≈482 و ≈773 و ≈986 ms، وأطول وقفة للـ writes ≈474 و ≈762 و ≈989 ms، يعني طول البناء بالظبط، والـ writers كانوا مستنيين <code>Lock:relation</code>. والـ reads مأثرش عليها. والـ CONCURRENTLY: البناء ≈565 و ≈694 و ≈728 ms، وأطول وقفة ≈12 و ≈247 و ≈12 ms، والـ writers كانوا مستنيين <code>IO:WalWrite</code> و<code>LWLock:WALWrite</code> بس، يعني الـ commit بيستنى الـ disk ومفيش lock. والوقتين متداخلين هنا لأن الجدول صغير، وعلى جدول كبير الـ CONCURRENTLY بيبقى أبطأ. وقبل آخر سطرين الـ phases الحقيقية من <code>pg_stat_progress_create_index</code>.</div>
+
+<pre class="diagram">
+ CREATE INDEX CONCURRENTLY: three transactions, not one
+
+ tx 1  catalog entry      indisready=false  indisvalid=false
+       wait for writers that started before it
+ tx 2  first table scan,  build the index
+                          indisready=true   (new writes now maintain it)
+       wait for writers again
+ tx 3  second scan, add rows that changed during the first scan
+       wait for every transaction with an older snapshot
+                          indisvalid=true   (planner may use it)
+</pre>
+  <div class="ar-note">الـ CIC تلات transactions مش واحدة، وده السبب إنه مينفعش جوه transaction. الأولى بتسجّل الـ index في الـ catalog وهو لسه مش جاهز. التانية بتمسح الجدول وتبني، وبعدها <code>indisready</code> بيبقى true فأي write جديد بيحدّث الـ index. التالتة بتمسح تاني عشان تضيف اللي اتغيّر، وبتستنى كل transaction عندها snapshot أقدم، وبعدها <code>indisvalid</code> بيبقى true والـ planner يقدر يستخدمه.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>It waits for older snapshots, even on other tables.</strong> Here a report in <code>REPEATABLE READ</code> touched only <code>customers</code>, and the build on <code>orders</code> still waits for it. The wait is visible: phase <code>waiting for old snapshots</code>, wait event <code>virtualxid</code>, and <code>pg_blocking_pids()</code> names the session. Traffic isn't blocked while this happens. The build just doesn't finish.</p>
+  </section>
+
+<pre data-file="l17/p3-wait.ts"><code class="language-typescript">// التجربة: CIC واقف على transaction قديمة، بس الـ writes ماشية عادي، وإزاي تعرف هو مستني مين
+import pg from "pg";
+import { sleep, startTraffic } from "./traffic.ts";
+
+const url = process.env.DATABASE_URL!;
+const mk = async (app: string) =&gt; {
+  const c = new pg.Client({ connectionString: url, application_name: app });
+  c.on("error", () =&gt; {});
+  await c.connect();
+  return c;
+};
+const [a, old, cic] = [await mk("admin"), await mk("nightly-report"), await mk("migrator")];
+
+// الـ report ده بيقرا customers بس، ومع ذلك عنده snapshot قديم، فالـ CIC على orders لازم يستناه
+await old.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+await old.query("SELECT count(*) FROM customers WHERE id &lt; 10");
+
+const traffic = await startTraffic(url);
+await sleep(300);
+const t0 = performance.now();
+const build = cic.query("CREATE INDEX CONCURRENTLY orders_status_idx ON orders (status)");
+
+for (let i = 0; i &lt; 4; i++) {
+  await sleep(1000);
+  const { rows } = await a.query(`
+    SELECT p.phase, s.wait_event_type, s.wait_event,
+           (SELECT string_agg(application_name, ', ') FROM pg_stat_activity WHERE pid = ANY (pg_blocking_pids(p.pid))) AS waiting_for
+      FROM pg_stat_progress_create_index p JOIN pg_stat_activity s USING (pid)`);
+  console.log(`t=${Math.round(performance.now() - t0)} ms`, rows[0]);
+}
+console.log("the report commits now");
+await old.query("COMMIT");
+await build;
+console.log(`index ready at ${Math.round(performance.now() - t0)} ms`);
+await sleep(200);
+const { write, read } = await traffic.stop();
+console.log("writes:", write);
+console.log("reads :", read);
+await Promise.all([a.end(), old.end(), cic.end()]);</code></pre>
+<pre><code class="language-plaintext">t=1026 ms {
+  phase: 'building index: scanning table',
+  wait_event_type: null,
+  wait_event: null,
+  waiting_for: null
+}
+t=2031 ms {
+  phase: 'building index: loading tuples in tree',
+  wait_event_type: null,
+  wait_event: null,
+  waiting_for: null
+}
+t=3033 ms {
+  phase: 'waiting for old snapshots',
+  wait_event_type: 'Lock',
+  wait_event: 'virtualxid',
+  waiting_for: 'nightly-report'
+}
+t=4050 ms {
+  phase: 'waiting for old snapshots',
+  wait_event_type: 'Lock',
+  wait_event: 'virtualxid',
+  waiting_for: 'nightly-report'
+}
+the report commits now
+index ready at 4053 ms
+writes: { ops: 593, errors: 0, maxMs: 196, p99Ms: 9 }
+reads : { ops: 605, errors: 0, maxMs: 32, p99Ms: 3 }</code></pre>
+  <div class="ar-note">أول قراءتين كان لسه بيبني. وبعدها الـ phase بقت <code>waiting for old snapshots</code> ومستني <code>virtualxid</code>، والـ <code>waiting_for</code> بيقول <code>nightly-report</code> بالاسم، مع إنه بيقرا <code>customers</code> بس. أول ما الـ report عمل COMMIT، الـ index خلص عند ≈4.05 ثانية. والـ traffic فضل ماشي طول الانتظار: 593 write و 605 read و 0 errors، وأطول read ≈32 ms وأطول write ≈196 ms، لأن الـ <code>ShareUpdateExclusive</code> مش بيتعارض مع الـ writes.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>When it fails, it leaves something behind.</strong> The run below shows two different leftovers, and the difference matters. A <code>unique</code> build that hits existing duplicates fails during the first scan, with <code>could not create unique index "u1"</code> (<code>23505</code>): <code>indisready = false</code>, 0 bytes, and it doesn't grow with writes. A build interrupted later, here by <code>lock_timeout</code> during the snapshot wait (<code>55P03</code>), has <code>indisready = true</code>. That one is complete enough to be maintained: it grew from 2138112 to 2146304 bytes after 1000 inserts, so <strong>it costs you on every write while the planner refuses to use it</strong>. Both are <code>indisvalid = false</code>. The docs say an invalid index "will still consume update overhead"; on this evidence, that's the <code>indisready = true</code> case.</p>
+    <p><strong>Two traps.</strong> Retrying with the same name fails with <code>42P07</code>. Worse, <code>IF NOT EXISTS</code> sees the name, prints a notice and succeeds, so your migration passes and the index doesn't work. Fix it with <code>DROP INDEX CONCURRENTLY</code> and build again, or with <code>REINDEX INDEX CONCURRENTLY</code>. Note that <code>lock_timeout</code> fires on CIC's waits too, so set it to 0 for this statement, because this wait doesn't block traffic anyway. Migration tools need "no transaction" on that file (Part 1).</p>
+  </section>
+
+<pre data-file="l17/p3-invalid.ts"><code class="language-typescript">// التجربة: CIC لما يفشل بيسيب إيه وراه؟ وهل الـ index الميت ده بيكلّف الـ writes فعلًا؟
+import pg from "pg";
+
+const url = process.env.DATABASE_URL;
+const mk = async () =&gt; {
+  const c = new pg.Client({ connectionString: url });
+  c.on("error", () =&gt; {});
+  await c.connect();
+  return c;
+};
+const [a, b] = [await mk(), await mk()];
+
+const state = async (name: string) =&gt; {
+  const { rows } = await a.query(
+    `SELECT indisvalid, indisready, pg_relation_size(indexrelid) AS bytes
+       FROM pg_index WHERE indexrelid = $1::regclass`,
+    [name],
+  );
+  return rows[0];
+};
+const insert1k = () =&gt;
+  a.query(`INSERT INTO orders (tenant_id, customer_id, status, total_cents, currency, created_at)
+           SELECT 1, 1, 'pending', i, 'EGP', now() FROM generate_series(1, 1000) i`);
+
+// الفشل 1: duplicates موجودة قبل ما يبدأ، فالبناء نفسه بيقع
+await a.query("ALTER TABLE orders ADD COLUMN ref text");
+await a.query("UPDATE orders SET ref = 'dup' WHERE id IN (1, 2)");
+await a.query("CREATE UNIQUE INDEX CONCURRENTLY u1 ON orders (ref)").catch((e) =&gt;
+  console.log("failure 1:", e.code, e.message),
+);
+const u1Before = await state("u1");
+await insert1k();
+console.log("u1 after failure:", u1Before, "| after 1000 inserts:", await state("u1"));
+
+// الفشل 2: الـ lock_timeout فرقع وهو مستني transaction قديمة، بعد ما البناء خلص
+await b.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+await b.query("SELECT 1 FROM orders LIMIT 1");
+await a.query("SET lock_timeout = '1s'");
+const t0 = performance.now();
+await a.query("CREATE INDEX CONCURRENTLY i2 ON orders (status)").catch((e) =&gt;
+  console.log(`failure 2 at ${Math.round(performance.now() - t0)} ms:`, e.code, e.message),
+);
+await a.query("SET lock_timeout = 0");
+await b.query("COMMIT");
+const i2Before = await state("i2");
+await insert1k();
+console.log("i2 after failure:", i2Before, "| after 1000 inserts:", await state("i2"));
+
+// الـ planner بيتجاهله: مفيش Index Scan حتى لو الـ query مناسبة
+await a.query("SET enable_seqscan = off");
+const plan = await a.query("EXPLAIN (COSTS OFF) SELECT 1 FROM orders WHERE status = 'refunded'");
+console.log("plan:", plan.rows.map((r) =&gt; r["QUERY PLAN"]).join(" / ").replace(/\s+/g, " "));
+await a.query("RESET enable_seqscan");
+
+// الـ query دي تتحط في الـ monitoring: أي index مش valid
+const { rows: invalid } = await a.query(
+  `SELECT c.relname AS index, t.relname AS tbl, i.indisvalid, i.indisready
+     FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_class t ON t.oid = i.indrelid
+    WHERE NOT i.indisvalid`,
+);
+console.log("invalid indexes:", invalid);
+
+// الفخ: IF NOT EXISTS شايف الاسم موجود، فبيعدّي من غير ما يبني حاجة، والـ migration تبان ناجحة
+const notices: string[] = [];
+a.on("notice", (n) =&gt; notices.push(n.message ?? ""));
+await a.query("CREATE INDEX CONCURRENTLY IF NOT EXISTS i2 ON orders (status)");
+await new Promise((r) =&gt; setTimeout(r, 50));
+console.log("IF NOT EXISTS:", notices, await state("i2"));
+await a.query("CREATE INDEX CONCURRENTLY i2 ON orders (status)").catch((e) =&gt; console.log("retry with same name:", e.code, e.message));
+
+// التصليح: DROP CONCURRENTLY وبعدين CIC من الأول، أو REINDEX CONCURRENTLY
+await a.query("DROP INDEX CONCURRENTLY u1");
+await a.query("REINDEX INDEX CONCURRENTLY i2");
+console.log("i2 after REINDEX CONCURRENTLY:", await state("i2"));
+await a.query("SET enable_seqscan = off");
+const plan2 = await a.query("EXPLAIN (COSTS OFF) SELECT 1 FROM orders WHERE status = 'refunded'");
+console.log("plan:", plan2.rows.map((r) =&gt; r["QUERY PLAN"]).join(" / ").replace(/\s+/g, " "));
+await Promise.all([a.end(), b.end()]);</code></pre>
+<pre><code class="language-plaintext">failure 1: 23505 could not create unique index "u1"
+u1 after failure: { indisvalid: false, indisready: false, bytes: '0' } | after 1000 inserts: { indisvalid: false, indisready: false, bytes: '0' }
+failure 2 at 1841 ms: 55P03 canceling statement due to lock timeout
+i2 after failure: { indisvalid: false, indisready: true, bytes: '2138112' } | after 1000 inserts: { indisvalid: false, indisready: true, bytes: '2146304' }
+plan: Gather / Workers Planned: 2 / -&gt; Parallel Seq Scan on orders / Disabled: true / Filter: (status = 'refunded'::text)
+invalid indexes: [
+  { index: 'u1', tbl: 'orders', indisvalid: false, indisready: false },
+  { index: 'i2', tbl: 'orders', indisvalid: false, indisready: true }
+]
+IF NOT EXISTS: [ 'relation "i2" already exists, skipping' ] { indisvalid: false, indisready: true, bytes: '2146304' }
+retry with same name: 42P07 relation "i2" already exists
+i2 after REINDEX CONCURRENTLY: { indisvalid: true, indisready: true, bytes: '2146304' }
+plan: Index Only Scan using i2 on orders / Index Cond: (status = 'refunded'::text)</code></pre>
+  <div class="ar-note">الفشل 1: <code>u1</code> حجمه 0 bytes، وبعد 1000 insert لسه 0، و<code>indisready</code> بـ false. الفشل 2: <code>i2</code> حجمه زاد بعد الـ inserts و<code>indisready</code> بـ true، يعني بيتحدّث مع كل write. الـ plan بيبيّن إن الـ planner تجاهله، حتى مع <code>enable_seqscan = off</code> (<code>Disabled: true</code> على الـ Seq Scan). بعدها query الـ monitoring لقت الاتنين. <code>IF NOT EXISTS</code> قال <code>already exists, skipping</code> والـ index لسه بايظ. والمحاولة بنفس الاسم وقعت بـ <code>42P07</code>. وبعد <code>REINDEX CONCURRENTLY</code> بقى valid والـ plan استخدمه.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><strong>ده سؤال 4 من اختبار الخروج.</strong> <code>CREATE INDEX</code> العادي ماسك <code>ShareLock</code> طول البناء: القراءة ماشية، وأي <code>INSERT</code> أو <code>UPDATE</code> أو <code>DELETE</code> بيستنى. <code>CONCURRENTLY</code> بياخد <code>ShareUpdateExclusiveLock</code> ومش بيتعارض مع الـ writes. التمن: بيمسح الجدول مرتين ولازم يستنى الـ transactions الأقدم، فعلى جدول كبير بياخد وقت أطول. الـ script بيبني نفس الـ index بالطريقتين، 3 جولات لكل واحدة، تحت نفس الـ traffic. وبيقرا <code>pg_stat_progress_create_index</code> وهو شغال، وبياخد عينات من الـ writers مستنيين إيه، وده الدليل الحقيقي: في البناء العادي مستنيين lock، ومع <code>CONCURRENTLY</code> مستنيين الـ disk بس.</p>
+    <p><strong>بيستنى الـ snapshots القديمة، حتى لو على جداول تانية.</strong> هنا report في <code>REPEATABLE READ</code> لمس <code>customers</code> بس، والبناء على <code>orders</code> برضه استناه. والانتظار باين: الـ phase <code>waiting for old snapshots</code>، والـ wait event <code>virtualxid</code>، و<code>pg_blocking_pids()</code> بيقولك اسم الـ session. والـ traffic مش واقف وقتها. البناء بس مش بيخلص.</p>
+    <p><strong>لما بيفشل، بيسيب حاجة وراه.</strong> التشغيل بيوريك نوعين من البواقي، والفرق بينهم مهم. <code>unique</code> لقى duplicates موجودة بيقع في أول scan بـ <code>could not create unique index "u1"</code> (<code>23505</code>): <code>indisready = false</code> و 0 bytes ومش بيكبر مع الـ writes. وبناء اتقطع بعد كده، هنا بـ <code>lock_timeout</code> وهو مستني الـ snapshots (<code>55P03</code>)، عنده <code>indisready = true</code>. ده بيتحدّث مع الـ writes: كبر من 2138112 لـ 2146304 bytes بعد 1000 insert، يعني <strong>بيكلّفك في كل write والـ planner رافض يستخدمه</strong>. والاتنين <code>indisvalid = false</code>. الـ docs بتقول إن الـ invalid index "بيستهلك update overhead"، وحسب التجربة دي ده بينطبق على حالة <code>indisready = true</code>.</p>
+    <p><strong>فخّين.</strong> المحاولة تاني بنفس الاسم بتقع بـ <code>42P07</code>. والأسوأ: <code>IF NOT EXISTS</code> بيشوف الاسم، ويطبع notice، وينجح، فالـ migration بتعدّي والـ index مش شغال. الحل: <code>DROP INDEX CONCURRENTLY</code> وتبني تاني، أو <code>REINDEX INDEX CONCURRENTLY</code>. وخد بالك إن <code>lock_timeout</code> بيفرقع على انتظارات الـ CIC كمان، فخليه 0 للـ statement ده، لأن الانتظار ده مش بيوقف الـ traffic أصلًا. وأدوات الـ migrations محتاجة "no transaction" على الملف ده (Part 1).</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      صفحة الـ orders بقت بطيئة ومحتاج index على <code>customer_id</code>: الملف يبقى statement واحد بـ <code>pgm.noTransaction()</code>، وبعد ما يخلص تتأكد من <code>indisvalid</code>. وحط query الـ <code>WHERE NOT indisvalid</code> في الـ monitoring، لأن index بايظ ممكن يفضل شهور بيكلّف writes من غير ما حد ياخد باله. الغلطة الشائعة: <code>IF NOT EXISTS</code> عشان الـ migration تبقى "idempotent"، وده اللي بيخبّي الـ index البايظ.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>What breaks at 100M rows</b>
+    On this machine, one million rows took about 0.6 to 2.3 s across runs. Multiply by 100 for a first guess of 1 to 4 minutes, then expect worse, because the table and the sort no longer fit in memory, and a busy table gives the second scan more to do. Plan for tens of minutes or more, watch <code>pg_stat_progress_create_index</code>, and check for long transactions before you start. Disk needs room for the new index.
+    <div class="ar-note">على الجهاز ده، مليون صف أخد حوالي 0.6 لـ 2.3 ثانية في التشغيلات المختلفة. اضرب في 100 كتقدير أولي: 1 لـ 4 دقايق، وبعدين توقع الأسوأ، لأن الجدول والـ sort مش هيدخلوا في الـ memory، والجدول المشغول بيدّي الـ scan التاني شغل أكتر. خطّط لعشرات الدقايق أو أكتر، وراقب <code>pg_stat_progress_create_index</code>، واتأكد إن مفيش transactions طويلة قبل ما تبدأ. والـ disk لازم يكون فيه مكان للـ index الجديد.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Adding a column <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — إضافة عمود</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>"Constant default" is the key phrase in the README.</strong> Since PG 11, adding a column with a default that's evaluated once stores the value in the catalog (<code>attmissingval</code>) and touches no rows, so it's instant at any size. A <em>volatile</em> default has to produce a different value per row, so Postgres rewrites the whole table under <code>AccessExclusiveLock</code>. The proof is <code>relfilenode</code>: a rewrite creates a new file. This is exactly what people write when they adopt <code>uuidv7()</code>.</p>
+    <p>Three results people get wrong: <code>now()</code> is stable, so it doesn't rewrite, and every old row gets the same timestamp, the moment of the ALTER (<code>distinct_values: 1</code>). <code>clock_timestamp()</code> looks similar and rewrites. Identity columns and <code>STORED</code> generated columns rewrite too, while PG 18's <code>VIRTUAL</code> columns don't.</p>
+    <p><strong>The fix for a volatile default:</strong> add the column with no default, then <code>SET DEFAULT</code> separately. Neither rewrites. New rows get the value at once and old rows stay <code>NULL</code> until you backfill them in batches (<a href="./18-expand-contract.html#p4">lesson 18</a>). All of these still need a brief <code>AccessExclusiveLock</code>, so <code>lock_timeout</code> still applies.</p>
+  </section>
+
+<pre data-file="l17/p4-add-column.ts"><code class="language-typescript">// التجربة: أنهي ADD COLUMN بيعيد كتابة الجدول؟ الـ relfilenode بيتغيّر لو حصل rewrite
+import pg from "pg";
+
+const c = new pg.Client({ connectionString: process.env.DATABASE_URL });
+await c.connect();
+const fileOf = async () =&gt;
+  (await c.query("SELECT relfilenode FROM pg_class WHERE relname = 'orders'")).rows[0].relfilenode;
+
+async function tryDdl(sub: string): Promise&lt;void&gt; {
+  const before = await fileOf();
+  const t0 = performance.now();
+  const err = await c.query(`ALTER TABLE orders ${sub}`).then(() =&gt; null, (e) =&gt; `${e.code} ${e.message}`);
+  const ms = (performance.now() - t0).toFixed(1).padStart(7);
+  const rewrite = before !== (await fileOf());
+  console.log(`${rewrite ? "REWRITE" : "no     "} ${ms} ms  ${sub}${err ? "\n        -&gt; " + err : ""}`);
+}
+
+const { rows: [{ n }] } = await c.query("SELECT count(*)::int AS n FROM orders");
+console.log(`${n} rows`);
+
+await tryDdl("ADD COLUMN coupon_code text");
+await tryDdl("ADD COLUMN paid_by text NOT NULL");
+await tryDdl("ADD COLUMN retries int NOT NULL DEFAULT 5");
+
+// السر في attmissingval: القيمة متخزنة في الـ catalog مرة واحدة، والصفوف القديمة مش بتتلمس
+const { rows: missing } = await c.query(
+  `SELECT attname, atthasmissing, attmissingval FROM pg_attribute
+    WHERE attrelid = 'orders'::regclass AND attname IN ('retries', 'coupon_code') ORDER BY attname`,
+);
+console.log(missing);
+
+await tryDdl("ADD COLUMN synced_at timestamptz DEFAULT now()");
+await tryDdl("ADD COLUMN score double precision DEFAULT random()");
+await tryDdl("ADD COLUMN public_id uuid DEFAULT uuidv7()");
+await tryDdl("ADD COLUMN touched_at timestamptz DEFAULT clock_timestamp()");
+await tryDdl("ADD COLUMN seq bigint GENERATED ALWAYS AS IDENTITY");
+await tryDdl("ADD COLUMN total_egp numeric GENERATED ALWAYS AS (total_cents / 100.0) STORED");
+await tryDdl("ADD COLUMN total_usd numeric GENERATED ALWAYS AS (total_cents / 5000.0) VIRTUAL");
+
+// الـ ⁦now()⁩ بتتحسب مرة واحدة وقت الـ ALTER، فكل الصفوف القديمة ليها نفس القيمة
+const { rows: same } = await c.query("SELECT count(DISTINCT synced_at)::int AS distinct_values FROM orders");
+console.log("synced_at", same[0]);
+
+// التصليح لـ uuidv7: عمود من غير default، وبعدين default للصفوف الجديدة بس
+await tryDdl("ADD COLUMN public_id2 uuid");
+await tryDdl("ALTER COLUMN public_id2 SET DEFAULT uuidv7()");
+await c.query(`INSERT INTO orders (tenant_id, customer_id, status, total_cents, currency, created_at)
+               VALUES (1, 1, 'pending', 100, 'EGP', now())`);
+const { rows: mixed } = await c.query(
+  "SELECT count(*) FILTER (WHERE public_id2 IS NULL)::int AS old_rows_null, count(public_id2)::int AS new_rows_set FROM orders",
+);
+console.log(mixed[0]);
+await c.end();</code></pre>
+<pre><code class="language-plaintext">300000 rows
+no         10.1 ms  ADD COLUMN coupon_code text
+no         13.1 ms  ADD COLUMN paid_by text NOT NULL
+        -&gt; 23502 column "paid_by" of relation "orders" contains null values
+no         14.0 ms  ADD COLUMN retries int NOT NULL DEFAULT 5
+[
+  { attname: 'coupon_code', atthasmissing: false, attmissingval: null },
+  { attname: 'retries', atthasmissing: true, attmissingval: '{5}' }
+]
+no          3.3 ms  ADD COLUMN synced_at timestamptz DEFAULT now()
+REWRITE  3105.0 ms  ADD COLUMN score double precision DEFAULT random()
+REWRITE  4971.7 ms  ADD COLUMN public_id uuid DEFAULT uuidv7()
+REWRITE  6666.9 ms  ADD COLUMN touched_at timestamptz DEFAULT clock_timestamp()
+REWRITE  8350.3 ms  ADD COLUMN seq bigint GENERATED ALWAYS AS IDENTITY
+REWRITE 11158.9 ms  ADD COLUMN total_egp numeric GENERATED ALWAYS AS (total_cents / 100.0) STORED
+no         75.7 ms  ADD COLUMN total_usd numeric GENERATED ALWAYS AS (total_cents / 5000.0) VIRTUAL
+synced_at { distinct_values: 1 }
+no        101.1 ms  ADD COLUMN public_id2 uuid
+no        100.5 ms  ALTER COLUMN public_id2 SET DEFAULT uuidv7()
+{ old_rows_null: 300000, new_rows_set: 1 }</code></pre>
+  <div class="ar-note">العمود الأول في كل سطر هو الحكم. <code>coupon_code</code> و<code>retries</code> و<code>synced_at</code> من غير rewrite وفي ميلي ثانية أو أكتر شوية حسب الحمل. <code>paid_by</code> من غير default وقع بـ <code>23502</code>. <code>retries</code> ظهر في <code>attmissingval</code> بالقيمة <code>{5}</code>، وده مكان القيمة الوحيد. وبعدها <code>random()</code> و<code>uuidv7()</code> و<code>clock_timestamp()</code> والـ identity والـ <code>STORED</code> كلهم <code>REWRITE</code> وفي ثواني على 300k صف بس، والأوقات بتطلع مع كل سطر لأن الجدول بيكبر والجهاز عليه حمل. و<code>VIRTUAL</code> من غير rewrite. <code>synced_at</code> كله قيمة واحدة. وآخر سطرين: <code>public_id2</code> بالطريقة الآمنة من غير rewrite، والصفوف القديمة 300000 <code>NULL</code> والصف الجديد واخد قيمة.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><strong>"constant default" هي الكلمة المهمة في الـ README.</strong> من PG 11، إضافة عمود بـ default بيتحسب مرة واحدة بتخزّن القيمة في الـ catalog (<code>attmissingval</code>) ومبتلمسش أي صف، فلحظية مهما كان الحجم. أما الـ default الـ <em>volatile</em> لازم يطلّع قيمة مختلفة لكل صف، فـ Postgres بيعيد كتابة الجدول كله تحت <code>AccessExclusiveLock</code>. والدليل <code>relfilenode</code>: الـ rewrite بيعمل ملف جديد. وده بالظبط اللي الناس بتكتبه لما تبدأ تستخدم <code>uuidv7()</code>.</p>
+    <p>تلات نتايج الناس بتفهمها غلط: <code>now()</code> نوعها stable، فمفيش rewrite، وكل الصفوف القديمة بتاخد نفس الوقت، لحظة الـ ALTER (<code>distinct_values: 1</code>). و<code>clock_timestamp()</code> شكلها قريب وبتعمل rewrite. والـ identity والـ generated <code>STORED</code> بيعملوا rewrite برضه، أما <code>VIRTUAL</code> بتاع PG 18 لأ.</p>
+    <p><strong>الحل للـ default الـ volatile:</strong> ضيف العمود من غير default، وبعدين <code>SET DEFAULT</code> لوحده. الاتنين من غير rewrite. الصفوف الجديدة بتاخد القيمة فورًا، والقديمة بتفضل <code>NULL</code> لحد ما تعملها backfill بالـ batches (<a href="./18-expand-contract.html#p4">درس 18</a>). وكلهم لسه محتاجين <code>AccessExclusiveLock</code> لحظة قصيرة، فالـ <code>lock_timeout</code> لسه لازم.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      قررت تدّي كل order معرّف عام <code>public_id</code> بدل ما تكشف الـ id في الـ URL: <code>ADD COLUMN public_id uuid DEFAULT uuidv7()</code> هيوقف الجدول كله وهو بيعيد كتابته، والمفروض تقسّمها: <code>ADD COLUMN</code>، و<code>SET DEFAULT</code>، و backfill. أما <code>ADD COLUMN channel text NOT NULL DEFAULT 'web'</code> آمنة زي ما هي. الغلطة الشائعة: تستخدم <code>DEFAULT now()</code> على جدول قديم وتفتكر إن <code>synced_at</code> هيبقى صح، وهو في الحقيقة كل الصفوف القديمة واخدة وقت الـ migration.
+    </div>
+  </section>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — NOT NULL on an existing column <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ NOT NULL على عمود موجود</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><code>SET NOT NULL</code> has to prove there are no NULLs, so it scans the whole table while holding <code>AccessExclusiveLock</code>: reads and writes both stop. Two ways avoid that, and both split the work into a fast step and a scan under a weak lock.</p>
+    <ul>
+      <li><strong>Since PG 12:</strong> add <code>CHECK (col IS NOT NULL) NOT VALID</code>, run <code>VALIDATE CONSTRAINT</code>, and <code>SET NOT NULL</code> then skips the scan because the validated check already proves it. The server says so at <code>debug1</code>. Drop the check afterwards.</li>
+      <li><strong>PG 18, cleaner:</strong> <code>ADD CONSTRAINT c NOT NULL col NOT VALID</code>, then <code>VALIDATE CONSTRAINT c</code>. No helper constraint to clean up.</li>
+    </ul>
+    <p>Both behave the same way as the rest of the <code>NOT VALID</code> family: new rows are checked right away, old rows stay as they are, and <code>VALIDATE</code> fails until you fix the data (<code>23502</code> here). Note <code>attnotnull</code> is already <code>true</code> while <code>convalidated</code> is <code>false</code>, so read <code>pg_constraint</code> to know whether the rule has been proven.</p>
+  </section>
+
+<pre data-file="l17/p5-not-null.ts"><code class="language-typescript">// المقارنة: SET NOT NULL العادي ضد الطريقتين الآمنتين، على 1M صف وتحت traffic
+import pg from "pg";
+import { sleep, startTraffic } from "./traffic.ts";
+
+const url = process.env.DATABASE_URL!;
+const a = new pg.Client({ connectionString: url });
+await a.connect();
+const debug: string[] = [];
+a.on("notice", (n) =&gt; {
+  const message = n.message ?? "";
+  if (n.severity === "DEBUG" &amp;&amp; /sufficient to prove|verifying table/.test(message)) debug.push(message);
+});
+
+// الـ setup: العمود currency مبقاش NOT NULL، زي عمود لسه متضاف ومتعبّي
+await a.query("ALTER TABLE orders ALTER COLUMN currency DROP NOT NULL");
+
+async function measure(title: string, statements: string[]): Promise&lt;void&gt; {
+  const traffic = await startTraffic(url);
+  await sleep(500);
+  const ms: number[] = [];
+  for (const s of statements) {
+    const t0 = performance.now();
+    await a.query(s);
+    ms.push(Math.round(performance.now() - t0));
+  }
+  await sleep(300);
+  const { write, read } = await traffic.stop();
+  console.log(`${title}\n  steps ${ms.join(" + ")} ms | writes max stall ${write.maxMs} ms, errors ${write.errors} | reads max stall ${read.maxMs} ms`);
+}
+
+await measure("A: plain SET NOT NULL", ["ALTER TABLE orders ALTER COLUMN currency SET NOT NULL"]);
+await a.query("ALTER TABLE orders ALTER COLUMN currency DROP NOT NULL");
+
+// الطريقة بتاعة PG 12: الـ CHECK المتحقق منه بيخلّي SET NOT NULL ميعملش scan
+await a.query("SET client_min_messages = debug1");
+await measure("B: CHECK NOT VALID, VALIDATE, SET NOT NULL, drop CHECK (PG 12+)", [
+  "ALTER TABLE orders ADD CONSTRAINT orders_currency_chk CHECK (currency IS NOT NULL) NOT VALID",
+  "ALTER TABLE orders VALIDATE CONSTRAINT orders_currency_chk",
+  "ALTER TABLE orders ALTER COLUMN currency SET NOT NULL",
+  "ALTER TABLE orders DROP CONSTRAINT orders_currency_chk",
+]);
+await a.query("RESET client_min_messages");
+console.log("  server said:", debug);
+await a.query("ALTER TABLE orders ALTER COLUMN currency DROP NOT NULL");
+
+// الطريقة بتاعة PG 18: الـ NOT NULL نفسه بقى constraint ليه NOT VALID
+await measure("C: ADD CONSTRAINT NOT NULL NOT VALID, VALIDATE (PG 18)", [
+  "ALTER TABLE orders ADD CONSTRAINT orders_currency_nn NOT NULL currency NOT VALID",
+  "ALTER TABLE orders VALIDATE CONSTRAINT orders_currency_nn",
+]);
+const { rows } = await a.query(
+  `SELECT c.conname, c.contype, c.convalidated, att.attnotnull
+     FROM pg_constraint c JOIN pg_attribute att ON att.attrelid = c.conrelid AND att.attnum = ANY (c.conkey)
+    WHERE c.conname = 'orders_currency_nn'`,
+);
+console.log("  catalog:", rows[0]);
+await a.end();</code></pre>
+<pre><code class="language-plaintext">A: plain SET NOT NULL
+  steps 258 ms | writes max stall 251 ms, errors 0 | reads max stall 248 ms
+B: CHECK NOT VALID, VALIDATE, SET NOT NULL, drop CHECK (PG 12+)
+  steps 5 + 118 + 1 + 3 ms | writes max stall 20 ms, errors 0 | reads max stall 3 ms
+  server said: [
+  'verifying table "orders"',
+  'existing constraints on column "orders.currency" are sufficient to prove that it does not contain nulls'
+]
+C: ADD CONSTRAINT NOT NULL NOT VALID, VALIDATE (PG 18)
+  steps 8 + 295 ms | writes max stall 8 ms, errors 0 | reads max stall 4 ms
+  catalog: {
+  conname: 'orders_currency_nn',
+  contype: 'n',
+  convalidated: true,
+  attnotnull: true
+}</code></pre>
+  <div class="ar-note">A: الـ <code>SET NOT NULL</code> العادي أخد ≈258 ms، والـ writes والـ reads الاتنين وقفوا نفس المدة (≈251 و≈248 ms). B: أربع خطوات، أطولها الـ VALIDATE ≈118 ms، والوقفة ≈20 ms للـ writes و ≈3 ms للـ reads، والـ server قال صراحةً <code>existing constraints ... are sufficient to prove</code>، يعني مفيش scan. C: خطوتين، الـ VALIDATE ≈295 ms والوقفة ≈8 ms، والـ catalog بيقول <code>convalidated: true</code>.</div>
+
+<pre data-file="l17/p5-bad-rows.ts"><code class="language-typescript">// التجربة: الـ NOT VALID بيحمي الصفوف الجديدة فورًا، والـ VALIDATE بيكشف القديمة
+import pg from "pg";
+
+const a = new pg.Client({ connectionString: process.env.DATABASE_URL });
+await a.connect();
+const insert = "INSERT INTO invoices (customer_id) VALUES ($1)";
+
+await a.query("CREATE TABLE invoices (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, customer_id bigint)");
+await a.query(insert, [1]);
+// الصف ده قديم وبايظ: customer_id فاضي
+await a.query(insert, [null]);
+
+await a.query("ALTER TABLE invoices ADD CONSTRAINT invoices_customer_nn NOT NULL customer_id NOT VALID");
+const show = async () =&gt;
+  (await a.query(
+    `SELECT c.convalidated, att.attnotnull FROM pg_constraint c
+       JOIN pg_attribute att ON att.attrelid = c.conrelid AND att.attnum = ANY (c.conkey)
+      WHERE c.conname = 'invoices_customer_nn'`,
+  )).rows[0];
+console.log("after NOT VALID:", await show());
+
+// الصف الجديد بيترفض فورًا، والقديم لسه موجود زي ما هو
+await a.query(insert, [null]).catch((e) =&gt; console.log("new NULL row:", e.code, e.message));
+console.log("old NULL rows still there:", (await a.query("SELECT count(*)::int AS n FROM invoices WHERE customer_id IS NULL")).rows[0].n);
+
+// الـ VALIDATE بيقع لحد ما تصلّح الـ data
+await a.query("ALTER TABLE invoices VALIDATE CONSTRAINT invoices_customer_nn").catch((e) =&gt;
+  console.log("VALIDATE:", e.code, e.message),
+);
+await a.query("UPDATE invoices SET customer_id = 0 WHERE customer_id IS NULL");
+await a.query("ALTER TABLE invoices VALIDATE CONSTRAINT invoices_customer_nn");
+console.log("after fixing data + VALIDATE:", await show());
+
+// قياس الـ locks: كل خطوة في transaction بتترجع، وبنقرا الـ lock اللي مسكته من pg_locks
+const lockOf = async (sql: string) =&gt; {
+  await a.query("BEGIN");
+  await a.query(sql);
+  const { rows } = await a.query(
+    "SELECT mode FROM pg_locks WHERE relation = 'orders'::regclass AND pid = pg_backend_pid() AND mode &lt;&gt; 'AccessShareLock'",
+  );
+  await a.query("ROLLBACK");
+  return rows.map((r) =&gt; r.mode).join(", ");
+};
+await a.query("ALTER TABLE orders ALTER COLUMN currency DROP NOT NULL");
+console.log("SET NOT NULL          :", await lockOf("ALTER TABLE orders ALTER COLUMN currency SET NOT NULL"));
+console.log("ADD NOT NULL NOT VALID:", await lockOf("ALTER TABLE orders ADD CONSTRAINT x NOT NULL currency NOT VALID"));
+await a.query("ALTER TABLE orders ADD CONSTRAINT x NOT NULL currency NOT VALID");
+console.log("VALIDATE              :", await lockOf("ALTER TABLE orders VALIDATE CONSTRAINT x"));
+await a.end();</code></pre>
+<pre><code class="language-plaintext">after NOT VALID: { convalidated: false, attnotnull: true }
+new NULL row: 23502 null value in column "customer_id" of relation "invoices" violates not-null constraint
+old NULL rows still there: 1
+VALIDATE: 23502 column "customer_id" of relation "invoices" contains null values
+after fixing data + VALIDATE: { convalidated: true, attnotnull: true }
+SET NOT NULL          : AccessExclusiveLock
+ADD NOT NULL NOT VALID: AccessExclusiveLock
+VALIDATE              : ShareUpdateExclusiveLock</code></pre>
+  <div class="ar-note">بعد <code>NOT VALID</code>: <code>convalidated</code> بـ false و<code>attnotnull</code> بـ true. الصف الجديد الفاضي اترفض بـ <code>23502</code>، والصف القديم الفاضي لسه موجود. الـ <code>VALIDATE</code> وقع لحد ما صلّحنا الـ data، وبعدها <code>convalidated</code> بقى true. وآخر 3 سطور الـ locks الحقيقية: <code>SET NOT NULL</code> و<code>ADD ... NOT VALID</code> الاتنين <code>AccessExclusiveLock</code> (الأول طول الـ scan، والتاني لحظة)، و<code>VALIDATE</code> بـ <code>ShareUpdateExclusiveLock</code> ومش بيوقف حد.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><code>SET NOT NULL</code> لازم يثبت إن مفيش NULL، فبيمسح الجدول كله وهو ماسك <code>AccessExclusiveLock</code>: القراءة والكتابة الاتنين بيقفوا. وفيه طريقتين يتجنبوا ده، والاتنين بيقسّموا الشغل لخطوة سريعة و scan تحت lock ضعيف.</p>
+    <ul>
+      <li><strong>من PG 12:</strong> ضيف <code>CHECK (col IS NOT NULL) NOT VALID</code>، وشغّل <code>VALIDATE CONSTRAINT</code>، وبعدها <code>SET NOT NULL</code> مش بيعمل scan لأن الـ check المتحقق منه بيثبت ده. والـ server بيقولها صراحةً على <code>debug1</code>. وشيل الـ check بعدها.</li>
+      <li><strong>PG 18، أنضف:</strong> <code>ADD CONSTRAINT c NOT NULL col NOT VALID</code>، وبعدين <code>VALIDATE CONSTRAINT c</code>. ومفيش constraint مساعد تنضفه.</li>
+    </ul>
+    <p>الاتنين بيتصرفوا زي باقي عيلة <code>NOT VALID</code>: الصفوف الجديدة بتتفحص فورًا، والقديمة بتفضل زي ما هي، و<code>VALIDATE</code> بيقع لحد ما تصلّح الـ data (<code>23502</code> هنا). وخد بالك إن <code>attnotnull</code> بيبقى <code>true</code> من الأول و<code>convalidated</code> لسه <code>false</code>، فاقرا <code>pg_constraint</code> عشان تعرف القاعدة اتثبتت ولا لأ.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عمود <code>tenant_id</code> اتضاف nullable زمان، ودلوقتي عايز تقفله: <code>NOT VALID</code> الأول عشان أي كود جديد يتمسك فورًا لو بعت NULL، وبعدين صلّح الصفوف القديمة، وبعدين <code>VALIDATE</code> في job لوحدها. لو لسه على نسخة أقدم من 18، استخدم طريقة الـ <code>CHECK</code>. الغلطة الشائعة: <code>attnotnull = true</code> تفتكر إن الجدول نضيف، وفيه صفوف قديمة لسه NULL.
+    </div>
+  </section>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Foreign keys <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ Foreign keys</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A plain <code>ADD FOREIGN KEY</code> checks every existing row while holding <code>ShareRowExclusiveLock</code> on <strong>both</strong> tables, so writes stall on the child and the parent. Split it: <code>NOT VALID</code> takes that same lock only briefly, because it skips the check, and from that moment new rows are enforced. Then <code>VALIDATE CONSTRAINT</code> scans under <code>ShareUpdateExclusiveLock</code> on the child and <code>RowShareLock</code> on the parent, which allow reads and writes.</p>
+    <p><strong>The two steps must be two transactions.</strong> Locks are held until commit, so inside one transaction the strong lock from step 1 stays through the validation scan and you get nothing for your effort (run C). This is where node-pg-migrate's single-transaction default from Part 1 bites: two pending files, one for each step, land in one transaction unless you use <code>--no-single-transaction</code> or <code>noTransaction</code>.</p>
+  </section>
+
+<pre class="diagram">
+ Plain ADD FOREIGN KEY
+   orders, customers  [ ShareRowExclusive ........ full scan ......... ]
+   writes             [ blocked ........................................ ]
+
+ NOT VALID, COMMIT, then VALIDATE
+   orders, customers  [SRE]
+   orders                   [ ShareUpdateExclusive ... scan ........... ]
+   customers                [ RowShare ................................ ]
+   writes             [b]    flowing .................................
+
+ NOT VALID + VALIDATE in ONE transaction
+   orders, customers  [ ShareRowExclusive held until COMMIT ........... ]
+   writes             [ blocked ........................................ ]
+</pre>
+  <div class="ar-note">فوق: الطريقة العادية الـ lock ماسك طول الـ scan والـ writes واقفة. في النص: <code>NOT VALID</code> بياخد الـ lock لحظة، وبعد الـ COMMIT الـ <code>VALIDATE</code> بيمسح تحت locks ضعيفة والـ writes ماشية. تحت: نفس الخطوتين في transaction واحدة، والـ lock الأول مبيتسابش غير عند الـ COMMIT، فرجعنا لنفس الوقفة.</div>
+
+<pre data-file="l17/p6-fk.ts"><code class="language-typescript">// المقارنة: ADD FOREIGN KEY العادي ضد NOT VALID + VALIDATE، وكمان الـ writes على الجدول الأب
+import pg from "pg";
+import { sleep, startTraffic, type Stats } from "./traffic.ts";
+
+const url = process.env.DATABASE_URL!;
+const a = new pg.Client({ connectionString: url });
+await a.connect();
+
+// الـ writer ده بيكتب في customers، الجدول اللي الـ FK بيشاور عليه
+async function parentWriter(isOn: () =&gt; boolean, ready: () =&gt; void): Promise&lt;Stats&gt; {
+  const c = new pg.Client({ connectionString: url });
+  await c.connect();
+  let maxMs = 0;
+  let ops = 0;
+  while (isOn()) {
+    const t0 = performance.now();
+    await c.query("UPDATE customers SET country = country WHERE id = 1");
+    maxMs = Math.max(maxMs, performance.now() - t0);
+    ops++;
+    ready();
+    await sleep(5);
+  }
+  await c.end();
+  return { ops, errors: 0, maxMs: Math.round(maxMs), p99Ms: 0 };
+}
+
+async function measure(title: string, statements: string[]): Promise&lt;void&gt; {
+  let on = true;
+  const traffic = await startTraffic(url);
+  let parentReady!: () =&gt; void;
+  const parentStarted = new Promise&lt;void&gt;((res) =&gt; { parentReady = res; });
+  const parent = parentWriter(() =&gt; on, parentReady);
+  await parentStarted;
+  await sleep(500);
+  const ms: number[] = [];
+  for (const s of statements) {
+    const t0 = performance.now();
+    await a.query(s);
+    ms.push(Math.round(performance.now() - t0));
+  }
+  await sleep(300);
+  on = false;
+  const { write, read } = await traffic.stop();
+  const p = await parent;
+  console.log(`${title}\n  steps ${ms.join(" + ")} ms | child writes max ${write.maxMs} ms | parent writes max ${p.maxMs} ms | reads max ${read.maxMs} ms`);
+}
+
+// الـ setup: بنشيل الـ FK اللي جه مع الـ seed عشان نضيفه تاني
+await a.query("ALTER TABLE orders DROP CONSTRAINT orders_customer_id_fkey");
+
+await measure("A: plain ADD FOREIGN KEY", [
+  "ALTER TABLE orders ADD CONSTRAINT orders_customer_fk FOREIGN KEY (customer_id) REFERENCES customers (id)",
+]);
+await a.query("ALTER TABLE orders DROP CONSTRAINT orders_customer_fk");
+
+await measure("B: NOT VALID, then VALIDATE", [
+  "ALTER TABLE orders ADD CONSTRAINT orders_customer_fk FOREIGN KEY (customer_id) REFERENCES customers (id) NOT VALID",
+  "ALTER TABLE orders VALIDATE CONSTRAINT orders_customer_fk",
+]);
+
+// الغلطة: نفس الخطوتين في transaction واحدة، فالـ lock الأول فاضل ماسك طول الـ VALIDATE
+await a.query("ALTER TABLE orders DROP CONSTRAINT orders_customer_fk");
+await measure("C: NOT VALID + VALIDATE inside ONE transaction", [
+  "BEGIN",
+  "ALTER TABLE orders ADD CONSTRAINT orders_customer_fk FOREIGN KEY (customer_id) REFERENCES customers (id) NOT VALID",
+  "ALTER TABLE orders VALIDATE CONSTRAINT orders_customer_fk",
+  "COMMIT",
+]);
+
+// قياس الـ locks على الجدولين لكل خطوة
+const locks = async (sql: string) =&gt; {
+  await a.query("BEGIN");
+  await a.query(sql);
+  const { rows } = await a.query(
+    `SELECT relation::regclass::text AS rel, mode FROM pg_locks
+      WHERE relation IN ('orders'::regclass, 'customers'::regclass) AND pid = pg_backend_pid() ORDER BY 1, 2`,
+  );
+  await a.query("ROLLBACK");
+  return rows.map((r) =&gt; `${r.rel}:${r.mode}`).join("  ");
+};
+await a.query("ALTER TABLE orders DROP CONSTRAINT orders_customer_fk");
+const addNotValid = "ALTER TABLE orders ADD CONSTRAINT orders_customer_fk FOREIGN KEY (customer_id) REFERENCES customers (id) NOT VALID";
+console.log("ADD ... NOT VALID:", await locks(addNotValid));
+await a.query(addNotValid);
+console.log("VALIDATE         :", await locks("ALTER TABLE orders VALIDATE CONSTRAINT orders_customer_fk"));
+
+// الـ NOT VALID بيحمي الصفوف الجديدة فورًا
+await a.query(`INSERT INTO orders (tenant_id, customer_id, status, total_cents, currency, created_at)
+               VALUES (1, 999999999, 'pending', 1, 'EGP', now())`).catch((e) =&gt; console.log("new bad row:", e.code, e.message));
+
+// الصف القديم الغلط بيوقّع الـ VALIDATE، وبنلاقيه بـ query قبلها
+await a.query("ALTER TABLE orders DROP CONSTRAINT orders_customer_fk");
+await a.query(`INSERT INTO orders (tenant_id, customer_id, status, total_cents, currency, created_at)
+               VALUES (1, 999999999, 'pending', 1, 'EGP', now())`);
+await a.query(addNotValid);
+await a.query("ALTER TABLE orders VALIDATE CONSTRAINT orders_customer_fk").catch((e) =&gt; console.log("VALIDATE:", e.code, e.message));
+const orphans = await a.query(`SELECT count(*)::int AS n FROM orders o
+   WHERE NOT EXISTS (SELECT 1 FROM customers c WHERE c.id = o.customer_id)`);
+console.log("orphans:", orphans.rows[0].n);
+await a.query("DELETE FROM orders WHERE customer_id = 999999999");
+
+// نفس النمط لـ CHECK
+await a.query("ALTER TABLE orders ADD CONSTRAINT orders_total_positive CHECK (total_cents &gt;= 0) NOT VALID");
+await a.query("INSERT INTO orders (tenant_id, customer_id, status, total_cents, currency, created_at) VALUES (1, 1, 'pending', -5, 'EGP', now())").catch((e) =&gt; console.log("CHECK new row:", e.code, e.message));
+console.log("CHECK VALIDATE   :", await locks("ALTER TABLE orders VALIDATE CONSTRAINT orders_total_positive"));
+
+// الـ NOT ENFORCED بتاع PG 18 حاجة تانية خالص: توثيق مش حماية
+await a.query("ALTER TABLE orders DROP CONSTRAINT orders_customer_fk");
+await a.query(`ALTER TABLE orders ADD CONSTRAINT orders_customer_doc FOREIGN KEY (customer_id) REFERENCES customers (id) NOT ENFORCED`);
+const r = await a.query(`INSERT INTO orders (tenant_id, customer_id, status, total_cents, currency, created_at)
+   VALUES (1, 888888888, 'pending', 1, 'EGP', now()) RETURNING customer_id`);
+console.log("NOT ENFORCED let this through:", r.rows[0].customer_id);
+const info = await a.query(`SELECT conname, conenforced, convalidated FROM pg_constraint WHERE conname = 'orders_customer_doc'`);
+console.log(info.rows);
+await a.query("ALTER TABLE orders VALIDATE CONSTRAINT orders_customer_doc").catch((e) =&gt; console.log("VALIDATE on NOT ENFORCED:", e.code, e.message));
+await a.end();</code></pre>
+<pre><code class="language-plaintext">A: plain ADD FOREIGN KEY
+  steps 559 ms | child writes max 552 ms | parent writes max 547 ms | reads max 15 ms
+B: NOT VALID, then VALIDATE
+  steps 2 + 705 ms | child writes max 209 ms | parent writes max 209 ms | reads max 4 ms
+C: NOT VALID + VALIDATE inside ONE transaction
+  steps 0 + 3 + 427 + 7 ms | child writes max 441 ms | parent writes max 428 ms | reads max 3 ms
+ADD ... NOT VALID: customers:AccessShareLock  customers:ShareRowExclusiveLock  orders:AccessShareLock  orders:ShareRowExclusiveLock
+VALIDATE         : customers:AccessShareLock  customers:RowShareLock  orders:AccessShareLock  orders:ShareUpdateExclusiveLock
+new bad row: 23503 insert or update on table "orders" violates foreign key constraint "orders_customer_fk"
+VALIDATE: 23503 insert or update on table "orders" violates foreign key constraint "orders_customer_fk"
+orphans: 1
+CHECK new row: 23514 new row for relation "orders" violates check constraint "orders_total_positive"
+CHECK VALIDATE   : orders:ShareUpdateExclusiveLock
+NOT ENFORCED let this through: 888888888
+[
+  {
+    conname: 'orders_customer_doc',
+    conenforced: false,
+    convalidated: false
+  }
+]
+VALIDATE on NOT ENFORCED: 55000 cannot validate NOT ENFORCED constraint</code></pre>
+  <div class="ar-note">A: الخطوة ≈559 ms، والوقفة ≈552 ms للـ child و ≈547 ms للـ parent، والـ reads مأثرش عليها. B: الـ VALIDATE ≈705 ms، والوقفة ≈209 ms، وده قريب من ضوضاء الجهاز (الـ baseline في Part 7). C: نفس الخطوتين في transaction واحدة، والـ VALIDATE ≈427 ms، والوقفة رجعت ≈441 و ≈428 ms، يعني قد الـ scan زي A. بعدها الـ locks الحقيقية على الجدولين لكل خطوة. الصف الجديد الغلط اترفض بـ <code>23503</code> فورًا. الصف القديم الغلط وقّع الـ <code>VALIDATE</code> بنفس الكود، و query الـ orphans لقاه. الـ <code>CHECK</code> نفس النمط بـ <code>23514</code> و<code>ShareUpdateExclusiveLock</code>. وآخر سطور: <code>NOT ENFORCED</code> عدّى <code>888888888</code> من غير ما يعترض، و<code>conenforced: false</code>، و<code>VALIDATE</code> عليه وقع بـ <code>55000</code>.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>Index the child column first, with <code>CONCURRENTLY</code>.</strong> Postgres doesn't create it for you. Without it, deleting one parent row has to search the whole child table: here ≈195 ms vs ≈4 ms for one <code>DELETE</code>, on a customer with no orders at all.</p>
+    <p><strong>The same pattern works for <code>CHECK</code>:</strong> <code>NOT VALID</code>, then <code>VALIDATE</code>. <strong>PG 18's <code>NOT ENFORCED</code> is a different thing:</strong> it records the relationship as documentation and protects nothing. The bad row went straight in and it can't be validated (<code>55000</code>). Use it to describe a link you can't enforce, not as a migration step.</p>
+  </section>
+
+<pre data-file="l17/p6-child-index.ts"><code class="language-typescript">// التجربة: ليه الـ FK محتاج index على عمود الـ child؟ بنقيس DELETE واحد من الجدول الأب
+import pg from "pg";
+
+const a = new pg.Client({ connectionString: process.env.DATABASE_URL });
+await a.connect();
+
+// الـ customer ده مالوش orders، فالـ DELETE لازم يتأكد إن مفيش صف بيشاور عليه
+const { rows: [{ id }] } = await a.query(
+  "INSERT INTO customers (tenant_id, email, country, created_at) VALUES (1, 'new@example.com', 'EG', now()) RETURNING id",
+);
+
+const triggerLine = async () =&gt; {
+  await a.query("BEGIN");
+  const { rows } = await a.query(`EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF) DELETE FROM customers WHERE id = ${id}`);
+  await a.query("ROLLBACK");
+  return rows.map((r) =&gt; r["QUERY PLAN"] as string).filter((l) =&gt; /Trigger for constraint|Execution Time/.test(l)).join(" | ");
+};
+
+console.log("no index on orders.customer_id :", await triggerLine());
+await a.query("CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id)");
+console.log("with CIC index                 :", await triggerLine());
+await a.end();</code></pre>
+<pre><code class="language-plaintext">no index on orders.customer_id : Trigger for constraint orders_customer_id_fkey: calls=1 | Execution Time: 195.506 ms
+with CIC index                 : Trigger for constraint orders_customer_id_fkey: calls=1 | Execution Time: 3.845 ms</code></pre>
+  <div class="ar-note">نفس الـ <code>DELETE</code> بالظبط على customer مالوش orders: من غير index ≈195 ms لأن الـ FK trigger لازم يدوّر في كل orders، ومع الـ index ≈4 ms.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><code>ADD FOREIGN KEY</code> العادي بيفحص كل صف موجود وهو ماسك <code>ShareRowExclusiveLock</code> على <strong>الجدولين</strong>، فالـ writes بتقف على الـ child والـ parent. قسّمها: <code>NOT VALID</code> بياخد نفس الـ lock لحظة بس لأنه مش بيفحص، ومن اللحظة دي الصفوف الجديدة بتتفحص. وبعدين <code>VALIDATE CONSTRAINT</code> بيمسح تحت <code>ShareUpdateExclusiveLock</code> على الـ child و<code>RowShareLock</code> على الـ parent، ودول بيسمحوا بالقراءة والكتابة.</p>
+    <p><strong>الخطوتين لازم يبقوا transactions منفصلة.</strong> الـ locks بتفضل لحد الـ commit، فجوه transaction واحدة الـ lock القوي من الخطوة الأولى بيفضل طول الـ scan، ومكسبتش حاجة (الـ run C). وهنا الـ single-transaction default بتاع node-pg-migrate من Part 1 بيعضّك: ملفين مستنيين، واحد لكل خطوة، بينزلوا في transaction واحدة إلا لو استخدمت <code>--no-single-transaction</code> أو <code>noTransaction</code>.</p>
+    <p><strong>اعمل index على عمود الـ child الأول، بـ <code>CONCURRENTLY</code>.</strong> Postgres مش بيعمله لوحده. ومن غيره، مسح صف واحد من الـ parent لازم يدوّر في جدول الـ child كله: هنا ≈195 ms ضد ≈4 ms لـ <code>DELETE</code> واحد، على customer مالوش orders أصلًا.</p>
+    <p><strong>نفس النمط بينفع مع <code>CHECK</code>:</strong> <code>NOT VALID</code> وبعدين <code>VALIDATE</code>. <strong>و<code>NOT ENFORCED</code> بتاع PG 18 حاجة تانية خالص:</strong> بيسجّل العلاقة كتوثيق ومش بيحمي حاجة. الصف الغلط دخل عادي، ومينفعش يتعمله validate (<code>55000</code>). استخدمه لوصف علاقة مش قادر تفرضها، مش كخطوة في migration.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      جدول <code>payments</code> فيه <code>order_id</code> من غير FK، وعايز تضيفه على جدول كبير: الأول query الـ orphans وتصلّح الصفوف، وبعدين CIC على <code>order_id</code>، وبعدين ملف <code>NOT VALID</code>، وبعدين ملف <code>VALIDATE</code> في run منفصل. الغلطة الشائعة: تحط الخطوتين في ملف واحد عشان "شكله أنضف"، وتاخد نفس الوقفة بالظبط وإنت فاكر إنك عملتها صح.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>A read-only blocker can still stop VALIDATE-free steps</b>
+    <code>NOT VALID</code> is fast only after it gets the lock. It still queues behind long transactions like any other DDL, and everything queues behind it. Part 2's <code>lock_timeout</code> and retry wrap this step as well.
+    <div class="ar-note"><code>NOT VALID</code> سريع بس بعد ما ياخد الـ lock. ولسه بيقف ورا الـ transactions الطويلة زي أي DDL، وكل حاجة بتقف وراه. فالـ <code>lock_timeout</code> والـ retry بتوع Part 2 لازم يلفّوا الخطوة دي كمان.</div>
+  </div>
+
+  <!-- ===================== PART 7 ===================== -->
+  <h2 id="p7">Part 7 — The safe-vs-dangerous sheet <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 7 — جدول الآمن والخطر</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>One harness backs the whole sheet. Two writers and two readers run throughout; each operation runs on the same 1M-row table; the script prints the operation's time, whether it rewrote the table, the longest stall and p99 for writes and reads, and the locks it took on <code>orders</code>. Keep it. When someone asks "is this migration safe?", run it on a copy with realistic size instead of arguing. The first row is the baseline, and it's your noise floor: anything near it is noise from this loaded machine.</p>
+  </section>
+
+<pre data-file="l17/traffic.ts"><code class="language-typescript">// الملف ده الـ harness: writers و readers شغالين طول الـ migration، وبيطلّع أطول وقفة حسّ بيها كل واحد
+import pg from "pg";
+
+export type Stats = { ops: number; errors: number; maxMs: number; p99Ms: number; firstError?: string };
+export type Traffic = { stop(): Promise&lt;{ write: Stats; read: Stats }&gt; };
+
+export const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+
+function summarize(latencies: number[], errors: number, firstError?: string): Stats {
+  const sorted = [...latencies].sort((a, b) =&gt; a - b);
+  return {
+    ops: sorted.length,
+    errors,
+    maxMs: Math.round(sorted.at(-1) ?? 0),
+    p99Ms: Math.round(sorted[Math.floor(sorted.length * 0.99)] ?? 0),
+    ...(firstError ? { firstError } : {}),
+  };
+}
+
+// الـ loop ده بيحسب وقت كل query لوحدها، فأي lock هيظهر كـ latency كبيرة
+async function loop(url: string, sql: () =&gt; [string, unknown[]], pace: number, isOn: () =&gt; boolean, ready: () =&gt; void): Promise&lt;Stats&gt; {
+  const client = new pg.Client({ connectionString: url });
+  client.on("error", () =&gt; {});
+  await client.connect();
+  const latencies: number[] = [];
+  let errors = 0;
+  let firstError: string | undefined;
+  while (isOn()) {
+    const [text, values] = sql();
+    const t0 = performance.now();
+    try {
+      await client.query(text, values);
+      latencies.push(performance.now() - t0);
+    } catch (e) {
+      errors++;
+      firstError ??= `${(e as { code?: string }).code} ${(e as Error).message}`;
+    }
+    ready();
+    await sleep(pace);
+  }
+  await client.end();
+  return summarize(latencies, errors, firstError);
+}
+
+const merge = (all: Stats[]): Stats =&gt; ({
+  ops: all.reduce((n, s) =&gt; n + s.ops, 0),
+  errors: all.reduce((n, s) =&gt; n + s.errors, 0),
+  maxMs: Math.max(...all.map((s) =&gt; s.maxMs)),
+  p99Ms: Math.max(...all.map((s) =&gt; s.p99Ms)),
+  ...(all.find((s) =&gt; s.firstError) ? { firstError: all.find((s) =&gt; s.firstError)!.firstError } : {}),
+});
+
+// اتنين writers بيعملوا INSERT واتنين readers بيقروا بالـ primary key، زي API عادية
+export async function startTraffic(url: string, opts: { writers?: number; readers?: number; paceMs?: number } = {}): Promise&lt;Traffic&gt; {
+  const { writers = 2, readers = 2, paceMs = 5 } = opts;
+  let on = true;
+  const insert = (): [string, unknown[]] =&gt; [
+    `INSERT INTO orders (tenant_id, customer_id, status, total_cents, currency, created_at)
+     VALUES (1, 1, 'pending', 1000, 'EGP', now())`,
+    [],
+  ];
+  const read = (): [string, unknown[]] =&gt; [
+    "SELECT id, status FROM orders WHERE id = $1",
+    [1 + Math.floor(Math.random() * 300_000)],
+  ];
+  // فتح connection مش لحظي تحت الضغط، فلازم كل loop يخلّص أول query قبل ما القياس يبدأ
+  const readies: Promise&lt;void&gt;[] = [];
+  const signal = () =&gt; {
+    let done!: () =&gt; void;
+    readies.push(new Promise&lt;void&gt;((res) =&gt; { done = res; }));
+    return done;
+  };
+  const w = Array.from({ length: writers }, () =&gt; loop(url, insert, paceMs, () =&gt; on, signal()));
+  const r = Array.from({ length: readers }, () =&gt; loop(url, read, paceMs, () =&gt; on, signal()));
+  await Promise.all(readies);
+  return {
+    async stop() {
+      on = false;
+      return { write: merge(await Promise.all(w)), read: merge(await Promise.all(r)) };
+    },
+  };
+}</code></pre>
+<pre data-file="l17/p7-harness.ts"><code class="language-typescript">// الـ harness الكامل: نفس الـ traffic، وكل عملية على نفس الـ 1M صف، وبيطبع الجدول اللي هتحفظه
+import pg from "pg";
+import { sleep, startTraffic } from "./traffic.ts";
+
+const url = process.env.DATABASE_URL!;
+const a = new pg.Client({ connectionString: url });
+const watcher = new pg.Client({ connectionString: url });
+await Promise.all([a.connect(), watcher.connect()]);
+const { rows: [{ pid }] } = await a.query("SELECT pg_backend_pid() AS pid");
+
+const fileOf = async () =&gt;
+  (await watcher.query("SELECT relfilenode AS f FROM pg_class WHERE relname = 'orders'")).rows[0].f;
+const LOCKS = `SELECT DISTINCT replace(mode, 'Lock', '') AS mode FROM pg_locks
+                WHERE relation = 'orders'::regclass AND pid = $1 AND mode &lt;&gt; 'AccessShareLock'`;
+
+// الـ function دي بتنفّذ الـ statement بجد، وبتقرا الـ lock اللي مسكه من pg_locks قبل ما يسيبه
+async function exec(sql: string, seen: Set&lt;string&gt;): Promise&lt;void&gt; {
+  if (/CONCURRENTLY|VACUUM/.test(sql)) {
+    // الأوامر دي مينفعش تتحط في transaction، فبنراقبها من connection تانية وهي شغالة
+    const timer = setInterval(async () =&gt; {
+      for (const r of (await watcher.query(LOCKS, [pid])).rows) seen.add(r.mode);
+    }, 20);
+    await a.query(sql);
+    clearInterval(timer);
+    return;
+  }
+  await a.query("BEGIN");
+  await a.query(sql);
+  for (const r of (await a.query(LOCKS, [pid])).rows) seen.add(r.mode);
+  await a.query("COMMIT");
+}
+
+async function run(label: string, statements: string[]): Promise&lt;void&gt; {
+  const before = await fileOf();
+  const traffic = await startTraffic(url);
+  await sleep(400);
+  const seen = new Set&lt;string&gt;();
+  const t0 = performance.now();
+  for (const s of statements) await exec(s, seen);
+  const ms = Math.round(performance.now() - t0);
+  await sleep(250);
+  const { write, read } = await traffic.stop();
+  const rewrite = before !== (await fileOf()) ? "yes" : "no";
+  const n = (v: number) =&gt; String(v).padStart(5);
+  console.log(`${label.padEnd(30)} ${n(ms)} ${rewrite.padEnd(3)} ${n(write.maxMs)} ${n(write.p99Ms)} ${n(read.maxMs)} ${n(read.p99Ms)} ${n(write.errors + read.errors)}  ${[...seen].join("+") || "-"}`);
+}
+
+console.log(`${"operation on 1M rows".padEnd(30)}    ms rw? w.max w.p99 r.max r.p99  errs  locks on orders`);
+await run("nothing (baseline)", ["SELECT pg_sleep(1)"]);
+await run("ADD COLUMN nullable", ["ALTER TABLE orders ADD COLUMN c1 text"]);
+await run("ADD COLUMN NOT NULL DEFAULT 5", ["ALTER TABLE orders ADD COLUMN c2 int NOT NULL DEFAULT 5"]);
+await run("ADD COLUMN DEFAULT uuidv7()", ["ALTER TABLE orders ADD COLUMN c3 uuid DEFAULT uuidv7()"]);
+await run("ALTER TYPE int to bigint", ["ALTER TABLE orders ALTER COLUMN tenant_id TYPE bigint"]);
+await run("CREATE INDEX", ["CREATE INDEX i1 ON orders (status)"]);
+await run("DROP INDEX", ["DROP INDEX i1"]);
+await run("CREATE INDEX CONCURRENTLY", ["CREATE INDEX CONCURRENTLY i1 ON orders (status)"]);
+await run("DROP INDEX CONCURRENTLY", ["DROP INDEX CONCURRENTLY i1"]);
+await a.query("ALTER TABLE orders ALTER COLUMN currency DROP NOT NULL");
+await run("SET NOT NULL", ["ALTER TABLE orders ALTER COLUMN currency SET NOT NULL"]);
+await a.query("ALTER TABLE orders ALTER COLUMN currency DROP NOT NULL");
+await run("NOT NULL NOT VALID + VALIDATE", [
+  "ALTER TABLE orders ADD CONSTRAINT nn NOT NULL currency NOT VALID",
+  "ALTER TABLE orders VALIDATE CONSTRAINT nn",
+]);
+await a.query("ALTER TABLE orders DROP CONSTRAINT orders_customer_id_fkey");
+await run("ADD FOREIGN KEY", ["ALTER TABLE orders ADD CONSTRAINT f1 FOREIGN KEY (customer_id) REFERENCES customers (id)"]);
+await a.query("ALTER TABLE orders DROP CONSTRAINT f1");
+await run("FK NOT VALID + VALIDATE", [
+  "ALTER TABLE orders ADD CONSTRAINT f1 FOREIGN KEY (customer_id) REFERENCES customers (id) NOT VALID",
+  "ALTER TABLE orders VALIDATE CONSTRAINT f1",
+]);
+await run("ADD UNIQUE constraint", ["ALTER TABLE orders ADD CONSTRAINT u1 UNIQUE (id, created_at)"]);
+await a.query("ALTER TABLE orders DROP CONSTRAINT u1");
+await run("UNIQUE via CIC + USING INDEX", [
+  "CREATE UNIQUE INDEX CONCURRENTLY u1 ON orders (id, created_at)",
+  "ALTER TABLE orders ADD CONSTRAINT u1 UNIQUE USING INDEX u1",
+]);
+await run("DROP COLUMN", ["ALTER TABLE orders DROP COLUMN c1"]);
+await run("VACUUM FULL", ["VACUUM FULL orders"]);
+await Promise.all([a.end(), watcher.end()]);</code></pre>
+<pre><code class="language-plaintext">operation on 1M rows              ms rw? w.max w.p99 r.max r.p99  errs  locks on orders
+nothing (baseline)              1020 no    215   215     4     2     0  -
+ADD COLUMN nullable                3 no      6     6     2     2     0  AccessExclusive
+ADD COLUMN NOT NULL DEFAULT 5      8 no      7     7     3     3     0  AccessExclusive
+ADD COLUMN DEFAULT uuidv7()     3817 yes  3791  3791  3790  3790     0  AccessExclusive+Share
+ALTER TYPE int to bigint        2234 yes  2206  2206  2204  2204     0  AccessExclusive+Share+ShareRowExclusive
+CREATE INDEX                     570 no    561   561     2     2     0  Share
+DROP INDEX                         3 no      5     5     5     5     0  AccessExclusive
+CREATE INDEX CONCURRENTLY        575 no     13    13     2     2     0  ShareUpdateExclusive
+DROP INDEX CONCURRENTLY            4 no      5     5     3     3     0  -
+SET NOT NULL                     105 no     92    92    92    92     0  AccessExclusive
+NOT NULL NOT VALID + VALIDATE     96 no      5     5     2     2     0  AccessExclusive+ShareUpdateExclusive
+ADD FOREIGN KEY                  193 no    218   218    12    12     0  ShareRowExclusive
+FK NOT VALID + VALIDATE          178 no      4     4     2     2     0  ShareRowExclusive+ShareUpdateExclusive
+ADD UNIQUE constraint            440 no    428   428   427   427     0  AccessExclusive+Share
+UNIQUE via CIC + USING INDEX     336 no     13    13     2     2     0  ShareUpdateExclusive+AccessExclusive
+DROP COLUMN                        2 no      7     7     2     2     0  AccessExclusive
+VACUUM FULL                     2851 yes  2840  2840  2839  2839     0  AccessExclusive+Share</code></pre>
+  <div class="ar-note">الأعمدة: الوقت بالـ ms، وهل حصل rewrite، وأطول وقفة والـ p99 للـ writes، وبعدهم للـ reads، وعدد الـ errors، والـ locks. الـ baseline بيوريك الضوضاء: write واحد وصل ≈215 ms من غير أي DDL. <code>ADD COLUMN</code> بـ nullable أو constant default لحظي. <code>uuidv7()</code> و<code>ALTER TYPE</code> و<code>VACUUM FULL</code> وقفوا الـ reads والـ writes كلها ثواني (≈3.8 و ≈2.2 و ≈2.8 ثانية في التشغيلة دي). <code>CREATE INDEX</code> وقف الـ writes بس، و<code>CONCURRENTLY</code> ماوقفش حاجة. <code>SET NOT NULL</code> وقف الاتنين، والطريقة بتاعة خطوتين لأ. <code>ADD FOREIGN KEY</code> وقف الـ writes، والخطوتين لأ. <code>ADD UNIQUE</code> وقف الاتنين لأنه بيبني index تحت <code>AccessExclusive</code>، و CIC مع <code>USING INDEX</code> لأ. وسطر <code>DROP INDEX CONCURRENTLY</code> عمود الـ locks فيه <code>-</code> لأنه خلص بين عينات المراقبة.</div>
+
+  <div class="callout warn">
+    <b>An outlier I can't explain</b>
+    In one of the five harness runs, <code>DROP INDEX CONCURRENTLY</code> took ≈9.9 s and a read stalled for ≈9.8 s. In the other four it took ≈4 to 15 ms with no stall. I didn't find the cause, and the machine's load is only a guess, so run this harness more than once before you trust a single row.
+    <div class="ar-note">في تشغيلة من الـ 5، <code>DROP INDEX CONCURRENTLY</code> أخد ≈9.9 ثانية، و read وقف ≈9.8 ثانية. وفي الـ 4 التانيين أخد ≈4 لـ 15 ms ومن غير وقفة. ومعرفتش السبب، وحمل الجهاز مجرد تخمين، فشغّل الـ harness أكتر من مرة قبل ما تثق في صف واحد.</div>
+  </div>
+
+  <table>
+    <thead><tr><th>Operation on a 100M-row table</th><th>Lock on it</th><th>Rewrite?</th><th>Safe recipe</th></tr></thead>
+    <tbody>
+      <tr><td>ADD COLUMN, nullable or constant default</td><td>AccessExclusive, brief</td><td>No</td><td><code>lock_timeout</code> + retry</td></tr>
+      <tr><td>ADD COLUMN, volatile default, identity, STORED</td><td>AccessExclusive, long</td><td>Yes</td><td>Add it empty, <code>SET DEFAULT</code>, backfill in batches</td></tr>
+      <tr><td>DROP COLUMN</td><td>AccessExclusive, brief</td><td>No</td><td>Stop reading it first, then <code>lock_timeout</code></td></tr>
+      <tr><td>ALTER COLUMN TYPE, rewriting kind</td><td>AccessExclusive, long</td><td>Yes</td><td>Expand/contract (<a href="./18-expand-contract.html">lesson 18</a>)</td></tr>
+      <tr><td>RENAME column or table</td><td>AccessExclusive, brief</td><td>No</td><td>It breaks running code: <a href="./18-expand-contract.html#p6">lesson 18</a></td></tr>
+      <tr><td>CREATE INDEX</td><td>Share, long</td><td>No</td><td><code>CONCURRENTLY</code>, one file, no transaction</td></tr>
+      <tr><td>DROP INDEX</td><td>AccessExclusive, brief</td><td>No</td><td><code>DROP INDEX CONCURRENTLY</code></td></tr>
+      <tr><td>SET NOT NULL</td><td>AccessExclusive, long scan</td><td>No</td><td><code>NOT NULL ... NOT VALID</code> + <code>VALIDATE</code></td></tr>
+      <tr><td>ADD FOREIGN KEY or CHECK</td><td>ShareRowExclusive (CHECK: AccessExclusive), long scan</td><td>No</td><td><code>NOT VALID</code>, commit, <code>VALIDATE</code></td></tr>
+      <tr><td>ADD UNIQUE constraint</td><td>AccessExclusive, long</td><td>No</td><td><code>CREATE UNIQUE INDEX CONCURRENTLY</code>, then <code>ADD CONSTRAINT ... USING INDEX</code></td></tr>
+      <tr><td>VACUUM FULL</td><td>AccessExclusive, long</td><td>Yes</td><td>Avoid it. pg_repack isn't run here; PG 19's RC notes list <code>REPACK (CONCURRENTLY)</code></td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">صف صف، على جدول 100M. <b>ADD COLUMN عادي أو بقيمة ثابتة:</b> lock قوي لحظة ومفيش rewrite: <code>lock_timeout</code> و retry. <b>ADD COLUMN بـ default volatile أو identity أو STORED:</b> lock قوي طويل و rewrite: ضيفه فاضي، و<code>SET DEFAULT</code>، و backfill بالـ batches. <b>DROP COLUMN:</b> lock قوي لحظة ومفيش rewrite: بطّل تقراه الأول، وبعدين <code>lock_timeout</code>. <b>ALTER COLUMN TYPE اللي بيعمل rewrite:</b> lock طويل: expand/contract. <b>RENAME:</b> lock لحظة بس بيكسر الكود الشغال: درس 18. <b>CREATE INDEX:</b> Share طويل: <code>CONCURRENTLY</code> في ملف لوحده من غير transaction. <b>DROP INDEX:</b> lock قوي لحظة: <code>DROP INDEX CONCURRENTLY</code>. <b>SET NOT NULL:</b> lock قوي و scan طويل: <code>NOT VALID</code> و<code>VALIDATE</code>. <b>FK أو CHECK:</b> الـ FK بـ ShareRowExclusive والـ CHECK بـ AccessExclusive مع scan طويل: <code>NOT VALID</code>، و commit، و<code>VALIDATE</code>. <b>UNIQUE:</b> lock قوي طويل: index بـ CIC، وبعدين <code>USING INDEX</code>. <b>VACUUM FULL:</b> lock قوي طويل و rewrite: تجنبه. pg_repack مش متشغل هنا، والـ RC notes بتاعة PG 19 فيها <code>REPACK (CONCURRENTLY)</code>.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>Scaling honestly.</strong> Across five runs, the rewrites here took between ≈2 s and ≈19 s per million rows, depending on the machine's load. A straight line gives roughly 4 to 30 minutes of total outage at 100M, and it's a floor, because the table stops fitting in memory and indexes get rebuilt too. The rewrite also needs disk for a full second copy of the table. The instant operations stay instant at any size, except for the time they wait in the lock queue, and that's why they still need a timeout.</p>
+    <p><strong>A checklist for migration pull requests:</strong></p>
+    <ul>
+      <li>Does the code running right now still work on this schema?</li>
+      <li>Is <code>lock_timeout</code> set on all DDL, and will a failure be retried?</li>
+      <li>Does anything scan or rewrite under a strong lock? Check the sheet.</li>
+      <li>Are <code>NOT VALID</code> and <code>VALIDATE</code> in separate transactions?</li>
+      <li>Is each <code>CONCURRENTLY</code> statement alone in a no-transaction file, with no <code>IF NOT EXISTS</code>?</li>
+      <li>Is there a data step? It must be batched and separate from the DDL.</li>
+      <li>Was it run on a copy with realistic size, under traffic?</li>
+    </ul>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ harness ده وراه الجدول كله. اتنين writers واتنين readers شغالين طول الوقت، وكل عملية بتشتغل على نفس جدول المليون صف، والـ script بيطبع وقت العملية، وهل عملت rewrite، وأطول وقفة والـ p99 للـ writes والـ reads، والـ locks اللي خدتها على <code>orders</code>. احتفظ بيه. ولما حد يسأل "الـ migration دي آمنة؟"، شغّله على نسخة بحجم واقعي بدل ما تتناقشوا. وأول صف هو الـ baseline، وده مستوى الضوضاء: أي رقم قريب منه ده حمل الجهاز مش الـ migration.</p>
+    <p><strong>التقدير بأمانة.</strong> في 5 تشغيلات، الـ rewrites هنا أخدت بين ≈2 و ≈19 ثانية لكل مليون صف، حسب حمل الجهاز. الخط المستقيم بيطلّع حوالي 4 لـ 30 دقيقة وقفة كاملة على 100M، وده أقل تقدير، لأن الجدول مش هيدخل في الـ memory والـ indexes بتتبني من جديد. والـ rewrite كمان محتاج مكان على الـ disk لنسخة تانية كاملة من الجدول. والعمليات اللحظية بتفضل لحظية مهما كان الحجم، ما عدا وقت انتظارها في طابور الـ locks، وده السبب إنها لسه محتاجة timeout.</p>
+    <p><strong>Checklist لـ pull requests الـ migrations:</strong></p>
+    <ul>
+      <li>الكود الشغال دلوقتي هيفضل شغال على الـ schema ده؟</li>
+      <li><code>lock_timeout</code> متظبط على كل DDL، والفشل هيتعمله retry؟</li>
+      <li>فيه حاجة بتعمل scan أو rewrite تحت lock قوي؟ بص في الجدول.</li>
+      <li><code>NOT VALID</code> و<code>VALIDATE</code> في transactions منفصلة؟</li>
+      <li>كل <code>CONCURRENTLY</code> لوحده في ملف من غير transaction، ومن غير <code>IF NOT EXISTS</code>؟</li>
+      <li>فيه خطوة data؟ لازم تبقى batches ومنفصلة عن الـ DDL.</li>
+      <li>اتجرّب على نسخة بحجم واقعي وتحت traffic؟</li>
+    </ul>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      انسخ الـ checklist في template الـ pull request بتاع الـ repo، واربط الجدول في الـ wiki. وقبل أي migration على جدول كبير، خد نسخة من الـ staging وشغّل الـ harness عليها، وحط الناتج في وصف الـ PR: وقت العملية، وأطول وقفة، والـ lock. الغلطة الشائعة: تجرّب على database فاضية في الـ CI، فكل حاجة تطلع لحظية، وأول مرة تشوف الوقفة الحقيقية تبقى في production.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question (exit test 4)</b>
+    "Add an index to a 100M-row table in production with no downtime." → <code>CREATE INDEX CONCURRENTLY</code> in its own no-transaction migration, with <code>lock_timeout</code> and <code>statement_timeout</code> at 0 so a wait can't kill it halfway. First check for long transactions, because it waits for older snapshots. Watch <code>pg_stat_progress_create_index</code>. Afterwards verify <code>indisvalid</code>; if it failed, drop the leftover concurrently and retry, and don't hide it with <code>IF NOT EXISTS</code>. Trade-off: it scans twice and waits for old transactions, so it's slower on a big table, and writes keep flowing.
+    <div class="ar-note">"ضيف index على جدول 100M صف في production من غير downtime." ← <code>CREATE INDEX CONCURRENTLY</code> في migration لوحدها من غير transaction، و<code>lock_timeout</code> و<code>statement_timeout</code> بـ 0 عشان الانتظار ميقتلوش في النص. الأول اتأكد من الـ transactions الطويلة لأنه بيستنى الـ snapshots القديمة. وراقب <code>pg_stat_progress_create_index</code>. وبعدها اتأكد من <code>indisvalid</code>، ولو فشل شيل البواقي بـ concurrently وجرّب تاني، ومتخبيهاش بـ <code>IF NOT EXISTS</code>. الـ trade-off: بيمسح مرتين وبيستنى الـ transactions القديمة، فبيبقى أبطأ على جدول كبير، والـ writes بتفضل ماشية.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ DDL with no lock timeout</b>
+<pre><code class="language-sql">-- واقف ورا أي transaction نايمة، والكل واقف وراه
+ALTER TABLE orders ADD COLUMN coupon_code text;</code></pre></div>
+    <div class="good"><b>✅ Fail fast and retry</b>
+<pre><code class="language-sql">-- أقصى وقفة ثانيتين، والـ runner بيعيد المحاولة
+SET LOCAL lock_timeout = '2s';
+ALTER TABLE orders ADD COLUMN coupon_code text;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ ALTER اللحظي ممكن يوقف الجدول كله لو قدامه transaction نايمة: في التجربة الـ pool خلص وطابوره وصل 48. ✅ مع <code>lock_timeout</code> أسوأ request بقى قد الـ timeout بس، والـ retry كمّل الشغل لما الـ blocker خلص.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A volatile default in ADD COLUMN</b>
+<pre><code class="language-sql">-- بيعيد كتابة الجدول كله تحت AccessExclusive
+ALTER TABLE orders
+  ADD COLUMN public_id uuid DEFAULT uuidv7();</code></pre></div>
+    <div class="good"><b>✅ Add it empty, then set the default</b>
+<pre><code class="language-sql">-- الاتنين لحظيين، والصفوف القديمة ليها backfill
+ALTER TABLE orders ADD COLUMN public_id uuid;
+ALTER TABLE orders
+  ALTER COLUMN public_id SET DEFAULT uuidv7();</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>uuidv7()</code> لازم يطلّع قيمة لكل صف، فالجدول كله بيتكتب من الأول والـ reads والـ writes واقفة: بين ≈4 و ≈18 ثانية على مليون صف في تشغيلات الـ harness، حسب حمل الجهاز. ✅ العمود من غير default لحظي، و<code>SET DEFAULT</code> لحظي، والصفوف الجديدة بتاخد قيمة فورًا، والقديمة بتتملي بـ batches.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ IF NOT EXISTS hides a broken index</b>
+<pre><code class="language-sql">-- بيعدّي لو الاسم موجود، حتى لو الـ index بايظ
+CREATE INDEX CONCURRENTLY IF NOT EXISTS
+  orders_status_idx ON orders (status);</code></pre></div>
+    <div class="good"><b>✅ Check indisvalid, rebuild if needed</b>
+<pre><code class="language-sql">-- القاعدة: لو الـ index مش valid، اعمله rebuild
+SELECT indisvalid FROM pg_index
+ WHERE indexrelid = 'orders_status_idx'::regclass;
+REINDEX INDEX CONCURRENTLY orders_status_idx;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>IF NOT EXISTS</code> بيبص على الاسم بس. لو محاولة قديمة فشلت، الـ migration بتنجح والـ index مش بيتستخدم، وممكن كمان يكلّف الـ writes لو <code>indisready = true</code>. ✅ اسأل <code>pg_index</code> صراحةً وابني تاني. وتمرين 2 بيعمل function كاملة للحكاية دي.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ NOT VALID + VALIDATE in one transaction</b>
+<pre><code class="language-sql">-- الـ lock القوي فاضل ماسك طول الـ scan
+BEGIN;
+ALTER TABLE orders ADD CONSTRAINT orders_customer_fk
+  FOREIGN KEY (customer_id) REFERENCES customers (id)
+  NOT VALID;
+ALTER TABLE orders VALIDATE CONSTRAINT orders_customer_fk;
+COMMIT;</code></pre></div>
+    <div class="good"><b>✅ Two transactions</b>
+<pre><code class="language-sql">-- الملف الأول: lock لحظة، وبعدها commit
+ALTER TABLE orders ADD CONSTRAINT orders_customer_fk
+  FOREIGN KEY (customer_id) REFERENCES customers (id)
+  NOT VALID;
+-- الملف التاني: run منفصل تحت lock ضعيف
+ALTER TABLE orders VALIDATE CONSTRAINT orders_customer_fk;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ SQL شكله صح، بس الـ locks بتتساب عند الـ COMMIT بس، فالوقفة زي الطريقة العادية بالظبط (الـ run C في Part 6). وأدوات زي node-pg-migrate بتعمل كده من غير ما تاخد بالك لو الملفين نزلوا في نفس الـ run. ✅ خطوتين في transactions منفصلة، والـ writes فضلت ماشية أثناء الـ <code>VALIDATE</code>.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Testing migrations on an empty database</b>
+<pre><code class="language-bash"># بيعدّي دايمًا: مفيش صفوف ومفيش traffic
+npx node-pg-migrate up
+npm test</code></pre></div>
+    <div class="good"><b>✅ A realistic copy under traffic</b>
+<pre><code class="language-bash"># نسخة بحجم واقعي، والـ harness شغال معاها
+DATABASE_URL=$STAGING_COPY node l17/p7-harness.ts
+DATABASE_URL=$STAGING_COPY npx node-pg-migrate up</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ على جدول فاضي كل حاجة لحظية، حتى اللي بيعمل rewrite، و<code>NOT NULL</code> من غير default بينجح كمان بدل ما يقع بـ <code>23502</code>. ✅ نسخة بحجم واقعي وتحت traffic هي اللي بتطلّع الوقفة الحقيقية قبل production.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Predict, then verify <span class="lvl lvl-1">🟢 easy</span></b>
+    For six statements, write down the lock and whether it rewrites before you run anything: <code>SET DEFAULT</code>; <code>ADD COLUMN meta jsonb DEFAULT '{}'</code>; <code>ADD COLUMN ref uuid DEFAULT gen_random_uuid()</code>; <code>currency</code> from <code>char(3)</code> to <code>text</code>; <code>status</code> from <code>text</code> to <code>varchar(20)</code>; and <code>CREATE INDEX</code>. Then write a script that checks your answers using <code>pg_relation_filenode</code> and <code>pg_locks</code>, rolling back each one.
+    <div class="ar-note">لـ 6 statements، اكتب الـ lock وهل فيه rewrite قبل ما تشغّل أي حاجة: <code>SET DEFAULT</code>، و<code>ADD COLUMN meta jsonb DEFAULT '{}'</code>، و<code>ADD COLUMN ref uuid DEFAULT gen_random_uuid()</code>، و<code>currency</code> من <code>char(3)</code> لـ <code>text</code>، و<code>status</code> من <code>text</code> لـ <code>varchar(20)</code>، و<code>CREATE INDEX</code>. وبعدين اكتب script يراجع إجاباتك بـ <code>pg_relation_filenode</code> و<code>pg_locks</code>، ويرجّع كل واحدة بـ rollback.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="l17/ex1-predict.ts"><code class="language-typescript">// الحل: السكريبت ده بينفّذ كل statement في transaction، ويطبع الـ lock والـ rewrite، وبعدين يرجّع
+import pg from "pg";
+
+const c = new pg.Client({ connectionString: process.env.DATABASE_URL });
+await c.connect();
+
+const statements = [
+  "ALTER TABLE orders ALTER COLUMN status SET DEFAULT 'new'",
+  "ALTER TABLE orders ADD COLUMN meta jsonb DEFAULT '{}'",
+  "ALTER TABLE orders ADD COLUMN ref uuid DEFAULT gen_random_uuid()",
+  "ALTER TABLE orders ALTER COLUMN currency TYPE text",
+  "ALTER TABLE orders ALTER COLUMN status TYPE varchar(20)",
+  "CREATE INDEX ON orders (status)",
+];
+
+for (const sql of statements) {
+  await c.query("BEGIN");
+  const before = (await c.query("SELECT pg_relation_filenode('orders') AS f")).rows[0].f;
+  await c.query(sql);
+  const after = (await c.query("SELECT pg_relation_filenode('orders') AS f")).rows[0].f;
+  const { rows } = await c.query(
+    `SELECT replace(mode, 'Lock', '') AS mode FROM pg_locks
+      WHERE relation = 'orders'::regclass AND pid = pg_backend_pid() AND mode &lt;&gt; 'AccessShareLock'`,
+  );
+  await c.query("ROLLBACK");
+  const locks = rows.map((r) =&gt; r.mode).join("+");
+  console.log(`${before === after ? "no     " : "REWRITE"} ${locks.padEnd(36)} ${sql.replace("ALTER TABLE orders ", "")}`);
+}
+await c.end();</code></pre>
+<pre><code class="language-plaintext">no      AccessExclusive                      ALTER COLUMN status SET DEFAULT 'new'
+no      AccessExclusive                      ADD COLUMN meta jsonb DEFAULT '{}'
+REWRITE Share+AccessExclusive                ADD COLUMN ref uuid DEFAULT gen_random_uuid()
+REWRITE Share+AccessExclusive                ALTER COLUMN currency TYPE text
+REWRITE Share+AccessExclusive                ALTER COLUMN status TYPE varchar(20)
+no      Share                                CREATE INDEX ON orders (status)</code></pre>
+      <div class="ar-note">الـ <code>SET DEFAULT</code> والـ <code>'{}'</code> الثابتة من غير rewrite، و<code>gen_random_uuid()</code> volatile فـ rewrite. و<code>char(3)</code> لـ <code>text</code> و<code>text</code> لـ <code>varchar(20)</code> الاتنين طلعوا <code>REWRITE</code>، وده اللي بيفاجئ الناس: الأنواع "القريبة من بعض" مش معناها إن مفيش rewrite. و<code>CREATE INDEX</code> بياخد <code>Share</code> بس، وده اللي بيوقف الـ writes ويسيب الـ reads.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. A safe ensureIndex <span class="lvl lvl-2">🟡 medium</span></b>
+    Write <code>ensureIndex(client, name, definition)</code> that can run any number of times. A valid index means nothing to do; an invalid leftover gets dropped concurrently and rebuilt; afterwards it verifies <code>indisvalid</code>. Test it on a leftover you create on purpose.
+    <div class="ar-note">اكتب <code>ensureIndex(client, name, definition)</code> تتشغل أي عدد مرات. لو الـ index سليم مفيش شغل، ولو بواقي بايظة تتشال بـ concurrently وتتبني تاني، وفي الآخر تتأكد من <code>indisvalid</code>. وجرّبها على بواقي تعملها بإيدك.</div>
+    <details><summary>Hint · تلميح</summary>
+      <code>to_regclass($1)</code> returns NULL instead of an error when the name doesn't exist, so a single query against <code>pg_index</code> tells you all three cases. To make a broken index, hold a <code>REPEATABLE READ</code> transaction and set a short <code>lock_timeout</code>.
+      <div class="ar-note"><code>to_regclass($1)</code> بترجّع NULL بدل error لو الاسم مش موجود، فـ query واحدة على <code>pg_index</code> بتقولك الحالات التلاتة. وعشان تعمل index بايظ، امسك transaction بـ <code>REPEATABLE READ</code> وظبّط <code>lock_timeout</code> قصير.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="l17/ex2-ensure-index.ts"><code class="language-typescript">// الحل: ensureIndex آمنة تتشغل كذا مرة: بتنضّف أي بواقي، وبتبني، وبتتأكد إن الـ index بقى valid
+import pg from "pg";
+
+export async function ensureIndex(c: pg.Client, name: string, definition: string): Promise&lt;string&gt; {
+  const check = () =&gt; c.query("SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass($1)", [name]);
+  const { rows } = await check();
+  // الحالة 1: موجود وسليم، يبقى مفيش شغل
+  if (rows[0]?.indisvalid) return "already valid";
+  // الحالة 2: موجود بس بواقي من محاولة فاشلة: لازم يتشال، و IF NOT EXISTS مش هيكتشفه
+  if (rows[0]) await c.query(`DROP INDEX CONCURRENTLY "${name}"`);
+  // الـ timeouts بتتصفّر هنا: الـ CIC مش بيوقف الـ traffic، وقطعه في النص بيسيب بواقي
+  await c.query("SET lock_timeout = 0");
+  await c.query("SET statement_timeout = 0");
+  await c.query(`CREATE INDEX CONCURRENTLY "${name}" ${definition}`);
+  const after = await check();
+  if (!after.rows[0]?.indisvalid) throw new Error(`index ${name} is still invalid`);
+  return rows[0] ? "rebuilt from an invalid leftover" : "built";
+}
+
+const c = new pg.Client({ connectionString: process.env.DATABASE_URL });
+const blocker = new pg.Client({ connectionString: process.env.DATABASE_URL });
+await Promise.all([c.connect(), blocker.connect()]);
+
+const defn = "ON orders (status)";
+console.log("first run  :", await ensureIndex(c, "orders_status_idx", defn));
+console.log("second run :", await ensureIndex(c, "orders_status_idx", defn));
+
+// بنعمل index بايظ بإيدينا: lock_timeout يفرقع وهو مستني transaction قديمة
+await c.query("DROP INDEX orders_status_idx");
+await blocker.query("BEGIN ISOLATION LEVEL REPEATABLE READ; SELECT 1 FROM orders LIMIT 1");
+await c.query("SET lock_timeout = '500ms'");
+await c.query(`CREATE INDEX CONCURRENTLY orders_status_idx ${defn}`).catch((e) =&gt; console.log("broken on purpose:", e.code));
+await blocker.query("COMMIT");
+console.log("third run  :", await ensureIndex(c, "orders_status_idx", defn));
+await Promise.all([c.end(), blocker.end()]);</code></pre>
+<pre><code class="language-plaintext">first run  : built
+second run : already valid
+broken on purpose: 55P03
+third run  : rebuilt from an invalid leftover</code></pre>
+      <div class="ar-note">أول تشغيل بنى، والتاني لقاه سليم فمعملش حاجة، وبعد ما كسرناه بـ <code>55P03</code> التالت عمله rebuild من البواقي.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. A tiny migration linter <span class="lvl lvl-3">🔴 hard</span></b>
+    Squawk isn't run in this lesson, so build a tiny version: a function that takes the text of a migration and returns a list of problems. Catch at least: plain <code>CREATE INDEX</code>, FK or CHECK with no <code>NOT VALID</code>, <code>SET NOT NULL</code>, a column type change, a volatile default, a rename, and DDL with no <code>lock_timeout</code>.
+    <div class="ar-note">Squawk مش متشغل في الدرس، فابني نسخة صغيرة: function بتاخد نص الـ migration وترجّع قايمة مشاكل. لازم تمسك على الأقل: <code>CREATE INDEX</code> العادي، و FK أو CHECK من غير <code>NOT VALID</code>، و<code>SET NOT NULL</code>، وتغيير نوع عمود، و default volatile، و rename، و DDL من غير <code>lock_timeout</code>.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="l17/ex3-lint.ts"><code class="language-typescript">// الحل: linter صغير بالـ regex، كفاية يوريك الفكرة، بس Squawk بيعمل parse حقيقي للـ SQL
+type Rule = { id: string; bad: RegExp; unless?: RegExp; say: string };
+
+const rules: Rule[] = [
+  { id: "plain-create-index", bad: /CREATE\s+(UNIQUE\s+)?INDEX\b/i, unless: /CONCURRENTLY/i, say: "use CREATE INDEX CONCURRENTLY" },
+  { id: "fk-without-not-valid", bad: /FOREIGN\s+KEY/i, unless: /NOT\s+VALID/i, say: "add NOT VALID, then VALIDATE in a later step" },
+  { id: "check-without-not-valid", bad: /ADD\s+CONSTRAINT\s+\S+\s+CHECK/i, unless: /NOT\s+VALID/i, say: "add NOT VALID, then VALIDATE in a later step" },
+  { id: "set-not-null", bad: /SET\s+NOT\s+NULL/i, say: "use ADD CONSTRAINT ... NOT NULL ... NOT VALID (PG 18)" },
+  { id: "column-type-change", bad: /ALTER\s+COLUMN\s+\S+\s+(SET\s+DATA\s+)?TYPE/i, say: "may rewrite the table: use expand/contract" },
+  { id: "volatile-default", bad: /ADD\s+COLUMN[^;]*DEFAULT\s+(uuidv7|uuidv4|gen_random_uuid|random|clock_timestamp)\s*\(/i, say: "rewrites the table: add the column, then SET DEFAULT" },
+  { id: "rename", bad: /RENAME\s+(COLUMN|TO)\b/i, say: "breaks running code: use expand/contract or a view" },
+];
+
+export function lint(sql: string): string[] {
+  const out: string[] = [];
+  const statements = sql.split(";").map((s) =&gt; s.trim()).filter(Boolean);
+  const needsLock = statements.some((s) =&gt; /^(ALTER|DROP|CREATE\s+TRIGGER)/i.test(s));
+  if (needsLock &amp;&amp; !/lock_timeout/i.test(sql)) out.push("missing-lock-timeout: set lock_timeout before any DDL");
+  for (const s of statements) {
+    for (const r of rules) {
+      if (r.bad.test(s) &amp;&amp; !r.unless?.test(s)) out.push(`${r.id}: ${r.say}`);
+    }
+  }
+  return out;
+}
+
+const bad = `
+ALTER TABLE orders ADD COLUMN public_id uuid DEFAULT uuidv7();
+CREATE INDEX orders_status_idx ON orders (status);
+ALTER TABLE orders ADD FOREIGN KEY (customer_id) REFERENCES customers (id);
+ALTER TABLE orders ALTER COLUMN currency SET NOT NULL;
+ALTER TABLE orders RENAME COLUMN status TO state;
+`;
+const good = `
+SET lock_timeout = '2s';
+ALTER TABLE orders ADD COLUMN public_id uuid;
+ALTER TABLE orders ALTER COLUMN public_id SET DEFAULT uuidv7();
+ALTER TABLE orders ADD CONSTRAINT orders_customer_fk FOREIGN KEY (customer_id) REFERENCES customers (id) NOT VALID;
+`;
+console.log("bad file:");
+for (const f of lint(bad)) console.log("  " + f);
+console.log("good file:", lint(good));</code></pre>
+<pre><code class="language-plaintext">bad file:
+  missing-lock-timeout: set lock_timeout before any DDL
+  volatile-default: rewrites the table: add the column, then SET DEFAULT
+  plain-create-index: use CREATE INDEX CONCURRENTLY
+  fk-without-not-valid: add NOT VALID, then VALIDATE in a later step
+  set-not-null: use ADD CONSTRAINT ... NOT NULL ... NOT VALID (PG 18)
+  rename: breaks running code: use expand/contract or a view
+good file: []</code></pre>
+      <div class="ar-note">الملف الغلط طلّع كل المشاكل، والملف الصح رجّع قايمة فاضية. والحل ده بالـ regex، فهيتلخبط من الـ comments والـ strings: ده الفرق بينه وبين linter بيعمل parse حقيقي.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    In your side project, add a <code>migrations/</code> folder with node-pg-migrate or Drizzle Kit, a separate pipeline job that runs before the deploy, and a retry wrapper with <code>lock_timeout</code>. Then seed your orders table to 1M rows and run this lesson's harness against your next real migration. Put the output in the pull request.
+    <div class="ar-note">في مشروعك الجانبي، ضيف فولدر <code>migrations/</code> بـ node-pg-migrate أو Drizzle Kit، و job لوحدها في الـ pipeline قبل الـ deploy، و retry wrapper بـ <code>lock_timeout</code>. وبعدين كبّر جدول الـ orders لمليون صف، وشغّل الـ harness بتاع الدرس على الـ migration الحقيقية الجاية، وحط الـ output في الـ pull request.</div>
+    <details><summary>Hint · تلميح</summary>
+      Start from <code>safe-ddl.ts</code> and <code>p7-harness.ts</code>. Replace the operations list with your migration's statements, and keep the baseline row, so you can tell the machine's noise from the real stall.
+      <div class="ar-note">ابدأ من <code>safe-ddl.ts</code> و<code>p7-harness.ts</code>. بدّل قايمة العمليات بالـ statements بتاعة الـ migration بتاعتك، وسيب صف الـ baseline عشان تفرّق بين ضوضاء الجهاز والوقفة الحقيقية.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Versioned files, a tracking table, forward-only. A separate job before the deploy, on a direct connection.</li>
+    <li>The old code must run on the new schema: test each migration against the running version's queries.</li>
+    <li><code>lock_timeout</code> is your maximum stall per attempt. Retry only on <code>55P03</code>, with backoff and an attempt limit.</li>
+    <li><code>statement_timeout</code> counts lock waits and rolls back the whole statement. It's 0 for CIC and <code>VALIDATE</code>; long data steps get batched.</li>
+    <li><code>pg_cancel_backend</code> does nothing to an idle transaction; <code>pg_terminate_backend</code> ends it. Find the blocker with <code>pg_blocking_pids()</code>.</li>
+    <li>CIC: one statement, no transaction, waits for old snapshots even on other tables. Afterwards check <code>indisvalid</code>.</li>
+    <li>A failed CIC leaves an invalid index. <code>indisready = true</code> means it also costs writes. <code>IF NOT EXISTS</code> hides it.</li>
+    <li>ADD COLUMN: constant default or <code>now()</code> is instant; volatile, identity and <code>STORED</code> rewrite. <code>relfilenode</code> is the proof.</li>
+    <li>NOT NULL: <code>ADD CONSTRAINT ... NOT NULL ... NOT VALID</code> + <code>VALIDATE</code> on PG 18, the <code>CHECK</code> route on PG 12+.</li>
+    <li>FK and CHECK: <code>NOT VALID</code>, commit, <code>VALIDATE</code>. One transaction cancels the benefit. Index the child column first.</li>
+    <li><code>NOT ENFORCED</code> is documentation, not protection.</li>
+    <li>Test on realistic size under traffic. An empty database says everything is instant.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>ملفات بـ versions، وجدول تتبّع، و forward-only. و job لوحدها قبل الـ deploy على connection مباشرة.</li>
+      <li>الكود القديم لازم يشتغل على الـ schema الجديد: اختبر كل migration ضد queries الإصدار الشغال.</li>
+      <li><code>lock_timeout</code> هو أقصى وقفة في المحاولة. اعمل retry على <code>55P03</code> بس، مع backoff وحد للمحاولات.</li>
+      <li><code>statement_timeout</code> بيعدّ انتظار الـ locks وبيرجّع الـ statement كله. بـ 0 للـ CIC و<code>VALIDATE</code>، وخطوات الـ data الطويلة بالـ batches.</li>
+      <li><code>pg_cancel_backend</code> مبيعملش حاجة لـ transaction نايمة، و<code>pg_terminate_backend</code> بينهيها. ولاقي الـ blocker بـ <code>pg_blocking_pids()</code>.</li>
+      <li>الـ CIC: statement واحد، من غير transaction، وبيستنى الـ snapshots القديمة حتى على جداول تانية. وبعدها اتأكد من <code>indisvalid</code>.</li>
+      <li>الـ CIC الفاشل بيسيب index بايظ. ولو <code>indisready = true</code> بيكلّف الـ writes كمان. و<code>IF NOT EXISTS</code> بيخبّيه.</li>
+      <li>الـ ADD COLUMN: القيمة الثابتة أو <code>now()</code> لحظي، والـ volatile والـ identity والـ <code>STORED</code> بيعملوا rewrite. والدليل <code>relfilenode</code>.</li>
+      <li>الـ NOT NULL: <code>ADD CONSTRAINT ... NOT NULL ... NOT VALID</code> و<code>VALIDATE</code> على PG 18، وطريقة الـ <code>CHECK</code> على PG 12 وأحدث.</li>
+      <li>الـ FK والـ CHECK: <code>NOT VALID</code>، و commit، و<code>VALIDATE</code>. والـ transaction الواحدة بتلغي الفايدة. واعمل index على عمود الـ child الأول.</li>
+      <li><code>NOT ENFORCED</code> توثيق مش حماية.</li>
+      <li>اختبر بحجم واقعي وتحت traffic. الـ database الفاضية هتقولك كل حاجة لحظية.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 07 · 2.5 — Migration tooling: versioned، forward-only غالبًا، في الـ CI/CD كخطوة منفصلة قبل الـ deploy</label>
+    <label><input type="checkbox" data-key="r2"> 07 · 2.5 — <code>CREATE INDEX CONCURRENTLY</code> (مش بيبلوك الـ writes — بس مينفعش جوه transaction)</label>
+    <label><input type="checkbox" data-key="r3"> 07 · 2.5 — إضافة عمود بـ <code>NOT NULL</code> + <code>DEFAULT</code> على جدول كبير (PG 11+ سريع للـ constant default)</label>
+    <label><input type="checkbox" data-key="r4"> 07 · 2.5 — <code>lock_timeout</code> و <code>statement_timeout</code> في الـ migrations عشان متوقّعش production</label>
+    <label><input type="checkbox" data-key="r5"> 07 · 2.5 — إضافة FK على جدول كبير: <code>NOT VALID</code> ثم <code>VALIDATE CONSTRAINT</code></label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.postgresql.org/docs/18/sql-altertable.html">PostgreSQL 18 — ALTER TABLE (locks, rewrites, NOT VALID)</a></li>
+    <li><a href="https://www.postgresql.org/docs/18/sql-createindex.html">PostgreSQL 18 — CREATE INDEX (building indexes concurrently)</a></li>
+    <li><a href="https://www.postgresql.org/docs/18/explicit-locking.html">PostgreSQL 18 — Explicit locking (conflict table)</a></li>
+    <li><a href="https://www.postgresql.org/docs/18/runtime-config-client.html">PostgreSQL 18 — lock_timeout and statement_timeout</a></li>
+    <li><a href="https://www.postgresql.org/docs/18/progress-reporting.html">PostgreSQL 18 — Progress reporting (CREATE INDEX phases)</a></li>
+    <li><a href="https://salsita.github.io/node-pg-migrate/">node-pg-migrate docs</a> · <a href="https://github.com/sbdchd/squawk">Squawk on GitHub</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <!-- ===== Prev / Next (use class="empty" on a span when there is no prev/next) ===== -->
+  <nav class="lesson-nav">
+    <a class="prev" href="./16-concurrency-patterns-skip-locked.html"><small>← Previous</small>16 · SKIP LOCKED &amp; NOTIFY</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./18-expand-contract.html"><small>Next →</small>18 · Expand/Contract</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

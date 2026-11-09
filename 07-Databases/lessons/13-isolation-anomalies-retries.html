@@ -1,0 +1,2601 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Isolation Levels, Anomalies &amp; Serialization Retries — 07 Databases</title>
+<meta name="section" content="07-Databases">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">07 · Databases</a></span>
+    <span>·</span>
+    <span>Lesson 13 / 43</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Isolation Levels, Anomalies &amp; Serialization Retries</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 13 of 43 — 07 Databases</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">PostgreSQL 18 · Node 22 · TypeScript 7</span>
+      <span class="chip">Prereq: lesson 05 · 04-Node lesson 19</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>07 · 2.4 — <b>Isolation levels</b>: Read Uncommitted (مش موجود فعليًا في PG)، <b>Read Committed</b> (الافتراضي)، <b>Repeatable Read</b>، <b>Serializable</b></li>
+        <li>07 · 2.4 — <b>الـ anomalies</b>: dirty read، non-repeatable read، phantom read، <b>lost update</b> (الأخطر والأشهر)، write skew — ومثال عملي لكل واحدة</li>
+        <li>07 · 2.4 — Serialization failures و retry logic من الكود</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — The map, and a runner to prove it</a></li>
+      <li><a href="#p2">Part 2 — Read Committed, the default</a></li>
+      <li><a href="#p3">Part 3 — Repeatable Read</a></li>
+      <li><a href="#p4">Part 4 — Lost update</a></li>
+      <li><a href="#p5">Part 5 — Write skew &amp; Serializable</a></li>
+      <li><a href="#p6">Part 6 — Retry logic that holds up</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Concurrency bugs in data don't crash anything. Your tests pass, your logs stay clean, and then a wallet ends up with money it shouldn't have, or a coupon with a limit of one gets used twice. In Part 4 of this lesson, 20 concurrent withdrawals in ordinary Node code lose up to 19 of them with no error at all, and wrapping the code in <code>BEGIN</code>/<code>COMMIT</code> doesn't help. Knowing what each isolation level really guarantees in Postgres, which is not what the SQL standard's table suggests, tells you which bugs you can have, which fix is cheapest, and when you owe the database a retry loop. It's also one of the most reliable senior interview topics.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ concurrency bugs في الـ data مبتوقّعش حاجة. الـ tests بتعدّي، والـ logs نضيفة، وبعدين تلاقي wallet فيها فلوس مش بتاعتها، أو كوبون حدّه مرة واحدة اتستخدم مرتين. في الجزء 4 من الدرس، 20 عملية سحب في نفس اللحظة بكود Node عادي بيضيع منها لحد 19 عملية من غير ولا error، ولفّ الكود في <code>BEGIN</code>/<code>COMMIT</code> مش بيحل المشكلة. لما تعرف كل isolation level بيضمن إيه فعلًا في Postgres، وده مختلف عن اللي جدول الـ SQL standard بيوحي بيه، هتعرف إيه الـ bugs الممكنة عندك، وإيه أرخص حل، وإمتى لازم تكتب retry loop للـ database. وكمان ده من أضمن مواضيع الـ interviews بتاعة السنيور.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — The map, and a runner to prove it <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الخريطة، و runner يثبتها</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><a href="./05-indexes-transactions-intro.html">Lesson 05</a> covered ACID and <code>BEGIN</code>/<code>COMMIT</code>. This lesson is the <b>I</b>. An isolation level answers one question: while my transaction runs, which effects of other transactions can I see, and which of my writes can collide with theirs? The SQL standard defines four levels by the phenomena each one must forbid. That table is a <em>floor</em>, and a database may be stricter. Postgres is stricter, so it really has three behaviours, not four.</p>
+    <table>
+      <tr><th>Level</th><th>Dirty read</th><th>Non-repeatable read</th><th>Phantom read</th><th>Serialization anomaly</th></tr>
+      <tr><td><code>READ UNCOMMITTED</code></td><td>Allowed, <b>not in PG</b></td><td>Possible</td><td>Possible</td><td>Possible</td></tr>
+      <tr><td><code>READ COMMITTED</code> (PG default)</td><td>No</td><td>Possible</td><td>Possible</td><td>Possible</td></tr>
+      <tr><td><code>REPEATABLE READ</code></td><td>No</td><td>No</td><td>Allowed, <b>not in PG</b></td><td>Possible</td></tr>
+      <tr><td><code>SERIALIZABLE</code></td><td>No</td><td>No</td><td>No</td><td>No</td></tr>
+    </table>
+  </section>
+  <div class="ar-note">الجدول ده من الـ docs بتاعة Postgres. سطر سطر: <code>READ UNCOMMITTED</code> الـ standard بيسمح فيه بـ dirty read بس Postgres مبيسمحش بيه، والباقي ممكن يحصل. <code>READ COMMITTED</code> (الافتراضي في Postgres) مفيهوش dirty read، بس non-repeatable و phantom و serialization anomaly ممكنين. <code>REPEATABLE READ</code> مفيهوش dirty ولا non-repeatable، والـ standard بيسمح بـ phantom بس Postgres مبيسمحش بيه، والـ serialization anomaly لسه ممكن. <code>SERIALIZABLE</code> مفيهوش أي حاجة من دول.</div>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The reason is MVCC, which <a href="./14-mvcc-vacuum-long-transactions.html">lesson 14</a> opens up. A reader never looks at uncommitted versions, at any level, so a dirty read is impossible: <code>READ UNCOMMITTED</code> is accepted and behaves as <code>READ COMMITTED</code>. And because <code>REPEATABLE READ</code> works from a single snapshot, a row committed after that snapshot simply isn't visible, so phantoms are blocked too. The academic name for what Postgres gives you there is <b>snapshot isolation</b>.</p>
+    <p>Notice that <b>lost update</b> and <b>write skew</b>, the two that cost real money, aren't in the standard's table at all. They come from the 1995 paper <em>A Critique of ANSI SQL Isolation Levels</em>. So don't trust the table: run it. Below is a tiny two-session runner that executes a script step by step on two real connections, waits until Postgres itself says a session is blocked on a lock, and prints a timeline. Every demo in this lesson uses it, and <code>anomaly-matrix.ts</code> uses it to produce the real map.</p>
+    <p>One safety rule first. These scripts drop and recreate tables, and with no URL or no port a driver silently falls back to the default port, which on your machine is your real database. So <code>lab-url.ts</code> refuses to run unless <code>DATABASE_URL</code> names a throwaway database on its own port.</p>
+  </section>
+
+<pre class="diagram">
+                   time ─────────────────────────────────────▶
+ other sessions    ──commit T1─────────commit T2───────────────
+
+ READ COMMITTED    [stmt 1: snapshot]   [stmt 2: NEW snapshot]
+                   sees T1              sees T1 + T2
+
+ REPEATABLE READ   [stmt 1: snapshot]   [stmt 2: SAME snapshot]
+                   sees T1              still sees T1 only
+                   write on a row T2 changed → 40001
+
+ SERIALIZABLE      same snapshot as above
+                   + SSI watches read/write dependencies
+                   dangerous pattern → 40001
+</pre>
+  <div class="ar-note">الزمن ماشي من الشمال لليمين، وفيه sessions تانية بتعمل commit لـ T1 وبعدين T2. في <code>READ COMMITTED</code> كل statement بياخد snapshot جديدة، فالتاني بيشوف T1 و T2. في <code>REPEATABLE READ</code> كل الـ statements على نفس الـ snapshot، فالتاني لسه شايف T1 بس، ولو كتبت على row غيّرها T2 بتاخد 40001. و<code>SERIALIZABLE</code> نفس الـ snapshot، وفوقها SSI بيراقب علاقات القراءة والكتابة بين الـ transactions، ولو طلع pattern خطر بتاخد 40001 برضه.</div>
+
+<pre data-file="src/lab-url.ts"><code class="language-typescript">// السكريبتات دي بتعمل DROP TABLE، فلازم تشتغل على lab DB مؤقتة بـ port صريح بس
+export function labUrl(): string {
+  const raw = process.env.DATABASE_URL ?? "";
+  const port = URL.canParse(raw) ? new URL(raw).port : "";
+  const n = Number(port);
+  // من غير port الـ driver بيرجع للـ default، يعني الـ database الحقيقية بتاعتك، وport صفر نفس الحكاية
+  if (!/^\d+$/.test(port) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) {
+    throw new Error(`refusing port "${port}": set DATABASE_URL to a throwaway database on its own port`);
+  }
+  return raw;
+}
+</code></pre>
+<pre data-file="src/timeline.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+export type Session = "A" | "B";
+
+export type Step = {
+  s: Session;
+  sql: string;
+  params?: unknown[];
+  // خطوة متوقع إنها تقف على lock: منستناش نتيجتها قبل الخطوة اللي بعدها
+  blocks?: boolean;
+};
+
+export type Outcome = {
+  step: number;
+  s: Session;
+  rows: Record&lt;string, unknown&gt;[];
+  tag: string;
+  error?: { code: string; message: string; detail?: string; hint?: string };
+};
+
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+const connect = async () =&gt; {
+  const client = new pg.Client({ connectionString: labUrl() });
+  await client.connect();
+  return client;
+};
+
+// بيحوّل نتيجة الخطوة لسطر واحد يتطبع في الـ timeline
+const show = (o: Outcome) =&gt;
+  o.error
+    ? `ERROR ${o.error.code}: ${o.error.message}`
+    : o.rows.length
+      ? JSON.stringify(o.rows.length === 1 ? o.rows[0] : o.rows)
+      : o.tag;
+
+// ينفّذ الخطوات بالترتيب بالظبط على session A و session B
+export async function runTimeline(title: string, steps: Step[], print = true): Promise&lt;Outcome[]&gt; {
+  const sessions = { A: await connect(), B: await connect() };
+  const watcher = await connect();
+  const pids = {
+    A: (await sessions.A.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number,
+    B: (await sessions.B.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number,
+  };
+  const waiting = new Map&lt;Session, Promise&lt;void&gt;&gt;();
+  const outcomes: Outcome[] = [];
+  const log = (line: string) =&gt; { if (print) console.log(line); };
+  // الـ session بتاع B بيتزق لليمين عشان تشوف الاتنين جنب بعض
+  const pad = (s: Session) =&gt; (s === "A" ? "" : "    ");
+
+  const exec = async (step: number, { s, sql, params }: Step) =&gt; {
+    const o: Outcome = { step, s, rows: [], tag: "" };
+    try {
+      const res = await sessions[s].query(sql, params);
+      o.rows = res.rows;
+      o.tag = res.command + (/UPDATE|INSERT|DELETE/.test(res.command) ? ` ${res.rowCount}` : "");
+    } catch (err) {
+      const e = err as pg.DatabaseError;
+      o.error = { code: e.code ?? "?", message: e.message, detail: e.detail, hint: e.hint };
+    }
+    outcomes.push(o);
+    return o;
+  };
+
+  log(`\n== ${title}`);
+  try {
+    for (const [i, step] of steps.entries()) {
+      const n = i + 1;
+      log(`${String(n).padStart(2)} ${pad(step.s)}${step.s}: ${step.sql}`);
+      if (step.blocks) {
+        waiting.set(step.s, exec(n, step).then((o) =&gt; log(`   ${pad(step.s)}   ↳ step ${n} resumed → ${show(o)}`)));
+        // استنى لحد ما Postgres نفسه يقول إن الـ session واقف على lock
+        for (;;) {
+          const { rows } = await watcher.query("SELECT wait_event_type FROM pg_stat_activity WHERE pid = $1", [pids[step.s]]);
+          if (rows[0]?.wait_event_type === "Lock") break;
+          await sleep(5);
+        }
+        log(`   ${pad(step.s)}   … waiting on a lock`);
+        continue;
+      }
+      const o = await exec(n, step);
+      log(`   ${pad(step.s)}   → ${show(o)}`);
+      // لو الخطوة دي حررت locks، استنى الـ session التاني يكمل قبل الخطوة الجاية
+      if (/^(COMMIT|ROLLBACK)/i.test(step.sql)) {
+        const other: Session = step.s === "A" ? "B" : "A";
+        await waiting.get(other);
+        waiting.delete(other);
+      }
+    }
+    return outcomes;
+  } finally {
+    await Promise.all([sessions.A.end(), sessions.B.end(), watcher.end()]);
+  }
+}
+
+// تنفيذ SQL لوحده على connection مؤقتة، للـ setup والتحقق
+export async function sql(text: string, params?: unknown[]) {
+  const client = await connect();
+  try {
+    return await client.query(text, params);
+  } finally {
+    await client.end();
+  }
+}
+</code></pre>
+<pre data-file="src/dirty-read.ts"><code class="language-typescript">import { runTimeline, sql } from "./timeline.ts";
+
+await sql(`
+  DROP TABLE IF EXISTS payments;
+  CREATE TABLE payments (id int PRIMARY KEY, status text NOT NULL);
+  INSERT INTO payments VALUES (1, 'pending');
+`);
+
+// بنحاول dirty read بجد: B غيّر الـ row ولسه معملش COMMIT
+await runTimeline("READ UNCOMMITTED: try a dirty read", [
+  { s: "A", sql: "BEGIN ISOLATION LEVEL READ UNCOMMITTED" },
+  { s: "A", sql: "SHOW transaction_isolation" },
+  { s: "B", sql: "BEGIN" },
+  { s: "B", sql: "UPDATE payments SET status = 'captured' WHERE id = 1" },
+  { s: "A", sql: "SELECT status FROM payments WHERE id = 1" },
+  { s: "B", sql: "ROLLBACK" },
+  { s: "A", sql: "COMMIT" },
+]);
+</code></pre>
+<pre><code class="language-plaintext">== READ UNCOMMITTED: try a dirty read
+ 1 A: BEGIN ISOLATION LEVEL READ UNCOMMITTED
+      → BEGIN
+ 2 A: SHOW transaction_isolation
+      → {"transaction_isolation":"read uncommitted"}
+ 3     B: BEGIN
+          → BEGIN
+ 4     B: UPDATE payments SET status = 'captured' WHERE id = 1
+          → UPDATE 1
+ 5 A: SELECT status FROM payments WHERE id = 1
+      → {"status":"pending"}
+ 6     B: ROLLBACK
+          → ROLLBACK
+ 7 A: COMMIT
+      → COMMIT
+</code></pre>
+  <div class="ar-note">الـ timeline: الـ session بتاع <code>B</code> متزق لليمين عشان تشوف الاتنين. <code>A</code> طلب <code>READ UNCOMMITTED</code> و Postgres قبله، و<code>SHOW</code> بيقول <code>read uncommitted</code> فعلًا. <code>B</code> غيّر الـ payment لـ <code>captured</code> من غير COMMIT، و<code>A</code> قرا فلقى <code>pending</code>: يعني مفيش dirty read، حتى في المستوى اللي الـ standard بيسمح فيه بيها.</div>
+
+<pre data-file="src/anomaly-matrix.ts"><code class="language-typescript">import { runTimeline, sql, type Outcome, type Step } from "./timeline.ts";
+
+const LEVELS = ["READ UNCOMMITTED", "READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE"] as const;
+type Level = (typeof LEVELS)[number];
+
+await sql(`
+  DROP TABLE IF EXISTS accounts, invoices, admins;
+  CREATE TABLE accounts (id int PRIMARY KEY, balance int NOT NULL);
+  CREATE TABLE invoices (id int PRIMARY KEY, status text NOT NULL);
+  CREATE TABLE admins (user_id int PRIMARY KEY, active boolean NOT NULL);
+`);
+const reset = () =&gt; sql(`
+  TRUNCATE accounts, invoices, admins;
+  INSERT INTO accounts VALUES (1, 1000);
+  INSERT INTO invoices VALUES (1, 'paid'), (2, 'paid');
+  INSERT INTO admins VALUES (1, true), (2, true);
+`);
+
+// الصفوف اللي رجعت من خطوة معينة، عشان نقارن القرايتين
+const rowsOf = (out: Outcome[], step: number) =&gt; JSON.stringify(out.find((o) =&gt; o.step === step)?.rows);
+
+type Probe = {
+  name: string;
+  steps: (l: Level) =&gt; Step[];
+  happened: (out: Outcome[]) =&gt; boolean | Promise&lt;boolean&gt;;
+};
+
+const probes: Probe[] = [
+  {
+    // هل A شاف قيمة B قبل الـ COMMIT؟
+    name: "dirty read",
+    steps: (l) =&gt; [
+      { s: "A", sql: `BEGIN ISOLATION LEVEL ${l}` },
+      { s: "B", sql: "BEGIN" },
+      { s: "B", sql: "UPDATE accounts SET balance = 1 WHERE id = 1" },
+      { s: "A", sql: "SELECT balance FROM accounts WHERE id = 1" },
+      { s: "B", sql: "ROLLBACK" },
+      { s: "A", sql: "COMMIT" },
+    ],
+    happened: (out) =&gt; rowsOf(out, 4) === JSON.stringify([{ balance: 1 }]),
+  },
+  {
+    // هل نفس القراية رجعت قيمة مختلفة جوه نفس الـ transaction؟
+    name: "non-repeatable read",
+    steps: (l) =&gt; [
+      { s: "A", sql: `BEGIN ISOLATION LEVEL ${l}` },
+      { s: "A", sql: "SELECT balance FROM accounts WHERE id = 1" },
+      { s: "B", sql: "UPDATE accounts SET balance = 500 WHERE id = 1" },
+      { s: "A", sql: "SELECT balance FROM accounts WHERE id = 1" },
+      { s: "A", sql: "COMMIT" },
+    ],
+    happened: (out) =&gt; rowsOf(out, 2) !== rowsOf(out, 4),
+  },
+  {
+    // هل ظهر row جديد في نفس الـ query؟
+    name: "phantom read",
+    steps: (l) =&gt; [
+      { s: "A", sql: `BEGIN ISOLATION LEVEL ${l}` },
+      { s: "A", sql: "SELECT count(*)::int AS n FROM invoices WHERE status = 'paid'" },
+      { s: "B", sql: "INSERT INTO invoices VALUES (3, 'paid')" },
+      { s: "A", sql: "SELECT count(*)::int AS n FROM invoices WHERE status = 'paid'" },
+      { s: "A", sql: "COMMIT" },
+    ],
+    happened: (out) =&gt; rowsOf(out, 2) !== rowsOf(out, 4),
+  },
+  {
+    // سحبين كل واحد 100 من 1000: لو الاتنين نجحوا والناتج 900 يبقى سحبة ضاعت
+    name: "lost update",
+    steps: (l) =&gt; [
+      { s: "A", sql: `BEGIN ISOLATION LEVEL ${l}` },
+      { s: "B", sql: `BEGIN ISOLATION LEVEL ${l}` },
+      { s: "A", sql: "SELECT balance FROM accounts WHERE id = 1" },
+      { s: "B", sql: "SELECT balance FROM accounts WHERE id = 1" },
+      { s: "A", sql: "UPDATE accounts SET balance = 900 WHERE id = 1" },
+      { s: "A", sql: "COMMIT" },
+      { s: "B", sql: "UPDATE accounts SET balance = 900 WHERE id = 1" },
+      { s: "B", sql: "COMMIT" },
+    ],
+    happened: (out) =&gt; !out.some((o) =&gt; o.error),
+  },
+  {
+    // كل admin بيشيل التاني بعد ما شاف إن فيه اتنين
+    name: "write skew",
+    steps: (l) =&gt; [
+      { s: "A", sql: `BEGIN ISOLATION LEVEL ${l}` },
+      { s: "B", sql: `BEGIN ISOLATION LEVEL ${l}` },
+      { s: "A", sql: "SELECT count(*)::int AS n FROM admins WHERE active" },
+      { s: "B", sql: "SELECT count(*)::int AS n FROM admins WHERE active" },
+      { s: "A", sql: "UPDATE admins SET active = false WHERE user_id = 2" },
+      { s: "B", sql: "UPDATE admins SET active = false WHERE user_id = 1" },
+      { s: "A", sql: "COMMIT" },
+      { s: "B", sql: "COMMIT" },
+    ],
+    happened: async () =&gt; (await sql("SELECT count(*)::int AS n FROM admins WHERE active")).rows[0].n === 0,
+  },
+];
+
+const table: string[][] = [];
+for (const probe of probes) {
+  const cells = [probe.name];
+  for (const level of LEVELS) {
+    await reset();
+    const out = await runTimeline(probe.name, probe.steps(level), false);
+    const bad = await probe.happened(out);
+    const code = out.find((o) =&gt; o.error)?.error?.code;
+    cells.push(bad ? "HAPPENS" : code ? `aborts ${code}` : "no");
+  }
+  table.push(cells);
+}
+
+const header = ["anomaly", "READ UNCOMM.", "READ COMM.", "REPEAT. READ", "SERIALIZABLE"];
+const widths = header.map((h, i) =&gt; Math.max(h.length, ...table.map((r) =&gt; r[i]!.length)));
+const line = (r: string[]) =&gt; r.map((c, i) =&gt; c.padEnd(widths[i]!)).join("  ");
+console.log(line(header));
+for (const r of table) console.log(line(r));
+</code></pre>
+<pre><code class="language-plaintext">anomaly              READ UNCOMM.  READ COMM.  REPEAT. READ  SERIALIZABLE
+dirty read           no            no          no            no          
+non-repeatable read  HAPPENS       HAPPENS     no            no          
+phantom read         HAPPENS       HAPPENS     no            no          
+lost update          HAPPENS       HAPPENS     aborts 40001  aborts 40001
+write skew           HAPPENS       HAPPENS     HAPPENS       aborts 40001
+</code></pre>
+  <div class="ar-note">دي الخريطة الحقيقية من تشغيل فعلي على Postgres 18، مش من كتاب. <code>HAPPENS</code> يعني الـ anomaly حصلت من غير أي error. <code>no</code> يعني محصلتش. <code>aborts 40001</code> يعني Postgres رفض واحدة من الـ transactions بدل ما يسيب الـ data تبوظ. سطر سطر: الـ dirty read مبيحصلش خالص في أي level. الـ non-repeatable والـ phantom بيحصلوا لحد <code>READ COMMITTED</code>. الـ lost update بيحصل لحد <code>READ COMMITTED</code> وفوق كده بياخد 40001. والـ write skew بيعدّي حتى على <code>REPEATABLE READ</code>، و<code>SERIALIZABLE</code> بس هو اللي بيمسكه.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><a href="./05-indexes-transactions-intro.html">درس 05</a> غطى ACID و <code>BEGIN</code>/<code>COMMIT</code>، والدرس ده عن حرف الـ <b>I</b>. الـ isolation level بيجاوب على سؤال واحد: وأنا الـ transaction بتاعتي شغالة، إيه من تأثير الـ transactions التانية ممكن أشوفه، وإيه من كتاباتي ممكن يتصادم مع بتاعتهم؟ الـ SQL standard بيعرّف 4 levels بالظواهر اللي كل واحد لازم يمنعها. الجدول ده حد أدنى، والـ database من حقها تبقى أشد. و Postgres أشد فعلًا، فعنده 3 سلوكيات حقيقية مش 4.</p>
+    <p>السبب هو MVCC، وهنفتحه في <a href="./14-mvcc-vacuum-long-transactions.html">درس 14</a>. الـ reader عمره ما بيبص على نسخ لسه متعملهاش commit في أي level، فالـ dirty read مستحيل، و<code>READ UNCOMMITTED</code> بيتقبل وبيتصرف زي <code>READ COMMITTED</code>. ولأن <code>REPEATABLE READ</code> شغال على snapshot واحدة، أي row اتعمله commit بعد الـ snapshot ببساطة مش ظاهر، فالـ phantoms ممنوعة برضه. الاسم الأكاديمي للي Postgres بيديهولك هنا هو <b>snapshot isolation</b>.</p>
+    <p>لاحظ إن الـ <b>lost update</b> والـ <b>write skew</b>، اللي بيكلفوا فلوس بجد، مش موجودين في جدول الـ standard أصلًا. دول جايين من ورقة 1995 اسمها <em>A Critique of ANSI SQL Isolation Levels</em>. فمتثقش في الجدول، شغّله. الـ <code>timeline.ts</code> فوق runner صغير بينفذ سكريبت خطوة خطوة على connectionين حقيقيين، وبيستنى لحد ما Postgres نفسه يقول إن session واقف على lock، وبيطبع timeline. كل demos الدرس بتستخدمه، و<code>anomaly-matrix.ts</code> بيستخدمه عشان يطلّع الخريطة الحقيقية.</p>
+    <p>وفيه قاعدة أمان قبل أي حاجة. السكريبتات دي بتعمل drop للجداول وتعملها من جديد، ومن غير URL أو من غير port الـ driver بيرجع لوحده للـ default port، وده على جهازك هو الـ database الحقيقية بتاعتك. فـ <code>lab-url.ts</code> بيرفض يشتغل إلا لو <code>DATABASE_URL</code> بيشاور على database مؤقتة على port خاص بيها.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      بلاغ من الـ support: "الرصيد غلط بس مفيش errors في الـ logs". أول سؤال: الـ endpoint ده على أنهي level؟ الإجابة في Node تقريبًا دايمًا <code>READ COMMITTED</code> لأنه الافتراضي ومحدش غيّره. يبقى من الخريطة، الـ lost update والـ write skew ممكنين والـ database مش هتقولك. وساعتها تدور في الكود على أي <code>SELECT</code> وبعده قرار وبعده <code>UPDATE</code>. و<code>timeline.ts</code> ده تقدر تستخدمه في tests تعيد بيها race بالظبط، خطوة خطوة، بدل ما تعتمد على الحظ.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Does Postgres support Read Uncommitted? What anomalies can happen at its default level?" → It accepts the syntax and behaves as Read Committed, because MVCC readers never see uncommitted versions. At the default, Read Committed: non-repeatable reads, phantoms, lost updates and write skew are all possible.
+    <div class="ar-note">"هل Postgres بيدعم Read Uncommitted؟ وإيه الـ anomalies الممكنة في الـ level الافتراضي؟" ← بيقبل الـ syntax وبيتصرف زي Read Committed، لأن الـ readers في MVCC عمرهم ما بيشوفوا نسخ لسه متعملهاش commit. وفي الافتراضي، Read Committed: الـ non-repeatable read والـ phantom والـ lost update والـ write skew كلهم ممكنين.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Read Committed, the default <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — Read Committed، الافتراضي</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Each <em>statement</em> gets a new snapshot when it starts. Within one statement everything is consistent; between two statements, anything that committed in the meantime becomes visible. Two named anomalies follow from that. A <b>non-repeatable read</b> is the same row reading differently the second time. A <b>phantom</b> is the same query returning a different <em>set</em> of rows. Below, a report sums a tenant's invoices twice inside one transaction while another session commits: the totals disagree, 60000 then 65000, and the count moves from 3 to 4.</p>
+    <p>This is acceptable for most OLTP work, and that's why it's the default: most transactions are short, touch a few rows by key, and make no decision that spans statements. It also never aborts you with a serialization error, so there's no retry to write. It stops being acceptable for <b>multi-statement reports</b>, where two numbers must agree, and for <b>checks</b>, where you read something and then act on it. The cheapest fix for a report is often one statement, since one statement sees one snapshot. If that doesn't fit, use Part 3.</p>
+    <p>There's one more trap, documented but rarely known. A statement blocked on a row lock waits, then re-checks its <code>WHERE</code> against the <em>new version of that row only</em>. It doesn't take a new snapshot for the rest of the table. In the third timeline, <code>jobs</code> has priorities 9 and 10 and session A adds 1 to both. A <code>DELETE ... WHERE priority = 10</code> deletes nothing, even though a row with priority 10 exists both before and after: the 9 was skipped at the start, and the 10 turned into 11 while it waited. So Read Committed is fine for simple updates by key and risky for complex search conditions on rows others are changing.</p>
+  </section>
+<pre data-file="src/rc-report.ts"><code class="language-typescript">import { runTimeline, sql } from "./timeline.ts";
+
+await sql(`
+  DROP TABLE IF EXISTS invoices;
+  CREATE TABLE invoices (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id int NOT NULL,
+    amount_cents bigint NOT NULL
+  );
+  INSERT INTO invoices (tenant_id, amount_cents) VALUES (1, 10000), (1, 20000), (1, 30000);
+`);
+
+const SUM = "SELECT sum(amount_cents)::int AS total FROM invoices WHERE tenant_id = 1";
+const COUNT = "SELECT count(*)::int AS invoices FROM invoices WHERE tenant_id = 1";
+
+// تقرير بيقرا الإجمالي مرتين، وبينهم session تاني بيعمل commit
+await runTimeline("READ COMMITTED: non-repeatable read and phantom", [
+  { s: "A", sql: "BEGIN" },
+  { s: "A", sql: "SHOW transaction_isolation" },
+  { s: "A", sql: SUM },
+  { s: "B", sql: "UPDATE invoices SET amount_cents = amount_cents + 5000 WHERE id = 1" },
+  { s: "A", sql: SUM },
+  { s: "A", sql: COUNT },
+  { s: "B", sql: "INSERT INTO invoices (tenant_id, amount_cents) VALUES (1, 7000)" },
+  { s: "A", sql: COUNT },
+  { s: "A", sql: "COMMIT" },
+]);
+
+// الحل الأرخص لو الأرقام تطلع من statement واحد: snapshot واحدة للرقمين
+await runTimeline("One statement sees one snapshot", [
+  { s: "A", sql: "SELECT count(*)::int AS invoices, sum(amount_cents)::int AS total FROM invoices WHERE tenant_id = 1" },
+]);
+
+// غريبة: الـ statement الواقف على lock بيعيد فحص الـ row المتغير بس
+await sql(`
+  DROP TABLE IF EXISTS jobs;
+  CREATE TABLE jobs (id int PRIMARY KEY, priority int NOT NULL);
+  INSERT INTO jobs VALUES (1, 9), (2, 10);
+`);
+await runTimeline("READ COMMITTED: a blocked DELETE re-checks the new row versions only", [
+  { s: "A", sql: "BEGIN" },
+  { s: "A", sql: "UPDATE jobs SET priority = priority + 1" },
+  { s: "B", sql: "DELETE FROM jobs WHERE priority = 10", blocks: true },
+  { s: "A", sql: "COMMIT" },
+  { s: "A", sql: "SELECT id, priority FROM jobs ORDER BY id" },
+]);
+</code></pre>
+<pre><code class="language-plaintext">== READ COMMITTED: non-repeatable read and phantom
+ 1 A: BEGIN
+      → BEGIN
+ 2 A: SHOW transaction_isolation
+      → {"transaction_isolation":"read committed"}
+ 3 A: SELECT sum(amount_cents)::int AS total FROM invoices WHERE tenant_id = 1
+      → {"total":60000}
+ 4     B: UPDATE invoices SET amount_cents = amount_cents + 5000 WHERE id = 1
+          → UPDATE 1
+ 5 A: SELECT sum(amount_cents)::int AS total FROM invoices WHERE tenant_id = 1
+      → {"total":65000}
+ 6 A: SELECT count(*)::int AS invoices FROM invoices WHERE tenant_id = 1
+      → {"invoices":3}
+ 7     B: INSERT INTO invoices (tenant_id, amount_cents) VALUES (1, 7000)
+          → INSERT 1
+ 8 A: SELECT count(*)::int AS invoices FROM invoices WHERE tenant_id = 1
+      → {"invoices":4}
+ 9 A: COMMIT
+      → COMMIT
+
+== One statement sees one snapshot
+ 1 A: SELECT count(*)::int AS invoices, sum(amount_cents)::int AS total FROM invoices WHERE tenant_id = 1
+      → {"invoices":4,"total":72000}
+
+== READ COMMITTED: a blocked DELETE re-checks the new row versions only
+ 1 A: BEGIN
+      → BEGIN
+ 2 A: UPDATE jobs SET priority = priority + 1
+      → UPDATE 2
+ 3     B: DELETE FROM jobs WHERE priority = 10
+          … waiting on a lock
+ 4 A: COMMIT
+      → COMMIT
+          ↳ step 3 resumed → DELETE 0
+ 5 A: SELECT id, priority FROM jobs ORDER BY id
+      → [{"id":1,"priority":10},{"id":2,"priority":11}]
+</code></pre>
+  <div class="ar-note">أول timeline: <code>A</code> قرا الإجمالي 60000، و<code>B</code> عمل update و commit، فنفس الـ query جوه نفس الـ transaction رجّعت 65000: ده الـ non-repeatable read. وبعدين الـ count كان 3، و<code>B</code> ضاف فاتورة، فبقى 4: ده الـ phantom. تاني timeline: statement واحد بيحسب الرقمين من snapshot واحدة. تالت timeline: الـ <code>DELETE</code> وقف على lock، ولما <code>A</code> عمل commit رجّع <code>DELETE 0</code>، والجدول في الآخر فيه priority 10 و 11، يعني كان فيه row بـ 10 قبل وبعد ومتمسحش.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>كل <em>statement</em> بياخد snapshot جديدة أول ما يبدأ. جوه الـ statement الواحد كله متماسك، وبين statement والتاني أي حاجة اتعمل لها commit بتظهر. وده بيطلّع anomalyين: الـ <b>non-repeatable read</b> إن نفس الـ row تتقري مختلفة تاني مرة، والـ <b>phantom</b> إن نفس الـ query ترجّع <em>مجموعة</em> rows مختلفة. فوق، تقرير بيجمع فواتير tenant مرتين جوه transaction واحدة وsession تاني بيعمل commit: الإجمالي 60000 وبعدين 65000، والعدد من 3 لـ 4.</p>
+    <p>ده مقبول لأغلب شغل الـ OLTP، وعشان كده هو الافتراضي: أغلب الـ transactions قصيرة، بتلمس rows قليلة بالـ key، ومبتاخدش قرار على أكتر من statement. وكمان عمره ما بيفشّلك بـ serialization error، فمفيش retry تكتبه. بيبطل يبقى مقبول في حاجتين: <b>التقارير اللي أكتر من statement</b> لما رقمين لازم يتفقوا، و<b>الـ checks</b> لما تقرا حاجة وتتصرف على أساسها. أرخص حل للتقرير غالبًا statement واحد، لأنه بيشوف snapshot واحدة. ولو ده مش مناسب، استخدم الجزء 3.</p>
+    <p>وفيه فخ تاني مكتوب في الـ docs بس قليل اللي يعرفه. الـ statement الواقف على row lock بيستنى، وبعدين بيعيد فحص الـ <code>WHERE</code> على <em>النسخة الجديدة من الـ row ده بس</em>، ومش بياخد snapshot جديدة لباقي الجدول. في تالت timeline، <code>jobs</code> فيه priorities 9 و 10، و<code>A</code> زوّد الاتنين 1. الـ <code>DELETE ... WHERE priority = 10</code> ممسحش حاجة، مع إن فيه row بـ priority 10 قبل وبعد: الـ 9 اتعدّت من الأول، والـ 10 بقت 11 وهو مستني. فـ Read Committed تمام لـ updates بسيطة بالـ key، وخطر مع شروط بحث معقدة على rows غيرك بيغيّرها.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      تذكرة من الـ finance: "الإجمالي في أول الصفحة مش مساوي مجموع السطور اللي تحت". الـ endpoint بيعمل query للـ header و query تانية للسطور، والـ orders بتتغير بينهم. الحل مش lock: يا تجيب الاتنين في statement واحد (window function من <a href="./06-ctes-windows-lateral.html">درس 06</a>)، يا تفتح <code>REPEATABLE READ READ ONLY</code>. أما <code>GET /orders/:id</code> بـ query واحدة، أو <code>UPDATE</code> بـ primary key، فـ <code>READ COMMITTED</code> كفاية ومتعقّدش الدنيا.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off</b>
+    Read Committed gives you no retries and fewer surprises in code, and in exchange you must think about every read that a decision depends on. Higher levels move that thinking into one retry wrapper, and in exchange you pay aborts under contention.
+    <div class="ar-note"><code>READ COMMITTED</code> بيديك كود من غير retries ومفاجآت أقل، بس لازم تفكر في كل قراءة بيعتمد عليها قرار. الـ levels الأعلى بتنقل التفكير ده لـ retry wrapper واحد، بس بتدفع aborts لما الـ contention يزيد.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Repeatable Read <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — Repeatable Read</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>One snapshot for the whole transaction. The same report now agrees with itself: 60000 and 3 both times, and only a new transaction sees 72000. The trap is <em>when</em> the snapshot is taken: at the <b>first statement, not at <code>BEGIN</code></b>. In the second timeline, B commits after A's <code>BEGIN</code> and A still sees it. If you need the snapshot pinned at a moment, run a cheap statement right there.</p>
+    <p>The price shows up on writes. If you try to update a row that someone changed after your snapshot, Postgres can't do what Read Committed does and re-check the new version, because that would break the promise of a stable view. It aborts you: <code>40001 could not serialize access due to concurrent update</code>. This is your signal, not a bug: retry the whole transaction from the start, and the new attempt gets a fresh snapshot. If the other session is still in progress you wait for it first: its <code>COMMIT</code> gives you 40001, and its <code>ROLLBACK</code> lets your update go through. After the error, every statement gets <code>25P02</code> until you roll back. A savepoint can't rescue it either: the snapshot is unchanged, so the same update fails the same way (real, below).</p>
+    <p>The best everyday use is a <b>consistent export</b> with <code>REPEATABLE READ READ ONLY</code>. It reads a stable view across any number of queries, refuses writes by accident with <code>25006</code>, and since it writes nothing it can't get a write conflict. In the test below, writers move money between 1,000 accounts while an export reads them in two queries. At Read Committed the total is wrong in most runs, and with Repeatable Read Read Only it's right every time. The cost: a long snapshot keeps old row versions alive, which is <a href="./14-mvcc-vacuum-long-transactions.html">lesson 14</a>'s story, and <code>pg_dump</code> works on this same snapshot idea.</p>
+  </section>
+<pre data-file="src/rr-report.ts"><code class="language-typescript">import { runTimeline, sql } from "./timeline.ts";
+
+const seed = () =&gt; sql(`
+  DROP TABLE IF EXISTS invoices;
+  CREATE TABLE invoices (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id int NOT NULL,
+    amount_cents bigint NOT NULL
+  );
+  INSERT INTO invoices (tenant_id, amount_cents) VALUES (1, 10000), (1, 20000), (1, 30000);
+`);
+const SUM = "SELECT sum(amount_cents)::int AS total FROM invoices WHERE tenant_id = 1";
+const COUNT = "SELECT count(*)::int AS invoices FROM invoices WHERE tenant_id = 1";
+
+// نفس التقرير بالظبط، بس snapshot واحدة لكل الـ transaction
+await seed();
+await runTimeline("REPEATABLE READ: the same report now agrees", [
+  { s: "A", sql: "BEGIN ISOLATION LEVEL REPEATABLE READ" },
+  { s: "A", sql: SUM },
+  { s: "A", sql: COUNT },
+  { s: "B", sql: "UPDATE invoices SET amount_cents = amount_cents + 5000 WHERE id = 1" },
+  { s: "B", sql: "INSERT INTO invoices (tenant_id, amount_cents) VALUES (1, 7000)" },
+  { s: "A", sql: SUM },
+  { s: "A", sql: COUNT },
+  { s: "A", sql: "COMMIT" },
+  { s: "A", sql: SUM },
+]);
+
+// فخ: الـ snapshot بتتاخد مع أول statement، مش مع BEGIN
+await seed();
+await runTimeline("The snapshot starts at the first statement, not at BEGIN", [
+  { s: "A", sql: "BEGIN ISOLATION LEVEL REPEATABLE READ" },
+  { s: "B", sql: "UPDATE invoices SET amount_cents = amount_cents + 5000 WHERE id = 1" },
+  { s: "A", sql: SUM },
+  { s: "A", sql: "COMMIT" },
+]);
+
+// كتابة على row حد تاني غيّره بعد الـ snapshot: 40001
+await seed();
+await runTimeline("A concurrent update makes yours fail", [
+  { s: "A", sql: "BEGIN ISOLATION LEVEL REPEATABLE READ" },
+  { s: "A", sql: SUM },
+  { s: "B", sql: "UPDATE invoices SET amount_cents = 11000 WHERE id = 1" },
+  { s: "A", sql: "UPDATE invoices SET amount_cents = 12000 WHERE id = 1" },
+  { s: "A", sql: SUM },
+  { s: "A", sql: "ROLLBACK" },
+]);
+
+// لو الـ session التاني لسه شغال: بتستنى، والنتيجة حسب هو عمل COMMIT ولا ROLLBACK
+await seed();
+await runTimeline("Blocked first: the other session COMMITs", [
+  { s: "A", sql: "BEGIN ISOLATION LEVEL REPEATABLE READ" },
+  { s: "A", sql: SUM },
+  { s: "B", sql: "BEGIN" },
+  { s: "B", sql: "UPDATE invoices SET amount_cents = 11000 WHERE id = 1" },
+  { s: "A", sql: "UPDATE invoices SET amount_cents = 12000 WHERE id = 1", blocks: true },
+  { s: "B", sql: "COMMIT" },
+  { s: "A", sql: "ROLLBACK" },
+]);
+await seed();
+await runTimeline("Blocked first: the other session ROLLs BACK", [
+  { s: "A", sql: "BEGIN ISOLATION LEVEL REPEATABLE READ" },
+  { s: "A", sql: SUM },
+  { s: "B", sql: "BEGIN" },
+  { s: "B", sql: "UPDATE invoices SET amount_cents = 11000 WHERE id = 1" },
+  { s: "A", sql: "UPDATE invoices SET amount_cents = 12000 WHERE id = 1", blocks: true },
+  { s: "B", sql: "ROLLBACK" },
+  { s: "A", sql: "COMMIT" },
+]);
+
+// الـ SAVEPOINT مبينفعش هنا: الـ snapshot هي هي
+await seed();
+await runTimeline("A savepoint can't rescue 40001: same snapshot, same failure", [
+  { s: "A", sql: "BEGIN ISOLATION LEVEL REPEATABLE READ" },
+  { s: "A", sql: SUM },
+  { s: "B", sql: "UPDATE invoices SET amount_cents = 11000 WHERE id = 1" },
+  { s: "A", sql: "SAVEPOINT before_update" },
+  { s: "A", sql: "UPDATE invoices SET amount_cents = 12000 WHERE id = 1" },
+  { s: "A", sql: "ROLLBACK TO SAVEPOINT before_update" },
+  { s: "A", sql: "UPDATE invoices SET amount_cents = 12000 WHERE id = 1" },
+  { s: "A", sql: "ROLLBACK" },
+]);
+
+// الـ READ ONLY بيمنع أي كتابة بالغلط
+await seed();
+await runTimeline("READ ONLY refuses writes", [
+  { s: "A", sql: "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" },
+  { s: "A", sql: "UPDATE invoices SET amount_cents = 0" },
+  { s: "A", sql: "ROLLBACK" },
+]);
+</code></pre>
+<pre><code class="language-plaintext">== REPEATABLE READ: the same report now agrees
+ 1 A: BEGIN ISOLATION LEVEL REPEATABLE READ
+      → BEGIN
+ 2 A: SELECT sum(amount_cents)::int AS total FROM invoices WHERE tenant_id = 1
+      → {"total":60000}
+ 3 A: SELECT count(*)::int AS invoices FROM invoices WHERE tenant_id = 1
+      → {"invoices":3}
+ 4     B: UPDATE invoices SET amount_cents = amount_cents + 5000 WHERE id = 1
+          → UPDATE 1
+ 5     B: INSERT INTO invoices (tenant_id, amount_cents) VALUES (1, 7000)
+          → INSERT 1
+ 6 A: SELECT sum(amount_cents)::int AS total FROM invoices WHERE tenant_id = 1
+      → {"total":60000}
+ 7 A: SELECT count(*)::int AS invoices FROM invoices WHERE tenant_id = 1
+      → {"invoices":3}
+ 8 A: COMMIT
+      → COMMIT
+ 9 A: SELECT sum(amount_cents)::int AS total FROM invoices WHERE tenant_id = 1
+      → {"total":72000}
+
+== The snapshot starts at the first statement, not at BEGIN
+ 1 A: BEGIN ISOLATION LEVEL REPEATABLE READ
+      → BEGIN
+ 2     B: UPDATE invoices SET amount_cents = amount_cents + 5000 WHERE id = 1
+          → UPDATE 1
+ 3 A: SELECT sum(amount_cents)::int AS total FROM invoices WHERE tenant_id = 1
+      → {"total":65000}
+ 4 A: COMMIT
+      → COMMIT
+
+== A concurrent update makes yours fail
+ 1 A: BEGIN ISOLATION LEVEL REPEATABLE READ
+      → BEGIN
+ 2 A: SELECT sum(amount_cents)::int AS total FROM invoices WHERE tenant_id = 1
+      → {"total":60000}
+ 3     B: UPDATE invoices SET amount_cents = 11000 WHERE id = 1
+          → UPDATE 1
+ 4 A: UPDATE invoices SET amount_cents = 12000 WHERE id = 1
+      → ERROR 40001: could not serialize access due to concurrent update
+ 5 A: SELECT sum(amount_cents)::int AS total FROM invoices WHERE tenant_id = 1
+      → ERROR 25P02: current transaction is aborted, commands ignored until end of transaction block
+ 6 A: ROLLBACK
+      → ROLLBACK
+
+== Blocked first: the other session COMMITs
+ 1 A: BEGIN ISOLATION LEVEL REPEATABLE READ
+      → BEGIN
+ 2 A: SELECT sum(amount_cents)::int AS total FROM invoices WHERE tenant_id = 1
+      → {"total":60000}
+ 3     B: BEGIN
+          → BEGIN
+ 4     B: UPDATE invoices SET amount_cents = 11000 WHERE id = 1
+          → UPDATE 1
+ 5 A: UPDATE invoices SET amount_cents = 12000 WHERE id = 1
+      … waiting on a lock
+ 6     B: COMMIT
+          → COMMIT
+      ↳ step 5 resumed → ERROR 40001: could not serialize access due to concurrent update
+ 7 A: ROLLBACK
+      → ROLLBACK
+
+== Blocked first: the other session ROLLs BACK
+ 1 A: BEGIN ISOLATION LEVEL REPEATABLE READ
+      → BEGIN
+ 2 A: SELECT sum(amount_cents)::int AS total FROM invoices WHERE tenant_id = 1
+      → {"total":60000}
+ 3     B: BEGIN
+          → BEGIN
+ 4     B: UPDATE invoices SET amount_cents = 11000 WHERE id = 1
+          → UPDATE 1
+ 5 A: UPDATE invoices SET amount_cents = 12000 WHERE id = 1
+      … waiting on a lock
+ 6     B: ROLLBACK
+          → ROLLBACK
+      ↳ step 5 resumed → UPDATE 1
+ 7 A: COMMIT
+      → COMMIT
+
+== A savepoint can't rescue 40001: same snapshot, same failure
+ 1 A: BEGIN ISOLATION LEVEL REPEATABLE READ
+      → BEGIN
+ 2 A: SELECT sum(amount_cents)::int AS total FROM invoices WHERE tenant_id = 1
+      → {"total":60000}
+ 3     B: UPDATE invoices SET amount_cents = 11000 WHERE id = 1
+          → UPDATE 1
+ 4 A: SAVEPOINT before_update
+      → SAVEPOINT
+ 5 A: UPDATE invoices SET amount_cents = 12000 WHERE id = 1
+      → ERROR 40001: could not serialize access due to concurrent update
+ 6 A: ROLLBACK TO SAVEPOINT before_update
+      → ROLLBACK
+ 7 A: UPDATE invoices SET amount_cents = 12000 WHERE id = 1
+      → ERROR 40001: could not serialize access due to concurrent update
+ 8 A: ROLLBACK
+      → ROLLBACK
+
+== READ ONLY refuses writes
+ 1 A: BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY
+      → BEGIN
+ 2 A: UPDATE invoices SET amount_cents = 0
+      → ERROR 25006: cannot execute UPDATE in a read-only transaction
+ 3 A: ROLLBACK
+      → ROLLBACK
+</code></pre>
+  <div class="ar-note">بالترتيب: (1) نفس التقرير دلوقتي 60000 و 3 في القرايتين، وبعد الـ COMMIT بس بنشوف 72000. (2) الـ snapshot بدأت مع أول <code>SELECT</code>، فـ <code>A</code> شاف commit بتاع <code>B</code> اللي حصل بعد <code>BEGIN</code>. (3) الكتابة على row اتغير بعد الـ snapshot بتاخد 40001، وأي statement بعدها بياخد 25P02 لحد الـ ROLLBACK. (4) و(5) لو <code>B</code> لسه شغال، <code>A</code> بيستنى: لو <code>B</code> عمل COMMIT بياخد 40001، ولو عمل ROLLBACK بيكمل عادي. (6) الـ SAVEPOINT مبينفعش: نفس الـ UPDATE بيفشل تاني بنفس الـ 40001 لأن الـ snapshot هي هي. (7) <code>READ ONLY</code> بيرفض أي كتابة بـ 25006.</div>
+<pre data-file="src/export-consistency.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const pool = new pg.Pool({ connectionString: labUrl(), max: 10 });
+
+await pool.query(`
+  DROP TABLE IF EXISTS ledger_accounts;
+  CREATE TABLE ledger_accounts (id int PRIMARY KEY, balance_cents bigint NOT NULL);
+  INSERT INTO ledger_accounts SELECT i, 10000 FROM generate_series(1, 1000) i;
+`);
+const EXPECTED = 1000 * 10000;
+
+// الـ writer بيحوّل فلوس بين الحسابات: الإجمالي الحقيقي ثابت طول الوقت
+let writing = true;
+async function writer() {
+  while (writing) {
+    const from = 1 + Math.floor(Math.random() * 500);
+    const to = 501 + Math.floor(Math.random() * 500);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("UPDATE ledger_accounts SET balance_cents = balance_cents - 100 WHERE id = $1", [from]);
+      await client.query("UPDATE ledger_accounts SET balance_cents = balance_cents + 100 WHERE id = $1", [to]);
+      await client.query("COMMIT");
+    } finally {
+      client.release();
+    }
+  }
+}
+
+// الـ export بيقرا الحسابات على مرحلتين، زي صفحات أو ملفين
+async function exportOnce(begin: string) {
+  const client = await pool.connect();
+  try {
+    await client.query(begin);
+    const part1 = await client.query("SELECT sum(balance_cents)::bigint AS s FROM ledger_accounts WHERE id &lt;= 500");
+    const part2 = await client.query("SELECT sum(balance_cents)::bigint AS s FROM ledger_accounts WHERE id &gt; 500");
+    await client.query("COMMIT");
+    return Number(part1.rows[0].s) + Number(part2.rows[0].s);
+  } finally {
+    client.release();
+  }
+}
+
+const writers = Array.from({ length: 4 }, writer);
+for (const begin of ["BEGIN ISOLATION LEVEL READ COMMITTED", "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"]) {
+  let wrong = 0;
+  let worst = 0;
+  const runs = 300;
+  for (let i = 0; i &lt; runs; i++) {
+    const total = await exportOnce(begin);
+    if (total !== EXPECTED) wrong++;
+    worst = Math.max(worst, Math.abs(total - EXPECTED));
+  }
+  console.log(`${begin.padEnd(48)} wrong totals: ${String(wrong).padStart(3)} / ${runs}, worst drift: ${worst} cents`);
+}
+writing = false;
+await Promise.all(writers);
+await pool.end();
+</code></pre>
+<pre><code class="language-plaintext">BEGIN ISOLATION LEVEL READ COMMITTED             wrong totals: 257 / 300, worst drift: 900 cents
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY  wrong totals:   0 / 300, worst drift: 0 cents
+</code></pre>
+  <div class="ar-note">الإجمالي الحقيقي ثابت طول الوقت لأن كل تحويل بياخد من حساب ويدي لحساب. الـ export بيقرا نص الحسابات في query والنص التاني في query تانية. تحت <code>READ COMMITTED</code> الإجمالي طلع غلط في معظم الـ 300 مرة، لأن تحويلات بتتعمل بين الـ query والتانية. وتحت <code>REPEATABLE READ READ ONLY</code> طلع صح الـ 300 مرة كلهم.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>snapshot واحدة لكل الـ transaction. نفس التقرير دلوقتي متفق مع نفسه: 60000 و 3 في المرتين، و transaction جديدة بس هي اللي بتشوف 72000. الفخ هو <em>إمتى</em> الـ snapshot بتتاخد: مع <b>أول statement، مش مع <code>BEGIN</code></b>. في تاني timeline، <code>B</code> عمل commit بعد <code>BEGIN</code> بتاع <code>A</code>، و<code>A</code> شافه برضه. لو محتاج تثبّت الـ snapshot في لحظة معينة، شغّل statement رخيص هناك.</p>
+    <p>التمن بيبان في الكتابة. لو حاولت تعمل update لـ row حد غيّره بعد الـ snapshot بتاعتك، Postgres مش هيقدر يعمل زي Read Committed ويعيد الفحص على النسخة الجديدة، لأن ده هيكسر وعد الـ view الثابت. فبيفشّلك: <code>40001 could not serialize access due to concurrent update</code>. دي إشارة ليك مش bug: اعمل retry للـ transaction كلها من الأول، والمحاولة الجديدة هتاخد snapshot جديدة. ولو الـ session التاني لسه شغال بتستناه الأول: الـ <code>COMMIT</code> بتاعه بيديك 40001، والـ <code>ROLLBACK</code> بتاعه بيعدّي الـ update بتاعك. وبعد الـ error، كل statement بياخد <code>25P02</code> لحد ما تعمل rollback. والـ savepoint مش هينقذك برضه: الـ snapshot زي ما هي، فنفس الـ update بيفشل بنفس الطريقة (حقيقي، فوق).</p>
+    <p>أحسن استخدام يومي هو <b>export متماسك</b> بـ <code>REPEATABLE READ READ ONLY</code>: بيقرا view ثابت على أي عدد queries، وبيرفض الكتابة بالغلط بـ <code>25006</code>، ولأنه مبيكتبش حاجة مش ممكن ياخد write conflict. في التجربة فوق، writers بينقلوا فلوس بين 1000 حساب والـ export بيقراهم في queryين. تحت Read Committed الإجمالي غلط في معظم المرات، وتحت Repeatable Read Read Only صح كل مرة. التمن إن الـ snapshot الطويلة بتخلي نسخ الـ rows القديمة عايشة، ودي قصة <a href="./14-mvcc-vacuum-long-transactions.html">درس 14</a>. و<code>pg_dump</code> شغال على نفس فكرة الـ snapshot دي.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      <code>GET /reports/monthly.csv</code>: بتجيب الفواتير صفحة صفحة بـ cursor، ومعاها الـ refunds في query تانية، وآخر الملف إجمالي. افتح <code>BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY</code> على client واحد من الـ pool، فكل الصفحات بتشوف نفس اللحظة والملف متماسك. والـ <code>READ ONLY</code> كمان حماية لو حد ضاف كتابة في الكود ده بالغلط. بس متفتحهاش لساعات على الـ primary، وشغّل التقارير الكبيرة على replica (<a href="./23-replication-read-replicas.html">درس 23</a>).
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks at scale</b>
+    Turning on Repeatable Read for write paths without a retry loop turns a silent data bug into visible 500s. Under contention that's a lot of them: in Part 4, 19 of 20 concurrent withdrawals fail. That's still better than losing money, but it isn't finished until Part 6.
+    <div class="ar-note">لو شغّلت <code>REPEATABLE READ</code> على مسارات الكتابة من غير retry loop، هتحوّل bug ساكت في الـ data لـ 500 ظاهرة. وتحت الـ contention بيبقوا كتير: في الجزء 4، 19 من 20 عملية سحب متزامنة بيفشلوا. ده لسه أحسن من ضياع الفلوس، بس الشغل مبيخلصش غير في الجزء 6.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Lost update <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ lost update</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The most common and most dangerous one. Two requests read the same balance, each computes a new value in application code, and each writes it. The second write overwrites the first, computed from a value that's already stale. Nobody gets an error. Every ORM's <code>load, change, save</code> has this shape.</p>
+    <p>Below are 20 concurrent withdrawals of 1,000 from a pool of 20 connections, opened ahead of time like a server that's been running for a while. A cold pool serializes requests by accident while it connects, and hides the race. Each strategy ran 3 times. Plain read-modify-write loses 7 to 16 withdrawals. <b>Wrapping it in <code>BEGIN</code>/<code>COMMIT</code> is no better, at 12 to 19 lost</b>, because a transaction gives you atomicity, not protection from other readers, and at Read Committed the <code>SELECT</code> takes no lock. The inventory version oversells: 5 in stock and 6 to 8 sold.</p>
+    <p>The first fix, and the best one when the logic fits in SQL, is a single atomic statement: <code>UPDATE wallets SET balance_cents = balance_cents - $2 WHERE id = $1 AND balance_cents &gt;= $2</code>. It's correct even at Read Committed because of the rule from Part 2. The row lock makes the second writer wait, and then it re-reads and re-checks <em>that row</em>, so the second <code>balance_cents - 300</code> starts from the new value, and the <code>WHERE</code> fails if the money is gone. <code>rowCount === 0</code> means insufficient funds, which is a business result, not an error. When the logic has to run in code, <a href="./16-concurrency-patterns-skip-locked.html">lesson 16</a> has the three standard fixes: <code>FOR UPDATE</code>, a version column, and Serializable with retry.</p>
+    <p>Under Repeatable Read, the same broken code doesn't lose data: it aborts instead. 1 of 20 succeeds, 19 fail with 40001, and the balance is exactly right for the one that went through. Correct, but useless without Part 6.</p>
+  </section>
+
+<pre class="diagram">
+  request A                 wallet row               request B
+  ─────────                 ──────────               ─────────
+  SELECT ───────────────▶  balance = 1000
+                           balance = 1000  ◀─────────────── SELECT
+  compute 1000 - 100                          compute 1000 - 100
+  UPDATE balance = 900 ─▶  balance = 900
+  COMMIT
+                           balance = 900   ◀── UPDATE balance = 900
+                                                          COMMIT
+
+  two withdrawals succeeded, the balance only dropped once
+</pre>
+  <div class="ar-note">الرسمة بتمشي من فوق لتحت. <code>A</code> و<code>B</code> قروا نفس الرصيد 1000. كل واحد حسب في الكود 1000 ناقص 100. <code>A</code> كتب 900 وعمل commit. وبعدين <code>B</code> كتب 900 برضه، من قيمة قديمة. النتيجة: عمليتين سحب نجحوا والرصيد نزل مرة واحدة، ومفيش أي error.</div>
+
+<pre data-file="src/lost-update.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const pool = new pg.Pool({ connectionString: labUrl(), max: 20 });
+// بنفتح الـ 20 connection مقدمًا زي سيرفر شغال من بدري
+const warm = await Promise.all(Array.from({ length: 20 }, () =&gt; pool.connect()));
+warm.forEach((c) =&gt; c.release());
+
+await pool.query(`
+  DROP TABLE IF EXISTS wallets, products, purchases;
+  CREATE TABLE wallets (id int PRIMARY KEY, balance_cents bigint NOT NULL);
+  CREATE TABLE products (id int PRIMARY KEY, stock int NOT NULL);
+  CREATE TABLE purchases (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, product_id int NOT NULL);
+`);
+const resetWallet = () =&gt; pool.query("TRUNCATE wallets; INSERT INTO wallets VALUES (1, 100000)");
+const resetStock = () =&gt; pool.query("TRUNCATE products, purchases; INSERT INTO products VALUES (1, 5)");
+const balance = async () =&gt; Number((await pool.query("SELECT balance_cents FROM wallets WHERE id = 1")).rows[0].balance_cents);
+
+// ❌ قرا، احسب في الكود، اكتب: ده الـ lost update بعينه
+async function withdrawBad(walletId: number, amount: number) {
+  const { rows } = await pool.query("SELECT balance_cents FROM wallets WHERE id = $1", [walletId]);
+  const current = Number(rows[0].balance_cents);
+  if (current &lt; amount) throw new Error("insufficient funds");
+  await pool.query("UPDATE wallets SET balance_cents = $2 WHERE id = $1", [walletId, current - amount]);
+}
+
+// ❌ نفس الغلطة جوه BEGIN و COMMIT: الـ transaction لوحدها مبتحلّش حاجة تحت READ COMMITTED
+async function withdrawBadInTx(walletId: number, amount: number) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query("SELECT balance_cents FROM wallets WHERE id = $1", [walletId]);
+    const current = Number(rows[0].balance_cents);
+    if (current &lt; amount) throw new Error("insufficient funds");
+    await client.query("UPDATE wallets SET balance_cents = $2 WHERE id = $1", [walletId, current - amount]);
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// ✅ الـ DB بتقرا وتحسب وتكتب في statement واحد، والـ row lock بيرتّب الكل
+async function withdrawAtomic(walletId: number, amount: number) {
+  const res = await pool.query(
+    `UPDATE wallets SET balance_cents = balance_cents - $2
+     WHERE id = $1 AND balance_cents &gt;= $2
+     RETURNING balance_cents`,
+    [walletId, amount],
+  );
+  // صفر rows معناها إن الرصيد مش مكفي، مش error
+  if (res.rowCount === 0) throw new Error("insufficient funds");
+}
+
+// نفس الكود الغلط، بس تحت REPEATABLE READ: بدل ما يضيع، بيفشل
+async function withdrawRepeatableRead(walletId: number, amount: number) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+    const { rows } = await client.query("SELECT balance_cents FROM wallets WHERE id = $1", [walletId]);
+    const current = Number(rows[0].balance_cents);
+    if (current &lt; amount) throw new Error("insufficient funds");
+    await client.query("UPDATE wallets SET balance_cents = $2 WHERE id = $1", [walletId, current - amount]);
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+const AMOUNT = 1000;
+const REQUESTS = 20;
+
+async function runWithdrawals(name: string, withdraw: (id: number, amount: number) =&gt; Promise&lt;void&gt;) {
+  await resetWallet();
+  const results = await Promise.allSettled(Array.from({ length: REQUESTS }, () =&gt; withdraw(1, AMOUNT)));
+  const ok = results.filter((r) =&gt; r.status === "fulfilled").length;
+  const codes = new Set(results.flatMap((r) =&gt; (r.status === "rejected" ? [(r.reason as pg.DatabaseError).code] : [])));
+  const final = await balance();
+  const correct = 100000 - ok * AMOUNT;
+  console.log(
+    `${name.padEnd(22)} succeeded=${String(ok).padStart(2)} failed=${String(REQUESTS - ok).padStart(2)} ` +
+      `final=${final} should be=${correct} lost=${(final - correct) / AMOUNT}` +
+      (codes.size ? ` errors=${[...codes].join(",")}` : ""),
+  );
+}
+
+for (let run = 1; run &lt;= 3; run++) {
+  await runWithdrawals("read-modify-write", withdrawBad);
+  await runWithdrawals("same, inside BEGIN", withdrawBadInTx);
+  await runWithdrawals("atomic UPDATE", withdrawAtomic);
+  await runWithdrawals("REPEATABLE READ", withdrawRepeatableRead);
+  console.log();
+}
+
+// ❌ نسخة الـ inventory: 5 قطع بس في المخزن و20 واحد بيشتروا في نفس اللحظة
+async function buyBad(productId: number) {
+  const { rows } = await pool.query("SELECT stock FROM products WHERE id = $1", [productId]);
+  if (rows[0].stock &lt; 1) throw new Error("out of stock");
+  await pool.query("UPDATE products SET stock = $2 WHERE id = $1", [productId, rows[0].stock - 1]);
+  await pool.query("INSERT INTO purchases (product_id) VALUES ($1)", [productId]);
+}
+
+// ✅ الـ WHERE هي اللي بتمنع الـ oversell، والبيع مبيحصلش غير لو الـ UPDATE لقى stock
+async function buyAtomic(productId: number) {
+  const res = await pool.query("UPDATE products SET stock = stock - 1 WHERE id = $1 AND stock &gt;= 1", [productId]);
+  if (res.rowCount === 0) throw new Error("out of stock");
+  await pool.query("INSERT INTO purchases (product_id) VALUES ($1)", [productId]);
+}
+
+for (const [name, buy] of [["buyBad", buyBad], ["buyAtomic", buyAtomic]] as const) {
+  for (let round = 1; round &lt;= 4; round++) {
+    await resetStock();
+    const results = await Promise.allSettled(Array.from({ length: REQUESTS }, () =&gt; buy(1)));
+    const sold = results.filter((r) =&gt; r.status === "fulfilled").length;
+    const { rows } = await pool.query("SELECT (SELECT stock FROM products WHERE id = 1) AS stock");
+    console.log(`${name.padEnd(10)} round ${round}: stock was 5, sold=${String(sold).padStart(2)}, stock now=${rows[0].stock}`);
+  }
+}
+
+await pool.end();
+</code></pre>
+<pre><code class="language-plaintext">read-modify-write      succeeded=20 failed= 0 final=96000 should be=80000 lost=16
+same, inside BEGIN     succeeded=20 failed= 0 final=99000 should be=80000 lost=19
+atomic UPDATE          succeeded=20 failed= 0 final=80000 should be=80000 lost=0
+REPEATABLE READ        succeeded= 1 failed=19 final=99000 should be=99000 lost=0 errors=40001
+
+read-modify-write      succeeded=20 failed= 0 final=87000 should be=80000 lost=7
+same, inside BEGIN     succeeded=20 failed= 0 final=92000 should be=80000 lost=12
+atomic UPDATE          succeeded=20 failed= 0 final=80000 should be=80000 lost=0
+REPEATABLE READ        succeeded= 1 failed=19 final=99000 should be=99000 lost=0 errors=40001
+
+read-modify-write      succeeded=20 failed= 0 final=90000 should be=80000 lost=10
+same, inside BEGIN     succeeded=20 failed= 0 final=93000 should be=80000 lost=13
+atomic UPDATE          succeeded=20 failed= 0 final=80000 should be=80000 lost=0
+REPEATABLE READ        succeeded= 1 failed=19 final=99000 should be=99000 lost=0 errors=40001
+
+buyBad     round 1: stock was 5, sold= 8, stock now=0
+buyBad     round 2: stock was 5, sold= 6, stock now=0
+buyBad     round 3: stock was 5, sold= 8, stock now=0
+buyBad     round 4: stock was 5, sold= 7, stock now=0
+buyAtomic  round 1: stock was 5, sold= 5, stock now=0
+buyAtomic  round 2: stock was 5, sold= 5, stock now=0
+buyAtomic  round 3: stock was 5, sold= 5, stock now=0
+buyAtomic  round 4: stock was 5, sold= 5, stock now=0
+</code></pre>
+  <div class="ar-note">أول 3 مجموعات: كل مجموعة تشغيلة كاملة بـ 20 سحب. <code>succeeded</code> عدد اللي قال نجح، و<code>should be</code> الرصيد الصح، و<code>lost</code> عدد السحوبات اللي ضاعت. الـ read-modify-write ضيّع 7 لـ 16، وجوه <code>BEGIN</code> ضيّع 12 لـ 19. الـ atomic ضيّع صفر. و<code>REPEATABLE READ</code> نجحت فيه واحدة بس و19 فشلوا بـ 40001 بس الرصيد صح. آخر 8 سطور للمخزن: 5 قطع، و<code>buyBad</code> باع 6 لـ 8 قطع، و<code>buyAtomic</code> باع 5 بالظبط في كل مرة.</div>
+
+<pre data-file="src/recheck.ts"><code class="language-typescript">import { runTimeline, sql } from "./timeline.ts";
+
+await sql(`
+  DROP TABLE IF EXISTS wallets;
+  CREATE TABLE wallets (id int PRIMARY KEY, balance_cents bigint NOT NULL);
+  INSERT INTO wallets VALUES (1, 500);
+`);
+const WITHDRAW = "UPDATE wallets SET balance_cents = balance_cents - 300 WHERE id = 1 AND balance_cents &gt;= 300 RETURNING balance_cents";
+
+// ليه الـ atomic UPDATE صح؟ التاني بيستنى، وبعدين بيعيد الـ WHERE على القيمة الجديدة
+await runTimeline("READ COMMITTED: the second UPDATE re-checks WHERE on the new value", [
+  { s: "A", sql: "BEGIN" },
+  { s: "A", sql: WITHDRAW },
+  { s: "B", sql: WITHDRAW, blocks: true },
+  { s: "A", sql: "COMMIT" },
+  { s: "A", sql: "SELECT balance_cents FROM wallets WHERE id = 1" },
+]);
+</code></pre>
+<pre><code class="language-plaintext">== READ COMMITTED: the second UPDATE re-checks WHERE on the new value
+ 1 A: BEGIN
+      → BEGIN
+ 2 A: UPDATE wallets SET balance_cents = balance_cents - 300 WHERE id = 1 AND balance_cents &gt;= 300 RETURNING balance_cents
+      → {"balance_cents":"200"}
+ 3     B: UPDATE wallets SET balance_cents = balance_cents - 300 WHERE id = 1 AND balance_cents &gt;= 300 RETURNING balance_cents
+          … waiting on a lock
+ 4 A: COMMIT
+      → COMMIT
+          ↳ step 3 resumed → UPDATE 0
+ 5 A: SELECT balance_cents FROM wallets WHERE id = 1
+      → {"balance_cents":"200"}
+</code></pre>
+  <div class="ar-note">ليه الـ atomic صح حتى تحت <code>READ COMMITTED</code>؟ الرصيد 500. <code>A</code> سحب 300 فبقى 200 ولسه معملش commit. <code>B</code> بيحاول يسحب 300 فوقف على الـ row lock. بعد الـ COMMIT، <code>B</code> عاد فحص الـ <code>WHERE</code> على القيمة الجديدة 200، فملقاش إنها أكبر من 300، ورجّع <code>UPDATE 0</code>. الرصيد 200 صح، ومفيش overdraft.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>ده أشهر واحدة وأخطرهم. requestين بيقروا نفس الرصيد، وكل واحد بيحسب قيمة جديدة في الكود ويكتبها. الكتابة التانية بتغطي على الأولى، وهي محسوبة من قيمة بقت قديمة. ومحدش بياخد error. وكل <code>load, change, save</code> في أي ORM ليها نفس الشكل ده.</p>
+    <p>فوق عندك 20 عملية سحب بـ 1000 في نفس اللحظة من pool فيه 20 connection، مفتوحين مقدمًا زي سيرفر شغال من بدري. الـ pool البارد بيسلسل الطلبات صدفة وهو بيتصل، وبيخبّي الـ race. وكل طريقة اتشغلت 3 مرات. الـ read-modify-write العادي ضيّع من 7 لـ 16 سحبة. <b>ولفّه في <code>BEGIN</code>/<code>COMMIT</code> مش أحسن: ضيّع من 12 لـ 19</b>، لأن الـ transaction بتديك atomicity مش حماية من الـ readers التانيين، والـ <code>SELECT</code> تحت Read Committed مش بياخد lock. ونسخة المخزن بتعمل oversell: 5 قطع وبيتباع من 6 لـ 8.</p>
+    <p>أول حل، وأحسنهم لما المنطق يتكتب في SQL، هو statement واحد atomic: <code>UPDATE wallets SET balance_cents = balance_cents - $2 WHERE id = $1 AND balance_cents &gt;= $2</code>. ده صح حتى تحت Read Committed بسبب القاعدة بتاعة الجزء 2. الـ row lock بيخلي الكاتب التاني يستنى، وبعدين يعيد قراية وفحص <em>الـ row ده</em>، فالحساب التاني بيبدأ من القيمة الجديدة، والـ <code>WHERE</code> بتفشل لو الفلوس خلصت. و<code>rowCount === 0</code> معناها رصيد مش كفاية، ودي نتيجة business مش error. ولما المنطق لازم يتنفذ في الكود، <a href="./16-concurrency-patterns-skip-locked.html">درس 16</a> فيه الـ 3 حلول المعروفة: <code>FOR UPDATE</code>، و version column، و Serializable مع retry.</p>
+    <p>تحت Repeatable Read نفس الكود الغلط مبيضيعش data، بيفشل بدل كده: واحدة من 20 بتنجح، و19 بياخدوا 40001، والرصيد مظبوط بالظبط للي عدّت. صح، بس ملوش لازمة من غير الجزء 6.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في الـ code review دور على الشكل ده: <code>const order = await repo.findById(id)</code>، وبعدين <code>order.total += x</code>، وبعدين <code>await repo.save(order)</code>. ده lost update مستني ضغط. وأمثلته: رصيد wallet، مخزن منتج، عدد استخدامات كوبون، <code>likes_count</code>، عدّاد فواتير. الحل الأول: اكتبها <code>UPDATE ... SET x = x - $1 WHERE x &gt;= $1 RETURNING x</code> وحوّل <code>rowCount === 0</code> لـ 409 أو "out of stock". الغلطة الشائعة إنك تفتكر إن <code>BEGIN</code> كفاية: الأرقام فوق بتقول العكس.
+    </div>
+  </section>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Write skew &amp; Serializable <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ write skew و Serializable</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Snapshot isolation catches two transactions writing the <em>same</em> row. <b>Write skew</b> is two transactions reading overlapping data and writing <em>different</em> rows. There's no row conflict to catch, but a rule that spans rows breaks. The classic is the last admin: a tenant has Mona and Karim as admins, and the rule is "at least one admin remains". Each one demotes the other at the same moment, and each transaction reads <code>admins = 2</code> and considers the change safe. Under Repeatable Read both commit: <b>0 admins, no error</b>.</p>
+    <p><code>SERIALIZABLE</code> runs the same snapshot and adds <b>SSI</b>, Serializable Snapshot Isolation. It records what each transaction read using <code>SIReadLock</code> entries in <code>pg_locks</code>. Despite the name, these block nothing and can't cause a deadlock. They let Postgres detect read/write dependencies: "T1 read something T2 wrote after T1's snapshot". Two such edges in a row around one transaction, a <em>pivot</em>, is the pattern a non-serial result needs, so one transaction gets <code>40001 could not serialize access due to read/write dependencies among transactions</code>, often at <code>COMMIT</code>. It can be a false positive: Postgres aborts some transactions that would have been fine, because it tracks a pattern rather than proving a real cycle.</p>
+    <p>The second example shows why locks can't always help. A coupon has a limit of one, and two requests count redemptions and then insert one. <code>SELECT ... FOR UPDATE</code> fixes the last-admin case because those rows exist, so B waits and then sees the truth. It can't fix the coupon, because <b>the rows don't exist yet</b>: there's nothing to lock, and both insert. <code>count(*) ... FOR UPDATE</code> is refused outright with <code>0A000</code>. Your options are to materialize the conflict on a row that does exist (an atomic counter on the parent <code>coupons</code> row), a constraint when the rule fits one, or Serializable.</p>
+  </section>
+
+<pre class="diagram">
+       reads admins = 2                    reads admins = 2
+   T1 ───────────────────┐        ┌───────────────────── T2
+   writes karim          │        │            writes mona
+                         ▼        ▼
+          T1 read what T2 wrote  (rw edge T1 → T2)
+          T2 read what T1 wrote  (rw edge T2 → T1)
+
+   no row was written twice      → snapshot isolation sees nothing
+   a cycle of rw dependencies    → SSI aborts one with 40001
+</pre>
+  <div class="ar-note">الرسمة: <code>T1</code> و<code>T2</code> قروا إن فيه 2 admins. <code>T1</code> كتب على karim و<code>T2</code> كتب على mona، يعني مفيش row اتكتب مرتين، فالـ snapshot isolation مش شايف مشكلة. بس <code>T1</code> قرا حاجة <code>T2</code> كتبها، و<code>T2</code> قرا حاجة <code>T1</code> كتبها. ده cycle من علاقات القراءة والكتابة، و SSI بيفشّل واحدة فيهم بـ 40001.</div>
+
+<pre data-file="src/write-skew.ts"><code class="language-typescript">import { runTimeline, sql, type Step } from "./timeline.ts";
+
+const seedAdmins = () =&gt; sql(`
+  DROP TABLE IF EXISTS tenant_members;
+  CREATE TABLE tenant_members (
+    tenant_id int NOT NULL,
+    email text NOT NULL,
+    role text NOT NULL,
+    PRIMARY KEY (tenant_id, email)
+  );
+  INSERT INTO tenant_members VALUES (1, 'mona@acme.io', 'admin'), (1, 'karim@acme.io', 'admin');
+`);
+const COUNT_ADMINS = "SELECT count(*)::int AS admins FROM tenant_members WHERE tenant_id = 1 AND role = 'admin'";
+const DEMOTE = (email: string) =&gt; `UPDATE tenant_members SET role = 'member' WHERE tenant_id = 1 AND email = '${email}'`;
+
+// كل واحد بيشوف إن فيه 2 admins، فبيعتبر إن التاني ممكن يتشال بأمان
+const demoteEachOther = (level: string): Step[] =&gt; [
+  { s: "A", sql: `BEGIN ISOLATION LEVEL ${level}` },
+  { s: "B", sql: `BEGIN ISOLATION LEVEL ${level}` },
+  { s: "A", sql: COUNT_ADMINS },
+  { s: "B", sql: COUNT_ADMINS },
+  { s: "A", sql: DEMOTE("karim@acme.io") },
+  { s: "B", sql: DEMOTE("mona@acme.io") },
+  { s: "A", sql: "COMMIT" },
+  { s: "B", sql: "COMMIT" },
+];
+
+await seedAdmins();
+await runTimeline("REPEATABLE READ: the last-admin rule breaks with no error", demoteEachOther("REPEATABLE READ"));
+console.log((await sql(COUNT_ADMINS)).rows[0]);
+
+await seedAdmins();
+const out = await runTimeline("SERIALIZABLE: one transaction aborts", demoteEachOther("SERIALIZABLE"));
+console.log((await sql(COUNT_ADMINS)).rows[0]);
+const failure = out.find((o) =&gt; o.error)?.error;
+console.log("detail:", failure?.detail);
+console.log("hint:", failure?.hint);
+
+// ❌ مستوى مختلط: الـ SSI بيراقب الـ transactions اللي على SERIALIZABLE بس
+await seedAdmins();
+await runTimeline("Mixed levels: one path forgot SERIALIZABLE", [
+  { s: "A", sql: "BEGIN ISOLATION LEVEL SERIALIZABLE" },
+  { s: "B", sql: "BEGIN ISOLATION LEVEL READ COMMITTED" },
+  { s: "A", sql: COUNT_ADMINS },
+  { s: "B", sql: COUNT_ADMINS },
+  { s: "A", sql: DEMOTE("karim@acme.io") },
+  { s: "B", sql: DEMOTE("mona@acme.io") },
+  { s: "A", sql: "COMMIT" },
+  { s: "B", sql: "COMMIT" },
+]);
+console.log((await sql(COUNT_ADMINS)).rows[0]);
+
+// ✅ هنا الـ rows موجودة، فـ FOR UPDATE بيقفلها ويحل المشكلة
+await seedAdmins();
+const LOCK_ADMINS = "SELECT email FROM tenant_members WHERE tenant_id = 1 AND role = 'admin' FOR UPDATE";
+await runTimeline("READ COMMITTED + FOR UPDATE on rows that exist: B sees the truth", [
+  { s: "A", sql: "BEGIN" },
+  { s: "A", sql: LOCK_ADMINS },
+  { s: "B", sql: "BEGIN" },
+  { s: "B", sql: LOCK_ADMINS, blocks: true },
+  { s: "A", sql: DEMOTE("karim@acme.io") },
+  { s: "A", sql: "COMMIT" },
+  { s: "B", sql: "ROLLBACK" },
+]);
+
+// الكوبون: الحد 1، والـ rows لسه متكتبتش. FOR UPDATE مش لاقي حاجة يقفلها
+const seedCoupons = () =&gt; sql(`
+  DROP TABLE IF EXISTS redemptions, coupons;
+  CREATE TABLE coupons (id int PRIMARY KEY, code text NOT NULL, max_uses int NOT NULL, used int NOT NULL DEFAULT 0);
+  CREATE TABLE redemptions (coupon_id int NOT NULL REFERENCES coupons, user_id int NOT NULL);
+  CREATE INDEX ON redemptions (coupon_id);
+  INSERT INTO coupons (id, code, max_uses) VALUES (1, 'WELCOME50', 1);
+`);
+const COUNT_USES = "SELECT count(*)::int AS uses FROM redemptions WHERE coupon_id = 1";
+const REDEEM = (u: number) =&gt; `INSERT INTO redemptions VALUES (1, ${u})`;
+const redeem = (begin: string, read: string): Step[] =&gt; [
+  { s: "A", sql: begin },
+  { s: "B", sql: begin },
+  { s: "A", sql: read },
+  { s: "B", sql: read },
+  { s: "A", sql: REDEEM(7) },
+  { s: "B", sql: REDEEM(8) },
+  { s: "A", sql: "COMMIT" },
+  { s: "B", sql: "COMMIT" },
+];
+
+await seedCoupons();
+await runTimeline("Coupon under REPEATABLE READ: limit 1, two redemptions", redeem("BEGIN ISOLATION LEVEL REPEATABLE READ", COUNT_USES));
+console.log((await sql(COUNT_USES)).rows[0]);
+
+await seedCoupons();
+await runTimeline("Coupon under SERIALIZABLE", redeem("BEGIN ISOLATION LEVEL SERIALIZABLE", COUNT_USES));
+console.log((await sql(COUNT_USES)).rows[0]);
+
+// ❌ الـ FOR UPDATE على rows لسه مش موجودة: مفيش حاجة تتقفل خالص
+await seedCoupons();
+await runTimeline("FOR UPDATE can't lock rows that don't exist yet", redeem("BEGIN", "SELECT user_id FROM redemptions WHERE coupon_id = 1 FOR UPDATE"));
+console.log((await sql(COUNT_USES)).rows[0]);
+
+// ولو حاولت تقفل aggregate، Postgres بيرفض أصلًا
+await runTimeline("FOR UPDATE with an aggregate", [{ s: "A", sql: "SELECT count(*) FROM redemptions WHERE coupon_id = 1 FOR UPDATE" }]);
+
+// ✅ الحل: اقفل الـ parent الموجود، أو حوّلها لـ atomic UPDATE على عدّاد
+await seedCoupons();
+const ATOMIC = "UPDATE coupons SET used = used + 1 WHERE id = 1 AND used &lt; max_uses";
+await runTimeline("Fix: atomic counter on the parent row, READ COMMITTED", [
+  { s: "A", sql: "BEGIN" },
+  { s: "A", sql: ATOMIC },
+  { s: "B", sql: "BEGIN" },
+  { s: "B", sql: ATOMIC, blocks: true },
+  { s: "A", sql: REDEEM(7) },
+  { s: "A", sql: "COMMIT" },
+  { s: "B", sql: "ROLLBACK" },
+]);
+console.log((await sql(COUNT_USES)).rows[0]);
+</code></pre>
+<pre><code class="language-plaintext">== REPEATABLE READ: the last-admin rule breaks with no error
+ 1 A: BEGIN ISOLATION LEVEL REPEATABLE READ
+      → BEGIN
+ 2     B: BEGIN ISOLATION LEVEL REPEATABLE READ
+          → BEGIN
+ 3 A: SELECT count(*)::int AS admins FROM tenant_members WHERE tenant_id = 1 AND role = 'admin'
+      → {"admins":2}
+ 4     B: SELECT count(*)::int AS admins FROM tenant_members WHERE tenant_id = 1 AND role = 'admin'
+          → {"admins":2}
+ 5 A: UPDATE tenant_members SET role = 'member' WHERE tenant_id = 1 AND email = 'karim@acme.io'
+      → UPDATE 1
+ 6     B: UPDATE tenant_members SET role = 'member' WHERE tenant_id = 1 AND email = 'mona@acme.io'
+          → UPDATE 1
+ 7 A: COMMIT
+      → COMMIT
+ 8     B: COMMIT
+          → COMMIT
+{ admins: 0 }
+
+== SERIALIZABLE: one transaction aborts
+ 1 A: BEGIN ISOLATION LEVEL SERIALIZABLE
+      → BEGIN
+ 2     B: BEGIN ISOLATION LEVEL SERIALIZABLE
+          → BEGIN
+ 3 A: SELECT count(*)::int AS admins FROM tenant_members WHERE tenant_id = 1 AND role = 'admin'
+      → {"admins":2}
+ 4     B: SELECT count(*)::int AS admins FROM tenant_members WHERE tenant_id = 1 AND role = 'admin'
+          → {"admins":2}
+ 5 A: UPDATE tenant_members SET role = 'member' WHERE tenant_id = 1 AND email = 'karim@acme.io'
+      → UPDATE 1
+ 6     B: UPDATE tenant_members SET role = 'member' WHERE tenant_id = 1 AND email = 'mona@acme.io'
+          → UPDATE 1
+ 7 A: COMMIT
+      → COMMIT
+ 8     B: COMMIT
+          → ERROR 40001: could not serialize access due to read/write dependencies among transactions
+{ admins: 1 }
+detail: Reason code: Canceled on identification as a pivot, during commit attempt.
+hint: The transaction might succeed if retried.
+
+== Mixed levels: one path forgot SERIALIZABLE
+ 1 A: BEGIN ISOLATION LEVEL SERIALIZABLE
+      → BEGIN
+ 2     B: BEGIN ISOLATION LEVEL READ COMMITTED
+          → BEGIN
+ 3 A: SELECT count(*)::int AS admins FROM tenant_members WHERE tenant_id = 1 AND role = 'admin'
+      → {"admins":2}
+ 4     B: SELECT count(*)::int AS admins FROM tenant_members WHERE tenant_id = 1 AND role = 'admin'
+          → {"admins":2}
+ 5 A: UPDATE tenant_members SET role = 'member' WHERE tenant_id = 1 AND email = 'karim@acme.io'
+      → UPDATE 1
+ 6     B: UPDATE tenant_members SET role = 'member' WHERE tenant_id = 1 AND email = 'mona@acme.io'
+          → UPDATE 1
+ 7 A: COMMIT
+      → COMMIT
+ 8     B: COMMIT
+          → COMMIT
+{ admins: 0 }
+
+== READ COMMITTED + FOR UPDATE on rows that exist: B sees the truth
+ 1 A: BEGIN
+      → BEGIN
+ 2 A: SELECT email FROM tenant_members WHERE tenant_id = 1 AND role = 'admin' FOR UPDATE
+      → [{"email":"mona@acme.io"},{"email":"karim@acme.io"}]
+ 3     B: BEGIN
+          → BEGIN
+ 4     B: SELECT email FROM tenant_members WHERE tenant_id = 1 AND role = 'admin' FOR UPDATE
+          … waiting on a lock
+ 5 A: UPDATE tenant_members SET role = 'member' WHERE tenant_id = 1 AND email = 'karim@acme.io'
+      → UPDATE 1
+ 6 A: COMMIT
+      → COMMIT
+          ↳ step 4 resumed → {"email":"mona@acme.io"}
+ 7     B: ROLLBACK
+          → ROLLBACK
+
+== Coupon under REPEATABLE READ: limit 1, two redemptions
+ 1 A: BEGIN ISOLATION LEVEL REPEATABLE READ
+      → BEGIN
+ 2     B: BEGIN ISOLATION LEVEL REPEATABLE READ
+          → BEGIN
+ 3 A: SELECT count(*)::int AS uses FROM redemptions WHERE coupon_id = 1
+      → {"uses":0}
+ 4     B: SELECT count(*)::int AS uses FROM redemptions WHERE coupon_id = 1
+          → {"uses":0}
+ 5 A: INSERT INTO redemptions VALUES (1, 7)
+      → INSERT 1
+ 6     B: INSERT INTO redemptions VALUES (1, 8)
+          → INSERT 1
+ 7 A: COMMIT
+      → COMMIT
+ 8     B: COMMIT
+          → COMMIT
+{ uses: 2 }
+
+== Coupon under SERIALIZABLE
+ 1 A: BEGIN ISOLATION LEVEL SERIALIZABLE
+      → BEGIN
+ 2     B: BEGIN ISOLATION LEVEL SERIALIZABLE
+          → BEGIN
+ 3 A: SELECT count(*)::int AS uses FROM redemptions WHERE coupon_id = 1
+      → {"uses":0}
+ 4     B: SELECT count(*)::int AS uses FROM redemptions WHERE coupon_id = 1
+          → {"uses":0}
+ 5 A: INSERT INTO redemptions VALUES (1, 7)
+      → INSERT 1
+ 6     B: INSERT INTO redemptions VALUES (1, 8)
+          → INSERT 1
+ 7 A: COMMIT
+      → COMMIT
+ 8     B: COMMIT
+          → ERROR 40001: could not serialize access due to read/write dependencies among transactions
+{ uses: 1 }
+
+== FOR UPDATE can't lock rows that don't exist yet
+ 1 A: BEGIN
+      → BEGIN
+ 2     B: BEGIN
+          → BEGIN
+ 3 A: SELECT user_id FROM redemptions WHERE coupon_id = 1 FOR UPDATE
+      → SELECT
+ 4     B: SELECT user_id FROM redemptions WHERE coupon_id = 1 FOR UPDATE
+          → SELECT
+ 5 A: INSERT INTO redemptions VALUES (1, 7)
+      → INSERT 1
+ 6     B: INSERT INTO redemptions VALUES (1, 8)
+          → INSERT 1
+ 7 A: COMMIT
+      → COMMIT
+ 8     B: COMMIT
+          → COMMIT
+{ uses: 2 }
+
+== FOR UPDATE with an aggregate
+ 1 A: SELECT count(*) FROM redemptions WHERE coupon_id = 1 FOR UPDATE
+      → ERROR 0A000: FOR UPDATE is not allowed with aggregate functions
+
+== Fix: atomic counter on the parent row, READ COMMITTED
+ 1 A: BEGIN
+      → BEGIN
+ 2 A: UPDATE coupons SET used = used + 1 WHERE id = 1 AND used &lt; max_uses
+      → UPDATE 1
+ 3     B: BEGIN
+          → BEGIN
+ 4     B: UPDATE coupons SET used = used + 1 WHERE id = 1 AND used &lt; max_uses
+          … waiting on a lock
+ 5 A: INSERT INTO redemptions VALUES (1, 7)
+      → INSERT 1
+ 6 A: COMMIT
+      → COMMIT
+          ↳ step 4 resumed → UPDATE 0
+ 7     B: ROLLBACK
+          → ROLLBACK
+{ uses: 1 }
+</code></pre>
+  <div class="ar-note">بالترتيب: (1) <code>REPEATABLE READ</code>: الاتنين عملوا COMMIT والنتيجة <code>admins: 0</code> من غير error. (2) <code>SERIALIZABLE</code>: التانية خدت 40001 عند الـ COMMIT والنتيجة <code>admins: 1</code>، و<code>detail</code> و<code>hint</code> هما الرسايل الحقيقية من Postgres، والـ hint بيقول حرفيًا إنها ممكن تنجح لو اتعادت. (3) مستوى مختلط: واحد على <code>SERIALIZABLE</code> والتاني <code>READ COMMITTED</code>: الـ SSI مبيراقبش التاني، فالـ admins صفر تاني. (4) <code>FOR UPDATE</code> على rows موجودة: <code>B</code> استنى ورجعله mona بس، فعرف الحقيقة. (5) الكوبون تحت <code>REPEATABLE READ</code>: حد 1 واستخدامين. (6) الكوبون تحت <code>SERIALIZABLE</code>: واحد نجح والتاني 40001. (7) <code>FOR UPDATE</code> رجّع صفر rows فمفيش lock، والنتيجة استخدامين. (8) <code>count(*)</code> مع <code>FOR UPDATE</code> مرفوض بـ 0A000. (9) العدّاد الـ atomic على الـ row الأب: <code>B</code> رجعله <code>UPDATE 0</code> فعرف إن الكوبون خلص، واستخدام واحد بس.</div>
+
+  <h3>What SSI costs, and why indexes help<span class="ar-sub">الـ SSI بيكلف إيه، وليه الـ indexes بتساعد</span></h3>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Predicate locks follow your plan. A sequential scan has to lock the whole relation, so two transactions on <em>unrelated tenants</em> look like they conflict. The test below runs 8 workers, each on its own tenant, with no logical conflict at all. Without an index, 85.8% of the attempts abort. With an index but each tenant's rows scattered across 100 pages, 68.2% still abort: the index helps, but reading more than <code>max_pred_locks_per_relation</code> pages of one table (‑2 means half of <code>max_pred_locks_per_transaction</code>, so 32 here) promotes the page locks to a relation lock. I hit that case by accident on my first run. With an index and each tenant packed into a few pages: <b>0 aborts</b>, and ≈40× the commits per second of the no-index run. So Serializable rewards exactly what good schemas already do.</p>
+  </section>
+<pre data-file="src/ssi-locks.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const pool = new pg.Pool({ connectionString: labUrl(), max: 20 });
+
+// 200 tenant، كل واحد ليه 100 member، والـ tenants مستقلين عن بعض خالص
+async function seed(physicalOrder: string, index: boolean) {
+  await pool.query(`
+    DROP TABLE IF EXISTS members;
+    CREATE TABLE members (
+      id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      tenant_id int NOT NULL,
+      role text NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    INSERT INTO members (tenant_id, role)
+    SELECT t, CASE WHEN m &lt;= 2 THEN 'admin' ELSE 'member' END
+    FROM generate_series(1, 200) t, generate_series(1, 100) m
+    ORDER BY ${physicalOrder};
+    ${index ? "CREATE INDEX members_tenant_idx ON members (tenant_id);" : ""}
+    ANALYZE members;
+  `);
+}
+
+const COUNT = "SELECT count(*)::int AS admins FROM members WHERE tenant_id = $1 AND role = 'admin'";
+const TOUCH = "UPDATE members SET updated_at = now() WHERE tenant_id = $1 AND role = 'admin'";
+
+// الـ predicate locks نفسها: بنقراها من pg_locks والـ transaction لسه مفتوحة
+async function showPredicateLocks() {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+    await client.query(COUNT, [7]);
+    const { rows } = await client.query(`
+      SELECT locktype, relation::regclass::text AS relation, count(*)::int AS locks
+      FROM pg_locks WHERE mode = 'SIReadLock' AND pid = pg_backend_pid()
+      GROUP BY 1, 2 ORDER BY 2, 1`);
+    const plan = await client.query("EXPLAIN (COSTS OFF) " + COUNT.replace("$1", "7"));
+    console.log("  scan:", plan.rows.map((r) =&gt; r["QUERY PLAN"].trim()).filter((l) =&gt; /Scan/.test(l)).join(" &lt;- "));
+    console.log("  SIReadLock:", rows.map((r) =&gt; `${r.locktype} on ${r.relation} x${r.locks}`).join(", "));
+    await client.query("COMMIT");
+  } finally {
+    client.release();
+  }
+}
+
+// كل worker شغال على tenant مختلف، يعني مفيش أي تعارض منطقي بينهم
+async function worker(tenantId: number, txCount: number, stats: { commits: number; aborts: number }) {
+  for (let i = 0; i &lt; txCount; i++) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+      await client.query(COUNT, [tenantId]);
+      await client.query(TOUCH, [tenantId]);
+      await client.query("COMMIT");
+      stats.commits++;
+    } catch (err) {
+      if ((err as pg.DatabaseError).code !== "40001") throw err;
+      stats.aborts++;
+      await client.query("ROLLBACK");
+    } finally {
+      client.release();
+    }
+  }
+}
+
+async function measure() {
+  const stats = { commits: 0, aborts: 0 };
+  const started = performance.now();
+  await Promise.all(Array.from({ length: 8 }, (_, i) =&gt; worker(i * 20 + 1, 200, stats)));
+  const seconds = (performance.now() - started) / 1000;
+  const pct = ((stats.aborts / (stats.commits + stats.aborts)) * 100).toFixed(1);
+  console.log(`  8 unrelated tenants: commits=${stats.commits} aborts=${stats.aborts} (${pct}%) ≈${Math.round(stats.commits / seconds)} commits/s`);
+}
+
+console.log("no index");
+await seed("t, m", false);
+await showPredicateLocks();
+await measure();
+
+// كل tenant متفرق على 100 page: الـ index موجود بس الـ lock بيترقى
+console.log("index, each tenant scattered over 100 pages");
+await seed("m, t", true);
+await showPredicateLocks();
+await measure();
+
+// كل tenant في pages قليلة جنب بعض: الـ locks ضيقة فعلًا
+console.log("index, each tenant packed in a few pages");
+await seed("t, m", true);
+await showPredicateLocks();
+await measure();
+
+const settings = await pool.query(`
+  SELECT name, setting FROM pg_settings
+  WHERE name IN ('max_pred_locks_per_transaction', 'max_pred_locks_per_relation', 'max_pred_locks_per_page')
+  ORDER BY name`);
+console.log(settings.rows.map((r) =&gt; `${r.name}=${r.setting}`).join("  "));
+
+await pool.end();
+</code></pre>
+<pre><code class="language-plaintext">no index
+  scan: -&gt;  Seq Scan on members
+  SIReadLock: relation on members x1
+  8 unrelated tenants: commits=228 aborts=1372 (85.8%) ≈124 commits/s
+index, each tenant scattered over 100 pages
+  scan: -&gt;  Bitmap Heap Scan on members &lt;- -&gt;  Bitmap Index Scan on members_tenant_idx
+  SIReadLock: relation on members x1, page on members_tenant_idx x1
+  8 unrelated tenants: commits=509 aborts=1091 (68.2%) ≈777 commits/s
+index, each tenant packed in a few pages
+  scan: -&gt;  Index Scan using members_tenant_idx on members
+  SIReadLock: page on members x2, page on members_tenant_idx x1
+  8 unrelated tenants: commits=1600 aborts=0 (0.0%) ≈5163 commits/s
+max_pred_locks_per_page=2  max_pred_locks_per_relation=-2  max_pred_locks_per_transaction=64
+</code></pre>
+  <div class="ar-note">3 حالات لنفس الشغل، 8 workers كل واحد على tenant مختلف. من غير index: Seq Scan و lock على الجدول كله، و85.8% من المحاولات فشلت. بـ index بس الـ tenant متفرق على 100 page: الـ lock اترقّى لـ relation برضه، و68.2% فشلوا. بـ index والـ tenant في pages قليلة جنب بعض: lock على pages بس، وصفر فشل، و≈5163 commit في الثانية. آخر سطر هو الإعدادات اللي بتتحكم في الترقية. الأرقام بتاعة السرعة على جهاز عليه ضغط، فخد النسبة.</div>
+
+<pre data-file="src/level-cost.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const pool = new pg.Pool({ connectionString: labUrl(), max: 8 });
+
+const LEVELS = ["READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE"] as const;
+const median = (xs: number[]) =&gt; [...xs].sort((a, b) =&gt; a - b)[Math.floor(xs.length / 2)]!;
+
+async function seed(accounts: number) {
+  await pool.query(`
+    DROP TABLE IF EXISTS ledger;
+    CREATE TABLE ledger (id int PRIMARY KEY, balance_cents bigint NOT NULL);
+    INSERT INTO ledger SELECT i, 100000 FROM generate_series(1, ${accounts}) i;
+    ANALYZE ledger;
+  `);
+}
+
+// تحويل بين حسابين عشوائيين، بترتيب ثابت للـ ids عشان منعملش deadlocks في القياس
+async function transfer(client: pg.PoolClient, level: string, accounts: number) {
+  const a = 1 + Math.floor(Math.random() * accounts);
+  const b = 1 + ((a + Math.floor(Math.random() * (accounts - 1))) % accounts);
+  const [first, second] = a &lt; b ? [a, b] : [b, a];
+  await client.query(`BEGIN ISOLATION LEVEL ${level}`);
+  await client.query("SELECT balance_cents FROM ledger WHERE id = $1", [first]);
+  await client.query("UPDATE ledger SET balance_cents = balance_cents - 100 WHERE id = $1", [first]);
+  await client.query("UPDATE ledger SET balance_cents = balance_cents + 100 WHERE id = $1", [second]);
+  await client.query("COMMIT");
+}
+
+async function round(level: string, accounts: number, workers: number, txPerWorker: number) {
+  let commits = 0;
+  let aborts = 0;
+  const started = performance.now();
+  await Promise.all(
+    Array.from({ length: workers }, async () =&gt; {
+      for (let i = 0; i &lt; txPerWorker; i++) {
+        const client = await pool.connect();
+        try {
+          await transfer(client, level, accounts);
+          commits++;
+        } catch (err) {
+          if ((err as pg.DatabaseError).code !== "40001") throw err;
+          aborts++;
+          await client.query("ROLLBACK");
+        } finally {
+          client.release();
+        }
+      }
+    }),
+  );
+  return { commits, aborts, rate: commits / ((performance.now() - started) / 1000) };
+}
+
+// الجولات متبادلة بين الـ levels عشان ضوضاء الجهاز تتوزع عليهم بالتساوي
+async function compare(label: string, accounts: number) {
+  await seed(accounts);
+  const stats = new Map(LEVELS.map((l) =&gt; [l, { commits: 0, aborts: 0, rates: [] as number[] }]));
+  for (let r = 0; r &lt; 9; r++) {
+    for (const level of LEVELS) {
+      const res = await round(level, accounts, 8, 250);
+      const s = stats.get(level)!;
+      s.commits += res.commits;
+      s.aborts += res.aborts;
+      s.rates.push(res.rate);
+    }
+  }
+  console.log(`\n${label}: 8 workers, 18000 transfers per level, 9 alternating rounds`);
+  for (const [level, s] of stats) {
+    const pct = ((s.aborts / (s.commits + s.aborts)) * 100).toFixed(2);
+    console.log(`${level.padEnd(16)} commits=${String(s.commits).padStart(5)} aborts=${String(s.aborts).padStart(5)} (${pct.padStart(5)}%)  median ≈${Math.round(median(s.rates))} commits/s`);
+  }
+}
+
+await compare("low contention, 100,000 accounts", 100000);
+await compare("high contention, 20 accounts", 20);
+await pool.end();
+</code></pre>
+<pre><code class="language-plaintext">low contention, 100,000 accounts: 8 workers, 18000 transfers per level, 9 alternating rounds
+READ COMMITTED   commits=18000 aborts=    0 ( 0.00%)  median ≈3261 commits/s
+REPEATABLE READ  commits=17998 aborts=    2 ( 0.01%)  median ≈3587 commits/s
+SERIALIZABLE     commits=17987 aborts=   13 ( 0.07%)  median ≈3380 commits/s
+
+high contention, 20 accounts: 8 workers, 18000 transfers per level, 9 alternating rounds
+READ COMMITTED   commits=18000 aborts=    0 ( 0.00%)  median ≈3824 commits/s
+REPEATABLE READ  commits= 9834 aborts= 8166 (45.37%)  median ≈1977 commits/s
+SERIALIZABLE     commits= 9071 aborts= 8929 (49.61%)  median ≈1670 commits/s
+</code></pre>
+  <div class="ar-note">نفس التحويلات على كل level، وجولات متبادلة عشان ضوضاء الجهاز تتوزع بالتساوي، والرقم median. الجدول تحت بيشرح الأرقام.</div>
+  <table>
+    <tr><th>Level</th><th>Low contention (100k accounts): aborts · ≈ commits/s</th><th>High contention (20 accounts): aborts · ≈ commits/s</th><th>You must write</th></tr>
+    <tr><td><code>READ COMMITTED</code></td><td>0% · 3261</td><td>0% · 3824</td><td>Correct SQL for every read-then-decide</td></tr>
+    <tr><td><code>REPEATABLE READ</code></td><td>0.01% · 3587</td><td>45.37% · 1977</td><td>Retry loop</td></tr>
+    <tr><td><code>SERIALIZABLE</code></td><td>0.07% · 3380</td><td>49.61% · 1670</td><td>Retry loop, on every path</td></tr>
+  </table>
+  <div class="ar-note">سطر سطر: <code>READ COMMITTED</code> صفر aborts في الحالتين، وبس لازم إنت تكتب SQL صح لكل قراءة بعدها قرار (التحويل هنا atomic فهو صح). <code>REPEATABLE READ</code> عند contention قليل تقريبًا صفر، وعند contention عالي 45% من المحاولات بتفشل والسرعة بتقع للنص، ولازم retry loop. <code>SERIALIZABLE</code> قريب منه: 0.07% و49.61%، ولازم retry loop على كل المسارات. الدرس: عند contention قليل، الفرق بين الـ levels أصغر من ضوضاء الجهاز ده (Windows تحت ضغط، fsync مقفول)، فمتخمّنش إن Serializable بطيء. التمن الحقيقي بيبان في الـ aborts لما الـ contention يعلى.</div>
+
+<pre data-file="src/deferrable.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const connect = async () =&gt; {
+  const c = new pg.Client({ connectionString: labUrl() });
+  await c.connect();
+  return c;
+};
+const [writer, report, watcher] = [await connect(), await connect(), await connect()];
+
+await writer.query(`
+  DROP TABLE IF EXISTS invoices;
+  CREATE TABLE invoices (id int PRIMARY KEY, amount_cents bigint NOT NULL);
+  INSERT INTO invoices VALUES (1, 10000), (2, 20000);
+`);
+const reportPid = (await report.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+
+// فيه transaction بتكتب ولسه مفتوحة، فالـ snapshot الجديدة مش مضمونة آمنة
+await writer.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+await writer.query("UPDATE invoices SET amount_cents = amount_cents + 1 WHERE id = 1");
+
+await report.query("BEGIN ISOLATION LEVEL SERIALIZABLE READ ONLY DEFERRABLE");
+const t0 = performance.now();
+const reading = report.query("SELECT sum(amount_cents)::int AS total FROM invoices").then((r) =&gt; {
+  console.log(`report got its answer after ≈${Math.round(performance.now() - t0)} ms:`, r.rows[0]);
+});
+
+await new Promise((r) =&gt; setTimeout(r, 500));
+const { rows } = await watcher.query("SELECT state, wait_event_type, wait_event FROM pg_stat_activity WHERE pid = $1", [reportPid]);
+console.log("report 500 ms in:", JSON.stringify(rows[0]));
+
+await writer.query("COMMIT");
+await reading;
+// الـ transaction دي مش ممكن تفشل بـ 40001 ومبتاخدش SIReadLocks
+const locks = await report.query("SELECT count(*)::int AS n FROM pg_locks WHERE mode = 'SIReadLock' AND pid = pg_backend_pid()");
+console.log("SIReadLocks held by the report:", locks.rows[0].n);
+await report.query("COMMIT");
+
+await Promise.all([writer.end(), report.end(), watcher.end()]);
+</code></pre>
+<pre><code class="language-plaintext">report 500 ms in: {"state":"active","wait_event_type":"IPC","wait_event":"SafeSnapshot"}
+report got its answer after ≈524 ms: { total: 30000 }
+SIReadLocks held by the report: 0
+</code></pre>
+  <div class="ar-note">تقرير بـ <code>SERIALIZABLE READ ONLY DEFERRABLE</code>: بعد 500 مللي ثانية كان واقف على <code>SafeSnapshot</code>، يعني مستني الـ writer يخلص. بعد الـ COMMIT رجّع الإجابة، ومعاهوش ولا <code>SIReadLock</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ snapshot isolation بيمسك transactionين بيكتبوا على <em>نفس</em> الـ row. الـ <b>write skew</b> هو transactionين بيقروا data متداخلة وبيكتبوا على rows <em>مختلفة</em>، فمفيش تعارض على row يتمسك، بس قاعدة ماشية على أكتر من row بتتكسر. المثال المشهور آخر admin: tenant فيه Mona و Karim admins، والقاعدة "لازم يفضل admin واحد على الأقل". كل واحد بيشيل التاني في نفس اللحظة، وكل transaction بتقرا <code>admins = 2</code> وتعتبر التغيير آمن. تحت Repeatable Read الاتنين بيعملوا commit: <b>صفر admins ومن غير error</b>.</p>
+    <p><code>SERIALIZABLE</code> بيشتغل بنفس الـ snapshot وبيزود <b>SSI</b> يعني Serializable Snapshot Isolation. بيسجّل كل transaction قرت إيه عن طريق <code>SIReadLock</code> في <code>pg_locks</code>. ورغم الاسم، دي مبتوقفش حد ومبتعملش deadlock. بتخلي Postgres يكتشف علاقات القراءة والكتابة: "T1 قرت حاجة T2 كتبتها بعد الـ snapshot بتاعة T1". علاقتين ورا بعض حوالين transaction واحدة، اسمها <em>pivot</em>، هو الشكل اللي أي نتيجة غير serial محتاجاه، فواحدة بتاخد <code>40001 could not serialize access due to read/write dependencies among transactions</code>، وغالبًا عند الـ <code>COMMIT</code>. وممكن تبقى false positive: Postgres بيفشّل transactions كانت هتطلع سليمة، لأنه بيتتبع pattern مش بيثبت cycle حقيقي.</p>
+    <p>المثال التاني بيوضح ليه الـ locks مش دايمًا بتنفع. كوبون حده مرة واحدة، وrequestين بيعدّوا الاستخدامات وبعدين بيضيفوا واحد. <code>SELECT ... FOR UPDATE</code> بيحل حالة آخر admin لأن الـ rows موجودة، فـ <code>B</code> بيستنى وبعدين يشوف الحقيقة. بس مش بيحل الكوبون لأن <b>الـ rows لسه مش موجودة</b>: مفيش حاجة تتقفل، والاتنين بيضيفوا. و<code>count(*) ... FOR UPDATE</code> مرفوض أصلًا بـ <code>0A000</code>. عندك 3 اختيارات: تخلي التعارض على row موجود (عدّاد atomic على الـ row الأب في <code>coupons</code>)، أو constraint لو القاعدة ينفع تتكتب كده، أو Serializable.</p>
+    <p>الـ predicate locks ماشية ورا الـ plan بتاعك. الـ sequential scan لازم يقفل الجدول كله، فـ transactionين على <em>tenants ملهمش علاقة ببعض</em> بيبانوا كأنهم متعارضين. التجربة فوق فيها 8 workers كل واحد على tenant لوحده ومفيش تعارض منطقي خالص. من غير index، 85.8% من المحاولات بتفشل. بـ index بس rows كل tenant متفرقة على 100 page، 68.2% لسه بيفشلوا: الـ index بيساعد، بس قراية أكتر من <code>max_pred_locks_per_relation</code> pages من جدول واحد (‑2 معناها نص <code>max_pred_locks_per_transaction</code>، يعني 32 هنا) بترقّي الـ page locks لـ relation lock. الحالة دي قابلتني بالصدفة في أول تشغيل. وبـ index وكل tenant في pages قليلة: <b>صفر فشل</b>، و≈40 ضعف الـ commits في الثانية مقارنة باللي من غير index. يعني Serializable بيكافئ نفس اللي الـ schemas الكويسة بتعمله أصلًا.</p>
+    <p>وفيه 3 حاجات مهمين: الـ SSI بيراقب الـ transactions اللي على <code>SERIALIZABLE</code> بس، فمسار واحد ناسيها بيكسر الضمان كله (حقيقي فوق، صفر admins)، فلو هتعتمد عليه خليه الافتراضي: <code>ALTER DATABASE app SET default_transaction_isolation = 'serializable'</code>. وحسب الـ docs، الـ level ده مش متاح على hot standby، يعني الـ replicas أعلى حاجة فيها Repeatable Read. والتقارير الطويلة تقدر تشغّلها بـ <code>SERIALIZABLE READ ONLY DEFERRABLE</code>: بتستنى لحد ما تضمن snapshot آمنة (<code>SafeSnapshot</code> فوق)، وبعدها مش ممكن تفشل بسبب serialization ومبتاخدش SIReadLocks.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      أي قاعدة شكلها "قرا عدد، وبعدين اكتب": حد الكوبونات، آخر admin، عدد المقاعد، "الفاتورة الـ draft واحدة بس لكل tenant"، وحد الـ plan في SaaS (5 projects بس في الـ free tier). جرّب بالترتيب: constraint (زي unique partial index أو <code>WITHOUT OVERLAPS</code> من <a href="./04-types-constraints.html">درس 04</a>)، وبعدين عدّاد atomic على row موجود، وبعدين Serializable مع <code>withRetry</code> لو القاعدة معقدة ومعندكش row واحد تتجمع عليه. ولو اخترت Serializable، حط index على الأعمدة اللي بتفلتر بيها، وإلا هتدفع aborts كتير على حاجات ملهاش علاقة ببعض زي ما شفت فوق.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Does Serializable in Postgres mean transactions run one at a time, with locks?" → No. It's Serializable Snapshot Isolation. Transactions run concurrently on snapshots, SIRead locks only record reads and never block, and Postgres aborts one transaction with 40001 when it sees a dangerous read/write dependency pattern. So the application must retry, and false positives exist, more of them with sequential scans.
+    <div class="ar-note">"هل Serializable في Postgres معناها الـ transactions بتشتغل واحدة واحدة بـ locks؟" ← لأ. ده Serializable Snapshot Isolation. الـ transactions شغالة مع بعض على snapshots، والـ SIRead locks بتسجل القراءة بس ومبتوقفش حد، و Postgres بيفشّل واحدة بـ 40001 لما يشوف pattern خطر في علاقات القراءة والكتابة. فالـ application لازم تعمل retry، وفيه false positives، وبتزيد مع الـ sequential scans.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Retry logic that holds up <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — retry logic متينة</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The docs state the contract: retry the <b>complete</b> transaction, "including all logic that decides which SQL to issue and/or which values to use". That's why Postgres has no automatic retry, and why <code>withRetry</code> takes a function rather than a list of statements. The rules below are the whole design:</p>
+    <ul>
+      <li><b>Retry only <code>40001</code> and <code>40P01</code>.</b> Serialization failures and deadlocks are transient. Anything else, like a declined card or a check constraint, fails the same way again. The docs add that <code>23505</code> and <code>23P01</code> are sometimes worth retrying, with care, because they can also be permanent, so leave those out of the default set.</li>
+      <li><b><code>COMMIT</code> is inside the <code>try</code>.</b> Under Serializable, the commit itself can fail, as Part 5 showed.</li>
+      <li><b>Release the connection before sleeping.</b> Otherwise backoff holds a pool slot doing nothing.</li>
+      <li><b>Exponential backoff with full jitter and a limit.</b> The generic version is built in <a href="../../02-JavaScript/lessons/10-advanced-async.html">02-JS lesson 10</a>, and <a href="../../04-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html">04-Node lesson 25</a> shows the storm it prevents, so I won't repeat that here.</li>
+      <li><b>A metric.</b> <code>onRetry</code> feeds a counter labelled by code and route. A rising retry rate is your first sign that a row has gone hot.</li>
+    </ul>
+    <p>The same wrapper fixes the broken withdrawal from Part 4: 20 of 20 succeed with the correct final balance, and a real deadlock recovers on its own after about 1 s, which is <code>deadlock_timeout</code>. A business error is thrown on attempt 1 and never retried. <a href="./15-locks-deadlocks-advisory.html">Lesson 15</a> covers deadlocks properly.</p>
+  </section>
+
+<pre class="diagram">
+   attempt = 1
+       │
+       ▼
+   BEGIN ──▶ work(tx): reads, decisions, writes ──▶ COMMIT ──▶ return
+       ▲                 │                            │
+       │                 └────────── error ◀──────────┘
+       │                               │
+       │                           ROLLBACK, release client
+       │                               │
+       │                     40001 or 40P01? ── no ──▶ throw
+       │                               │ yes
+       │                    attempts left? ── no ──▶ throw + alert
+       │                               │ yes
+       │                    metric++, sleep(jitter)
+       └───────────────────────────────┘
+</pre>
+  <div class="ar-note">الرسمة: بنبدأ <code>BEGIN</code> وننفذ <code>work</code> كلها (القراءة والقرارات والكتابة) وبعدين <code>COMMIT</code> ونرجّع النتيجة. لو حصل error في أي مكان حتى الـ COMMIT: <code>ROLLBACK</code> ونرجّع الـ client للـ pool. لو الـ code مش 40001 ولا 40P01 نرمي الـ error على طول. لو هو منهم بس المحاولات خلصت نرميه وننبّه. ولو لسه فيه محاولات نزوّد الـ metric وننام مدة عشوائية، ونبدأ من الأول خالص.</div>
+
+<pre data-file="src/with-retry.ts"><code class="language-typescript">import pg from "pg";
+
+// الاتنين بس: serialization failure و deadlock. أي code تاني غلط حقيقي ميتعادش
+const RETRYABLE = new Set(["40001", "40P01"]);
+
+export type RetryOptions = {
+  isolation?: "READ COMMITTED" | "REPEATABLE READ" | "SERIALIZABLE";
+  maxAttempts?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  onRetry?: (info: { attempt: number; code: string; delayMs: number }) =&gt; void;
+};
+
+const sleep = (ms: number) =&gt; new Promise((resolve) =&gt; setTimeout(resolve, ms));
+
+export async function withRetry&lt;T&gt;(
+  pool: pg.Pool,
+  work: (tx: pg.PoolClient) =&gt; Promise&lt;T&gt;,
+  { isolation = "SERIALIZABLE", maxAttempts = 5, baseDelayMs = 10, maxDelayMs = 500, onRetry }: RetryOptions = {},
+): Promise&lt;T&gt; {
+  for (let attempt = 1; ; attempt++) {
+    const client = await pool.connect();
+    let broken: Error | undefined;
+    let code = "";
+    try {
+      await client.query(`BEGIN ISOLATION LEVEL ${isolation}`);
+      const result = await work(client);
+      // الـ COMMIT جوه الـ try: تحت SERIALIZABLE ممكن هو نفسه يفشل بـ 40001
+      const done = await client.query("COMMIT");
+      // لو حد بلع error جوه work، الـ COMMIT بيرجع ROLLBACK من غير ولا exception
+      if (done.command !== "COMMIT") throw new Error(`transaction ended with ${done.command}: an error inside it was swallowed`);
+      return result;
+    } catch (err) {
+      await client.query("ROLLBACK").catch((e: Error) =&gt; { broken = e; });
+      code = (err as pg.DatabaseError).code ?? "";
+      if (!RETRYABLE.has(code) || attempt &gt;= maxAttempts) throw err;
+    } finally {
+      // بنرجّع الـ connection قبل الـ sleep عشان الانتظار ميحجزش الـ pool
+      client.release(broken);
+    }
+    // الـ full jitter: رقم عشوائي بين صفر والـ cap اللي بيتضاعف
+    const delayMs = Math.random() * Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
+    onRetry?.({ attempt, code, delayMs });
+    await sleep(delayMs);
+  }
+}
+
+// يفتح الـ connections مقدمًا: pool بارد بيسلسل الطلبات صدفة ويخبّي الـ race
+export async function warmPool(pool: pg.Pool, size: number) {
+  const clients = await Promise.all(Array.from({ length: size }, () =&gt; pool.connect()));
+  clients.forEach((c) =&gt; c.release());
+}
+</code></pre>
+<pre data-file="src/retry-demo.ts"><code class="language-typescript">import pg from "pg";
+import { warmPool, withRetry } from "./with-retry.ts";
+import { labUrl } from "./lab-url.ts";
+
+const pool = new pg.Pool({ connectionString: labUrl(), max: 20 });
+await warmPool(pool, 20);
+
+await pool.query(`
+  DROP TABLE IF EXISTS wallets;
+  CREATE TABLE wallets (id int PRIMARY KEY, balance_cents bigint NOT NULL);
+  INSERT INTO wallets VALUES (1, 100000), (2, 100000);
+`);
+
+// نفس الـ read-modify-write الغلط من الجزء 4، بس المرة دي جوه withRetry و SERIALIZABLE
+const retries = { n: 0, codes: new Set&lt;string&gt;() };
+const withdraw = (amount: number) =&gt;
+  withRetry(
+    pool,
+    async (tx) =&gt; {
+      const { rows } = await tx.query("SELECT balance_cents FROM wallets WHERE id = 1");
+      const current = Number(rows[0].balance_cents);
+      if (current &lt; amount) throw new Error("insufficient funds");
+      await tx.query("UPDATE wallets SET balance_cents = $1 WHERE id = 1", [current - amount]);
+    },
+    {
+      maxAttempts: 30,
+      onRetry: ({ code }) =&gt; { retries.n++; retries.codes.add(code); },
+    },
+  );
+
+const results = await Promise.allSettled(Array.from({ length: 20 }, () =&gt; withdraw(1000)));
+const ok = results.filter((r) =&gt; r.status === "fulfilled").length;
+const final = (await pool.query("SELECT balance_cents FROM wallets WHERE id = 1")).rows[0].balance_cents;
+console.log(`20 withdrawals: succeeded=${ok} retries=${retries.n} codes=${[...retries.codes]} final=${final} (correct is 80000)`);
+
+// الـ deadlock حقيقي: تحويلين عكس بعض، و 40P01 بيتعاد لوحده
+const transfer = (from: number, to: number, gate: Promise&lt;void&gt;, arrive: () =&gt; void) =&gt; {
+  let attempts = 0;
+  return withRetry(
+    pool,
+    async (tx) =&gt; {
+      attempts++;
+      await tx.query("UPDATE wallets SET balance_cents = balance_cents - 100 WHERE id = $1", [from]);
+      // أول محاولة بس: استنى الـ transfer التاني ياخد الـ row بتاعه عشان الـ deadlock يحصل مضمون
+      if (attempts === 1) { arrive(); await gate; }
+      await tx.query("UPDATE wallets SET balance_cents = balance_cents + 100 WHERE id = $1", [to]);
+      return attempts;
+    },
+    { isolation: "READ COMMITTED", onRetry: ({ code }) =&gt; console.log(`  transfer ${from}-&gt;${to} retry after ${code}`) },
+  );
+};
+let arrivals = 0;
+let open!: () =&gt; void;
+const gate = new Promise&lt;void&gt;((resolve) =&gt; { open = resolve; });
+const arrive = () =&gt; { if (++arrivals === 2) open(); };
+const started = performance.now();
+const attempts = await Promise.all([transfer(1, 2, gate, arrive), transfer(2, 1, gate, arrive)]);
+console.log(`deadlock: attempts=${attempts} ≈${Math.round(performance.now() - started)} ms (deadlock_timeout defaults to 1 s)`);
+
+// أي error تاني ميتعادش: الرصيد مش مكفي مش هيتصلح لو حاولت تاني
+let businessAttempts = 0;
+await withRetry(pool, async () =&gt; {
+  businessAttempts++;
+  throw new Error("insufficient funds");
+}).catch((e: Error) =&gt; console.log(`business error: attempts=${businessAttempts} message="${e.message}"`));
+
+await pool.end();
+</code></pre>
+<pre><code class="language-plaintext">20 withdrawals: succeeded=20 retries=55 codes=40001 final=80000 (correct is 80000)
+  transfer 2-&gt;1 retry after 40P01
+deadlock: attempts=1,2 ≈1031 ms (deadlock_timeout defaults to 1 s)
+business error: attempts=1 message="insufficient funds"
+</code></pre>
+  <div class="ar-note">نفس السحب الغلط، بس جوه <code>withRetry</code> و <code>SERIALIZABLE</code>: الـ 20 نجحوا، بعد 55 retry بـ 40001، والرصيد 80000 صح. الـ deadlock حقيقي: واحد من التحويلين خد 40P01 واتعاد لوحده، و<code>attempts=1,2</code> معناها محاولة وواحدة للتاني ومحاولتين للأول، في حوالي ثانية لأن ده الـ <code>deadlock_timeout</code>. والـ business error اترمى من أول محاولة ومتعادش.</div>
+
+  <h3>Side effects don't roll back<span class="ar-sub">الـ side effects مبتعملش rollback</span></h3>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A retried block runs more than once, and an email can't be un-sent. The demo: 20 requests on a coupon with a limit of 5, Serializable. With the email inside the block, the database correctly saves 5 redemptions while customers receive 30 to 34 emails, because the <code>COMMIT</code> that fails comes <em>after</em> the send. Move the send after the commit and it's exactly 5. In production "after commit" still has a gap, since the process can die between commit and send. The real answer to that is the outbox in <a href="./41-outbox-cdc-idempotency.html">lesson 41</a>: write the intent in the same transaction.</p>
+  </section>
+<pre data-file="src/retry-side-effects.ts"><code class="language-typescript">import pg from "pg";
+import { warmPool, withRetry } from "./with-retry.ts";
+import { labUrl } from "./lab-url.ts";
+
+const pool = new pg.Pool({ connectionString: labUrl(), max: 20 });
+await warmPool(pool, 20);
+
+await pool.query(`
+  DROP TABLE IF EXISTS redemptions;
+  CREATE TABLE redemptions (coupon_id int NOT NULL, user_id int NOT NULL);
+`);
+
+// بديل الإيميل الحقيقي: عدّاد عشان نشوف اتبعت كام مرة
+let emails = 0;
+const sendCouponEmail = async (_userId: number) =&gt; { emails++; };
+
+// الجزء اللي بيتعاد: يقرا عدد الاستخدامات ويقرر، والحد 5
+async function redeem(tx: pg.PoolClient, userId: number) {
+  const { rows } = await tx.query("SELECT count(*)::int AS uses FROM redemptions WHERE coupon_id = 1");
+  if (rows[0].uses &gt;= 5) throw new Error("coupon exhausted");
+  await tx.query("INSERT INTO redemptions VALUES (1, $1)", [userId]);
+}
+
+// ❌ الإيميل جوه الـ block اللي بيتعاد: الـ COMMIT ممكن يفشل بعده بـ 40001
+const bad = (userId: number) =&gt;
+  withRetry(pool, async (tx) =&gt; {
+    await redeem(tx, userId);
+    await sendCouponEmail(userId);
+  }, { maxAttempts: 30 });
+
+// ✅ الإيميل بعد ما الـ COMMIT نجح: مرة واحدة لكل استخدام اتحفظ
+const good = async (userId: number) =&gt; {
+  await withRetry(pool, (tx) =&gt; redeem(tx, userId), { maxAttempts: 30 });
+  await sendCouponEmail(userId);
+};
+
+for (const [name, create] of [["inside the retried block", bad], ["after commit", good]] as const) {
+  for (let round = 1; round &lt;= 3; round++) {
+    await pool.query("TRUNCATE redemptions");
+    emails = 0;
+    await Promise.allSettled(Array.from({ length: 20 }, (_, i) =&gt; create(i + 1)));
+    const { rows } = await pool.query("SELECT count(*)::int AS saved FROM redemptions");
+    console.log(`${name.padEnd(25)} round ${round}: redemptions saved=${rows[0].saved} emails sent=${emails}`);
+  }
+}
+
+await pool.end();
+</code></pre>
+<pre><code class="language-plaintext">inside the retried block  round 1: redemptions saved=5 emails sent=30
+inside the retried block  round 2: redemptions saved=5 emails sent=34
+inside the retried block  round 3: redemptions saved=5 emails sent=31
+after commit              round 1: redemptions saved=5 emails sent=5
+after commit              round 2: redemptions saved=5 emails sent=5
+after commit              round 3: redemptions saved=5 emails sent=5
+</code></pre>
+  <div class="ar-note">الـ data صح في الحالتين: 5 استخدامات محفوظين. الفرق في الإيميلات: جوه الـ block بيتبعت 30 لـ 34 إيميل، وبعد الـ COMMIT بيتبعت 5 بالظبط.</div>
+
+  <h3>Never swallow an error inside the transaction<span class="ar-sub">متبلعش error جوه الـ transaction أبدًا</span></h3>
+  <section class="en">
+    <span class="label">English</span>
+    <p>After any error, Postgres marks the transaction as failed, and every later statement gets <code>25P02</code>. The dangerous part is what comes next: <b><code>COMMIT</code> on a failed transaction doesn't throw</b>. It returns normally with the command tag <code>ROLLBACK</code>, so code that ignored the first error reports success with nothing saved. That's why <code>withRetry</code> checks <code>done.command</code>. For an error you expect inside a transaction, use <code>ON CONFLICT DO NOTHING</code> or a <code>SAVEPOINT</code>. Neither applies to 40001, because a savepoint keeps the old snapshot.</p>
+  </section>
+<pre data-file="src/swallow.ts"><code class="language-typescript">import pg from "pg";
+import { withRetry } from "./with-retry.ts";
+import { labUrl } from "./lab-url.ts";
+
+const pool = new pg.Pool({ connectionString: labUrl() });
+
+await pool.query(`
+  DROP TABLE IF EXISTS users, audit_log;
+  CREATE TABLE users (email text PRIMARY KEY);
+  CREATE TABLE audit_log (action text NOT NULL);
+  INSERT INTO users VALUES ('mona@acme.io');
+`);
+const count = async (table: string) =&gt; (await pool.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n as number;
+
+// ❌ بلع الـ error جوه الـ transaction وكمّل كأن مفيش حاجة
+const client = await pool.connect();
+await client.query("BEGIN");
+await client.query("INSERT INTO audit_log VALUES ('signup attempt')");
+try {
+  await client.query("INSERT INTO users VALUES ('mona@acme.io')");
+} catch (err) {
+  console.log("swallowed:", (err as pg.DatabaseError).code, (err as Error).message);
+}
+try {
+  await client.query("INSERT INTO audit_log VALUES ('continued anyway')");
+} catch (err) {
+  console.log("next statement:", (err as pg.DatabaseError).code, (err as Error).message);
+}
+// الجزء الخطير: الـ COMMIT مبيرميش error، بيرجع ROLLBACK ساكت
+const end = await client.query("COMMIT");
+console.log("COMMIT returned command:", end.command);
+client.release();
+console.log("audit_log rows saved:", await count("audit_log"));
+
+// ✅ الـ error المتوقع جوه الـ transaction: يا SAVEPOINT يا ON CONFLICT
+const tx = await pool.connect();
+await tx.query("BEGIN");
+await tx.query("INSERT INTO audit_log VALUES ('signup attempt')");
+await tx.query("SAVEPOINT before_user");
+try {
+  await tx.query("INSERT INTO users VALUES ('mona@acme.io')");
+} catch {
+  await tx.query("ROLLBACK TO SAVEPOINT before_user");
+}
+const insert = await tx.query("INSERT INTO users VALUES ('mona@acme.io') ON CONFLICT DO NOTHING");
+console.log("ON CONFLICT DO NOTHING rowCount:", insert.rowCount);
+console.log("COMMIT returned command:", (await tx.query("COMMIT")).command);
+tx.release();
+console.log("audit_log rows saved:", await count("audit_log"));
+
+// الـ guard اللي في withRetry بيمسك البلع بدل ما يعدّي على إنه نجح
+await withRetry(pool, async (t) =&gt; {
+  await t.query("INSERT INTO users VALUES ('mona@acme.io')").catch(() =&gt; {});
+}).catch((e: Error) =&gt; console.log("withRetry:", e.message));
+
+await pool.end();
+</code></pre>
+<pre><code class="language-plaintext">swallowed: 23505 duplicate key value violates unique constraint "users_pkey"
+next statement: 25P02 current transaction is aborted, commands ignored until end of transaction block
+COMMIT returned command: ROLLBACK
+audit_log rows saved: 0
+ON CONFLICT DO NOTHING rowCount: 0
+COMMIT returned command: COMMIT
+audit_log rows saved: 1
+withRetry: transaction ended with ROLLBACK: an error inside it was swallowed
+</code></pre>
+  <div class="ar-note">الـ 23505 اتبلع في الـ catch. الـ statement اللي بعده خد 25P02. والـ <code>COMMIT</code> مرماش حاجة، بس الـ command بتاعه رجع <code>ROLLBACK</code>، و<code>audit_log</code> فيه صفر rows: يعني الكود فاكر إنه نجح وكل حاجة ضاعت. الحل بالـ SAVEPOINT و<code>ON CONFLICT</code>: الـ COMMIT رجع <code>COMMIT</code> وفيه row محفوظ. وآخر سطر: الـ guard في <code>withRetry</code> مسك البلع ورماه كـ error واضح.</div>
+
+  <h3>Where retries stop helping<span class="ar-sub">الـ retries بتبطل تفيد فين</span></h3>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Finally, a measurement: 640 increments of one hot row, split among 2, 8 and 32 workers, read-then-write at Serializable. Retries keep the data correct in every row of the output (the script throws if the counter drifts), but look at what they cost. With a limit of 50 and jitter, throughput <em>falls</em> as you add workers: ≈569, ≈365, ≈283 commits/s, and p99 climbs to ≈1.2 s. Without backoff at 32 workers it's 14 attempts per commit and ≈133 commits/s, and 15 still give up. With a limit of 5 at 32 workers, 261 of 640 operations fail. Meanwhile the atomic <code>UPDATE</code> does ≈7,430 to ≈9,536 commits/s at 8 and 32 workers, with 1 attempt each.</p>
+    <p>The lesson: a row can only be committed by one writer at a time, so more workers add wasted attempts, not throughput. Retries are the right tool for <em>occasional</em> conflicts. If your retry metric is high on one row, stop tuning the backoff and change the shape: an atomic statement, or a queue or partitioned counter so that fewer writers touch the same row.</p>
+  </section>
+<pre data-file="src/retry-scale.ts"><code class="language-typescript">import pg from "pg";
+import { warmPool, withRetry, type RetryOptions } from "./with-retry.ts";
+import { labUrl } from "./lab-url.ts";
+
+const pool = new pg.Pool({ connectionString: labUrl(), max: 40 });
+await warmPool(pool, 40);
+
+await pool.query(`
+  DROP TABLE IF EXISTS hot_counters;
+  CREATE TABLE hot_counters (id int PRIMARY KEY, n bigint NOT NULL);
+`);
+const TOTAL = 640;
+const percentile = (xs: number[], p: number) =&gt; [...xs].sort((a, b) =&gt; a - b)[Math.min(xs.length - 1, Math.floor(xs.length * p))] ?? 0;
+
+type Row = { commits: number; gaveUp: number; attempts: number; seconds: number; p50: number; p99: number };
+
+// كل worker بيعمل نصيبه من الـ 640 زيادة على نفس الـ row
+async function run(workers: number, op: (onAttempt: () =&gt; void) =&gt; Promise&lt;void&gt;): Promise&lt;Row&gt; {
+  await pool.query("TRUNCATE hot_counters; INSERT INTO hot_counters VALUES (1, 0)");
+  let commits = 0;
+  let gaveUp = 0;
+  let attempts = 0;
+  const latencies: number[] = [];
+  const started = performance.now();
+  await Promise.all(
+    Array.from({ length: workers }, async () =&gt; {
+      for (let i = 0; i &lt; TOTAL / workers; i++) {
+        const t0 = performance.now();
+        try {
+          await op(() =&gt; { attempts++; });
+          commits++;
+          latencies.push(performance.now() - t0);
+        } catch (err) {
+          if ((err as pg.DatabaseError).code !== "40001") throw err;
+          gaveUp++;
+        }
+      }
+    }),
+  );
+  const seconds = (performance.now() - started) / 1000;
+  const { rows } = await pool.query("SELECT n FROM hot_counters WHERE id = 1");
+  if (Number(rows[0].n) !== commits) throw new Error(`lost update! n=${rows[0].n} commits=${commits}`);
+  return { commits, gaveUp, attempts, seconds, p50: percentile(latencies, 0.5), p99: percentile(latencies, 0.99) };
+}
+
+const serializable = (opts: RetryOptions) =&gt; (onAttempt: () =&gt; void) =&gt;
+  withRetry(pool, async (tx) =&gt; {
+    onAttempt();
+    const { rows } = await tx.query("SELECT n FROM hot_counters WHERE id = 1");
+    await tx.query("UPDATE hot_counters SET n = $1 WHERE id = 1", [Number(rows[0].n) + 1]);
+  }, opts);
+
+const atomic = async (onAttempt: () =&gt; void) =&gt; {
+  onAttempt();
+  await pool.query("UPDATE hot_counters SET n = n + 1 WHERE id = 1");
+};
+
+const strategies: [string, (onAttempt: () =&gt; void) =&gt; Promise&lt;void&gt;][] = [
+  ["SERIALIZABLE retry, jitter, limit 5", serializable({ maxAttempts: 5 })],
+  ["SERIALIZABLE retry, jitter, limit 50", serializable({ maxAttempts: 50 })],
+  ["SERIALIZABLE retry, no backoff, limit 50", serializable({ maxAttempts: 50, baseDelayMs: 0 })],
+  ["atomic UPDATE, READ COMMITTED", atomic],
+];
+
+for (const [name, op] of strategies) {
+  console.log(`\n${name}`);
+  for (const workers of [2, 8, 32]) {
+    const r = await run(workers, op);
+    console.log(
+      `  ${String(workers).padStart(2)} workers: commits=${String(r.commits).padStart(3)} gave up=${String(r.gaveUp).padStart(3)} ` +
+        `attempts/commit=${(r.attempts / Math.max(1, r.commits)).toFixed(1).padStart(5)} ` +
+        `≈${String(Math.round(r.commits / r.seconds)).padStart(5)} commits/s  p50≈${r.p50.toFixed(0)} ms p99≈${r.p99.toFixed(0)} ms`,
+    );
+  }
+}
+await pool.end();
+</code></pre>
+<pre><code class="language-plaintext">SERIALIZABLE retry, jitter, limit 5
+   2 workers: commits=636 gave up=  4 attempts/commit=  1.2 ≈  382 commits/s  p50≈3 ms p99≈43 ms
+   8 workers: commits=602 gave up= 38 attempts/commit=  1.9 ≈  438 commits/s  p50≈3 ms p99≈115 ms
+  32 workers: commits=379 gave up=261 attempts/commit=  6.2 ≈  216 commits/s  p50≈32 ms p99≈179 ms
+
+SERIALIZABLE retry, jitter, limit 50
+   2 workers: commits=640 gave up=  0 attempts/commit=  1.0 ≈  569 commits/s  p50≈2 ms p99≈13 ms
+   8 workers: commits=640 gave up=  0 attempts/commit=  1.2 ≈  365 commits/s  p50≈2 ms p99≈225 ms
+  32 workers: commits=640 gave up=  0 attempts/commit=  1.9 ≈  283 commits/s  p50≈2 ms p99≈1199 ms
+
+SERIALIZABLE retry, no backoff, limit 50
+   2 workers: commits=640 gave up=  0 attempts/commit=  1.6 ≈  534 commits/s  p50≈2 ms p99≈23 ms
+   8 workers: commits=640 gave up=  0 attempts/commit=  4.2 ≈  339 commits/s  p50≈11 ms p99≈137 ms
+  32 workers: commits=625 gave up= 15 attempts/commit= 14.0 ≈  133 commits/s  p50≈141 ms p99≈826 ms
+
+atomic UPDATE, READ COMMITTED
+   2 workers: commits=640 gave up=  0 attempts/commit=  1.0 ≈ 3680 commits/s  p50≈1 ms p99≈1 ms
+   8 workers: commits=640 gave up=  0 attempts/commit=  1.0 ≈ 9536 commits/s  p50≈1 ms p99≈5 ms
+  32 workers: commits=640 gave up=  0 attempts/commit=  1.0 ≈ 7430 commits/s  p50≈2 ms p99≈24 ms
+</code></pre>
+  <div class="ar-note">كل مجموعة طريقة، وكل سطر عدد workers. <code>commits</code> اللي نجحوا من 640، و<code>gave up</code> اللي استسلموا بعد ما المحاولات خلصت، و<code>attempts/commit</code> كام محاولة لكل نجاح، وبعدها السرعة والـ latency. Limit 5: عند 32 worker، 261 استسلموا. Limit 50 مع jitter: كله نجح، بس السرعة نزلت من ≈569 لـ ≈283 والـ p99 طلع ≈1.2 ثانية. من غير backoff: عند 32 worker، 14 محاولة لكل نجاح، و15 استسلموا. والـ atomic: محاولة واحدة وآلاف الـ commits في الثانية. الأرقام تحت ضغط على Windows و fsync مقفول، فخد النسبة مش الرقم.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ docs بتقول العقد بوضوح: اعمل retry للـ transaction <b>كلها</b>، "بما فيها كل المنطق اللي بيقرر تبعت أنهي SQL وبأنهي قيم". وعشان كده Postgres مفيهوش retry أوتوماتيك، وعشان كده <code>withRetry</code> بتاخد function مش قايمة statements. القواعد دي هي التصميم كله:</p>
+    <ul>
+      <li><b>اعمل retry لـ <code>40001</code> و<code>40P01</code> بس.</b> الـ serialization failure والـ deadlock مؤقتين. أي حاجة تانية زي كارت مرفوض أو check constraint هتفشل بنفس الطريقة تاني. والـ docs بتضيف إن <code>23505</code> و<code>23P01</code> أحيانًا تستاهل retry بحذر لأنها ممكن تبقى دايمة، فسيبها بره الـ set الافتراضي.</li>
+      <li><b>الـ <code>COMMIT</code> جوه الـ <code>try</code>.</b> تحت Serializable الـ commit نفسه ممكن يفشل، زي ما الجزء 5 ورّى.</li>
+      <li><b>رجّع الـ connection قبل الـ sleep.</b> وإلا الـ backoff هيحجز مكان في الـ pool من غير شغل.</li>
+      <li><b>Exponential backoff مع full jitter وحد أقصى.</b> النسخة العامة متبنية في <a href="../../02-JavaScript/lessons/10-advanced-async.html">درس 10 في 02-JS</a>، و<a href="../../04-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html">درس 25 في 04-Node</a> بيوريك العاصفة اللي بتمنعها، فمش هكررها هنا.</li>
+      <li><b>Metric.</b> الـ <code>onRetry</code> بتغذي counter بالـ code والـ route. لما الـ retry rate يطلع، دي أول علامة إن فيه row بقى hot.</li>
+    </ul>
+    <p>نفس الـ wrapper بيصلّح السحب الغلط من الجزء 4: 20 من 20 نجحوا بالرصيد الصح، و deadlock حقيقي اتعالج لوحده في حوالي ثانية، وده الـ <code>deadlock_timeout</code>. والـ business error اترمى من أول محاولة ومتعادش. و<a href="./15-locks-deadlocks-advisory.html">درس 15</a> بيغطي الـ deadlocks صح.</p>
+    <p><b>الـ side effects مبتعملش rollback.</b> الـ block اللي بيتعاد بيتنفذ أكتر من مرة، والإيميل مش بيرجع. التجربة: 20 request على كوبون حده 5، تحت Serializable. لما الإيميل جوه الـ block، الـ database بتحفظ 5 استخدامات صح، والعملاء بيوصلهم من 30 لـ 34 إيميل، لأن الـ <code>COMMIT</code> اللي بيفشل بييجي <em>بعد</em> الإرسال. لما تنقل الإرسال بعد الـ commit، بيبقى 5 بالظبط. وفي production لسه فيه فتحة في "بعد الـ commit"، لأن الـ process ممكن يموت بين الـ commit والإرسال. الإجابة الحقيقية هي الـ outbox في <a href="./41-outbox-cdc-idempotency.html">درس 41</a>: تكتب النية في نفس الـ transaction.</p>
+    <p><b>متبلعش error جوه الـ transaction.</b> بعد أي error، Postgres بيعلّم الـ transaction إنها فشلت، وكل statement بعدها بياخد <code>25P02</code>. والخطر في اللي بعد كده: <b><code>COMMIT</code> على transaction فاشلة مبيرميش error</b>. بيرجع عادي بـ command tag اسمه <code>ROLLBACK</code>، فالكود اللي تجاهل أول error بيقول إنه نجح ومفيش حاجة اتحفظت. وعشان كده <code>withRetry</code> بتفحص <code>done.command</code>. ولأي error متوقع جوه الـ transaction استخدم <code>ON CONFLICT DO NOTHING</code> أو <code>SAVEPOINT</code>. والاتنين ملهمش علاقة بـ 40001، لأن الـ savepoint بيفضل على نفس الـ snapshot القديمة.</p>
+    <p><b>الـ retries بتبطل تفيد فين؟</b> قياس أخير: 640 زيادة على row واحد hot، موزعين على 2 و8 و32 worker، قرا وبعدين كتب تحت Serializable. الـ retries حافظت على الـ data صح في كل السطور (السكريبت بيرمي error لو العدّاد غلط)، بس بص التمن. بحد 50 و jitter، السرعة <em>بتقل</em> كل ما تزود workers: ≈569 و≈365 و≈283 commit في الثانية، والـ p99 بيطلع لـ ≈1.2 ثانية. من غير backoff عند 32 worker: 14 محاولة لكل commit و≈133 commit في الثانية، و15 استسلموا برضه. وبحد 5 عند 32 worker، 261 من 640 بيفشلوا. وفي نفس الوقت الـ <code>UPDATE</code> الـ atomic بيعمل من ≈7430 لـ ≈9536 commit في الثانية عند 8 و32 worker، بمحاولة واحدة.</p>
+    <p>الدرس: الـ row الواحد بيقبل commit من كاتب واحد في الوقت، فزيادة الـ workers بتزود محاولات ضايعة مش سرعة. الـ retries الأداة الصح للتعارضات <em>النادرة</em>. لو الـ metric عالي على row واحد، بطّل تظبط في الـ backoff وغيّر الشكل: statement atomic، أو queue، أو counter متقسم على كذا row عشان كتّاب أقل يلمسوا نفس الـ row.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      <code>POST /checkout</code>: بتقرا الـ cart وحدود الكوبون والمخزن وبتقرر، والقرار معقد ومش هيتكتب في statement واحد. لفّه كله في <code>withRetry(pool, (tx) =&gt; placeOrder(tx, cart), { onRetry: metric })</code> تحت Serializable. جوه الـ function مفيش HTTP ولا إيميل ولا publish: أي حاجة بره الـ database بتتحط في outbox أو بعد الـ COMMIT. ولو الـ request بقى عنده 3 attempts زيادة وقرب من الـ deadline، ارمي 503 بدل ما تكمّل. وحط alert على <code>db_tx_retries_total</code>: أول مرة يطلع فجأة بعد deploy، غالبًا query فقدت index فبقت Seq Scan، زي ما شفت في الجزء 5.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Explain a lost update and how you'd prevent it." → Two transactions read the same value, compute in the application, and write back, so one overwrites the other with no error. BEGIN alone doesn't help at Read Committed. Best fix: a single atomic <code>UPDATE ... SET x = x - $1 WHERE x &gt;= $1</code>. When logic must stay in code: <code>SELECT ... FOR UPDATE</code>, an optimistic <code>version</code> column, or Repeatable Read/Serializable with a retry on 40001, retrying the whole transaction and keeping side effects outside it.
+    <div class="ar-note">"اشرح الـ lost update وإزاي تمنعه." ← transactionين بيقروا نفس القيمة، بيحسبوا في الـ application، وبيكتبوا، فواحد بيغطي على التاني من غير error. و<code>BEGIN</code> لوحدها مش بتحل حاجة تحت Read Committed. أحسن حل: <code>UPDATE ... SET x = x - $1 WHERE x &gt;= $1</code> واحد atomic. ولما المنطق لازم يفضل في الكود: <code>SELECT ... FOR UPDATE</code>، أو <code>version</code> column بأسلوب optimistic، أو Repeatable Read/Serializable مع retry على 40001، تعيد فيه الـ transaction كلها وتسيب الـ side effects بره.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "You start seeing 40001 errors after a deploy. What do you do?" → It isn't a bug by itself: retry the whole transaction with backoff. But a sudden rise means something changed, so I'd check for a hot row, a query that lost its index and now does a Seq Scan (relation-level predicate lock), and transactions that got longer. If it's one hot row, I'd change the write to an atomic statement or a different shape rather than add retries.
+    <div class="ar-note">"بدأت تشوف 40001 بعد deploy، هتعمل إيه؟" ← هي نفسها مش bug: اعمل retry للـ transaction كلها بـ backoff. بس الزيادة المفاجئة معناها إن حاجة اتغيرت، فهبص على: row بقى hot، أو query فقدت الـ index وبقت Seq Scan (يعني predicate lock على الجدول كله)، أو transactions بقت أطول. ولو row واحد hot، هغيّر الكتابة لـ statement atomic أو شكل مختلف بدل ما أزود retries.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Trusting <code>BEGIN</code> to stop a race</b>
+<pre><code class="language-typescript">await tx.query("BEGIN");
+const { rows } = await tx.query("SELECT stock FROM products WHERE id = 1");
+await tx.query("UPDATE products SET stock = $1 WHERE id = 1", [rows[0].stock - 1]);
+await tx.query("COMMIT");
+// كل الـ requests بتقرا نفس الـ stock وبتكتب نفس القيمة</code></pre></div>
+    <div class="good"><b>✅ Let the database do it in one statement</b>
+<pre><code class="language-typescript">const res = await pool.query(
+  "UPDATE products SET stock = stock - 1 WHERE id = 1 AND stock &gt;= 1",
+);
+if (res.rowCount === 0) throw new OutOfStockError();
+// الـ row lock بيرتّب الكل والـ WHERE بتتفحص على القيمة الجديدة</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ transaction بتديك atomicity يعني الكل أو لا شيء، مش حماية من الـ race. تحت Read Committed الـ <code>SELECT</code> مش بياخد lock، فكل الـ requests بتقرا نفس الـ stock، وفي الجزء 4 ضيّعت 12 لـ 19 عملية من 20. الصح: statement واحد، و<code>rowCount === 0</code> معناها "خلص".</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Retrying the failed statement</b>
+<pre><code class="language-typescript">try {
+  await tx.query(UPDATE_BALANCE, [next]);
+} catch (err) {
+  // نفس الـ snapshot ونفس الـ next القديم: هتفشل تاني أو تكتب غلط
+  await tx.query(UPDATE_BALANCE, [next]);
+}</code></pre></div>
+    <div class="good"><b>✅ Retrying the whole transaction</b>
+<pre><code class="language-typescript">await withRetry(pool, async (tx) =&gt; {
+  // القراءة والقرار جوه الـ function، فبيتعادوا من snapshot جديدة
+  const balance = await readBalance(tx, id);
+  await writeBalance(tx, id, balance - amount);
+});</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>بعد 40001 الـ transaction كلها بقت فاشلة، والـ statement اللي بعدها بياخد 25P02. وحتى بـ savepoint نفس الـ UPDATE فشل بنفس الـ 40001 في الجزء 3، لأن الـ snapshot مش بتتغير. لازم <code>ROLLBACK</code> و <code>BEGIN</code> جديدة وقراءة جديدة وقرار جديد، وده اللي <code>withRetry</code> بتعمله.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Retrying every error</b>
+<pre><code class="language-typescript">for (let i = 0; i &lt; 5; i++) {
+  try { return await checkout(cart); }
+  // كارت مرفوض أو constraint هيتعادوا 5 مرات على الفاضي
+  catch { await sleep(100); }
+}</code></pre></div>
+    <div class="good"><b>✅ Two codes, with a limit</b>
+<pre><code class="language-typescript">const RETRYABLE = new Set(["40001", "40P01"]);
+// أي code تاني بيترمي من أول محاولة
+if (!RETRYABLE.has(code) || attempt &gt;= maxAttempts) throw err;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ retry على كل error بيخلّي الـ bugs الحقيقية تاخد وقت أطول وحمل أكبر قبل ما تظهر، وبيعيد حاجات مش هتتصلح لوحدها. وكمان الـ sleep الثابت بيخلي الكل يرجع مع بعض. الصح: 40001 و40P01 بس، وحد أقصى، وjitter. في الجزء 6 الـ business error خد محاولة واحدة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Serializable on some paths</b>
+<pre><code class="language-typescript">// المسار الأول
+await withRetry(pool, demote, { isolation: "SERIALIZABLE" });
+// مسار تاني في admin panel نسي، فشغال READ COMMITTED
+await pool.query(DEMOTE_SQL);</code></pre></div>
+    <div class="good"><b>✅ Make it the default, or use a constraint</b>
+<pre><code class="language-sql">-- كل الـ transactions في الـ database دي بقت SERIALIZABLE
+ALTER DATABASE app SET default_transaction_isolation = 'serializable';</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ SSI بيراقب الـ transactions اللي على <code>SERIALIZABLE</code> بس. في الجزء 5، واحدة على <code>SERIALIZABLE</code> والتانية <code>READ COMMITTED</code> خلّوا الـ admins صفر من غير error. يا إما تخليه الافتراضي وكل الكود يبقى جاهز لـ retry، يا إما تستخدم constraint أو atomic statement، ودول بيشتغلوا من أي مسار.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. See both anomalies with your own script <span class="lvl lvl-1">🟢 easy</span></b>
+    Using <code>timeline.ts</code>, write a script around <code>shipments</code>: session A counts the packed shipments of an order twice while session B marks one as lost and inserts two more. Run it at Read Committed and at Repeatable Read, predict each count first, then compare.
+    <div class="ar-note">باستخدام <code>timeline.ts</code>، اكتب سكريبت على جدول <code>shipments</code>: الـ session <code>A</code> بيعدّ الشحنات الـ packed لطلب مرتين، و<code>B</code> بيعلّم واحدة إنها lost ويضيف اتنين. شغّله على Read Committed وعلى Repeatable Read. توقّع كل عدد الأول، وبعدين قارن.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-status.ts"><code class="language-typescript">import { runTimeline, sql } from "./timeline.ts";
+
+const seed = () =&gt; sql(`
+  DROP TABLE IF EXISTS shipments;
+  CREATE TABLE shipments (id int PRIMARY KEY, order_id int NOT NULL, status text NOT NULL);
+  INSERT INTO shipments VALUES (1, 100, 'packed'), (2, 100, 'packed');
+`);
+const READY = "SELECT count(*)::int AS packed FROM shipments WHERE order_id = 100 AND status = 'packed'";
+
+// نفس السكريبت بالظبط، والـ level بس هو اللي بيتغير
+for (const level of ["READ COMMITTED", "REPEATABLE READ"]) {
+  await seed();
+  await runTimeline(level, [
+    { s: "A", sql: `BEGIN ISOLATION LEVEL ${level}` },
+    { s: "A", sql: READY },
+    { s: "B", sql: "UPDATE shipments SET status = 'lost' WHERE id = 1" },
+    { s: "B", sql: "INSERT INTO shipments VALUES (3, 100, 'packed'), (4, 100, 'packed')" },
+    { s: "A", sql: READY },
+    { s: "A", sql: "COMMIT" },
+  ]);
+}
+</code></pre>
+<pre><code class="language-plaintext">== READ COMMITTED
+ 1 A: BEGIN ISOLATION LEVEL READ COMMITTED
+      → BEGIN
+ 2 A: SELECT count(*)::int AS packed FROM shipments WHERE order_id = 100 AND status = 'packed'
+      → {"packed":2}
+ 3     B: UPDATE shipments SET status = 'lost' WHERE id = 1
+          → UPDATE 1
+ 4     B: INSERT INTO shipments VALUES (3, 100, 'packed'), (4, 100, 'packed')
+          → INSERT 2
+ 5 A: SELECT count(*)::int AS packed FROM shipments WHERE order_id = 100 AND status = 'packed'
+      → {"packed":3}
+ 6 A: COMMIT
+      → COMMIT
+
+== REPEATABLE READ
+ 1 A: BEGIN ISOLATION LEVEL REPEATABLE READ
+      → BEGIN
+ 2 A: SELECT count(*)::int AS packed FROM shipments WHERE order_id = 100 AND status = 'packed'
+      → {"packed":2}
+ 3     B: UPDATE shipments SET status = 'lost' WHERE id = 1
+          → UPDATE 1
+ 4     B: INSERT INTO shipments VALUES (3, 100, 'packed'), (4, 100, 'packed')
+          → INSERT 2
+ 5 A: SELECT count(*)::int AS packed FROM shipments WHERE order_id = 100 AND status = 'packed'
+      → {"packed":2}
+ 6 A: COMMIT
+      → COMMIT
+</code></pre>
+      <div class="ar-note">تحت <code>READ COMMITTED</code> العدد بيبقى 2 وبعدين 3 (واحدة راحت واتنين جم): non-repeatable و phantom مع بعض. وتحت <code>REPEATABLE READ</code> بيفضل 2 في المرتين.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Fix a lost update <span class="lvl lvl-2">🟡 medium</span></b>
+    <code>addCreditBad</code> reads a user's store credit, adds to it, caps it at 100000 and writes it back. Run 50 concurrent calls, see the wrong total, then rewrite it as one statement, keeping the cap.
+    <div class="ar-note"><code>addCreditBad</code> بتقرا رصيد المستخدم، تزود عليه، تعمل cap عند 100000، وتكتبه. شغّل 50 call في نفس اللحظة، شوف الإجمالي الغلط، وبعدين اكتبها في statement واحد من غير ما تضيّع الـ cap.</div>
+    <details><summary>Hint · تلميح</summary>
+      <code>LEAST(a, b)</code> works inside a <code>SET</code>.
+      <div class="ar-note"><code>LEAST(a, b)</code> بتشتغل جوه الـ <code>SET</code>.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-credit.ts"><code class="language-typescript">import pg from "pg";
+import { labUrl } from "./lab-url.ts";
+
+const pool = new pg.Pool({ connectionString: labUrl(), max: 20 });
+const warm = await Promise.all(Array.from({ length: 20 }, () =&gt; pool.connect()));
+warm.forEach((c) =&gt; c.release());
+
+await pool.query(`
+  DROP TABLE IF EXISTS user_credits;
+  CREATE TABLE user_credits (user_id int PRIMARY KEY, credit_cents bigint NOT NULL);
+`);
+const CAP = 100000;
+
+// ❌ الكود اللي عليك تصلحه: read-modify-write في Node
+async function addCreditBad(userId: number, cents: number) {
+  const { rows } = await pool.query("SELECT credit_cents FROM user_credits WHERE user_id = $1", [userId]);
+  const next = Math.min(Number(rows[0].credit_cents) + cents, CAP);
+  await pool.query("UPDATE user_credits SET credit_cents = $2 WHERE user_id = $1", [userId, next]);
+}
+
+// ✅ الحساب والـ cap جوه statement واحد
+async function addCreditFixed(userId: number, cents: number) {
+  const { rows } = await pool.query(
+    "UPDATE user_credits SET credit_cents = LEAST(credit_cents + $2, $3) WHERE user_id = $1 RETURNING credit_cents",
+    [userId, cents, CAP],
+  );
+  return Number(rows[0].credit_cents);
+}
+
+for (const [name, add] of [["bad", addCreditBad], ["fixed", addCreditFixed]] as const) {
+  await pool.query("TRUNCATE user_credits; INSERT INTO user_credits VALUES (1, 0), (2, 95000)");
+  await Promise.all(Array.from({ length: 50 }, () =&gt; add(1, 100)));
+  await Promise.all(Array.from({ length: 50 }, () =&gt; add(2, 100)));
+  const { rows } = await pool.query("SELECT user_id, credit_cents FROM user_credits ORDER BY user_id");
+  console.log(`${name.padEnd(6)} user 1 = ${rows[0].credit_cents} (want 5000)  user 2 = ${rows[1].credit_cents} (want 100000)`);
+}
+await pool.end();
+</code></pre>
+<pre><code class="language-plaintext">bad    user 1 = 200 (want 5000)  user 2 = 95100 (want 100000)
+fixed  user 1 = 5000 (want 5000)  user 2 = 100000 (want 100000)
+</code></pre>
+      <div class="ar-note">الـ bad بيخسر معظم الزيادات، والـ fixed بيوصل للرقم الصح بالظبط، وعند الـ cap بيقف على 100000.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Double-booked room <span class="lvl lvl-2">🟡 medium</span></b>
+    Two requests check that a room is free for a slot and then insert a booking. Show the double booking at Repeatable Read, show Serializable aborting one, then make the rule a constraint so it holds at Read Committed too. Which of the three would you ship, and why?
+    <div class="ar-note">requestين بيتأكدوا إن الأوضة فاضية في ميعاد وبعدين بيضيفوا حجز. ورّي الحجز المزدوج تحت Repeatable Read، وورّي Serializable وهو بيفشّل واحد، وبعدين خلّي القاعدة constraint عشان تشتغل حتى تحت Read Committed. هتطلّع production بأنهي واحدة من التلاتة وليه؟</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-booking.ts"><code class="language-typescript">import { runTimeline, sql, type Step } from "./timeline.ts";
+
+const seed = () =&gt; sql(`
+  CREATE EXTENSION IF NOT EXISTS btree_gist;
+  DROP TABLE IF EXISTS bookings;
+  CREATE TABLE bookings (room_id int NOT NULL, during tstzrange NOT NULL, booked_by text NOT NULL);
+`);
+const OVERLAPS = `SELECT count(*)::int AS clashes FROM bookings WHERE room_id = 1 AND during &amp;&amp; '[2026-11-10 10:00+00,2026-11-10 11:00+00)'`;
+const BOOK = (who: string) =&gt; `INSERT INTO bookings VALUES (1, '[2026-11-10 10:00+00,2026-11-10 11:00+00)', '${who}')`;
+const script = (level: string): Step[] =&gt; [
+  { s: "A", sql: `BEGIN ISOLATION LEVEL ${level}` },
+  { s: "B", sql: `BEGIN ISOLATION LEVEL ${level}` },
+  { s: "A", sql: OVERLAPS },
+  { s: "B", sql: OVERLAPS },
+  { s: "A", sql: BOOK("mona") },
+  { s: "B", sql: BOOK("karim") },
+  { s: "A", sql: "COMMIT" },
+  { s: "B", sql: "COMMIT" },
+];
+const rows = async () =&gt; (await sql("SELECT count(*)::int AS bookings FROM bookings")).rows[0].bookings;
+
+await seed();
+await runTimeline("write skew at REPEATABLE READ", script("REPEATABLE READ"), false);
+console.log("REPEATABLE READ: bookings for the same slot =", await rows());
+
+await seed();
+const ser = await runTimeline("SERIALIZABLE", script("SERIALIZABLE"), false);
+console.log("SERIALIZABLE: bookings =", await rows(), "| error:", ser.find((o) =&gt; o.error)?.error?.code);
+
+// الـ constraint هو الحل الأقوى: القاعدة في الـ schema مش في كل code path
+await seed();
+await sql("ALTER TABLE bookings ADD PRIMARY KEY (room_id, during WITHOUT OVERLAPS)");
+// الـ INSERT التاني بيستنى الأول يخلص، عشان كده blocks هنا
+const con = await runTimeline("constraint", [
+  { s: "A", sql: "BEGIN" },
+  { s: "B", sql: "BEGIN" },
+  { s: "A", sql: BOOK("mona") },
+  { s: "B", sql: BOOK("karim"), blocks: true },
+  { s: "A", sql: "COMMIT" },
+  { s: "B", sql: "ROLLBACK" },
+], false);
+console.log("WITHOUT OVERLAPS at READ COMMITTED: bookings =", await rows(), "| error:", con.find((o) =&gt; o.error)?.error?.code);
+</code></pre>
+<pre><code class="language-plaintext">REPEATABLE READ: bookings for the same slot = 2
+SERIALIZABLE: bookings = 1 | error: 40001
+WITHOUT OVERLAPS at READ COMMITTED: bookings = 1 | error: 23P01
+</code></pre>
+      <div class="ar-note">الـ constraint هو اللي تطلّعه: القاعدة بقت في الـ schema فبتشتغل من أي مسار وأي level، والخطأ <code>23P01</code> واضح وتقدر تحوّله لـ 409. استخدم Serializable للقواعد اللي ملهاش constraint مناسب. والـ <code>WITHOUT OVERLAPS</code> موجود من PG 18، ومحتاج <code>btree_gist</code> عشان عمود الـ <code>int</code>.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project: a real retry wrapper <span class="lvl lvl-3">🔴 project</span></b>
+    Pick the most valuable read-then-write path in your side project, such as checkout or reserving stock. Decide between an atomic statement and <code>withRetry</code>. If it's <code>withRetry</code>, add a test with 20 concurrent calls that asserts the invariant, expose a retry counter labelled by route and SQLSTATE, and move every side effect out of the block.
+    <div class="ar-note">اختار أهم مسار read-then-write في مشروعك الجانبي، زي الـ checkout أو حجز المخزن. قرر: statement atomic ولا <code>withRetry</code>. لو <code>withRetry</code>، ضيف test بـ 20 call في نفس اللحظة يتأكد من القاعدة، وطلّع counter للـ retries بالـ route والـ SQLSTATE، وانقل كل side effect بره الـ block.</div>
+    <details><summary>Hint · تلميح</summary>
+      Warm the pool in the test, or a cold pool will hide the race. Assert the invariant from the database at the end, not from what each call returned.
+      <div class="ar-note">افتح الـ connections مقدمًا في الـ test، وإلا الـ pool البارد هيخبّي الـ race. وفي الآخر اتأكد من القاعدة من الـ database نفسها، مش من اللي كل call رجّعته.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Postgres has 3 real levels: <code>READ UNCOMMITTED</code> behaves as <code>READ COMMITTED</code>, and dirty reads never happen.</li>
+    <li><b>Read Committed:</b> new snapshot per statement. Non-repeatable reads, phantoms, lost updates and write skew are all possible. No serialization errors.</li>
+    <li>A blocked statement re-checks <code>WHERE</code> on the new version of that row only. Great for <code>x = x - 1 WHERE x &gt;= 1</code>, risky for complex conditions.</li>
+    <li><b>Repeatable Read:</b> one snapshot, taken at the first statement, not at <code>BEGIN</code>. Blocks phantoms and lost updates, and writes on a changed row get 40001.</li>
+    <li>Consistent export: <code>REPEATABLE READ READ ONLY</code>. Long snapshots keep old versions alive (lesson 14).</li>
+    <li><b>Lost update:</b> read, compute in code, write. <code>BEGIN</code> doesn't fix it. Fix first with one atomic statement; lesson 16 has the other three.</li>
+    <li><b>Write skew:</b> read overlapping data, write different rows. Only <code>SERIALIZABLE</code> catches it, or a constraint, or a conflict materialized on a row that exists.</li>
+    <li><code>FOR UPDATE</code> can't lock rows that don't exist yet.</li>
+    <li>SSI needs every path on <code>SERIALIZABLE</code>. Seq scans mean a relation-level predicate lock and many false aborts, so indexes help.</li>
+    <li><code>withRetry</code>: 40001 and 40P01 only, the whole transaction, <code>COMMIT</code> inside the <code>try</code>, release before sleeping, jitter, a limit, a metric.</li>
+    <li>No side effects in the retried block. <code>COMMIT</code> on a failed transaction returns <code>ROLLBACK</code> with no exception, so check it.</li>
+    <li>On a hot row more workers mean less throughput. A high retry rate means change the write's shape, not the backoff.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>Postgres عنده 3 levels حقيقيين: <code>READ UNCOMMITTED</code> بيتصرف زي <code>READ COMMITTED</code>، والـ dirty read مبيحصلش أبدًا.</li>
+      <li><b>Read Committed:</b> snapshot جديدة لكل statement. الـ non-repeatable والـ phantom والـ lost update والـ write skew كلهم ممكنين، ومفيش serialization errors.</li>
+      <li>الـ statement الواقف على lock بيعيد فحص الـ <code>WHERE</code> على النسخة الجديدة من الـ row ده بس. ممتاز لـ <code>x = x - 1 WHERE x &gt;= 1</code>، وخطر مع الشروط المعقدة.</li>
+      <li><b>Repeatable Read:</b> snapshot واحدة بتتاخد مع أول statement مش مع <code>BEGIN</code>. بيمنع الـ phantoms والـ lost updates، والكتابة على row اتغير بتاخد 40001.</li>
+      <li>الـ export المتماسك: <code>REPEATABLE READ READ ONLY</code>. والـ snapshots الطويلة بتخلي النسخ القديمة عايشة (درس 14).</li>
+      <li><b>Lost update:</b> اقرا، احسب في الكود، اكتب. <code>BEGIN</code> مش بتحله. ابدأ بـ statement واحد atomic، ودرس 16 فيه التلاتة التانيين.</li>
+      <li><b>Write skew:</b> قراءة data متداخلة وكتابة rows مختلفة. مبيمسكوش غير <code>SERIALIZABLE</code>، أو constraint، أو تعارض على row موجود.</li>
+      <li><code>FOR UPDATE</code> مش بيقدر يقفل rows لسه مش موجودة.</li>
+      <li>الـ SSI محتاج كل المسارات على <code>SERIALIZABLE</code>. والـ Seq Scan معناه predicate lock على الجدول كله و aborts كتير على الفاضي، فالـ indexes بتساعد.</li>
+      <li><code>withRetry</code>: 40001 و40P01 بس، الـ transaction كلها، الـ <code>COMMIT</code> جوه الـ <code>try</code>، رجّع الـ client قبل الـ sleep، jitter، حد أقصى، و metric.</li>
+      <li>مفيش side effects جوه الـ block اللي بيتعاد. و<code>COMMIT</code> على transaction فاشلة بيرجع <code>ROLLBACK</code> من غير exception، فافحصه.</li>
+      <li>على row hot، workers أكتر معناها سرعة أقل. والـ retry rate العالي معناه غيّر شكل الكتابة مش الـ backoff.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 07 · 2.4 — <b>Isolation levels</b>: Read Uncommitted (مش موجود فعليًا في PG)، <b>Read Committed</b> (الافتراضي)، <b>Repeatable Read</b>، <b>Serializable</b></label>
+    <label><input type="checkbox" data-key="r2"> 07 · 2.4 — <b>الـ anomalies</b>: dirty read، non-repeatable read، phantom read، <b>lost update</b> (الأخطر والأشهر)، write skew — ومثال عملي لكل واحدة</label>
+    <label><input type="checkbox" data-key="r3"> 07 · 2.4 — Serialization failures و retry logic من الكود</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.postgresql.org/docs/current/transaction-iso.html">PostgreSQL docs — Transaction Isolation</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/mvcc-serialization-failure-handling.html">PostgreSQL docs — Serialization Failure Handling</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/applevel-consistency.html">PostgreSQL docs — Data Consistency Checks at the Application Level</a></li>
+    <li><a href="https://wiki.postgresql.org/wiki/SSI">PostgreSQL wiki — SSI, with worked examples</a></li>
+    <li><a href="https://drkp.net/papers/ssi-vldb12.pdf">Ports &amp; Grittner — Serializable Snapshot Isolation in PostgreSQL (VLDB 2012)</a></li>
+    <li><a href="https://www.microsoft.com/en-us/research/publication/a-critique-of-ansi-sql-isolation-levels/">Berenson et al. — A Critique of ANSI SQL Isolation Levels (1995)</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./12-search-fts-trgm-elasticsearch.html"><small>← Previous</small>12 · Search</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./14-mvcc-vacuum-long-transactions.html"><small>Next →</small>14 · MVCC &amp; VACUUM</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
