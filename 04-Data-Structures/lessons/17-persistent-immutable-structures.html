@@ -1,0 +1,1491 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Persistent &amp; Immutable Structures: Structural Sharing, HAMT &amp; Immer — 04 Data Structures</title>
+<meta name="section" content="04-Data-Structures">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">04 · Data Structures</a></span>
+    <span>·</span>
+    <span>Lesson 17 / 18</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+<!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Persistent &amp; Immutable Structures: Structural Sharing, HAMT &amp; Immer</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 17 of 18 — 04 Data Structures</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">Node 22.19 · TypeScript 7 · Immer 11 · Immutable 5.2 · React 19.3</span>
+      <span class="chip">Prereq: 04 Queues, 07 BST, 08 Balanced Trees</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>04 · 3.5 — Structural sharing: تعدّل نسخة وتحتفظ بالقديمة من غير ما تنسخ كل حاجة</li>
+        <li>04 · 3.5 — Persistent list و persistent tree (path copying)</li>
+        <li>04 · 3.5 — HAMT كمفهوم: ليه Immutable.js و Clojure بيستخدموها</li>
+        <li>04 · 3.5 — ليه React و Immer معتمدين على الفكرة دي، وتكلفة الـ immutability في الذاكرة والسرعة (تقيسها)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Structural sharing, measured</a></li>
+      <li><a href="#p2">Part 2 — Persistent list and queue</a></li>
+      <li><a href="#p3">Part 3 — Persistent tree by path copying</a></li>
+      <li><a href="#p4">Part 4 — HAMT, small but real</a></li>
+      <li><a href="#p5">Part 5 — Why React and Immer depend on it</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Undo in an order editor, "what was this SKU's price when the invoice was issued", a Redux or Zustand store, a config snapshot that readers keep while a writer swaps in the next one: all of them need <b>old versions that stay valid after an update</b>. Copying the whole state per version is the naive answer, and this lesson measures what it costs: one deep copy of 10⁶ orders took ≈1.8 s and 320 MB. Persistent structures keep versions for the price of the changed path only.</p>
+    <p>The same idea is the contract behind React: a component, a <code>memo</code> or the React Compiler decides "nothing changed" by comparing references. Interviewers ask "how does Immer avoid copying everything?" and "why didn't my component re-render?". A senior answer comes with the cost: here, Immer's auto-freeze made one update on a 10⁶-item array ≈50× slower than with it off.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ undo في شاشة تعديل order، و"السعر بتاع الـ SKU ده كان كام لما الفاتورة طلعت"، والـ store بتاع Redux أو Zustand، و config snapshot الـ readers ماسكينها والـ writer بيبدّلها بالجديدة: كلهم محتاجين <b>versions قديمة تفضل سليمة بعد أي update</b>. الحل الساذج إنك تنسخ الـ state كله لكل version، والدرس ده بيقيس تمنه: نسخة deep واحدة لمليون order خدت حوالي 1.8 ثانية و 320 MB. الـ persistent structures بتحتفظ بالـ versions بتمن الـ path اللي اتغير بس.</p>
+    <p>ونفس الفكرة هي العقد اللي React مبني عليه: الـ component أو الـ <code>memo</code> أو الـ React Compiler بيقرر "مفيش حاجة اتغيرت" بمقارنة الـ references. في الـ interviews هتتسأل "Immer بيتجنب إنه ينسخ كل حاجة إزاي؟" و"ليه الـ component بتاعي معملش re-render؟". إجابة السنيور بييجي معاها التمن: هنا الـ auto-freeze بتاع Immer خلّى update واحد على array فيها مليون عنصر أبطأ بحوالي 50 مرة من غيره.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Structural sharing, measured <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — الـ structural sharing بالقياس</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The concept, the diagram and a mini-Immer built on <code>Proxy</code> are in <a href="../../01-JavaScript/lessons/20-functional-programming.html#p1">JavaScript lesson 20, part 1</a>, and immutability inside a service is in <a href="../../11-Software-Architecture/lessons/10-functional-core-immutability.html#p5">Architecture lesson 10, part 5</a>. This part measures it. The state is an order book of 10³, 10⁵ and 10⁶ orders, each with one line item. One update marks one order as paid, done four ways:</p>
+    <ul>
+      <li><b><code>structuredClone</code></b>: a full deep copy, then the change. Nothing is shared.</li>
+      <li><b>Spread at each level</b>: a new root, a new <code>orders</code> array via <code>with(i, …)</code>, one new order. Every other order object is shared.</li>
+      <li><b>Immer</b>: the same path copy, written as a mutation on a draft.</li>
+      <li><b>Paged spread</b>: the same orders split into pages of 1,024. The path is now the small top array plus one page.</li>
+    </ul>
+    <p>Two numbers per technique: the time of one update, and the bytes each kept version adds when you keep a chain of versions (an undo history), measured with the kit's <code>heapOf</code>. The flat-array result is the important one: structural sharing shares the <em>orders</em>, but the array that points to them is still copied, 8 bytes per slot. That is 8 MB per version at 10⁶, so 100 undo steps cost 800 MB. Splitting into pages of 1,024 turns the path from n pointers into n/1,024 + 1,024 (about 2·√n at 10⁶), and a 32-way trie (Part 4) makes it O(log₃₂ n).</p>
+  </section>
+
+<pre data-file="src/l17/order-book.ts"><code class="language-typescript">// (1) نسخة كاملة: كل order وكل line بيتنسخوا، حتى اللي متغيرش
+export function payWithClone(book: OrderBook, i: number): OrderBook {
+  const next = structuredClone(book) as { version: number; orders: Order[] };
+  next.orders[i] = { ...next.orders[i]!, status: 'paid' };
+  next.version++;
+  return next;
+}
+
+// (2) بالـ spread على كل مستوى: الـ root والـ array والـ order اللي اتغير بس
+export function payWithSpread(book: OrderBook, i: number): OrderBook {
+  return {
+    ...book,
+    version: book.version + 1,
+    orders: book.orders.with(i, { ...book.orders[i]!, status: 'paid' }),
+  };
+}
+
+// (3) بالـ Immer: بتكتب mutation على draft، وهو بيعمل نفس الـ path copy
+export function payWithImmer(book: OrderBook, i: number): OrderBook {
+  return produce(book, (d) =&gt; {
+    d.orders[i]!.status = 'paid';
+    d.version++;
+  });
+}
+
+// (4) نفس الـ orders متقسمة pages كل واحدة 1,024: الـ path بقى صفحة واحدة مش الـ array كلها
+export interface PagedBook { readonly version: number; readonly pages: readonly (readonly Order[])[] }
+export const PAGE = 1_024;
+
+export function toPaged(book: OrderBook): PagedBook {
+  const pages: Order[][] = [];
+  for (let i = 0; i &lt; book.orders.length; i += PAGE) pages.push(book.orders.slice(i, i + PAGE));
+  return { version: book.version, pages };
+}
+
+export function payPaged(book: PagedBook, i: number): PagedBook {
+  const p = Math.floor(i / PAGE), o = i % PAGE;
+  const page = book.pages[p]!;
+  return {
+    version: book.version + 1,
+    pages: book.pages.with(p, page.with(o, { ...page[o]!, status: 'paid' })),
+  };
+}</code></pre>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p>The run (<code>node --expose-gc src/l17/sharing.bench.ts</code>). Timings are ≈, on a loaded Windows machine; the byte counts are stable. <code>structuredClone</code> rows at 10⁵ and 10⁶ were measured over 5 versions instead of 100, because 100 deep copies of 10⁶ orders would need ≈32 GB.</p>
+  </section>
+
+<pre><code class="language-plaintext">time per update  structuredClone    spread     immer  paged spread
+---------------  ---------------  --------  --------  ------------
+1,000                     1.2 ms    0.7 µs  104.1 µs        0.9 µs
+100,000                 141.9 ms  155.5 µs    6.3 ms        1.2 µs
+1,000,000              1754.3 ms    1.3 ms   65.2 ms        1.8 µs
+
+bytes per kept version  state size  structuredClone    spread     immer  paged spread
+----------------------  ----------  ---------------  --------  --------  ------------
+1,000                     197.0 KB         342.6 KB    8.2 KB    7.7 KB        8.2 KB
+100,000                    19.3 MB          32.0 MB  800.2 KB  800.2 KB        9.2 KB
+1,000,000                 194.4 MB         320.0 MB    8.0 MB    8.0 MB       16.2 KB
+
+spread: prev.orders[5] === next.orders[5] → true
+spread: prev.orders[7] === next.orders[7] → false
+spread: prev.orders === next.orders       → false
+immer:  prev.orders[5] === next.orders[5] → true
+clone:  prev.orders[5] === next.orders[5] → false</code></pre>
+  <div class="ar-note">الجدول الأول: وقت update واحد. الـ <code>structuredClone</code> بيكبر مع الحجم لحد حوالي 1.8 ثانية عند مليون، الـ spread حوالي 1.3 ms عند مليون (نسخ array الـ pointers)، الـ Immer أبطأ من الـ spread بكتير (هنشوف ليه في الجزء 5)، والـ paged spread تقريبًا ثابت حوالي 2 µs. الجدول التاني: كل version محفوظة بتزوّد كام byte. الـ clone بيضيف أكتر من حجم الـ state نفسه، الـ spread والـ Immer بيضيفوا 8 bytes لكل order (array الـ pointers) يعني 8 MB عند مليون، والـ paged بيضيف حوالي 16 KB بس. وآخر سطور: الـ order اللي متغيرش هو نفس الـ object في النسختين (<code>true</code>)، واللي اتغير جديد (<code>false</code>)، والـ clone مفيهوش أي مشاركة.</div>
+
+<pre class="diagram">
+ v1 (root)                 v2 = pay(v1, 7)     (spread / Immer)
+ { version: 1 }            { version: 2 }
+     |                         |
+ orders[ ]  ---- copied ---> orders'[ ]        8 bytes x n pointers: the "path"
+   | | | | ...                 | | | | ...
+   v v v v                     | | | |
+  o0 o1 o2 ... o7(pending)  &lt;--+-+-+ |         shared: same objects, no copy
+                               o7'(paid)       new: only the changed order
+
+ paged: top[977 pages] -> page[1,024 orders] -> order   path = 977 + 1,024 pointers + 1 order
+</pre>
+  <div class="ar-note">الرسمة: النسخة <code>v2</code> ليها root جديد و array جديدة للـ orders، بس الـ arrows بتشاور على نفس الـ orders القديمة، ما عدا order رقم 7 اللي اتعمل له object جديد. الـ array الجديدة نفسها هي "الـ path" وبتتكلف 8 bytes لكل order. في الشكل الـ paged، الـ path بقى array صغيرة فيها 977 page وصفحة واحدة فيها 1,024 order وorder واحد.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الفكرة نفسها والرسمة و mini-Immer مبني على <code>Proxy</code> موجودين في <a href="../../01-JavaScript/lessons/20-functional-programming.html#p1">درس JavaScript رقم 20، الجزء 1</a>، والـ immutability جوه service في <a href="../../11-Software-Architecture/lessons/10-functional-core-immutability.html#p5">درس الـ Architecture رقم 10، الجزء 5</a>. هنا بنقيس. الـ state عبارة عن order book فيها 10³ و 10⁵ و 10⁶ order، كل order فيه line item واحد. الـ update بيعلّم order واحد إنه اتدفع، بأربع طرق:</p>
+    <ul>
+      <li><b><code>structuredClone</code></b>: نسخة deep كاملة وبعدين التعديل. مفيش أي مشاركة.</li>
+      <li><b>الـ spread على كل مستوى</b>: root جديد، و array <code>orders</code> جديدة بـ <code>with(i, …)</code>، و order واحد جديد. كل الـ orders التانية متشاركة.</li>
+      <li><b>الـ Immer</b>: نفس الـ path copy، بس مكتوب كأنه mutation على draft.</li>
+      <li><b>الـ paged spread</b>: نفس الـ orders متقسمة صفحات كل واحدة 1,024. الـ path بقى الـ array الصغيرة اللي فوق + صفحة واحدة.</li>
+    </ul>
+    <p>رقمين لكل طريقة: وقت update واحد، وكام byte كل version محفوظة بتزوّد لما تحتفظ بسلسلة versions (undo history)، متقاسة بالـ <code>heapOf</code> بتاعة الـ kit. أهم نتيجة هي بتاعة الـ array المسطحة: الـ structural sharing بيشارك الـ <em>orders</em>، لكن الـ array اللي بتشاور عليهم لسه بتتنسخ، 8 bytes لكل خانة. يعني 8 MB لكل version عند مليون، و 100 خطوة undo بـ 800 MB. لما تقسمها صفحات كل واحدة 1,024، الـ path بيتحول من n pointer لـ n/1,024 + 1,024 (يعني حوالي ضعف جذر n عند مليون)، والـ trie بـ 32 فرع (الجزء 4) بيخليه O(log₃₂ n).</p>
+    <p>عن التشغيلة: الأوقات تقريبية (≈) على جهاز Windows عليه حمل، وأرقام الـ bytes ثابتة. صفوف الـ <code>structuredClone</code> عند 10⁵ و 10⁶ اتقاست على 5 versions بس مش 100، لأن 100 نسخة deep من مليون order كانت هتحتاج حوالي 32 GB. والملاحظة اللي محتاجة تفسير: النسخة اللي طالعة من <code>structuredClone</code> أكبر من الأصل (342 KB قصاد 197 KB، و 320 MB قصاد 194 MB)؛ الأصل مبني من object literals، والـ deserializer بيبني الـ objects بطريقة تانية. قسناها ومدخلناش أعمق من كده.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      شاشة admin في Next.js بتعدّل order كبير أو قايمة أسعار، والـ product عايز undo لآخر 100 خطوة. لو خزنت كل خطوة بـ <code>structuredClone</code> على 10⁵ صف، الـ 100 خطوة هيبقوا حوالي 3.2 GB والـ tab هيقع. بالـ spread حوالي 80 MB، وبالصفحات أقل من 1 MB. نفس الكلام في Node: لو بتحتفظ بـ snapshots لـ state في الـ memory (audit أو replay)، الـ structural sharing هو اللي بيخليها ممكنة. والغلطة الشائعة: إنك تفتكر إن الـ spread "ببلاش" على array كبيرة؛ هو O(n) في عدد الـ pointers.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: sharing is not free on a flat array</b>
+    <code>{ ...state, orders: state.orders.with(i, x) }</code> shares every order but still copies n pointers per update: ≈1.3 ms and 8 MB at 10⁶ here. Fine for a UI list of 500 rows; wrong for a 10⁶-row in-memory model that changes 100 times a second. Then you need a structure whose path is O(log n): pages, a vector trie or a persistent tree.
+    <div class="ar-note">الـ spread بيشارك كل الـ orders، بس لسه بينسخ n pointer في كل update: حوالي 1.3 ms و 8 MB عند مليون هنا. ده تمام لقايمة UI فيها 500 صف؛ وغلط لـ model في الـ memory فيه مليون صف وبيتغير 100 مرة في الثانية. ساعتها محتاج structure الـ path بتاعها O(log n): صفحات، أو vector trie، أو persistent tree.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Persistent list and queue <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — الـ persistent list والـ queue</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The simplest persistent structure is the immutable singly linked list (a <em>cons list</em>). <b>Prepend is O(1)</b>: the new node points at the old list, so the whole old version becomes the new version's tail. <b>Append is O(n)</b>: you cannot change the last node without changing the node before it, and so on up to the head, so every node is copied. <b>Removing at index i copies the i nodes before it</b> and shares everything after it.</p>
+    <p>A persistent queue reuses <a href="./04-stacks-queues-deques-monotonic.html#p3">lesson 04, part 3</a>'s two-stack queue: enqueue prepends to <code>back</code>, dequeue takes from <code>front</code>, and when <code>front</code> is empty it reverses <code>back</code>. That is amortized O(1) <em>if each version is used once</em>. Persistence breaks the argument: an old version with an empty <code>front</code> can be dequeued again and again, and each call pays the full reversal. The run shows it: 1,000 dequeues of the same 10,000-item version allocated 10,000,000 nodes. Caching the reversed queue per version (a <code>WeakMap</code>, which is what lazy evaluation gives you in Okasaki's queues) brings it back to 10,000. For bounds that hold under any use pattern, Okasaki's banker's and real-time queues schedule the reversal incrementally (see his thesis in the sources).</p>
+    <p>The tests freeze every node of an old version with <code>Object.freeze</code>. ES modules run in strict mode, so any code that writes to an old node throws a <code>TypeError</code> instead of silently changing history.</p>
+  </section>
+
+<pre data-file="src/l17/plist.ts"><code class="language-typescript">// قايمة cons immutable (persistent) + queue persistent من two lists
+export interface Cons&lt;T&gt; { readonly head: T; readonly tail: List&lt;T&gt; }
+export type List&lt;T&gt; = Cons&lt;T&gt; | null;
+
+// عدّاد للـ nodes اللي اتعملت، عشان نثبت مين بيتنسخ ومين بيتشارك
+export const stats = { allocated: 0 };
+
+export function cons&lt;T&gt;(head: T, tail: List&lt;T&gt;): Cons&lt;T&gt; {
+  stats.allocated++;
+  return { head, tail };
+}
+
+export function fromArray&lt;T&gt;(items: readonly T[]): List&lt;T&gt; {
+  let list: List&lt;T&gt; = null;
+  for (let i = items.length - 1; i &gt;= 0; i--) list = cons(items[i]!, list);
+  return list;
+}
+
+export function* iterate&lt;T&gt;(list: List&lt;T&gt;): Generator&lt;T&gt; {
+  for (let c = list; c !== null; c = c.tail) yield c.head;
+}
+
+export const toArray = &lt;T&gt;(list: List&lt;T&gt;): T[] =&gt; [...iterate(list)];
+
+// بـ ⁦O(1)⁩: الـ node الجديدة بتشاور على الـ list القديمة كلها (shared tail)
+export const prepend = &lt;T&gt;(list: List&lt;T&gt;, item: T): Cons&lt;T&gt; =&gt; cons(item, list);
+
+// بـ ⁦O(n)⁩: مفيش طريقة نغيّر آخر node، فبننسخ كل الـ nodes اللي قبلها
+export function append&lt;T&gt;(list: List&lt;T&gt;, item: T): Cons&lt;T&gt; {
+  const items = toArray(list);
+  let out = cons(item, null);
+  for (let i = items.length - 1; i &gt;= 0; i--) out = cons(items[i]!, out);
+  return out;
+}
+
+// بـ ⁦O(index)⁩: بننسخ الـ prefix بس، والـ suffix اللي بعد العنصر بيتشارك
+export function removeAt&lt;T&gt;(list: List&lt;T&gt;, index: number): List&lt;T&gt; {
+  if (list === null) throw new RangeError(`index ${index} out of range`);
+  if (index === 0) return list.tail;
+  return cons(list.head, removeAt(list.tail, index - 1));
+}
+
+export function reverse&lt;T&gt;(list: List&lt;T&gt;): List&lt;T&gt; {
+  let out: List&lt;T&gt; = null;
+  for (let c = list; c !== null; c = c.tail) out = cons(c.head, out);
+  return out;
+}
+
+// ⁦----------⁩ الـ persistent queue: الـ front للقراية، والـ back للكتابة (معكوسة⁦) ----------⁩
+export interface Queue&lt;T&gt; { readonly front: List&lt;T&gt;; readonly back: List&lt;T&gt;; readonly size: number }
+export const emptyQueue = &lt;T&gt;(): Queue&lt;T&gt; =&gt; ({ front: null, back: null, size: 0 });
+
+// بـ ⁦O(1)⁩: الـ enqueue = prepend على الـ back
+export const enqueue = &lt;T&gt;(q: Queue&lt;T&gt;, item: T): Queue&lt;T&gt; =&gt;
+  ({ front: q.front, back: cons(item, q.back), size: q.size + 1 });
+
+// الـ ⁦amortized O(1)⁩ يتحقق لو كل version بتتستخدم مرة واحدة بس؛ الـ reverse بيحصل لما الـ front يخلص
+export function dequeue&lt;T&gt;(q: Queue&lt;T&gt;): [T, Queue&lt;T&gt;] | undefined {
+  if (q.front !== null) return [q.front.head, { front: q.front.tail, back: q.back, size: q.size - 1 }];
+  if (q.back === null) return undefined;
+  const front = reverse(q.back)!;
+  return [front.head, { front: front.tail, back: null, size: q.size - 1 }];
+}
+
+// الحل للـ version اللي بتتقرا كذا مرة: نحفظ نتيجة الـ reverse مرة واحدة لكل version
+const normalized = new WeakMap&lt;Queue&lt;unknown&gt;, Queue&lt;unknown&gt;&gt;();
+export function dequeueMemo&lt;T&gt;(q: Queue&lt;T&gt;): [T, Queue&lt;T&gt;] | undefined {
+  if (q.front === null &amp;&amp; q.back !== null) {
+    let ready = normalized.get(q) as Queue&lt;T&gt; | undefined;
+    if (!ready) {
+      ready = { front: reverse(q.back), back: null, size: q.size };
+      normalized.set(q, ready);
+    }
+    q = ready;
+  }
+  return dequeue(q);
+}</code></pre>
+
+<pre data-file="src/l17/plist.test.ts"><code class="language-typescript">import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mulberry32 } from '../rng.ts';
+import {
+  fromArray, toArray, prepend, append, removeAt, emptyQueue, enqueue, dequeue, dequeueMemo,
+  type List, type Queue,
+} from './plist.ts';
+
+interface Line { readonly sku: string; readonly qty: number }
+
+// تجميد كل node: أي كود بيعدّل version قديمة هيرمي ⁦TypeError (⁩الـ ES modules دايمًا strict)
+function deepFreeze&lt;T&gt;(list: List&lt;T&gt;): List&lt;T&gt; {
+  for (let c = list; c !== null; c = c.tail) Object.freeze(c);
+  return list;
+}
+
+test('old invoice versions never change', () =&gt; {
+  const v1 = deepFreeze(fromArray&lt;Line&gt;([{ sku: 'CHAIR', qty: 2 }, { sku: 'DESK', qty: 1 }]));
+  const v2 = prepend(v1, { sku: 'LAMP', qty: 3 });
+  const v3 = append(v2, { sku: 'CABLE', qty: 5 });
+  const v4 = removeAt(v3, 1);
+  assert.deepEqual(toArray(v1).map((l) =&gt; l.sku), ['CHAIR', 'DESK']);
+  assert.deepEqual(toArray(v2).map((l) =&gt; l.sku), ['LAMP', 'CHAIR', 'DESK']);
+  assert.deepEqual(toArray(v3).map((l) =&gt; l.sku), ['LAMP', 'CHAIR', 'DESK', 'CABLE']);
+  assert.deepEqual(toArray(v4).map((l) =&gt; l.sku), ['LAMP', 'DESK', 'CABLE']);
+  // الـ prepend شارك الـ list القديمة كلها كـ tail
+  assert.equal(v2.tail, v1);
+});</code></pre>
+
+<pre><code class="language-plaintext">n          prepend ns/op  append µs/op  nodes copied (prepend)  nodes copied (append)
+---------  -------------  ------------  ----------------------  ---------------------
+1,000               14.3          36.9                       1                   1001
+100,000             20.3        3336.8                       1                 100001
+1,000,000           20.2       79243.8                       1                1000001
+dequeue: 1,000 dequeues of the same 10,000-item version allocated 10,000,000 nodes
+dequeueMemo: 1,000 dequeues of the same 10,000-item version allocated 10,000 nodes</code></pre>
+  <div class="ar-note">الـ prepend ثابت حوالي 20 ns مهما كبرت الـ list، وبينسخ node واحدة بس. الـ append بيكبر مع الحجم: حوالي 37 µs عند 10³، و 3.3 ms عند 10⁵، و 79 ms عند مليون، لأنه بينسخ n + 1 node. وآخر سطرين: 1,000 dequeue على نفس الـ version القديمة عملوا 10 مليون node بالـ <code>dequeue</code> العادي، و 10,000 بس مع الـ <code>dequeueMemo</code>.</div>
+
+<pre class="diagram">
+ v1 = [CHAIR, DESK]          CHAIR --> DESK --> null
+                               ^
+ v2 = prepend(v1, LAMP)    LAMP-+                       1 new node, v1 is v2's tail
+
+ v3 = append(v2, CABLE)    LAMP' --> CHAIR' --> DESK' --> CABLE --> null
+                                                        all 4 nodes copied
+
+ v4 = removeAt(v3, 1)      LAMP'' --> DESK' --> CABLE   copies 1 node, shares DESK' and CABLE
+</pre>
+  <div class="ar-note">الرسمة: <code>v2</code> عبارة عن node جديدة (LAMP) بتشاور على <code>v1</code> كلها. الـ append عمل نسخة من كل الـ nodes (اللي عليها علامة <code>'</code>) وزوّد CABLE في الآخر. والـ <code>removeAt(v3, 1)</code> نسخ LAMP بس، وشارك DESK و CABLE من <code>v3</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>أبسط persistent structure هي الـ singly linked list الـ immutable (اسمها <em>cons list</em>). الـ <b>prepend بـ O(1)</b>: الـ node الجديدة بتشاور على الـ list القديمة، فالـ version القديمة كلها بتبقى الـ tail بتاع الجديدة. الـ <b>append بـ O(n)</b>: مينفعش تغيّر آخر node من غير ما تغيّر اللي قبلها، واللي قبلها، لحد الـ head، فكل الـ nodes بتتنسخ. والـ <b>removeAt عند index i بينسخ الـ i nodes اللي قبله</b> ويشارك كل اللي بعده.</p>
+    <p>الـ persistent queue بتستخدم فكرة الـ queue بـ two stacks من <a href="./04-stacks-queues-deques-monotonic.html#p3">الدرس 04، الجزء 3</a>: الـ enqueue بيعمل prepend على الـ <code>back</code>، والـ dequeue بياخد من الـ <code>front</code>، ولو الـ <code>front</code> فاضي بيعكس الـ <code>back</code>. ده amortized O(1) <em>بشرط إن كل version تتستخدم مرة واحدة</em>. الـ persistence بتكسر الإثبات ده: version قديمة الـ <code>front</code> بتاعها فاضي ممكن تعمل لها dequeue تاني وتالت، وكل مرة تدفع تمن الـ reverse كله. التشغيلة بتوضح ده: 1,000 dequeue على نفس الـ version اللي فيها 10,000 عنصر عملوا 10,000,000 node. لما نحفظ الـ queue المعكوسة لكل version (في <code>WeakMap</code>، وده اللي الـ lazy evaluation بتديهولك في queues بتاعة Okasaki) الرقم بيرجع 10,000. ولو عايز ضمان شغال مع أي طريقة استخدام، الـ banker's queue والـ real-time queue بتوع Okasaki بيوزعوا الـ reverse على خطوات (الرسالة بتاعته في المصادر).</p>
+    <p>الـ tests بتعمل <code>Object.freeze</code> لكل node في الـ version القديمة. الـ ES modules بتشتغل strict mode، فأي كود بيكتب في node قديمة هيرمي <code>TypeError</code> بدل ما يغيّر التاريخ من غير ما حد يحس.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      تاريخ نسخ الفاتورة: كل تعديل على الـ line items بيعمل version جديدة، والـ audit محتاج "الفاتورة رقم 3 كان فيها إيه". لو التعديلات بتضيف lines في الأول، كل version بتتكلف node واحدة. ونفس الشكل في الـ event sourcing: الـ projection بتاعتك بتحتفظ بالـ state بعد كل event من غير نسخ. الغلطة الشائعة: إنك تبني list كبيرة بـ append جوه loop، وده O(n²)؛ ابنيها بـ prepend وبعدين reverse مرة واحدة.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "The two-stack queue has amortized O(1) dequeue. Does that still hold if the queue is persistent?" → No. Amortization assumes the expensive reversal is paid once, by the version that triggered it. With persistence, any old version whose front is empty can be dequeued many times, and each pays O(n): we measured 10,000,000 node allocations for 1,000 dequeues of one 10,000-item version. Fix it with memoization (lazy evaluation) or an incrementally rotating queue (Okasaki).
+    <div class="ar-note">"الـ queue بـ two stacks فيها dequeue بـ amortized O(1). ده لسه صح لو الـ queue بقت persistent؟" ← لأ. الـ amortization بتفترض إن الـ reverse الغالي بيتدفع مرة واحدة، من الـ version اللي عملته. مع الـ persistence، أي version قديمة الـ front بتاعها فاضي ممكن تعمل لها dequeue كذا مرة، وكل مرة تدفع O(n): قسنا 10,000,000 node لـ 1,000 dequeue على version واحدة فيها 10,000 عنصر. الحل: memoization (lazy evaluation) أو queue بتلف تدريجي (Okasaki).</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Persistent tree by path copying <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — الـ persistent tree بالـ path copying</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Take <a href="./08-balanced-trees-ordered-map.html#p1">lesson 08</a>'s AVL tree and never mutate a node. <code>set</code> walks down to the key, builds a new node there, and on the way back up builds a new parent for every node on the path, because each parent must point at its new child. Everything off the path is shared. A rotation is just a few more new nodes. So an update copies about the height of the tree, O(log n), and returns a new root; the old root still describes the old tree exactly.</p>
+    <p>The measurement counts created nodes per operation at 10³, 10⁵ and 10⁶: an update of an existing key copies 9.0, 15.7 and 19.0 nodes (height − 1 on average), an insert 11.0, 18.7 and 21.1 (the path plus rotations). Then a price list of 10,000 SKUs keeps 1,000 versions, each changing one price: ≈1.5 MB as persistent trees against ≈459 MB as 1,000 copies of a <code>Map</code>. "Price of SKU X as of version v" is <code>get(versions[v], X)</code>: O(log n) on that version's root, no replay.</p>
+  </section>
+
+<pre data-file="src/l17/pavl.ts"><code class="language-typescript">// شجرة AVL persistent بالـ path copying: كل update بيرجّع root جديد، والـ roots القديمة تفضل صالحة
+export interface Node&lt;K, V&gt; {
+  readonly key: K;
+  readonly value: V;
+  readonly left: Node&lt;K, V&gt; | null;
+  readonly right: Node&lt;K, V&gt; | null;
+  readonly height: number;
+}
+export type Tree&lt;K, V&gt; = Node&lt;K, V&gt; | null;
+export type Compare&lt;K&gt; = (a: K, b: K) =&gt; number;
+
+// عدّاد الـ nodes الجديدة: ده بالظبط اللي كل version بتدفعه في الذاكرة
+export const stats = { created: 0 };
+
+const h = &lt;K, V&gt;(t: Tree&lt;K, V&gt;): number =&gt; (t === null ? 0 : t.height);
+
+function create&lt;K, V&gt;(left: Tree&lt;K, V&gt;, key: K, value: V, right: Tree&lt;K, V&gt;): Node&lt;K, V&gt; {
+  stats.created++;
+  return { key, value, left, right, height: 1 + Math.max(h(left), h(right)) };
+}
+
+// بنبني الـ node وهي متوازنة على طول: الـ rotation نفسها nodes جديدة، مفيش تعديل في القديم
+function balance&lt;K, V&gt;(l: Tree&lt;K, V&gt;, key: K, value: V, r: Tree&lt;K, V&gt;): Node&lt;K, V&gt; {
+  const hl = h(l), hr = h(r);
+  if (hl &gt; hr + 1) {
+    const L = l!;
+    if (h(L.left) &gt;= h(L.right)) return create(L.left, L.key, L.value, create(L.right, key, value, r));
+    const LR = L.right!;
+    return create(create(L.left, L.key, L.value, LR.left), LR.key, LR.value, create(LR.right, key, value, r));
+  }
+  if (hr &gt; hl + 1) {
+    const R = r!;
+    if (h(R.right) &gt;= h(R.left)) return create(create(l, key, value, R.left), R.key, R.value, R.right);
+    const RL = R.left!;
+    return create(create(l, key, value, RL.left), RL.key, RL.value, create(RL.right, R.key, R.value, R.right));
+  }
+  return create(l, key, value, r);
+}
+
+// الـ set بينسخ الـ nodes اللي على الطريق من الـ root للـ key بس، والباقي متشارك
+export function set&lt;K, V&gt;(t: Tree&lt;K, V&gt;, key: K, value: V, cmp: Compare&lt;K&gt;): Node&lt;K, V&gt; {
+  if (t === null) return create(null, key, value, null);
+  const c = cmp(key, t.key);
+  if (c === 0) return Object.is(value, t.value) ? t : create(t.left, key, value, t.right);
+  if (c &lt; 0) {
+    const left = set(t.left, key, value, cmp);
+    return left === t.left ? t : balance(left, t.key, t.value, t.right);
+  }
+  const right = set(t.right, key, value, cmp);
+  return right === t.right ? t : balance(t.left, t.key, t.value, right);
+}
+
+export function get&lt;K, V&gt;(t: Tree&lt;K, V&gt;, key: K, cmp: Compare&lt;K&gt;): V | undefined {
+  while (t !== null) {
+    const c = cmp(key, t.key);
+    if (c === 0) return t.value;
+    t = c &lt; 0 ? t.left : t.right;
+  }
+  return undefined;
+}</code></pre>
+
+<pre data-file="src/l17/pavl.bench.ts"><code class="language-typescript">// (2) قايمة أسعار 10,000 SKU و ⁦1,000 version (⁩كل version بتغيّر سعر واحد)
+const SKUS = 10_000, VERSIONS = 1_000;
+const skuIds = Array.from({ length: SKUS }, (_, i) =&gt; i);
+const initial = skuIds.map((id) =&gt; [id, 1_000 + id] as const);
+
+const rand = mulberry32(9);
+const changes = Array.from({ length: VERSIONS }, () =&gt; [Math.floor(rand() * SKUS), Math.floor(rand() * 9_000)] as const);
+
+const persistentBytes = heapOf(() =&gt; {
+  const versions: Tree&lt;number, number&gt;[] = [fromSorted(initial)];
+  for (const [sku, price] of changes) versions.push(set(versions.at(-1)!, sku, price, byNum));
+  return versions;
+});
+const copiesBytes = heapOf(() =&gt; {
+  const versions: Map&lt;number, number&gt;[] = [new Map(initial)];
+  for (const [sku, price] of changes) versions.push(new Map(versions.at(-1)!).set(sku, price));
+  return versions;
+});
+console.log(`1,000 versions of 10,000 prices: persistent AVL ≈ ${(persistentBytes / 1e6).toFixed(1)} MB, full Map copies ≈ ${(copiesBytes / 1e6).toFixed(1)} MB`);
+
+// ⁦(3) "⁩سعر الـ SKU ده كان كام في version رقم v؟⁦" = get⁩ على root الـ version دي
+const versions: Tree&lt;number, number&gt;[] = [fromSorted(initial)];
+for (const [sku, price] of changes) versions.push(set(versions.at(-1)!, sku, price, byNum));
+const [sku0, price0] = changes[0]!;</code></pre>
+
+<pre><code class="language-plaintext">n          height  log2(n)  copied / update  copied / insert  ns / update
+---------  ------  -------  ---------------  ---------------  -----------
+1,000          10     10.0              9.0             11.0          162
+100,000        17     16.6             15.7             18.7          585
+1,000,000      20     19.9             19.0             21.1         1237
+1,000 versions of 10,000 prices: persistent AVL ≈ 1.5 MB, full Map copies ≈ 459.3 MB
+SKU 1987: v0 → 2987 | v1 → 7660 (changed to 7660) | v1000 → 7660</code></pre>
+  <div class="ar-note">الجدول: الـ height بتاعة الشجرة 10 و 17 و 20 (قريبة من log₂ n). الـ update لـ key موجود بينسخ 9 و 15.7 و 19 node، يعني الـ path بالظبط تقريبًا، والـ insert بينسخ أكتر شوية بسبب الـ rotations. الوقت بيزيد ببطء مع الحجم (log n + cache misses). وبعده: 1,000 version لقايمة 10,000 سعر بتاخد حوالي 1.5 MB كـ persistent trees، قصاد حوالي 459 MB لو نسخت الـ Map كل مرة. وآخر سطر: سعر SKU رقم 1987 كان 2987 في version 0، وبقى 7660 من version 1 لحد آخر version.</div>
+
+<pre class="diagram">
+        old root (v1)                      new root (v2) after set(SKU-40, 1999)
+           [50]                                 [50']
+          /    \                               /    \
+       [30]    [70]   &lt;---- shared ------  [30']    (points to old [70])
+       /  \    /  \                        /  \
+    [20] [40] [60] [80]     shared [20] --+   [40']   new leaf value
+                                                       copied: 50, 30, 40  = the path
+</pre>
+  <div class="ar-note">الرسمة: بعد <code>set</code> على SKU-40، اتعمل 3 nodes جديدة بس (عليهم علامة <code>'</code>): 50 و 30 و 40، وده الـ path من الـ root للـ key. الـ subtree اللي تحت 70 كلها، و node رقم 20، متشاركين بين النسختين. الـ root القديم لسه بيوصف الشجرة القديمة بالظبط.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Git works the same way.</b> A commit points to a root tree; a tree lists names with the hash of a blob or a sub-tree. Changing <code>src/orders/pay.ts</code> writes one new blob and new trees for <code>src/orders</code>, <code>src</code> and the root, then a new commit. Every other tree and blob is reused by hash. That is path copying with content hashes as pointers, which is why a commit that changes one file in a huge repository is cheap.</p>
+    <p><b>sorted-btree</b> does a variant: <code>clone()</code> is O(1) because it marks the root as shared, and the first edit on either copy copies the nodes on its path (copy-on-write). Its README calls this "dynamically persistent". The run shows a clone of 10⁶ entries in ≈29 µs and the first <code>set</code> after it in ≈82 µs. It also shows a trap worth knowing: its persistent <code>with(key, value)</code> does <b>not</b> overwrite an existing key unless you pass <code>overwrite = true</code>.</p>
+  </section>
+
+<pre class="diagram">
+ commit C1 --> tree(root) --> tree(src) --> tree(orders) --> blob pay.ts (v1)
+                    |              |              +-------> blob refund.ts
+                    |              +--> tree(users) ...
+                    +--> blob package.json
+
+ commit C2 --> tree(root') --> tree(src') --> tree(orders') --> blob pay.ts (v2)  new
+                    |              |               +-----------> blob refund.ts  same hash
+                    |              +--> tree(users) ...          same hash, reused
+                    +--> blob package.json                       same hash, reused
+</pre>
+  <div class="ar-note">الرسمة: الـ commit الجديد C2 عمل blob جديد لـ <code>pay.ts</code>، و trees جديدة للـ orders والـ src والـ root بس (اللي عليها <code>'</code>). الـ refund.ts والـ users والـ package.json نفس الـ hash، فبيتعاد استخدامهم من غير نسخ. ده path copying والـ pointers فيه هي الـ hashes.</div>
+
+<pre data-file="src/l17/btree-clone.ts"><code class="language-typescript">// تشغيل: ⁦node src/l17/btree-clone.ts   (sorted-btree 2.1)⁩
+import btree from 'sorted-btree';
+
+// الـ package ده CommonJS: الـ class نفسها في ⁦.default⁩ لما تعمله import من ESM
+const BTree = btree.default;
+
+const prices = new BTree&lt;number, number&gt;();
+for (let sku = 0; sku &lt; 1_000_000; sku++) prices.set(sku, 1_000);
+
+// الـ ⁦clone()⁩ بـ ⁦O(1)⁩: بيعلّم الـ root إنه shared، والنسختين بيشاركوا كل الـ nodes
+let t0 = performance.now();
+const snapshot = prices.clone();
+console.log(`clone() of 1,000,000 prices: ≈${((performance.now() - t0) * 1000).toFixed(0)} µs`);
+
+// أول تعديل بعد الـ clone بينسخ الـ nodes اللي على الطريق بس (copy-on-write)
+t0 = performance.now();
+prices.set(42, 1_499);
+console.log(`first set() after clone: ≈${((performance.now() - t0) * 1000).toFixed(0)} µs`);
+console.log('live 42 →', prices.get(42), '| snapshot 42 →', snapshot.get(42));
+
+// الـ with() persistent: بيرجّع شجرة جديدة والقديمة زي ما هي
+// خلي بالك: الـ overwrite الافتراضي false، فلو الـ key موجود القيمة مش بتتغير
+const kept = snapshot.with(7, 1_250);
+const v2 = snapshot.with(7, 1_250, true);
+console.log('snapshot 7 →', snapshot.get(7), '| with(7, 1250) →', kept.get(7), '| with(7, 1250, true) →', v2.get(7));</code></pre>
+
+<pre><code class="language-plaintext">clone() of 1,000,000 prices: ≈29 µs
+first set() after clone: ≈82 µs
+live 42 → 1499 | snapshot 42 → 1000
+snapshot 7 → 1000 | with(7, 1250) → 1000 | with(7, 1250, true) → 1250</code></pre>
+  <div class="ar-note">الـ <code>clone()</code> لمليون سعر خد حوالي 29 µs، وأول <code>set()</code> بعده حوالي 82 µs لأنه نسخ الـ nodes اللي على الـ path. النسخة الحية بقت 1499 والـ snapshot فضلت 1000. وآخر سطر: <code>with(7, 1250)</code> رجّع 1000 لأن الـ overwrite الافتراضي false، و <code>with(7, 1250, true)</code> رجّع 1250.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>خد الـ AVL بتاع <a href="./08-balanced-trees-ordered-map.html#p1">الدرس 08</a> ومتعدّلش أي node أبدًا. الـ <code>set</code> بينزل لحد الـ key، ويعمل node جديدة هناك، وهو طالع بيعمل parent جديد لكل node على الـ path، لأن كل parent لازم يشاور على الـ child الجديد. أي حاجة بره الـ path متشاركة. والـ rotation عبارة عن كام node جديدة زيادة. فالـ update بينسخ حوالي ارتفاع الشجرة، O(log n)، ويرجّع root جديد؛ والـ root القديم لسه بيوصف الشجرة القديمة بالظبط.</p>
+    <p>القياس بيعدّ الـ nodes الجديدة في كل عملية عند 10³ و 10⁵ و 10⁶: الـ update لـ key موجود بينسخ 9.0 و 15.7 و 19.0 node (في المتوسط الـ height ناقص 1)، والـ insert بينسخ 11.0 و 18.7 و 21.1 (الـ path + الـ rotations). وبعدين قايمة أسعار فيها 10,000 SKU بنحتفظ لها بـ 1,000 version، كل version بتغيّر سعر واحد: حوالي 1.5 MB كـ persistent trees قصاد حوالي 459 MB لو عملنا 1,000 نسخة من <code>Map</code>. و"سعر الـ SKU ده كان كام في version رقم v" هي <code>get(versions[v], X)</code>: بـ O(log n) على الـ root بتاع الـ version دي، من غير ما تعيد تشغيل التعديلات.</p>
+    <p><b>الـ Git شغال بنفس الطريقة.</b> الـ commit بيشاور على root tree، والـ tree فيها أسامي وقصاد كل اسم hash لـ blob أو sub-tree. لما تغيّر <code>src/orders/pay.ts</code>، Git بيكتب blob جديد واحد، و trees جديدة لـ <code>src/orders</code> و <code>src</code> والـ root، وبعدين commit جديد. أي tree أو blob تاني بيتعاد استخدامه بالـ hash. ده path copying والـ pointers فيه content hashes، وعشان كده commit بيغيّر ملف واحد في repo ضخم بيبقى رخيص.</p>
+    <p>والـ <b>sorted-btree</b> بيعمل نسخة من الفكرة: الـ <code>clone()</code> بـ O(1) لأنه بيعلّم الـ root إنه shared، وأول تعديل على أي نسخة بينسخ الـ nodes اللي على الـ path بتاعه (copy-on-write). الـ README بتاعه بيسمي ده "dynamically persistent". التشغيلة بتوري clone لمليون entry في حوالي 29 µs، وأول <code>set</code> بعده في حوالي 82 µs. وبتوري فخ لازم تعرفه: الـ <code>with(key, value)</code> الـ persistent بتاعه <b>مش</b> بيكتب فوق key موجود إلا لو بعت <code>overwrite = true</code>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      نزاع على فاتورة: العميل بيقول "السعر كان أقل وقت ما طلبت". لو قايمة الأسعار عندك persistent ومتخزن معاها رقم الـ version في كل order، الإجابة <code>get</code> واحدة. ونفس الحكاية في snapshot للـ feature flags أو الـ routing table مع كل deploy: الـ readers ماسكين الـ root القديم، والـ writer بيبدّل الـ reference لـ root جديد مرة واحدة. لو الداتا لازم تعيش بعد restart، الـ DB بجدول temporal (<code>valid_from</code>/<code>valid_to</code> + index) هو المكان الصح (الدرس 18).
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Support 'price of SKU X at time T' for 10,000 SKUs with 1,000 price changes a day, without a full copy per change." → In memory: a persistent ordered map; each change copies the O(log n) path (we measured ≈19 nodes at 10⁶ and ≈1.5 MB for 1,000 versions of 10,000 prices vs ≈459 MB for full copies) and keeps a root per version; answer by finding the version for T (binary search over change times) and doing <code>get</code> on its root. If it must survive restarts or be shared by pods, store it in the database as a temporal table with an index on (sku, valid_from).
+    <div class="ar-note">"عايز تدعم 'سعر الـ SKU ده كان كام في الوقت T' لـ 10,000 SKU و 1,000 تغيير سعر في اليوم، من غير نسخة كاملة لكل تغيير." ← في الـ memory: persistent ordered map؛ كل تغيير بينسخ الـ path اللي هو O(log n) (قسنا حوالي 19 node عند مليون، وحوالي 1.5 MB لـ 1,000 version من 10,000 سعر قصاد حوالي 459 MB للنسخ الكاملة)، وبتحتفظ بـ root لكل version؛ والإجابة إنك تلاقي الـ version بتاعة T (binary search على أوقات التغيير) وتعمل <code>get</code> على الـ root بتاعها. لو لازم يعيش بعد الـ restart أو يتشارك بين الـ pods، خزّنه في الـ DB كجدول temporal بـ index على (sku, valid_from).</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — HAMT, small but real <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ HAMT، صغيرة بس حقيقية</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A persistent tree needs ordered keys and gives O(log₂ n) depth. A <b>Hash Array Mapped Trie</b> (Bagwell, "Ideal Hash Trees", 2001) needs only a hash and is much shallower. Hash the key to 32 bits and consume 5 bits per level: each level picks one of 32 slots, so 10⁶ keys need about log₃₂ 10⁶ ≈ 4 levels. A naive 32-slot array per node would waste memory, so each node stores a <b>32-bit bitmap</b> of which slots are used plus a <b>dense array</b> of only those children. The child for slot s lives at index <code>popcount(bitmap &amp; (bit − 1))</code>: the number of used slots below s (bit tricks are in <a href="../../05-Algorithms/lessons/14-bits-and-math.html">section 05 · 3.2</a>).</p>
+    <p>After 7 levels (shifts 0, 5, …, 30) the 32 bits are used up. Two different keys with the same full hash go into a <b>collision node</b> that is searched linearly. That is not theoretical: on this run's key set, 8 of 10⁶ order ids shared a full 32-bit hash with an earlier id (a random hash would give ≈116 by the birthday bound). <code>set</code> is path copying again: it copies at most one node per level, each with its child array, and returns a new root.</p>
+    <p>Immutable.js's <code>Map</code> is a HAMT with refinements you can read in <code>immutable/dist/immutable.es.js</code> (5.2.1): an <code>ArrayMapNode</code> for up to 8 entries, a <code>BitmapIndexedNode</code> up to 16 children, then a full 32-slot <code>HashArrayMapNode</code>, plus <code>HashCollisionNode</code>. Strings hash with Java's <code>31·h + c</code>, and 5.x adds a per-process seeded secondary hash inside collision nodes against crafted collisions. Clojure's persistent hash map is a HAMT too, and its persistent vector (Hickey) is a 32-way trie indexed by position: the "pages" of Part 1 taken to their logical end.</p>
+  </section>
+
+<pre data-file="src/l17/hamt.ts"><code class="language-typescript">// نسخة صغيرة من الـ Hash Array Mapped Trie (Bagwell 2001): map persistent، والـ ⁦set()⁩ بترجّع map جديدة
+export type Hasher&lt;K&gt; = (key: K) =&gt; number;
+
+interface Leaf&lt;K, V&gt; { readonly kind: 0; readonly hash: number; readonly key: K; readonly value: V }
+interface Collision&lt;K, V&gt; { readonly kind: 1; readonly hash: number; readonly entries: readonly (readonly [K, V])[] }
+interface Branch&lt;K, V&gt; { readonly kind: 2; readonly bitmap: number; readonly children: readonly HNode&lt;K, V&gt;[] }
+type HNode&lt;K, V&gt; = Leaf&lt;K, V&gt; | Collision&lt;K, V&gt; | Branch&lt;K, V&gt;;
+
+const BITS = 5;
+const MASK = 0b11111;
+
+// عدد الـ bits اللي قيمتها 1 في رقم 32-bit (SWAR، من غير loop)
+export function popcount(x: number): number {
+  x = x - ((x &gt;&gt;&gt; 1) &amp; 0x55555555);
+  x = (x &amp; 0x33333333) + ((x &gt;&gt;&gt; 2) &amp; 0x33333333);
+  x = (x + (x &gt;&gt;&gt; 4)) &amp; 0x0f0f0f0f;
+  return Math.imul(x, 0x01010101) &gt;&gt;&gt; 24;
+}
+
+// الـ FNV-1a وبعده fmix32 بتاع Murmur3 عشان كل bit في الـ hash تتأثر بكل حرف
+export function hashString(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i &lt; s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  h ^= h &gt;&gt;&gt; 16; h = Math.imul(h, 0x85ebca6b);
+  h ^= h &gt;&gt;&gt; 13; h = Math.imul(h, 0xc2b2ae35);
+  return (h ^ (h &gt;&gt;&gt; 16)) &gt;&gt;&gt; 0;
+}
+
+export const stats = { nodes: 0 };
+function leaf&lt;K, V&gt;(hash: number, key: K, value: V): Leaf&lt;K, V&gt; {
+  stats.nodes++;
+  return { kind: 0, hash, key, value };
+}
+function branch&lt;K, V&gt;(bitmap: number, children: readonly HNode&lt;K, V&gt;[]): Branch&lt;K, V&gt; {
+  stats.nodes++;
+  return { kind: 2, bitmap, children };
+}
+function collision&lt;K, V&gt;(hash: number, entries: readonly (readonly [K, V])[]): Collision&lt;K, V&gt; {
+  stats.nodes++;
+  return { kind: 1, hash, entries };
+}
+
+// اتنين hashes مختلفين: بننزل levels لحد ما الـ 5 bits بتوعهم يختلفوا
+function merge&lt;K, V&gt;(a: Leaf&lt;K, V&gt; | Collision&lt;K, V&gt;, b: Leaf&lt;K, V&gt;, shift: number): Branch&lt;K, V&gt; {
+  const fa = (a.hash &gt;&gt;&gt; shift) &amp; MASK, fb = (b.hash &gt;&gt;&gt; shift) &amp; MASK;
+  if (fa === fb) return branch(1 &lt;&lt; fa, [merge(a, b, shift + BITS)]);
+  return branch((1 &lt;&lt; fa) | (1 &lt;&lt; fb), fa &lt; fb ? [a, b] : [b, a]);
+}
+
+function insert&lt;K, V&gt;(
+  node: HNode&lt;K, V&gt;, shift: number, hash: number, key: K, value: V, added: { yes: boolean },
+): HNode&lt;K, V&gt; {
+  if (node.kind === 2) {
+    const bit = 1 &lt;&lt; ((hash &gt;&gt;&gt; shift) &amp; MASK);
+    // مكان الـ child في الـ array المضغوطة = عدد الـ bits اللي قبله في الـ bitmap
+    const idx = popcount(node.bitmap &amp; (bit - 1));
+    if ((node.bitmap &amp; bit) === 0) {
+      added.yes = true;
+      return branch(node.bitmap | bit, node.children.toSpliced(idx, 0, leaf(hash, key, value)));
+    }
+    const child = node.children[idx]!;
+    const next = insert(child, shift + BITS, hash, key, value, added);
+    // الـ path copy: node جديدة بنفس الـ children ما عدا واحد
+    return next === child ? node : branch(node.bitmap, node.children.with(idx, next));
+  }
+  if (node.hash !== hash) { added.yes = true; return merge(node, leaf(hash, key, value), shift); }
+  if (node.kind === 0) {
+    if (Object.is(node.key, key)) return Object.is(node.value, value) ? node : leaf(hash, key, value);
+    added.yes = true;
+    return collision(hash, [[node.key, node.value], [key, value]]);
+  }
+  // الـ collision node: نفس الـ hash الـ 32-bit كامل، فبنخزنهم list ونقارن بالـ key
+  const at = node.entries.findIndex(([k]) =&gt; Object.is(k, key));
+  if (at === -1) { added.yes = true; return collision(hash, [...node.entries, [key, value]]); }
+  return Object.is(node.entries[at]![1], value) ? node : collision(hash, node.entries.with(at, [key, value]));
+}</code></pre>
+
+<pre data-file="src/l17/hamt.ts"><code class="language-typescript">export class PersistentMap&lt;K, V&gt; {
+  readonly size: number;
+  readonly #root: HNode&lt;K, V&gt; | null;
+  readonly #hash: Hasher&lt;K&gt;;
+
+  private constructor(root: HNode&lt;K, V&gt; | null, size: number, hash: Hasher&lt;K&gt;) {
+    this.#root = root; this.size = size; this.#hash = hash;
+  }
+  static empty&lt;K, V&gt;(hash: Hasher&lt;K&gt;): PersistentMap&lt;K, V&gt; { return new PersistentMap&lt;K, V&gt;(null, 0, hash); }
+
+  get(key: K): V | undefined {
+    const hash = this.#hash(key);
+    let node = this.#root, shift = 0;
+    while (node !== null) {
+      if (node.kind === 2) {
+        const bit = 1 &lt;&lt; ((hash &gt;&gt;&gt; shift) &amp; MASK);
+        if ((node.bitmap &amp; bit) === 0) return undefined;
+        node = node.children[popcount(node.bitmap &amp; (bit - 1))]!;
+        shift += BITS;
+      } else if (node.kind === 0) {
+        return node.hash === hash &amp;&amp; Object.is(node.key, key) ? node.value : undefined;
+      } else {
+        if (node.hash !== hash) return undefined;
+        return node.entries.find(([k]) =&gt; Object.is(k, key))?.[1];
+      }
+    }
+    return undefined;
+  }
+
+  has(key: K): boolean { return this.get(key) !== undefined; }
+
+  set(key: K, value: V): PersistentMap&lt;K, V&gt; {
+    const hash = this.#hash(key);
+    if (this.#root === null) return new PersistentMap(leaf(hash, key, value), 1, this.#hash);
+    const added = { yes: false };
+    const root = insert(this.#root, 0, hash, key, value, added);
+    if (root === this.#root) return this;
+    return new PersistentMap(root, this.size + (added.yes ? 1 : 0), this.#hash);
+  }</code></pre>
+
+<pre data-file="src/l17/hamt-depth.ts"><code class="language-typescript">// تشغيل: node src/l17/hamt-depth.ts
+import { PersistentMap, hashString } from './hamt.ts';
+
+let orders = PersistentMap.empty&lt;string, number&gt;(hashString);
+const seen = new Set&lt;number&gt;();
+let sameFullHash = 0;
+for (let i = 0; i &lt; 1_000_000; i++) {
+  const key = `order-${i}`;
+  const h = hashString(key);
+  if (seen.has(h)) sameFullHash++;
+  seen.add(h);
+  orders = orders.set(key, i);
+}
+// الـ birthday bound لـ hash عشوائي ⁦32-bit: n² ÷ 2³³⁩
+console.log('size', orders.size, '| depth (levels incl. leaf)', orders.depth());
+console.log('keys sharing a full 32-bit hash with an earlier key:', sameFullHash, '| random-hash expectation ≈', Math.round(1e12 / 2 ** 33));</code></pre>
+
+<pre><code class="language-plaintext">size 1000000 | depth (levels incl. leaf) 8
+keys sharing a full 32-bit hash with an earlier key: 8 | random-hash expectation ≈ 116</code></pre>
+  <div class="ar-note">مليون order في الـ HAMT: أقصى عمق 8 (7 levels من الـ branches + الـ leaf أو الـ collision node). و 8 keys كان ليهم نفس الـ hash الـ 32-bit كامل بتاع key قبلهم، يعني الـ collision nodes اشتغلت فعلًا؛ والـ hash العشوائي كان متوقع يدي حوالي 116.</div>
+
+<pre class="diagram">
+ key "order-42" -> hash 32 bits, 5 bits per level:   ... 00110 | 01001 | 10011
+                                                             l2      l1      l0
+ level 0 uses 10011 = slot 19
+ node.bitmap  = bit 31 ............ bit 19 ...... bit 3 ... bit 0
+                0 0 0 1 0 ... 0 0 0 1 0 0 ... 0 1 0 0 1 0 1 1      (8 slots used)
+ slot 19 used?  bitmap &amp; (1 &lt;&lt; 19) != 0
+ index in children[] = popcount(bitmap &amp; ((1 &lt;&lt; 19) - 1)) = used slots below 19 = 5
+ children = [ c0, c1, c3, c5, c8, c19, c27, c31 ]   dense: 8 pointers, not 32
+                                   ^ index 5
+</pre>
+  <div class="ar-note">الرسمة: الـ hash بتاع الـ key بيتقسم 5 bits لكل level؛ الـ level الأول بياخد <code>10011</code> يعني slot رقم 19. الـ bitmap فيها bit لكل slot مستخدمة (هنا 8). عشان نعرف مكان slot 19 في الـ array المضغوطة، بنعدّ الـ bits اللي قيمتها 1 تحت bit 19 بالـ popcount، فبيطلع 5. والـ children array فيها 8 pointers بس بدل 32.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p>The tests run the same model-based check (20,000 random sets against a <code>Map</code>, 400 when every key collides, with snapshots that must stay unchanged) under three hash functions: the real one, one that keeps only 4 buckets, and one where every key collides. The benchmark compares my HAMT, Immutable.js 5.2 and copy-on-write on a native <code>Map</code> (<code>new Map(old).set(k, v)</code>), each size in its own process so one cell's garbage does not slow the next.</p>
+  </section>
+
+<pre data-file="src/l17/hamt.test.ts"><code class="language-typescript">// نفس الـ model test بـ 3 hash functions: الحقيقية، وواحدة نصها collisions، وواحدة كلها collision
+const hashers: [string, Hasher&lt;string&gt;][] = [
+  ['real hash', hashString],
+  ['4 buckets only', (k) =&gt; hashString(k) &amp; 3],
+  ['everything collides', () =&gt; 7],
+];
+for (const [name, hash] of hashers) {
+  test(`matches a Map model and keeps old versions (${name})`, () =&gt; {
+    const rand = mulberry32(11);
+    let m = PersistentMap.empty&lt;string, number&gt;(hash);
+    const model = new Map&lt;string, number&gt;();
+    const snapshots: [PersistentMap&lt;string, number&gt;, Map&lt;string, number&gt;][] = [];
+    const ops = name === 'everything collides' ? 400 : 20_000;
+    for (let i = 0; i &lt; ops; i++) {
+      const key = `order-${Math.floor(rand() * (ops / 2))}`;
+      m = m.set(key, i);
+      model.set(key, i);
+      if (i % (ops / 10) === 0) snapshots.push([m, new Map(model)]);
+    }
+    assert.equal(m.size, model.size);
+    for (const [k, v] of model) assert.equal(m.get(k), v);
+    assert.equal(m.get('order-missing'), undefined);
+    assert.deepEqual(new Map(m.entries()), model);
+    // الـ versions القديمة لسه زي ما كانت وقت ما خدنا الـ snapshot
+    for (const [old, expected] of snapshots) assert.deepEqual(new Map(old.entries()), expected);
+  });
+}</code></pre>
+
+<pre data-file="src/l17/hamt.bench.ts"><code class="language-typescript">// الـ copy-on-write على الـ Map العادية: كل set بتنسخ الـ Map كلها
+class CowMap implements Persistent {
+  readonly #m: Map&lt;string, number&gt;;
+  constructor(m: Map&lt;string, number&gt;) { this.#m = m; }
+  set(key: string, value: number): CowMap { return new CowMap(new Map(this.#m).set(key, value)); }
+  get(key: string): number | undefined { return this.#m.get(key); }
+}
+
+const builders: Record&lt;string, (keys: string[]) =&gt; Persistent&gt; = {
+  'my HAMT': (keys) =&gt; keys.reduce&lt;PersistentMap&lt;string, number&gt;&gt;((m, k, i) =&gt; m.set(k, i), PersistentMap.empty(hashString)),
+  'Immutable.Map': (keys) =&gt; IMap&lt;string, number&gt;().withMutations((m) =&gt; { keys.forEach((k, i) =&gt; m.set(k, i)); }),
+  'COW Map': (keys) =&gt; new CowMap(new Map(keys.map((k, i) =&gt; [k, i]))),
+};</code></pre>
+
+<pre><code class="language-plaintext">n              structure  update ns/op  get ns/op  bytes/entry  bytes/version
+---------  -------------  ------------  ---------  -----------  -------------
+1,000            my HAMT           138         87          107            832
+1,000      Immutable.Map           184         57          161            996
+1,000            COW Map         30438         36           30          28800
+100,000          my HAMT           660        259          113           1317
+100,000    Immutable.Map           718        276          154           1339
+100,000          COW Map       7777075         78           37        3612866
+1,000,000        my HAMT          1187        711          112           1530
+1,000,000  Immutable.Map          1574        888          161           1598
+1,000,000        COW Map     210525100        306           29        skipped</code></pre>
+  <div class="ar-note">الـ update: الـ HAMT بتاعتي و Immutable.Map حوالي 0.1 لـ 1.6 µs وبيزيدوا ببطء، والـ COW Map بتنسخ الـ Map كلها فبتبقى 30 µs عند 10³، وحوالي 7.8 ms عند 10⁵، وحوالي 210 ms عند مليون. الـ get: الـ Map العادية الأسرع في كل الأحجام (36 و 78 و 306 ns). الذاكرة: الـ Map العادية حوالي 30 byte لكل entry، والـ HAMT حوالي 110، و Immutable حوالي 160. وكل version جديدة بتتكلف حوالي 1.5 KB في الـ HAMT، قصاد 3.6 MB في الـ COW Map عند 10⁵ (وعند مليون اتخطّت).</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ persistent tree محتاجة keys مترتبة وعمقها O(log₂ n). الـ <b>Hash Array Mapped Trie</b> (Bagwell، "Ideal Hash Trees"، سنة 2001) محتاجة hash بس، وأقل عمق بكتير. بتعمل hash للـ key لـ 32 bit وتاخد 5 bits في كل level: كل level بيختار slot من 32، فمليون key محتاجين حوالي log₃₂ 10⁶ يعني حوالي 4 levels. لو كل node فيها array بـ 32 خانة هتضيّع memory، فكل node بتخزن <b>bitmap بـ 32 bit</b> بتقول مين من الـ slots مستخدم، و <b>array مضغوطة</b> فيها الـ children دول بس. الـ child بتاع slot رقم s مكانه <code>popcount(bitmap &amp; (bit − 1))</code>: عدد الـ slots المستخدمة اللي تحت s (الـ bit tricks في <a href="../../05-Algorithms/lessons/14-bits-and-math.html">القسم 05 · 3.2</a>).</p>
+    <p>بعد 7 levels (الـ shift بـ 0 و 5 لحد 30) الـ 32 bit بيخلصوا. اتنين keys مختلفين ليهم نفس الـ hash كامل بيروحوا <b>collision node</b> بندوّر فيها خطي. ده مش كلام نظري: على الـ keys بتاعة التشغيلة دي، 8 من مليون order id كان ليهم نفس الـ hash الـ 32-bit بتاع id قبلهم (والـ hash العشوائي كان هيدي حوالي 116 حسب الـ birthday bound). والـ <code>set</code> هو path copying تاني: بينسخ node واحدة بالكتير في كل level، كل واحدة بالـ children array بتاعتها، ويرجّع root جديد.</p>
+    <p>الـ <code>Map</code> بتاع Immutable.js عبارة عن HAMT ومعاها تحسينات تقدر تقراها في <code>immutable/dist/immutable.es.js</code> (نسخة 5.2.1): <code>ArrayMapNode</code> لحد 8 entries، وبعدها <code>BitmapIndexedNode</code> لحد 16 child، وبعدها <code>HashArrayMapNode</code> بـ 32 خانة كاملة، ومعاهم <code>HashCollisionNode</code>. الـ strings بتتعمل لها hash بطريقة Java (<code>31·h + c</code>)، ونسخة 5 زوّدت hash تاني جوه الـ collision nodes بـ seed مختلف لكل process عشان الـ collisions المتعمّدة. والـ persistent hash map بتاع Clojure هي HAMT برضه، والـ persistent vector بتاعها (Hickey) عبارة عن trie بـ 32 فرع بالـ index: نفس فكرة الصفحات بتاعة الجزء 1 لحد آخرها.</p>
+    <p>الـ tests بتعمل نفس الـ model check (20,000 set عشوائي قصاد <code>Map</code>، و 400 بس لما كل الـ keys بتعمل collision، ومعاهم snapshots لازم تفضل زي ما هي) بتلات hash functions: الحقيقية، وواحدة بتسيب 4 buckets بس، وواحدة كل الـ keys فيها بتعمل collision. والـ benchmark بيقارن الـ HAMT بتاعتي و Immutable.js 5.2 و copy-on-write على <code>Map</code> عادية (<code>new Map(old).set(k, v)</code>)، كل حجم في process لوحده عشان الـ garbage بتاع خانة ميبطّأش اللي بعدها.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      service في Node بتحمّل routing table للـ tenants (مين على أنهي DB shard) من Postgres كل 30 ثانية، والـ requests بتقرا منها طول الوقت. لو الجدول 500 tenant وبيتغير نادرًا، الـ copy-on-write على <code>Map</code> عادية كفاية وأسرع في القراية. لو 10⁵ entry وبتتغير entries كتير في الدقيقة، كل نسخة كاملة بـ 7.8 ms وحوالي 3.6 MB garbage، والـ HAMT بتعمل نفس الشغل بـ microsecond و 1.3 KB. والغلطة الشائعة: تستخدم Immutable.Map في كل حتة "عشان immutable" وإنت مش محتاج versions؛ القراية أبطأ والـ memory أكتر من 3 أضعاف.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: persistent maps vs the native Map</b>
+    Lookups favour the native <code>Map</code> at every size here (36 / 78 / 306 ns vs 87 / 259 / 711 ns for my HAMT) and it uses ≈30 bytes per entry against ≈110–160. A HAMT only wins when you keep versions or update a big map often: one update at 10⁵ is ≈0.7 µs vs ≈7.8 ms for a full copy.
+    <div class="ar-note">القراية لصالح الـ <code>Map</code> العادية في كل الأحجام هنا (36 و 78 و 306 ns قصاد 87 و 259 و 711 ns للـ HAMT بتاعتي)، وبتاخد حوالي 30 byte لكل entry قصاد ما بين 110 و 160. الـ HAMT بتكسب بس لما تحتفظ بـ versions أو تعدّل map كبيرة كتير: update واحد عند 10⁵ بحوالي 0.7 µs قصاد حوالي 7.8 ms للنسخة الكاملة.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Why React and Immer depend on it <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — ليه React و Immer معتمدين على الفكرة دي</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Reference equality is the contract.</b> React decides that nothing changed by comparing references with <code>Object.is</code>: a <code>setState</code> with the same value is skipped, <code>React.memo</code> skips a child whose props are the same references, effect and memo dependency arrays compare each item, and <code>useSyncExternalStore</code> re-renders when <code>getSnapshot</code> returns a different value. The React Compiler (1.0) compiles memoization into the component; its output below caches the computed total behind <code>if ($[0] !== lines)</code>. Mutating state in place keeps the reference, so every one of these checks concludes "unchanged".</p>
+    <p>The jsdom run makes it concrete. A cart starts with one line. <code>lines.push(x); setLines(lines)</code> does not render at all. An unrelated state change then re-renders the cart, but the memoized list is skipped because <code>lines</code> is the same array, so the DOM still shows 1 line while the array holds 2. The next correct update with Immer's <code>produce</code> creates a new array, and the hidden line suddenly appears with the new one: 3 lines. That "data shows up one click late" symptom is the classic sign of mutated state.</p>
+  </section>
+
+<pre data-file="src/l17/cart-render.tsx"><code class="language-tsx">import './dom-setup.ts';
+import { act, memo, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { produce } from 'immer';
+
+interface CartLine { readonly sku: string; readonly qty: number }
+const renders = { cart: 0, list: 0 };
+
+// الـ memo بيقارن الـ props بالـ ⁦reference (Object.is)⁩، ولو زي ما هي مش بيعمل render
+const LineList = memo(function LineList({ lines }: { lines: readonly CartLine[] }) {
+  renders.list++;
+  return &lt;ul&gt;{lines.map((l) =&gt; &lt;li key={l.sku}&gt;{l.sku} × {l.qty}&lt;/li&gt;)}&lt;/ul&gt;;
+});
+
+let actions!: { addMutating(l: CartLine): void; addWithImmer(l: CartLine): void; typeCoupon(): void };
+
+function Cart() {
+  renders.cart++;
+  const [lines, setLines] = useState&lt;CartLine[]&gt;([{ sku: 'CHAIR', qty: 1 }]);
+  const [coupon, setCoupon] = useState('');
+  actions = {
+    // ❌ نفس الـ array بعد ما اتعدّلت: ⁦Object.is(old, new)⁩ بيرجّع true، فـ React بيتجاهل الـ update
+    addMutating: (l) =&gt; { lines.push(l); setLines(lines); },
+    // ✅ نسخة array جديدة (والعناصر القديمة متشاركة⁦):⁩ الـ reference اتغير، فـ React بيعمل render
+    addWithImmer: (l) =&gt; setLines((prev) =&gt; produce(prev, (d) =&gt; { d.push(l); })),
+    typeCoupon: () =&gt; setCoupon((c) =&gt; c + 'X'),
+  };
+  return &lt;section&gt;&lt;LineList lines={lines} /&gt;&lt;p&gt;coupon: {coupon}&lt;/p&gt;&lt;/section&gt;;
+}
+
+const container = document.getElementById('root')!;
+const root = createRoot(container);
+const show = (step: string) =&gt;
+  console.log(step.padEnd(28), `renders cart=${renders.cart} list=${renders.list}`, `| DOM lines=${container.querySelectorAll('li').length}`);
+
+await act(async () =&gt; root.render(&lt;Cart /&gt;));
+show('initial render');
+await act(async () =&gt; actions.addMutating({ sku: 'DESK', qty: 1 }));
+show('push + setLines(same)');
+await act(async () =&gt; actions.typeCoupon());
+show('unrelated state change');
+await act(async () =&gt; actions.addWithImmer({ sku: 'LAMP', qty: 2 }));
+show('produce → new array');
+await act(async () =&gt; root.unmount());</code></pre>
+
+<pre><code class="language-plaintext">initial render               renders cart=1 list=1 | DOM lines=1
+push + setLines(same)        renders cart=1 list=1 | DOM lines=1
+unrelated state change       renders cart=2 list=1 | DOM lines=1
+produce → new array          renders cart=3 list=2 | DOM lines=3</code></pre>
+  <div class="ar-note">أول render: الـ cart والـ list اترسموا مرة، وفي الـ DOM سطر واحد. بعد <code>push</code> + <code>setLines</code> بنفس الـ array: مفيش أي render. بعد تغيير state ملوش علاقة: الـ cart اترسم تاني بس الـ list لأ (الـ memo شاف نفس الـ reference)، والـ DOM لسه سطر واحد مع إن الـ array فيها اتنين. بعد الـ <code>produce</code>: array جديدة، الـ list اترسمت، والـ DOM بقى فيه 3 سطور مرة واحدة.</div>
+
+<pre data-file="src/l17/compile-check.mjs"><code class="language-javascript">// تشغيل: ⁦node src/l17/compile-check.mjs  (⁩بيطبع الكود اللي React Compiler بيطلّعه)
+import { transformSync } from '@babel/core';
+
+const source = `
+export function CartTotal({ lines }) {
+  const total = lines.reduce((sum, l) =&gt; sum + l.qty * l.priceCents, 0);
+  return &lt;b&gt;{total}&lt;/b&gt;;
+}`;
+const out = transformSync(source, {
+  filename: 'CartTotal.jsx',
+  plugins: ['@babel/plugin-syntax-jsx', ['babel-plugin-react-compiler', {}]],
+  configFile: false, babelrc: false,
+});
+console.log(out.code);</code></pre>
+
+<pre><code class="language-plaintext">import { c as _c } from "react/compiler-runtime";
+export function CartTotal(t0) {
+  const $ = _c(4);
+  const {
+    lines
+  } = t0;
+  let t1;
+  if ($[0] !== lines) {
+    t1 = lines.reduce(_temp, 0);
+    $[0] = lines;
+    $[1] = t1;
+  } else {
+    t1 = $[1];
+  }
+  const total = t1;
+  let t2;
+  if ($[2] !== total) {
+    t2 = &lt;b&gt;{total}&lt;/b&gt;;
+    $[2] = total;
+    $[3] = t2;
+  } else {
+    t2 = $[3];
+  }
+  return t2;
+}
+function _temp(sum, l) {
+  return sum + l.qty * l.priceCents;
+}</code></pre>
+  <div class="ar-note">ده الكود اللي الـ React Compiler طلّعه بجد: الـ total بيتحسب تاني بس لو <code>$[0] !== lines</code>، يعني لو الـ reference اتغير. لو عملت mutation للـ array في مكانها، الـ reference هو هو والـ total القديم هيفضل يتعرض.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Immer 11 specifics.</b> <code>produce</code> hands your recipe a <code>Proxy</code> draft. Reads create child drafts lazily; the first write to an object makes a shallow copy of it and marks its parents as modified (copy-on-write). At the end, untouched drafts return their original objects, which is where the sharing comes from. Then <b>auto-freeze</b> (on by default) deep-freezes the result, skipping objects that are already frozen.</p>
+    <p>That freeze has a cost the docs mention and this run measures. The first <code>produce</code> on a fresh 10⁶-item array also freezes all 10⁶ items. Steady state is worse than expected on big arrays: with auto-freeze on, one change on a frozen 10⁶-item array took ≈62 ms against ≈1.2 ms with <code>setAutoFreeze(false)</code> (≈50×; an earlier run on a busier machine gave 342 ms vs 4.5 ms). Two costs add up: Immer copies arrays with <code>Array.prototype.slice</code>, and on Node 22.19 (V8 12.4) copying a <em>frozen</em> array with <code>slice</code> or <code>with</code> took a slow path, ≈13–27× slower than the same copy of a plain array across runs, while <code>[...frozen]</code> stayed fast; and re-freezing walks every child. Not tested on newer V8 lines.</p>
+    <p><b>Batching</b> matters more than anything else: 1,000 changes in one recipe cost about the same as one change, while 1,000 separate <code>produce</code> calls each copy and re-freeze the whole array: ≈6.4 s at 10⁵ against ≈7 ms. <b>Patches</b> (<code>produceWithPatches</code>, <code>applyPatches</code>) give undo/redo that stores only the diff. Immer's client-state use with Zustand is in <a href="../../07-React/lessons/11-client-state.html#p4">React lesson 11, part 4</a>.</p>
+    <p><b>When not to.</b> In a Node hot loop (aggregating 10⁶ events into totals) mutate a local <code>Map</code> and return a new object at the boundary: the in-place update is ≈4 µs at 10⁶ here. Big typed arrays (a <code>Float64Array</code> of prices in a worker) are not draftable at all (<code>isDraftable</code> returns <code>false</code>): update them in place and transfer ownership instead of copying.</p>
+  </section>
+
+<pre data-file="src/l17/immer-cost.bench.ts"><code class="language-typescript">  setAutoFreeze(true);
+  // الـ state الحقيقي بعد أول produce: متجمّد كله (الـ array والعناصر)
+  const frozen: Lines = produce(makeLines(n), () =&gt; {});
+  const fresh = () =&gt; makeLines(n);
+  const one = (d: CartLine[]) =&gt; { (d[i0] as { qty: number }).qty = 2; };
+
+  put('mutate in place', n, time(fresh, (a) =&gt; { a[i0] = { ...a[i0]!, qty: 2 }; }, k));
+  put('hand spread: [...state], replace 1', n, time(() =&gt; frozen, (a) =&gt; { const c = [...a]; c[i0] = { ...a[i0]!, qty: 2 }; return c; }, k));
+  put('state.with(i, x) on frozen state', n, time(() =&gt; frozen, (a) =&gt; a.with(i0, { ...a[i0]!, qty: 2 }), k));
+  put('produce, frozen state (autoFreeze on)', n, time(() =&gt; frozen, (a) =&gt; produce(a, one), k));
+  put('produce, first call: deep-freezes all', n, time(fresh, (a) =&gt; produce(a, one), k));
+  put('1,000 changes in 1 recipe', n, time(() =&gt; frozen, (a) =&gt; produce(a, (d) =&gt; { for (const i of idx) (d[i] as { qty: number }).qty++; }), k));
+  put('1,000 changes, 1 produce each', n, time(() =&gt; frozen, (a) =&gt; idx.slice(0, chain).reduce((s, i) =&gt; produce(s, (d) =&gt; { (d[i] as { qty: number }).qty++; }), a), 1) * (1_000 / chain), note);
+  console.error('done autoFreeze on', n);
+
+  setAutoFreeze(false);
+  const loose: Lines = makeLines(n);
+  put('produce, autoFreeze off', n, time(() =&gt; loose, (a) =&gt; produce(a, one), k));
+  put('1,000 changes, 1 produce each, autoFreeze off', n, time(() =&gt; loose, (a) =&gt; idx.slice(0, chain).reduce((s, i) =&gt; produce(s, (d) =&gt; { (d[i] as { qty: number }).qty++; }), a), 1) * (1_000 / chain), note);
+  setAutoFreeze(true);
+  console.error('done', n);
+}
+printTable(Object.entries(table).map(([operation, cells]) =&gt; ({ operation, ...cells })));</code></pre>
+
+<pre><code class="language-plaintext">operation                                         1,000   100,000              1,000,000
+---------------------------------------------  --------  --------  ---------------------
+mutate in place                                  1.5 µs    4.0 µs                 4.4 µs
+hand spread: [...state], replace 1               2.0 µs  147.3 µs                 1.4 ms
+state.with(i, x) on frozen state                22.6 µs    2.2 ms                21.9 ms
+produce, frozen state (autoFreeze on)          145.6 µs    5.9 ms                61.7 ms
+produce, first call: deep-freezes all          283.4 µs   23.9 ms               157.4 ms
+1,000 changes in 1 recipe                        1.5 ms    6.9 ms                62.7 ms
+1,000 changes, 1 produce each                   67.3 ms     6.4 s  61.1 s (20 calls ×50)
+produce, autoFreeze off                          2.0 µs  165.4 µs                 1.2 ms
+1,000 changes, 1 produce each, autoFreeze off    2.3 ms  211.6 ms   1.9 s (20 calls ×50)
+typed arrays are draftable by Immer? false</code></pre>
+  <div class="ar-note">صف صف: الـ mutation في المكان حوالي 4 µs حتى عند مليون. الـ spread اليدوي (<code>[...state]</code>) حوالي 1.4 ms عند مليون. الـ <code>with</code> على state متجمّدة حوالي 22 ms عند مليون (أبطأ بكتير من الـ spread، ده الـ slow path). الـ <code>produce</code> على state متجمّدة حوالي 62 ms، وأول <code>produce</code> على state مش متجمّدة حوالي 157 ms لأنه بيجمّد المليون عنصر. 1,000 تغيير في recipe واحدة حوالي 63 ms، يعني تقريبًا نفس تمن تغيير واحد، لكن 1,000 نداء <code>produce</code> منفصلين حوالي 61 ثانية (اتقاس على 20 نداء ×50). ومع <code>autoFreeze</code> مقفول: تغيير واحد حوالي 1.2 ms، و 1,000 نداء حوالي 1.9 ثانية. وآخر سطر: الـ typed arrays مش draftable في Immer.</div>
+
+<pre data-file="src/l17/frozen-with.ts"><code class="language-typescript">// تشغيل: node src/l17/frozen-with.ts
+// نسخ array كبيرة متجمّدة (زي اللي Immer بيرجّعها⁦):⁩ نفس العملية بطرق مختلفة
+interface CartLine { readonly sku: string; readonly qty: number }
+const median = (f: () =&gt; unknown) =&gt; {
+  f();
+  const t: number[] = [];
+  for (let i = 0; i &lt; 7; i++) { const t0 = performance.now(); f(); t.push(performance.now() - t0); }
+  return `≈${t.sort((a, b) =&gt; a - b)[3]!.toFixed(2)} ms`;
+};
+for (const n of [100_000, 1_000_000]) {
+  const plain: CartLine[] = Array.from({ length: n }, (_, i) =&gt; ({ sku: `SKU-${i}`, qty: 1 }));
+  const frozen: readonly CartLine[] = Object.freeze(plain.slice());
+  const line = { sku: 'SKU-7', qty: 2 };
+  console.log(`n=${n.toLocaleString('en-US')}`);
+  console.log('  plain.with(i, x)         ', median(() =&gt; plain.with(7, line)));
+  console.log('  frozen.with(i, x)        ', median(() =&gt; frozen.with(7, line)));
+  console.log('  [...frozen] then [i] = x ', median(() =&gt; { const c = [...frozen]; c[7] = line; return c; }));
+  console.log('  frozen.slice() then [i]=x', median(() =&gt; { const c = frozen.slice(); c[7] = line; return c; }));
+}</code></pre>
+
+<pre><code class="language-plaintext">n=100,000
+  plain.with(i, x)          ≈0.23 ms
+  frozen.with(i, x)         ≈3.43 ms
+  [...frozen] then [i] = x  ≈0.20 ms
+  frozen.slice() then [i]=x ≈3.22 ms
+n=1,000,000
+  plain.with(i, x)          ≈2.15 ms
+  frozen.with(i, x)         ≈27.97 ms
+  [...frozen] then [i] = x  ≈2.15 ms
+  frozen.slice() then [i]=x ≈43.07 ms</code></pre>
+  <div class="ar-note">نفس العملية (نسخة من الـ array وتغيير خانة) على array عادية وعلى array متجمّدة. عند مليون: <code>with</code> على العادية حوالي 2 ms، وعلى المتجمّدة حوالي 28 ms؛ و <code>slice</code> على المتجمّدة حوالي 43 ms؛ أما <code>[...frozen]</code> فحوالي 2 ms زي العادية. يعني الفرق مش في الـ immutability نفسها، الفرق في الـ path اللي V8 بياخده لما الـ array تبقى frozen (قيسناه على Node 22.19 بس).</div>
+
+<pre data-file="src/l17/undo-patches.ts"><code class="language-typescript">// تشغيل: node src/l17/undo-patches.ts
+import { enablePatches, produceWithPatches, applyPatches, type Patch } from 'immer';
+
+enablePatches();
+
+interface CartLine { sku: string; qty: number }
+interface Cart { readonly lines: readonly CartLine[]; readonly coupon: string | null }
+interface Step { readonly redo: Patch[]; readonly undo: Patch[] }
+
+// كل خطوة بتخزن الـ patches بس (الفرق)، مش نسخة من الـ state كله
+const undoStack: Step[] = [];
+const redoStack: Step[] = [];
+let cart: Cart = { lines: [{ sku: 'CHAIR', qty: 1 }], coupon: null };
+
+function edit(recipe: (draft: { lines: CartLine[]; coupon: string | null }) =&gt; void): void {
+  const [next, patches, inverse] = produceWithPatches(cart, recipe);
+  cart = next;
+  undoStack.push({ redo: patches, undo: inverse });
+  redoStack.length = 0;
+  console.log('patches:', JSON.stringify(patches));
+}
+function undo(): void {
+  const step = undoStack.pop();
+  if (!step) return;
+  cart = applyPatches(cart, step.undo);
+  redoStack.push(step);
+}
+function redo(): void {
+  const step = redoStack.pop();
+  if (!step) return;
+  cart = applyPatches(cart, step.redo);
+  undoStack.push(step);
+}
+
+edit((d) =&gt; { d.lines.push({ sku: 'DESK', qty: 1 }); });
+const beforeSecondEdit = cart;
+edit((d) =&gt; { d.lines[0]!.qty = 3; d.coupon = 'EID10'; });
+console.log('now:       ', JSON.stringify(cart));
+undo();
+console.log('after undo:', JSON.stringify(cart));
+redo();
+console.log('after redo:', JSON.stringify(cart));
+// الـ DESK line متشاركة بين كل الـ versions: نفس الـ object
+console.log('DESK shared across versions:', beforeSecondEdit.lines[1] === cart.lines[1]);</code></pre>
+
+<pre><code class="language-plaintext">patches: [{"op":"add","path":["lines",1],"value":{"sku":"DESK","qty":1}}]
+patches: [{"op":"replace","path":["lines",0,"qty"],"value":3},{"op":"replace","path":["coupon"],"value":"EID10"}]
+now:        {"lines":[{"sku":"CHAIR","qty":3},{"sku":"DESK","qty":1}],"coupon":"EID10"}
+after undo: {"lines":[{"sku":"CHAIR","qty":1},{"sku":"DESK","qty":1}],"coupon":null}
+after redo: {"lines":[{"sku":"CHAIR","qty":3},{"sku":"DESK","qty":1}],"coupon":"EID10"}
+DESK shared across versions: true</code></pre>
+  <div class="ar-note">أول تعديل طلّع patch واحد (<code>add</code> لسطر DESK)، والتاني طلّع اتنين (<code>replace</code> للكمية وللكوبون). الـ undo رجّع الكمية 1 والكوبون <code>null</code>، والـ redo رجّعهم 3 و EID10. وآخر سطر: سطر الـ DESK هو نفس الـ object في كل الـ versions، يعني الـ patches كمان بتحافظ على الـ sharing.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ reference equality هي العقد.</b> React بيقرر إن مفيش حاجة اتغيرت بمقارنة الـ references بـ <code>Object.is</code>: الـ <code>setState</code> بنفس القيمة بيتجاهله، والـ <code>React.memo</code> بيتخطى الـ child لو الـ props هي نفس الـ references، والـ dependency arrays بتاعة الـ effects والـ memo بتقارن كل عنصر، والـ <code>useSyncExternalStore</code> بيعمل re-render لما الـ <code>getSnapshot</code> ترجّع قيمة مختلفة. والـ React Compiler (نسخة 1.0) بيحط الـ memoization جوه الـ component وهو بيعمل compile؛ الكود اللي طلّعه فوق بيخزن الـ total ورا <code>if ($[0] !== lines)</code>. لو عملت mutation للـ state في مكانه، الـ reference بيفضل هو هو، فكل الـ checks دي بتقول "متغيرش".</p>
+    <p>تشغيلة الـ jsdom بتوضح ده: cart فيها سطر واحد. <code>lines.push(x); setLines(lines)</code> مبيعملش render خالص. بعدها تغيير state ملوش علاقة بيرسم الـ cart تاني، بس الـ list اللي عليها memo بتتخطى لأن <code>lines</code> هي نفس الـ array، فالـ DOM بيفضل فيه سطر واحد والـ array فيها اتنين. أول update صح بـ <code>produce</code> بتاع Immer بيعمل array جديدة، والسطر المستخبي بيظهر فجأة مع الجديد: 3 سطور. العَرَض ده، "الداتا بتظهر متأخرة click"، هو العلامة المشهورة لـ state اتعمل لها mutation.</p>
+    <p><b>تفاصيل Immer 11.</b> الـ <code>produce</code> بيدي الـ recipe بتاعتك draft عبارة عن <code>Proxy</code>. القراية بتعمل drafts للـ children وقت الحاجة بس؛ وأول كتابة في object بتعمل له نسخة shallow وتعلّم الـ parents بتوعه إنهم اتعدّلوا (copy-on-write). في الآخر، الـ drafts اللي محدش لمسها بترجع الـ objects الأصلية، ومن هنا بيجي الـ sharing. وبعدها الـ <b>auto-freeze</b> (شغال افتراضيًا) بيعمل deep freeze للنتيجة، ويتخطى الـ objects المتجمّدة أصلًا.</p>
+    <p>الـ freeze ده ليه تمن، الـ docs بتذكره والتشغيلة دي بتقيسه. أول <code>produce</code> على array جديدة فيها مليون عنصر بيجمّد المليون عنصر كمان. والوضع العادي أوحش من المتوقع على الـ arrays الكبيرة: مع الـ auto-freeze، تغيير واحد على array متجمّدة فيها مليون عنصر خد حوالي 62 ms، قصاد حوالي 1.2 ms مع <code>setAutoFreeze(false)</code> (حوالي 50 مرة؛ وتشغيلة قبلها والجهاز عليه حمل أكتر طلّعت 342 ms قصاد 4.5 ms). فيه تمنين بيتجمعوا: Immer بينسخ الـ arrays بـ <code>Array.prototype.slice</code>، وعلى Node 22.19 (V8 12.4) نسخ array <em>متجمّدة</em> بـ <code>slice</code> أو <code>with</code> بياخد slow path، أبطأ ما بين 13 و 27 مرة من نفس النسخ على array عادية حسب التشغيلة، أما <code>[...frozen]</code> فبيفضل سريع؛ وكمان إعادة الـ freeze بتلف على كل الـ children. مجربناش على نسخ V8 أحدث.</p>
+    <p>الـ <b>batching</b> أهم من أي حاجة: 1,000 تغيير في recipe واحدة تمنهم تقريبًا تمن تغيير واحد، أما 1,000 نداء <code>produce</code> منفصل فكل واحد بينسخ الـ array كلها ويجمّدها تاني: حوالي 6.4 ثانية عند 10⁵ قصاد حوالي 7 ms. والـ <b>patches</b> (<code>produceWithPatches</code> و <code>applyPatches</code>) بتديك undo/redo بيخزن الفرق بس. واستخدام Immer في الـ client state مع Zustand موجود في <a href="../../07-React/lessons/11-client-state.html#p4">درس React رقم 11، الجزء 4</a>.</p>
+    <p><b>إمتى متستخدمهوش.</b> في loop سخنة في Node (بتجمع مليون event في totals) اعمل mutation لـ <code>Map</code> محلية ورجّع object جديد عند الحدود: الـ update في المكان حوالي 4 µs عند مليون هنا. والـ typed arrays الكبيرة (<code>Float64Array</code> فيها أسعار جوه worker) مش draftable أصلًا (<code>isDraftable</code> بترجّع <code>false</code>): عدّلها في مكانها وانقل الـ ownership بالـ transfer بدل ما تنسخ.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      store بتاع Zustand في Next.js فيه 50,000 صف (جدول orders للـ ops). الـ "Mark all as shipped" اتكتب كـ loop بينادي action واحدة لكل صف، وكل action فيها <code>produce</code>: ده نفس صف "1,000 produce call" في الجدول، والصفحة بتهنّج ثواني. الحل: action واحدة فيها recipe واحدة بتعدّل الـ 50,000، أو تقفل الـ auto-freeze في production لو الـ arrays كبيرة وقيست الفرق. وفي code review: أي <code>push</code> أو <code>sort()</code> على state مباشرة غلطة حتى لو "شغالة"، لأنها بتكسر الـ memo والـ Compiler.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "How does Immer avoid copying the whole state, and what does it cost?" → The recipe edits a Proxy draft; only objects that are written are shallow-copied, along with their parents up to the root, and everything untouched is returned as the original reference, so old and new states share structure. Costs: the path copy (a whole array if you change one item of a big array), proxy overhead, and auto-freeze, which deep-freezes on the first produce and re-freezes on each one. On a 10⁶-item array we measured ≈62 ms per change with auto-freeze and ≈1.2 ms without; batching 1,000 changes into one recipe cost about the same as one.
+    <div class="ar-note">"Immer بيتجنب نسخ الـ state كله إزاي، وتمن ده إيه؟" ← الـ recipe بتعدّل draft عبارة عن Proxy؛ الـ objects اللي بيتكتب فيها بس هي اللي بتتنسخ shallow، ومعاها الـ parents بتوعها لحد الـ root، وأي حاجة متلمستش بترجع بنفس الـ reference الأصلي، فالـ state القديمة والجديدة بيتشاركوا. التمن: الـ path copy (array كاملة لو غيّرت عنصر واحد في array كبيرة)، وتكلفة الـ Proxy، والـ auto-freeze اللي بيعمل deep freeze في أول produce ويرجع يجمّد في كل مرة. على array فيها مليون عنصر قسنا حوالي 62 ms للتغيير مع الـ auto-freeze وحوالي 1.2 ms من غيره؛ وتجميع 1,000 تغيير في recipe واحدة اتكلف تقريبًا قد تغيير واحد.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+  <div class="compare">
+    <div class="bad"><b>❌ Mutate, then set the same reference</b>
+<pre><code class="language-typescript">// ❌ نفس الـ array: React بيقارن بـ Object.is ويتجاهل الـ update
+lines.push(line);
+setLines(lines);</code></pre></div>
+    <div class="good"><b>✅ A new array; old items shared</b>
+<pre><code class="language-typescript">// ✅ نسخة array جديدة والعناصر القديمة نفس الـ objects
+setLines((prev) =&gt; [...prev, line]);
+// أو بالـ Immer لو الـ state متداخلة
+setLines((prev) =&gt; produce(prev, (d) =&gt; { d.push(line); }));</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>push</code> بيعدّل نفس الـ array، فالـ <code>setLines(lines)</code> بيدي React نفس الـ reference، و <code>Object.is</code> بيقول "متغيرش" فمفيش render؛ وفي الـ jsdom شفنا السطر بيظهر متأخر update كامل. ✅ اعمل array جديدة (spread أو <code>produce</code>): الـ reference اتغير، والعناصر القديمة لسه متشاركة فالـ memo بتاع كل سطر لسه بيشتغل.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>getSnapshot</code> builds a new object</b>
+<pre><code class="language-typescript">// ❌ بترجّع object جديد في كل نداء: React شايفه بيتغير على طول
+useSyncExternalStore(store.subscribe, () =&gt; ({
+  paid: store.orders.filter((o) =&gt; o.status === 'paid').length,
+}));</code></pre></div>
+    <div class="good"><b>✅ Return a primitive or a cached reference</b>
+<pre><code class="language-typescript">// ✅ رقم: نفس القيمة = نفس الـ snapshot
+useSyncExternalStore(store.subscribe, () =&gt;
+  store.orders.filter((o) =&gt; o.status === 'paid').length,
+);</code></pre></div>
+  </div>
+<pre><code class="language-plaintext">bad: threw Maximum update depth exceeded. This can happen when a component repeatedly calls setState inside componentWillUpdate or componentDidUpdate. React limits the number of nested updates to prevent infinite loops.
+bad: console.error → The result of getSnapshot should be cached to avoid an infinite loop
+good: rendered "1"</code></pre>
+  <div class="ar-note">التشغيلة الحقيقية (React 19.3 على jsdom): النسخة الغلط رمت "Maximum update depth exceeded" وطبعت "The result of getSnapshot should be cached to avoid an infinite loop"، والنسخة الصح رسمت "1".</div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>getSnapshot</code> بترجّع object جديد كل مرة، فـ React بيشوف snapshot "مختلفة" في كل نداء ويفضل يعيد الـ render لحد ما يوقف بـ error. ✅ رجّع قيمة primitive، أو نفس الـ reference لحد ما الداتا تتغير فعلًا (selector بيعمل cache على الـ input). نفس القاعدة بتنطبق على selectors بتاعة Zustand و Redux.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ One <code>produce</code> per item</b>
+<pre><code class="language-typescript">// ❌ كل نداء بينسخ الـ array كلها ويجمّدها تاني
+let s = orders;
+for (const id of selected) {
+  s = produce(s, (d) =&gt; { d[id]!.status = 'shipped'; });
+}
+// عند ⁦10⁵⁩ و 1,000 تغيير: حوالي 6.4 ثانية</code></pre></div>
+    <div class="good"><b>✅ One recipe, many changes</b>
+<pre><code class="language-typescript">// ✅ نسخة واحدة وتجميد واحد للكل
+const s = produce(orders, (d) =&gt; {
+  for (const id of selected) d[id]!.status = 'shipped';
+});
+// نفس الشغل: حوالي 7 ms</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ كل <code>produce</code> بيعمل path copy كامل (الـ array كلها لو كبيرة) ويجمّد النتيجة، فـ 1,000 نداء يعني 1,000 نسخة. ✅ recipe واحدة بتعدّل كل اللي محتاجه: نسخة واحدة وتجميد واحد. في الـ store خليها action واحدة للـ bulk operation بدل action لكل صف.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Reusing an old persistent queue version</b>
+<pre><code class="language-typescript">// ❌ نفس الـ version القديمة (front فاضي) بتتعمل لها dequeue كتير
+for (let k = 0; k &lt; 1_000; k++) dequeue(snapshot);
+// يعني 10,000,000 node للـ reverse</code></pre></div>
+    <div class="good"><b>✅ Normalize once per version</b>
+<pre><code class="language-typescript">// ✅ الـ reverse بيتحسب مرة لكل version ويتحفظ في WeakMap
+for (let k = 0; k &lt; 1_000; k++) dequeueMemo(snapshot);
+// يعني 10,000 node بس</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ amortized O(1) بتاع الـ two-list queue بيفترض إن كل version بتتستخدم مرة؛ لو بترجع لـ version قديمة (retry، أو أكتر من consumer بيقروا نفس الـ snapshot) كل مرة بتدفع الـ reverse كله. ✅ احفظ نتيجة الـ reverse لكل version (lazy evaluation)، أو استخدم queue بتلف تدريجي زي بتاعة Okasaki.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Assuming a library's persistent API overwrites</b>
+<pre><code class="language-typescript">// ❌ في sorted-btree الـ overwrite الافتراضي false
+const v2 = prices.with(7, 1_250);
+v2.get(7); // → 1000</code></pre></div>
+    <div class="good"><b>✅ Read the signature, test the behaviour</b>
+<pre><code class="language-typescript">// ✅ قول صراحةً إنك عايز تكتب فوق القيمة
+const v2 = prices.with(7, 1_250, true);
+v2.get(7); // → 1250</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>with(key, value)</code> في sorted-btree 2.1 مش بيغيّر قيمة key موجود إلا لو بعت <code>true</code> في الآخر، فالكود "شغال" ومفيش error والسعر الجديد مش موجود. ✅ اقرا الـ signature في الـ <code>.d.ts</code> واكتب test بيتأكد إن القيمة اتغيرت، خصوصًا مع مكتبات الـ persistent اللي كل واحدة فيها ليها semantics مختلفة.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Count what is shared <span class="lvl lvl-1">🟢 easy</span></b>
+    Write <code>countShared(prev, next)</code> that counts how many orders in the new order book are the very same object as in the old one, and run it after one update with spread, Immer and <code>structuredClone</code> on 10,000 orders.
+    <div class="ar-note">اكتب <code>countShared(prev, next)</code> بتعدّ كام order في الـ order book الجديدة هو نفس الـ object بالظبط اللي في القديمة، وشغّلها بعد update واحد بالـ spread والـ Immer والـ <code>structuredClone</code> على 10,000 order.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/l17/count-shared.ts"><code class="language-typescript">// تشغيل: node src/l17/count-shared.ts
+import { makeBook, payWithClone, payWithSpread, payWithImmer, type OrderBook } from './order-book.ts';
+
+// كام order في النسخة الجديدة هو نفس الـ object بالظبط اللي في القديمة؟
+export function countShared(prev: OrderBook, next: OrderBook): { shared: number; copied: number } {
+  let shared = 0;
+  for (let i = 0; i &lt; next.orders.length; i++) if (next.orders[i] === prev.orders[i]) shared++;
+  return { shared, copied: next.orders.length - shared };
+}
+
+const prev = makeBook(10_000);
+for (const [name, pay] of [['spread', payWithSpread], ['immer', payWithImmer], ['structuredClone', payWithClone]] as const) {
+  console.log(name.padEnd(16), JSON.stringify(countShared(prev, pay(prev, 42))));
+}</code></pre>
+<pre><code class="language-plaintext">spread           {"shared":9999,"copied":1}
+immer            {"shared":9999,"copied":1}
+structuredClone  {"shared":0,"copied":10000}</code></pre>
+      <div class="ar-note">الـ spread والـ Immer شاركوا 9,999 order ونسخوا واحد بس، والـ <code>structuredClone</code> نسخ الـ 10,000 كلهم ومشاركش ولا واحد.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. Add <code>delete</code> to the HAMT <span class="lvl lvl-2">🟡 medium</span></b>
+    Implement <code>PersistentMap.delete(key)</code> by path copying. Keep the trie canonical: a branch left with a single leaf child collapses into that leaf, and a collision node left with one entry becomes a leaf. Extend the model test so it also deletes, under all three hash functions.
+    <div class="ar-note">نفّذ <code>PersistentMap.delete(key)</code> بالـ path copying. خلي الـ trie في شكلها الطبيعي: الـ branch اللي يفضل فيها child واحد leaf تتحول للـ leaf ده، والـ collision node اللي يفضل فيها entry واحد تبقى leaf. وسّع الـ model test بحيث يعمل delete كمان، بالتلات hash functions.</div>
+    <details><summary>Hint · تلميح</summary>
+      Recurse like <code>insert</code> and return <code>null</code> for "removed here". In a branch, drop the child with <code>toSpliced(idx, 1)</code> and clear its bit with <code>bitmap &amp; ~bit</code>; if one child remains and it is not a branch, return that child. Return the same node when the key was not found, so an unchanged map keeps its reference.
+      <div class="ar-note">اعمل recursion زي <code>insert</code> ورجّع <code>null</code> معناها "اتشال هنا". في الـ branch شيل الـ child بـ <code>toSpliced(idx, 1)</code> وامسح الـ bit بتاعه بـ <code>bitmap &amp; ~bit</code>؛ ولو فضل child واحد ومش branch، رجّعه هو. ورجّع نفس الـ node لو الـ key مش موجود، عشان الـ map اللي متغيرتش تفضل بنفس الـ reference.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. A persistent vector for the order book <span class="lvl lvl-3">🔴 hard</span></b>
+    Generalize Part 1's pages into a 32-way trie indexed by position (Clojure's persistent vector): <code>get(i)</code> and <code>set(i, x)</code> by path copying, 5 bits of the index per level, plus <code>push</code>. Measure bytes per kept version and time per update at 10³/10⁵/10⁶ next to the flat spread and the 1,024-page version.
+    <div class="ar-note">عمّم صفحات الجزء 1 لـ trie بـ 32 فرع بالـ index (الـ persistent vector بتاع Clojure): <code>get(i)</code> و <code>set(i, x)</code> بالـ path copying، و 5 bits من الـ index في كل level، ومعاهم <code>push</code>. قيس الـ bytes لكل version محفوظة ووقت الـ update عند 10³ و 10⁵ و 10⁶ جنب الـ spread المسطح ونسخة الـ 1,024 صفحة.</div>
+    <details><summary>Hint · تلميح</summary>
+      With a fixed depth d = ceil(log₃₂ n), the child at level k is <code>(i &gt;&gt;&gt; (5 * k)) &amp; 31</code>, from the top level down. Each <code>set</code> copies d arrays of 32 pointers, about 256 bytes each, so expect roughly 4 × 256 bytes per version at 10⁶ instead of 16 KB for pages.
+      <div class="ar-note">لو العمق ثابت d = ceil(log₃₂ n)، الـ child في level رقم k هو <code>(i &gt;&gt;&gt; (5 * k)) &amp; 31</code>، من فوق لتحت. كل <code>set</code> بينسخ d arrays كل واحدة 32 pointer، يعني حوالي 256 byte للواحدة، فتوقع حوالي 4 × 256 byte لكل version عند مليون بدل الـ 16 KB بتاعة الصفحات.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    Add <code>PersistentMap</code> (HAMT) and the persistent AVL to your side project's <code>@side/ds</code> package with their model-based tests and a benchmark that prints the table against Immutable.js and a copy-on-write <code>Map</code>. Then use one for real: price history with "price as of the order's version" in the orders service, or undo for the admin order editor. Record the numbers in the README of the package.
+    <div class="ar-note">ضيف <code>PersistentMap</code> (الـ HAMT) والـ persistent AVL في package الـ <code>@side/ds</code> بتاعة مشروعك الجانبي، ومعاهم الـ model-based tests و benchmark بيطبع الجدول قصاد Immutable.js و copy-on-write على <code>Map</code>. وبعدين استخدم واحدة فيهم بجد: تاريخ الأسعار مع "السعر وقت الـ version بتاعة الـ order" في الـ orders service، أو undo لشاشة تعديل الـ order في الـ admin. سجّل الأرقام في الـ README بتاع الـ package.</div>
+    <details><summary>Hint · تلميح</summary>
+      Store the price-list version number on each order row when it is placed. The service keeps the persistent roots in memory for the last N versions and falls back to a <code>price_history</code> table for older ones, which also survives restarts.
+      <div class="ar-note">خزّن رقم الـ version بتاع قايمة الأسعار في صف الـ order وقت ما يتعمل. الـ service تحتفظ بالـ roots الـ persistent في الـ memory لآخر N version، وترجع لجدول <code>price_history</code> للأقدم، وده كمان بيعيش بعد الـ restart.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Persistent = every update returns a new version and old versions stay valid; the cost is the changed <b>path</b>, not the whole structure.</li>
+    <li>Flat array + spread shares the items but copies n pointers per update (8 MB at 10⁶); pages or a 32-way trie shrink the path to KBs.</li>
+    <li>Cons list: prepend O(1) shares the tail, append O(n), removeAt(i) copies i nodes. Build with prepend + one reverse.</li>
+    <li>The two-list queue's amortized O(1) breaks under persistence (10,000,000 vs 10,000 nodes): memoize per version or use Okasaki's queues.</li>
+    <li>Path-copied AVL: ≈height nodes per update (19 at 10⁶); 1,000 versions of 10,000 prices ≈1.5 MB vs ≈459 MB of copies; "as of v" = <code>get</code> on root v.</li>
+    <li>Git trees and sorted-btree's <code>clone()</code> are path copying; sorted-btree's <code>with</code> needs <code>overwrite = true</code>.</li>
+    <li>HAMT: 5 hash bits per level, bitmap + dense children, index = popcount(bitmap &amp; (bit − 1)), ≤7 levels then collision nodes. Immutable.js and Clojure use it.</li>
+    <li>Native <code>Map</code> wins lookups and memory (≈30 B/entry); a HAMT wins when you keep versions or update a big map (≈0.7 µs vs ≈7.8 ms at 10⁵).</li>
+    <li>React, <code>memo</code>, deps arrays, <code>useSyncExternalStore</code> and the React Compiler (<code>$[0] !== lines</code>) all compare references: never mutate state.</li>
+    <li>Immer: Proxy + copy-on-write; auto-freeze costs (≈50× on a 10⁶ array here, frozen-array copies hit a V8 slow path on Node 22.19); batch many changes in one recipe; patches for undo; typed arrays are not draftable.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ persistent معناها كل update بيرجّع version جديدة والقديمة تفضل سليمة؛ والتمن هو الـ <b>path</b> اللي اتغير، مش الـ structure كلها.</li>
+      <li>الـ array المسطحة مع الـ spread بتشارك العناصر بس بتنسخ n pointer في كل update (8 MB عند مليون)؛ الصفحات أو trie بـ 32 فرع بيصغّروا الـ path لـ KBs.</li>
+      <li>الـ cons list: الـ prepend بـ O(1) وبيشارك الـ tail، والـ append بـ O(n)، و removeAt(i) بينسخ i nodes. ابنيها بـ prepend و reverse واحد في الآخر.</li>
+      <li>الـ amortized O(1) بتاع الـ queue بـ two lists بيقع مع الـ persistence (10,000,000 قصاد 10,000 node): اعمل memoization لكل version أو استخدم queues بتاعة Okasaki.</li>
+      <li>الـ AVL بالـ path copying: حوالي ارتفاع الشجرة nodes لكل update (19 عند مليون)؛ 1,000 version من 10,000 سعر حوالي 1.5 MB قصاد حوالي 459 MB نسخ؛ و"السعر وقت v" = <code>get</code> على الـ root رقم v.</li>
+      <li>الـ trees بتاعة Git والـ <code>clone()</code> بتاع sorted-btree هما path copying؛ والـ <code>with</code> في sorted-btree محتاجة <code>overwrite = true</code>.</li>
+      <li>الـ HAMT: 5 bits من الـ hash لكل level، و bitmap و children مضغوطة، والـ index = popcount(bitmap &amp; (bit − 1))، و 7 levels بالكتير وبعدها collision nodes. Immutable.js و Clojure بيستخدموها.</li>
+      <li>الـ <code>Map</code> العادية بتكسب في القراية والـ memory (حوالي 30 byte لكل entry)؛ والـ HAMT بتكسب لما تحتفظ بـ versions أو تعدّل map كبيرة (حوالي 0.7 µs قصاد حوالي 7.8 ms عند 10⁵).</li>
+      <li>React والـ <code>memo</code> والـ deps arrays والـ <code>useSyncExternalStore</code> والـ React Compiler (<code>$[0] !== lines</code>) كلهم بيقارنوا references: متعملش mutation للـ state أبدًا.</li>
+      <li>الـ Immer: Proxy و copy-on-write؛ الـ auto-freeze ليه تمن (حوالي 50 مرة على array بمليون عنصر هنا، ونسخ الـ arrays المتجمّدة بياخد slow path في V8 على Node 22.19)؛ جمّع التغييرات في recipe واحدة؛ الـ patches للـ undo؛ والـ typed arrays مش draftable.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 04 · 3.5 — Structural sharing: تعدّل نسخة وتحتفظ بالقديمة من غير ما تنسخ كل حاجة</label>
+    <label><input type="checkbox" data-key="r2"> 04 · 3.5 — Persistent list و persistent tree (path copying)</label>
+    <label><input type="checkbox" data-key="r3"> 04 · 3.5 — HAMT كمفهوم: ليه Immutable.js و Clojure بيستخدموها</label>
+    <label><input type="checkbox" data-key="r4"> 04 · 3.5 — ليه React و Immer معتمدين على الفكرة دي، وتكلفة الـ immutability في الذاكرة والسرعة (تقيسها)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://lampwww.epfl.ch/papers/idealhashtrees.pdf">Phil Bagwell — Ideal Hash Trees (2001)</a></li>
+    <li><a href="https://www.cs.cmu.edu/~rwh/students/okasaki.pdf">Chris Okasaki — Purely Functional Data Structures (thesis, 1996)</a></li>
+    <li><a href="https://immerjs.github.io/immer/performance">Immer docs — Performance (auto-freeze, batching)</a></li>
+    <li><a href="https://react.dev/reference/react/useSyncExternalStore">React docs — useSyncExternalStore</a></li>
+    <li><a href="https://git-scm.com/book/en/v2/Git-Internals-Git-Objects">Pro Git — Git Objects (trees and blobs)</a></li>
+    <li><a href="https://github.com/qwertie/btree-typescript">sorted-btree (B+ tree with fast clone and persistent methods)</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <!-- ===== Prev / Next (use class="empty" on a span when there is no prev/next) ===== -->
+  <nav class="lesson-nav">
+    <a class="prev" href="./16-probabilistic-structures.html"><small>← Previous</small>16 · Probabilistic Structures</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./18-choosing-structures-production.html"><small>Next →</small>18 · Choosing in Production</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
