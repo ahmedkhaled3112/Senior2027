@@ -1,4 +1,4 @@
-# 06 — Next.js (App Router)
+# 08 — Next.js (App Router)
 
 > **ليه القسم ده:** Next.js هو الـ framework الأكتر طلبًا مع React، وهو المكان اللي الـ Full-Stack بيلتقي فيه الـ backend بالـ frontend. أكتر مكان الناس بتغلط فيه: الـ caching layers. السنيور بيعرف لكل صفحة إيه الـ rendering strategy وليه.
 >
