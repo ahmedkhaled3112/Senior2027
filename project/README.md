@@ -32,14 +32,14 @@ project/
 | المرحلة | الحالة | الرابط |
 | --- | --- | --- |
 | Spec + MVP محدد | ⬜ | [spec.md](./spec.md) |
-| Backend (04) — Fastify/NestJS + auth + queues + observability | ⬜ | |
-| Data layer (07) — Postgres tuning + Redis + outbox | ⬜ | |
-| Frontend (05/06) — Next.js App Router + monorepo | ⬜ | |
-| Patterns (08) — Strategy/Adapter/Decorator/Outbox/Circuit breaker | ⬜ | |
-| Architecture (09) — modular monolith + DDD على module واحد | ⬜ | |
-| System design (10) — design doc للـ bottlenecks عند 10×/100× | ⬜ | |
-| Testing/Security/Deploy (11) — Testcontainers + Semgrep + Terraform + canary | ⬜ | |
-| AI feature (12) — RAG على pgvector + MCP server | ⬜ | |
+| Backend (06) — Fastify/NestJS + auth + queues + observability | ⬜ | |
+| Data layer (09) — Postgres tuning + Redis + outbox | ⬜ | |
+| Frontend (07/08) — Next.js App Router + monorepo | ⬜ | |
+| Patterns (10) — Strategy/Adapter/Decorator/Outbox/Circuit breaker | ⬜ | |
+| Architecture (11) — modular monolith + DDD على module واحد | ⬜ | |
+| System design (12) — design doc للـ bottlenecks عند 10×/100× | ⬜ | |
+| Testing/Security/Deploy (13) — Testcontainers + Semgrep + Terraform + canary | ⬜ | |
+| AI feature (14) — RAG على pgvector + MCP server | ⬜ | |
 | منشور ومستخدم | ⬜ | |
 
 ## القواعد

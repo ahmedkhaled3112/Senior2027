@@ -4,7 +4,7 @@
 
 - أنا Full-Stack Node.js developer بخبرة ~4 سنين، Mid-level، وهدفي أبقى **Senior بجد** (مش لقب): architecture، system design، production ownership، وأبقى **برنس في كل حاجة technical**.
 - الـ repo ده هو المكان الوحيد اللي بسجّل فيه كل حاجة بتعلمها: https://github.com/ahmedkhaled3112/Senior2027.git
-- المنهج الكامل في [README.md](./README.md)، و14 فولدر مرقّمين `01-` لـ `14-` كل واحد فيه `README.md` بالمواضيع على 3 مستويات (🟢 أساسيات · 🟡 متوسط · 🔴 متقدم). الأقسام 01–12 تقنية، 13 (Senior Skills) بيتمرن في الشغل، 14 (Interview Prep) للربع الأخير.
+- المنهج الكامل في [README.md](./README.md)، و17 فولدر مرقّمين `01-` لـ `17-` كل واحد فيه `README.md` بالمواضيع على 3 مستويات (🟢 أساسيات · 🟡 متوسط · 🔴 متقدم). الترتيب: اللغة الأول (01 JavaScript، 02 TypeScript)، بعدها 03 CS Fundamentals و 04 Data Structures و 05 Algorithms، وبعدها الـ stack والـ architecture لحد 14 (AI). الأقسام 01–14 تقنية، 15 (Senior Skills) بيتمرن في الشغل، 16 (Interview Prep) للربع الأخير، 17 (ERP & Odoo) تخصص إضافي.
 - الخيط اللي بيربط كل حاجة: **مشروع جانبي واحد** بيكبر مع كل قسم (backend Node → frontend Next → data layer → patterns → architecture → system design → tests/security/deploy → AI feature). الـ spec والـ roadmap والـ ADRs والـ design docs بتاعته في [project/](./project/README.md) — الكود في repo منفصل.
 - لما أطلب "ADR" أو "design doc" استخدم الـ templates في `project/adr/0000-template.md` و `project/design-docs/0000-template.md`.
 
@@ -23,14 +23,14 @@
 7. **تمارين "جرّب بنفسك".** كل درس ينتهي بـ 2–4 تمارين عملية صغيرة أعملها بإيدي (مش بالـ AI)، مرتبة من السهل للصعب، وواحدة منهم على الأقل مرتبطة بالمشروع الجانبي.
 8. **متكررش اللي في الـ README.** الـ README فيه قايمة المواضيع؛ الدرس فيه الشرح والكود. الدرس بيغطي بنود محددة من الـ README ويقولها بالاسم في آخره عشان أعلّمهم.
 9. **لما أسأل سؤال سريع** (مش درس)، جاوب مباشرة وبإيجاز بنفس القاعدة: مثال + فين أستخدمه — من غير ما تعمل ملف HTML إلا لو طلبت.
-10. **القسم 13 (Senior Skills) مختلف**: الدرس فيه مش كود — هو سيناريو حقيقي من الشغل + إزاي تتصرف + template (RFC، postmortem، feedback) + تمرين تعمله في شغلك الأسبوع ده. نفس قاعدة EN ثم AR.
-11. **القسم 14 (Interview Prep)**: الدرس = تمرين بتوقيت (مسألة، design، سؤال behavioral) + الحل النموذجي + إيه اللي الـ interviewer بيقيّمه + الغلطات الشائعة.
-12. **القسم 12 (AI)**: كل درس لازم يحتوي على cost و latency و failure mode للحاجة اللي بتتشرح، وevals لو فيه LLM call — مش demo بس.
+10. **القسم 15 (Senior Skills) مختلف**: الدرس فيه مش كود — هو سيناريو حقيقي من الشغل + إزاي تتصرف + template (RFC، postmortem، feedback) + تمرين تعمله في شغلك الأسبوع ده. نفس قاعدة EN ثم AR.
+11. **القسم 16 (Interview Prep)**: الدرس = تمرين بتوقيت (مسألة، design، سؤال behavioral) + الحل النموذجي + إيه اللي الـ interviewer بيقيّمه + الغلطات الشائعة.
+12. **القسم 14 (AI)**: كل درس لازم يحتوي على cost و latency و failure mode للحاجة اللي بتتشرح، وevals لو فيه LLM call — مش demo بس.
 
 ## 3. شكل الدرس (HTML)
 
 - كل درس = ملف HTML واحد self-contained في فولدر القسم تحت `lessons/`:
-  `NN-topic-name.html` → مثال: `04-NodeJS/lessons/03-streams-and-backpressure.html`
+  `NN-topic-name.html` → مثال: `06-NodeJS/lessons/03-streams-and-backpressure.html`
 - **ابدأ دايمًا من** [`_template/lesson.html`](./_template/lesson.html) — انسخه واملاه. متغيّرش الـ CSS والـ structure إلا لو طلبت. الـ template فيه: light/dark، خطوط مريحة (Inter للإنجليزي، Cairo للعربي، JetBrains Mono للكود)، code highlighting، TOC، و"mark as done" بـ localStorage.
 - التصميم لازم يفضل **واضح ومريح للعين للمذاكرة الطويلة**: عرض نص ≤ 800px، line-height ≥ 1.7، contrast عالي، مفيش ألوان صارخة، كود بخلفية هادية، مسافات واسعة بين الأجزاء.
 - هيكل كل درس بالترتيب:
@@ -59,7 +59,7 @@
 ## 5. Git والـ repo
 
 - Branch رئيسي: `main`. Commit مباشر على main مقبول (repo شخصي).
-- Commit messages بالإنجليزي، conventional: `lesson(04-node): streams and backpressure`، `progress: mark 02-js level 1 done`، `docs(08): add outbox pattern notes`.
+- Commit messages بالإنجليزي، conventional: `lesson(06-node): streams and backpressure`، `progress: mark 01-js level 1 done`، `docs(10): add outbox pattern notes`.
 - **متعملش commit أو push غير لما أقولك.** لما أقول "commit" اعمل `git add` للملفات المتعلقة بالشغل الحالي بس (مش `git add -A` على العمياني) و commit واحد بـ message واضح.
 - متمسحش ولا تعدّل في الملفين الأصليين (`المنهج الكامل...md` و `خريطة الطريق...md`) — دول المرجع.
 - متعدّلش في هيكل الفولدرات أو الترقيم من غير ما تسألني.

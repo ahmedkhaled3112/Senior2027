@@ -71,7 +71,7 @@ function listLessons(dir) {
     .map((f) => {
       const html = fs.readFileSync(path.join(ldir, f), "utf8");
       const t = (html.match(/<title>([^<]*)<\/title>/i) || [, f])[1]
-        .replace(/\s+—\s+\d{2}\s.*$/, "") // drop the " — 01 CS Fundamentals" suffix
+        .replace(/\s+—\s+\d{2}\s.*$/, "") // drop the " — 03 CS Fundamentals" suffix
         .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
         .trim();
       const level = (html.match(/<meta name="level" content="([^"]*)"/i) || [, ""])[1];
@@ -163,20 +163,23 @@ const rootManualTail = `
 
 | القسم | بدأت | خلصت | ملاحظة |
 | --- | --- | --- | --- |
-| 01 CS Fundamentals | | | |
-| 02 JavaScript | | | |
-| 03 TypeScript | | | |
-| 04 Node.js | | | |
-| 05 React | | | |
-| 06 Next.js | | | |
-| 07 Databases | | | |
-| 08 Design Patterns | | | |
-| 09 Software Architecture | | | |
-| 10 System Design | | | |
-| 11 Testing · Security · DevOps | | | |
-| 12 AI Engineering | | | |
-| 13 Senior Skills | | | |
-| 14 Interview Prep | | | |
+| 01 JavaScript | | | |
+| 02 TypeScript | | | |
+| 03 CS Fundamentals | | | |
+| 04 Data Structures | | | |
+| 05 Algorithms | | | |
+| 06 Node.js | | | |
+| 07 React | | | |
+| 08 Next.js | | | |
+| 09 Databases | | | |
+| 10 Design Patterns | | | |
+| 11 Software Architecture | | | |
+| 12 System Design | | | |
+| 13 Testing · Security · DevOps | | | |
+| 14 AI Engineering | | | |
+| 15 Senior Skills | | | |
+| 16 Interview Prep | | | |
+| 17 ERP & Odoo | | | |
 
 ## الإيقاع الأسبوعي المستهدف: 10–12 ساعة
 
