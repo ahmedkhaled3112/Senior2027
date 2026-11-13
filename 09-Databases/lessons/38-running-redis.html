@@ -1,0 +1,2360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Running Redis: Persistence, Eviction, Memory, Big Keys &amp; Cluster — 09 Databases</title>
+<meta name="section" content="09-Databases">
+<meta name="level" content="🟡 → 🔴">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">09 · Databases</a></span>
+    <span>·</span>
+    <span>Lesson 38 / 43</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+    <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Running Redis: Persistence, Eviction, Memory, Big Keys &amp; Cluster</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 38 of 43 — Databases</p>
+    <div class="meta">
+      <span class="chip">🟡 → 🔴</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Redis 8.10 · TypeScript 7</span>
+      <span class="chip">Prereq: 37 Cache Failures</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>09 · 2.9 — Persistence: RDB vs AOF، وإنك متعتمدش على Redis كـ source of truth</li>
+        <li>09 · 2.9 — Eviction policies (<code>allkeys-lru</code>، <code>volatile-ttl</code>)، <code>maxmemory</code></li>
+        <li>09 · 3.5 — Redis Cluster (hash slots، resharding، multi-key limitations) vs Sentinel (HA لـ single master) vs replication</li>
+        <li>09 · 3.5 — Big keys وليه خطر (blocking)، <code>SCAN</code> بدل <code>KEYS</code></li>
+        <li>09 · 3.5 — Memory analysis: <code>MEMORY USAGE</code>، <code>--bigkeys</code>، encoding optimizations</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Persistence: RDB and AOF</a></li>
+      <li><a href="#p2">Part 2 — Not a source of truth</a></li>
+      <li><a href="#p3">Part 3 — Eviction</a></li>
+      <li><a href="#p4">Part 4 — Memory analysis</a></li>
+      <li><a href="#p5">Part 5 — Big keys</a></li>
+      <li><a href="#p6">Part 6 — Replication &amp; Sentinel</a></li>
+      <li><a href="#p7">Part 7 — Cluster</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Most Redis incidents aren't about the commands you know. They're "writes started failing with OOM at 2 AM", "every request froze for half a second when someone deleted a key", "we failed over and lost payments", and "the queue was empty after the cache got busy". Each one has a config line or a habit behind it, and you only learn which by running it. Interviews go to the same place: RDB vs AOF, what eviction policy and why, and when Sentinel or Cluster.</p>
+    <p>Everything below ran on real Redis 8.10.3, the Windows build, with private instances started by a small helper. Its memory allocator is libc rather than jemalloc, and it has no modules, so where that changes a result, the lesson says so. Counts are exact. Timings come from a loaded Windows machine and are marked ≈. Cluster mode and Sentinel weren't started: those parts carry a visible <code>Not run here</code> line, with real configs and a labelled stand-in.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>معظم حوادث Redis مش عن الـ commands اللي إنت عارفها. بتبقى "الـ writes بدأت تفشل بـ OOM الساعة 2 بالليل"، و"كل الـ requests وقفت نص ثانية لما حد مسح key"، و"عملنا failover وضاعت payments"، و"الـ queue فضيت لما الـ cache اتشغل". كل واحدة وراها سطر config أو عادة، ومش هتعرف أنهي غير لما تشغّلها بنفسك. والـ interviews بتروح لنفس الحتة: RDB ولا AOF، أنهي eviction policy وليه، وإمتى Sentinel وإمتى Cluster.</p>
+    <p>كل اللي تحت اتشغّل على Redis 8.10.3 حقيقي، نسخة Windows، بـ instances خاصة بيشغّلها helper صغير. الـ memory allocator فيها libc مش jemalloc، ومفيهاش modules، ولما ده يغيّر نتيجة الدرس بيقول. الأعداد مظبوطة. الأوقات من جهاز Windows عليه ضغط وعليها ≈. وضع الـ Cluster والـ Sentinel ما اشتغلوش: الأجزاء دي عليها سطر <code>Not run here</code> واضح، ومعاها configs حقيقية و stand-in متعلّم عليه.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Persistence: RDB and AOF <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الـ persistence: RDB و AOF</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Redis keeps everything in memory; persistence is how it gets the data back after a restart. It has two mechanisms, and they answer different questions.</p>
+    <p><b>RDB</b> is a point-in-time snapshot: one compact file (<code>dump.rdb</code>), fast to load, good for backups. <code>SAVE</code> blocks the server; <code>BGSAVE</code> forks a child to write it. Anything written after the snapshot isn't on disk. Below: <code>survive</code> written before <code>SAVE</code> comes back, <code>lost</code> written after doesn't.</p>
+    <p><b>AOF</b> logs every write, in the Redis protocol, and replays the log at startup. <code>appendfsync</code> controls when the log is forced to disk: <code>always</code> (before replying), <code>everysec</code> (the default, real here, from a background thread), or <code>no</code> (leave it to the OS). Since 7.0 the AOF is a folder: a base file, incremental files and a manifest; with <code>aof-use-rdb-preamble yes</code> (default, real) the base is RDB format, so loading is fast.</p>
+    <p><b>Process crash vs machine crash: the distinction almost everyone misses.</b> Below is a real crash (<code>DEBUG SEGFAULT</code>) under continuous writes, counting only acknowledged writes. RDB lost everything since its snapshot, ≈1 s of writes. All three AOF policies lost 0, <em>including</em> <code>appendfsync no</code>. That isn't a bug in the test: Redis normally calls <code>write()</code> before replying, so the bytes are already with the OS, and a process crash doesn't lose the OS's page cache. One exception, per the latency docs: under <code>everysec</code>, if a background fsync is still running, Redis can hold back the <code>write()</code> for up to 2 s, so a slow disk can lose a little even on a process crash. <code>fsync</code> only matters if the <em>machine</em> dies: power loss or a kernel panic. There <code>everysec</code> can lose about 1 s per the docs, <code>always</code> should lose nothing acknowledged, and <code>no</code> loses what the OS hadn't flushed (the docs say Linux usually flushes every 30 s). <code>Not run here: a real power loss can't be simulated on this machine, so the machine-crash numbers come from the Redis docs.</code> What it costs you is real, though: <code>always</code> made ≈750 writes/s in this run (as low as ≈120 in others, because this disk is shared) against ≈7400 for <code>everysec</code>. A faster disk narrows that gap but doesn't close it.</p>
+    <p><b>A torn tail is normal.</b> A crash can cut the last command in half. <code>redis-check-aof</code> reports it, and <code>aof-load-truncated yes</code> (default) makes Redis drop that incomplete command and start, logging what it did. Below, cutting 5 bytes lost exactly the last write, <code>order:1000</code>, with the real log lines. Corruption in the <em>middle</em> of the file stops startup instead, and <code>--fix</code> can discard everything after it, so back up first.</p>
+    <p><b>Fork and copy-on-write are a memory risk.</b> <code>BGSAVE</code> and AOF rewrite fork. The child sees a frozen view; each page the parent then changes gets copied. In the worst case, a write-heavy instance needs up to twice its dataset in RAM during a save, which is how a box at 60% memory gets OOM-killed by its own backup. The fork itself also blocks the main thread: the docs list about 10–13 ms per GB on Linux, and far worse on some virtualized hosts. Here it took ≈45 ms for 100 MB (≈150 ms in another run), but that's this Windows build's fork emulation, not a Linux number, and <code>rdb_last_cow_size</code> reads 0 here even with 38,000 writes during the save, so copy-on-write can't be measured on this machine. On Linux, watch that field, disable transparent huge pages (per the docs), and leave headroom. With the default <code>stop-writes-on-bgsave-error yes</code> (real), a failed save makes writes fail, so an alert on <code>rdb_last_bgsave_status</code> belongs on your dashboard.</p>
+    <p><b>New in 8.10:</b> the <code>BACKUP</code> commands produce a restorable base + incremental + manifest without stopping writes, and they work with AOF off (real below). A node starts from one with the startup-only <code>preload-file</code> setting (per the docs, not run here).</p>
+    <p><b>What to run:</b> a pure cache needs nothing, or RDB for a warm restart. Anything you'd rather not lose: both, as the docs advise. With both on, Redis loads from the AOF at startup because it's the most complete.</p>
+    <p><code>instance.ts</code> below wraps the helper that starts each private instance on a free port. On your machine, replace its two functions with <code>redis-server --port N --dir D</code> and the same flags, and point <code>WORK_DIR</code> at an empty folder.</p>
+  </section>
+
+<pre class="diagram">
+ RDB                                          AOF
+ ───                                          ───
+ writes  ─────●───────────●────────▶          writes ─┬─┬─┬─┬─┬─┬─┬─▶
+           snapshot    snapshot   crash               ▼ ▼ ▼ ▼ ▼ ▼ ▼
+                          ├─ lost ─┤           write() to the OS (before the reply)
+                                                      │
+ process crash:  lost since the last snapshot         │ fsync: always / every 1 s / OS decides
+ machine crash:  same                                 ▼
+                                               disk
+                                               process crash:  nothing acknowledged is lost
+                                               machine crash:  what wasn't fsynced yet
+</pre>
+  <div class="ar-note">على الشمال RDB: كل كام وقت snapshot، واللي بعد آخر واحدة بيضيع سواء الـ process وقع أو الجهاز كله. على اليمين AOF: كل write بيروح للـ OS قبل الرد، والـ fsync بيحصل حسب الـ policy. لو الـ process وقع بس، اللي اتعمله ack مش بيضيع لأن الـ OS معاه البيانات. لو الجهاز نفسه وقع، بيضيع اللي لسه ما اتعملوش fsync.</div>
+
+<pre data-file="src/instance.ts"><code class="language-typescript">import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { Redis } from "ioredis";
+
+// الملف ده بيشغّل instance خاصة في folder لوحدها: لو مش عندك الـ helper استخدم redis-server --port و ⁦--dir⁩
+const helper = process.env.REDIS_HELPER;
+if (!helper) throw new Error("REDIS_HELPER is not set");
+
+export function startInstance(dir: string, ...flags: string[]): number {
+  mkdirSync(dir, { recursive: true });
+  execFileSync("node", [helper!, "start", ...flags], { cwd: dir, stdio: "ignore" });
+  return portOf(dir);
+}
+
+export function stopInstance(dir: string): void {
+  execFileSync("node", [helper!, "stop"], { cwd: dir, stdio: "ignore" });
+}
+
+// بنرفض أي port فاضي أو default قبل أي اتصال
+export function portOf(dir: string): number {
+  const raw = readFileSync(path.join(dir, "redis.port"), "utf8").trim();
+  const n = Number(raw);
+  if (!/^\d+$/.test(raw) || n &lt; 1024 || n &gt; 65535 || [5432, 6379, 27017].includes(n)) {
+    throw new Error(`refusing port "${raw}"`);
+  }
+  return n;
+}
+
+export function connect(port: number): Redis {
+  const r = new Redis({ host: "127.0.0.1", port, maxRetriesPerRequest: 1, retryStrategy: () =&gt; null });
+  r.on("error", () =&gt; {});
+  return r;
+}
+
+export const sleep = (ms: number) =&gt; new Promise&lt;void&gt;((r) =&gt; setTimeout(r, ms));
+
+export const infoField = async (r: Redis, section: string, field: string): Promise&lt;string&gt; =&gt;
+  (await r.info(section)).match(new RegExp(`^${field}:(.*)$`, "m"))?.[1]?.trim() ?? "";</code></pre>
+
+<pre data-file="src/rdb-restart.ts"><code class="language-typescript">import { readdirSync, rmSync } from "node:fs";
+import path from "node:path";
+import { connect, startInstance, stopInstance } from "./instance.ts";
+
+const dir = path.join(process.env.WORK_DIR!, "p-rdb");
+rmSync(dir, { recursive: true, force: true });
+
+let r = connect(startInstance(dir));
+console.log(`appendfsync=${(await r.config("GET", "appendfsync"))[1]} aof-use-rdb-preamble=${(await r.config("GET", "aof-use-rdb-preamble"))[1]}`);
+await r.set("survive", "yes");
+console.log("SAVE -&gt;", await r.save());
+// الـ write ده بعد آخر snapshot: مفيش حاجة على الـ disk بتحكي عنه
+await r.set("lost", "after-save");
+r.disconnect();
+stopInstance(dir);
+
+console.log("files:", readdirSync(dir).filter((f) =&gt; f.endsWith(".rdb")).join());
+r = connect(startInstance(dir));
+console.log(`after restart: survive=${await r.get("survive")} lost=${await r.get("lost")}`);
+r.disconnect();
+stopInstance(dir);</code></pre>
+
+<pre><code class="language-plaintext">appendfsync=everysec aof-use-rdb-preamble=yes
+SAVE -&gt; OK
+files: dump.rdb
+after restart: survive=yes lost=null</code></pre>
+  <div class="ar-note">الـ <code>appendfsync</code> الافتراضي <code>everysec</code>. اللي اتكتب قبل <code>SAVE</code> رجع بعد الـ restart، واللي اتكتب بعده <code>null</code>، وملف الـ snapshot هو <code>dump.rdb</code>.</div>
+
+<pre data-file="src/crash-loss.ts"><code class="language-typescript">import { rmSync } from "node:fs";
+import path from "node:path";
+import { connect, sleep, startInstance, stopInstance } from "./instance.ts";
+
+const dir = path.join(process.env.WORK_DIR!, "p-crash");
+
+type Mode = { name: string; flags: string[]; snapshotAtMs?: number };
+const modes: Mode[] = [
+  { name: "RDB, last SAVE 1 s ago", flags: [], snapshotAtMs: 500 },
+  { name: "AOF fsync no", flags: ["--appendonly", "yes", "--appendfsync", "no"] },
+  { name: "AOF fsync everysec", flags: ["--appendonly", "yes", "--appendfsync", "everysec"] },
+  { name: "AOF fsync always", flags: ["--appendonly", "yes", "--appendfsync", "always"] },
+];
+
+for (const mode of modes) {
+  rmSync(dir, { recursive: true, force: true });
+  const flags = ["--enable-debug-command", "yes", ...mode.flags];
+  const port = startInstance(dir, ...flags);
+  const writer = connect(port);
+  const admin = connect(port);
+  await writer.ping();
+  await admin.ping();
+  let acked = 0;
+  let stop = false;
+  const t0 = performance.now();
+  // الـ writer بيعد الـ writes اللي جالها رد بس: دي اللي الـ app افتكر إنها اتحفظت
+  const loop = (async () =&gt; {
+    while (!stop) {
+      try {
+        await writer.incr("orders:count");
+        acked++;
+      } catch {
+        return;
+      }
+    }
+  })();
+  if (mode.snapshotAtMs) {
+    await sleep(mode.snapshotAtMs);
+    await admin.save();
+    await sleep(1500 - mode.snapshotAtMs);
+  } else {
+    await sleep(1500);
+  }
+  const secs = (performance.now() - t0) / 1000;
+  // ده crash حقيقي للـ process: مفيش shutdown ومفيش save
+  await admin.call("DEBUG", "SEGFAULT").catch(() =&gt; {});
+  stop = true;
+  await loop;
+  writer.disconnect();
+  admin.disconnect();
+  await sleep(300);
+  stopInstance(dir);
+  const after = connect(startInstance(dir, ...flags));
+  const survived = Number((await after.get("orders:count")) ?? 0);
+  console.log(`${mode.name.padEnd(24)} ~${String(Math.round(acked / secs)).padStart(5)}/s  acked=${String(acked).padStart(5)}  restart=${String(survived).padStart(5)}  lost=${acked - survived}`);
+  after.disconnect();
+  stopInstance(dir);
+}</code></pre>
+
+<pre><code class="language-plaintext">RDB, last SAVE 1 s ago   ~ 9231/s  acked=13908  restart= 4402  lost=9506
+AOF fsync no             ~ 8574/s  acked=12859  restart=12859  lost=0
+AOF fsync everysec       ~ 7406/s  acked=11103  restart=11103  lost=0
+AOF fsync always         ~  758/s  acked= 1137  restart= 1137  lost=0</code></pre>
+  <div class="ar-note">كل صف crash حقيقي للـ process والـ writes شغالة. <code>acked</code> اللي جاله رد، و <code>restart</code> اللي لقيناه بعد الـ restart، و <code>lost</code> الفرق. الـ RDB ضيّع كل اللي بعد آخر snapshot. الـ AOF بالتلات policies ضيّع صفر، حتى <code>no</code>، لأن الـ crash هنا للـ process بس مش للجهاز. والعمود اللي عليه <code>/s</code> هو عدد الـ writes في الثانية، وبيوضح ثمن <code>always</code>.</div>
+
+<pre data-file="src/aof-files.ts"><code class="language-typescript">import { execFileSync } from "node:child_process";
+import { readdirSync, readFileSync, rmSync, statSync, truncateSync } from "node:fs";
+import path from "node:path";
+import { connect, startInstance, stopInstance } from "./instance.ts";
+
+const dir = path.join(process.env.WORK_DIR!, "p-aof");
+rmSync(dir, { recursive: true, force: true });
+const checkAof = process.env.REDIS_CHECK_AOF ?? "redis-check-aof";
+const flags = ["--appendonly", "yes", "--appendfsync", "everysec", "--logfile", "server.log"];
+
+let r = connect(startInstance(dir, ...flags));
+for (let i = 1; i &lt;= 1000; i++) await r.set(`order:${i}`, `status-${i}`);
+r.disconnect();
+stopInstance(dir);
+
+const aofDir = path.join(dir, "appendonlydir");
+for (const f of readdirSync(aofDir).sort()) console.log(`${f}  ${statSync(path.join(aofDir, f)).size} bytes`);
+console.log(readFileSync(path.join(aofDir, "appendonly.aof.manifest"), "utf8").trim());
+
+const check = () =&gt; {
+  try {
+    return execFileSync(checkAof, ["appendonly.aof.manifest"], { encoding: "utf8", cwd: aofDir, stdio: ["ignore", "pipe", "pipe"] });
+  } catch (e) {
+    return String((e as { stdout?: string }).stdout ?? e);
+  }
+};
+const incrLines = (s: string) =&gt; s.split(/\r?\n/).filter((l) =&gt; /incr\.aof|All AOF|Expected/.test(l)).join("\n");
+console.log(incrLines(check()));
+
+// نقص آخر 5 bytes: زي write اتقطع في النص وقت crash أو disk full
+const incr = path.join(aofDir, readdirSync(aofDir).find((f) =&gt; f.endsWith(".incr.aof"))!);
+truncateSync(incr, statSync(incr).size - 5);
+console.log("--- after cutting 5 bytes off the tail");
+console.log(incrLines(check()));
+
+r = connect(startInstance(dir, ...flags));
+console.log(`restart with aof-load-truncated=${(await r.config("GET", "aof-load-truncated"))[1]}: keys=${await r.dbsize()} order:999=${await r.get("order:999")} order:1000=${await r.get("order:1000")}`);
+r.disconnect();
+stopInstance(dir);
+const log = readFileSync(path.join(dir, "server.log"), "utf8").split(/\r?\n/);
+console.log(log.filter((l) =&gt; /short read|Truncating|loaded anyway/.test(l)).map((l) =&gt; l.replace(/^.*?# /, "")).join("\n"));</code></pre>
+
+<pre><code class="language-plaintext">appendonly.aof.1.base.rdb  89 bytes
+appendonly.aof.1.incr.aof  44711 bytes
+appendonly.aof.manifest  117 bytes
+file appendonly.aof.1.base.rdb seq 1 type b
+file appendonly.aof.1.incr.aof seq 1 type i startoffset 0 endoffset 1000
+AOF analyzed: filename=appendonly.aof.1.incr.aof, size=44711, ok_up_to=44711, ok_up_to_line=7006, diff=0
+INCR AOF appendonly.aof.1.incr.aof is valid
+All AOF files and manifest are valid
+--- after cutting 5 bytes off the tail
+0x            ae9a: Expected to read 13 bytes, got 8 bytes
+AOF analyzed: filename=appendonly.aof.1.incr.aof, size=44706, ok_up_to=44663, ok_up_to_line=7005, diff=43
+AOF appendonly.aof.1.incr.aof is not valid. Use the --fix option to try fixing it.
+restart with aof-load-truncated=yes: keys=999 order:999=status-999 order:1000=null
+!!! Warning: short read while loading the AOF file appendonly.aof.1.incr.aof!!!
+!!! Truncating the AOF appendonly.aof.1.incr.aof at offset 44663 !!!
+AOF appendonlydir/appendonly.aof.1.incr.aof loaded anyway because aof-load-truncated is enabled</code></pre>
+  <div class="ar-note">الـ AOF folder فيه base و incr و manifest، والـ manifest بيقول أنهي ملف إيه. <code>redis-check-aof</code> قال valid. بعد ما قصينا 5 bytes قال إن فيه 43 byte من آخر command مش سليمين. الـ restart حمّل 999 key، و <code>order:1000</code> بس اللي ضاع، وآخر 3 سطور من الـ log الحقيقي بتاع Redis.</div>
+
+<pre data-file="src/bgsave-cow.ts"><code class="language-typescript">import { rmSync } from "node:fs";
+import path from "node:path";
+import { connect, infoField, startInstance, stopInstance } from "./instance.ts";
+
+const dir = path.join(process.env.WORK_DIR!, "p-cow");
+rmSync(dir, { recursive: true, force: true });
+const r = connect(startInstance(dir));
+
+const payload = "x".repeat(1000);
+for (let i = 0; i &lt; 100_000; i += 5000) {
+  const pipe = r.pipeline();
+  for (let j = i; j &lt; i + 5000; j++) pipe.set(`invoice:${j}`, payload);
+  await pipe.exec();
+}
+console.log(`dataset: used_memory=${await infoField(r, "memory", "used_memory_human")}`);
+console.log("BGSAVE -&gt;", await r.bgsave());
+
+// خلال الـ snapshot بنعدّل نفس الـ keys: ده اللي بيعمل copy-on-write على Linux
+let writes = 0;
+while ((await infoField(r, "persistence", "rdb_bgsave_in_progress")) === "1") {
+  const pipe = r.pipeline();
+  for (let j = 0; j &lt; 2000; j++) pipe.set(`invoice:${(writes + j) % 100_000}`, payload);
+  await pipe.exec();
+  writes += 2000;
+}
+console.log(`writes during the snapshot=${writes}`);
+console.log(`latest_fork_usec:${await infoField(r, "stats", "latest_fork_usec")}`);
+for (const f of ["rdb_last_bgsave_status", "rdb_last_bgsave_time_sec", "rdb_last_cow_size"]) console.log(`${f}:${await infoField(r, "persistence", f)}`);
+console.log(`stop-writes-on-bgsave-error=${(await r.config("GET", "stop-writes-on-bgsave-error"))[1]}`);
+
+r.disconnect();
+stopInstance(dir);</code></pre>
+
+<pre><code class="language-plaintext">dataset: used_memory=102.95M
+BGSAVE -&gt; Background saving started
+writes during the snapshot=38000
+latest_fork_usec:44639
+rdb_last_bgsave_status:ok
+rdb_last_bgsave_time_sec:0
+rdb_last_cow_size:0
+stop-writes-on-bgsave-error=yes</code></pre>
+  <div class="ar-note">الـ fork هنا خد بالـ microseconds الرقم اللي في <code>latest_fork_usec</code>، وده على fork emulation بتاع Windows مش Linux. <code>rdb_last_cow_size:0</code> رغم الـ writes الكتير وقت الـ snapshot: النسخة دي مش بتقيسه، فمتعتمدش على الصفر ده. و <code>stop-writes-on-bgsave-error=yes</code> معناها إن فشل الـ save بيوقف الـ writes.</div>
+
+<pre data-file="src/backup.ts"><code class="language-typescript">import { rmSync } from "node:fs";
+import path from "node:path";
+import { connect, infoField, sleep, startInstance, stopInstance } from "./instance.ts";
+
+const dir = path.join(process.env.WORK_DIR!, "p-backup");
+rmSync(dir, { recursive: true, force: true });
+const r = connect(startInstance(dir));
+await r.set("order:1", "paid");
+
+const show = async (...a: [string, ...string[]]) =&gt; {
+  const res = await r.call(...a).catch((e: Error) =&gt; "ERR " + e.message);
+  const shown = Array.isArray(res) ? res.map((p) =&gt; path.basename(String(p))) : res;
+  console.log(a.join(" "), "-&gt;", JSON.stringify(shown));
+};
+
+// الـ backup بيشتغل حتى والـ AOF مقفول
+console.log(`aof_enabled=${await infoField(r, "persistence", "aof_enabled")}`);
+await show("BACKUP", "START");
+await sleep(800);
+// الـ write ده بعد الـ BASE، وهيتحفظ في الـ INCR لحد الـ SEAL
+await r.set("order:2", "added-after-the-base");
+await show("BACKUP", "SEAL");
+await show("BACKUP", "LIST");
+await show("BACKUP", "CLEANUP");
+
+r.disconnect();
+stopInstance(dir);</code></pre>
+
+<pre><code class="language-plaintext">aof_enabled=0
+BACKUP START -&gt; "OK"
+BACKUP SEAL -&gt; "OK"
+BACKUP LIST -&gt; ["appendonly.aof.1.base.rdb","appendonly.aof.1.incr.aof","appendonly.aof.manifest"]
+BACKUP CLEANUP -&gt; "OK"</code></pre>
+  <div class="ar-note">الـ <code>aof_enabled=0</code> والـ backup شغال عادي. <code>START</code> بيعمل الـ base، و <code>SEAL</code> بيقفله، و <code>LIST</code> بيرجّع التلات ملفات (هنا طبعنا الأسماء بس)، و <code>CLEANUP</code> بيشيلهم بعد ما تنقلهم.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>Redis بيحتفظ بكل حاجة في الـ memory، والـ persistence هي الطريقة اللي بيرجّع بيها الـ data بعد restart. فيه طريقتين، وكل واحدة بتجاوب على سؤال مختلف.</p>
+    <p>الـ <b>RDB</b> هو snapshot للحظة معينة: ملف واحد مضغوط (<code>dump.rdb</code>)، سريع في التحميل، وكويس للـ backups. <code>SAVE</code> بيوقف السيرفر، و <code>BGSAVE</code> بيعمل fork لـ child يكتبه. أي حاجة اتكتبت بعد الـ snapshot مش على الـ disk. تحت: <code>survive</code> اتكتب قبل <code>SAVE</code> ورجع، و <code>lost</code> اتكتب بعده ومرجعش.</p>
+    <p>الـ <b>AOF</b> بيسجّل كل write بالـ Redis protocol، وبيعيد تشغيل الـ log وقت الـ startup. <code>appendfsync</code> بيحدد إمتى الـ log يتجبر على الـ disk: <code>always</code> (قبل الرد)، أو <code>everysec</code> (الـ default، حقيقي هنا، من background thread)، أو <code>no</code> (سيبها للـ OS). من 7.0 الـ AOF بقى folder: ملف base، وملفات incremental، و manifest. ومع <code>aof-use-rdb-preamble yes</code> (الـ default، حقيقي) الـ base بصيغة RDB، فالتحميل سريع.</p>
+    <p><b>crash الـ process غير crash الجهاز: الفرق اللي ناس كتير مش واخدة بالها منه.</b> تحت crash حقيقي (<code>DEBUG SEGFAULT</code>) والـ writes شغالة، وبنعد اللي جاله ack بس. الـ RDB ضيّع كل اللي بعد الـ snapshot، ≈ثانية writes. التلات AOF policies ضيّعوا صفر، <em>حتى</em> <code>appendfsync no</code>. ده مش bug في التجربة: Redis عادةً بينادي <code>write()</code> قبل الرد، فالـ bytes بقت مع الـ OS، و crash الـ process مش بيضيّع الـ page cache بتاع الـ OS. فيه استثناء واحد من الـ latency docs: مع <code>everysec</code>، لو fsync في الخلفية لسه شغال، Redis ممكن يأخر الـ <code>write()</code> لحد ثانيتين، فـ disk بطيء ممكن يضيّع شوية حتى مع crash الـ process. الـ <code>fsync</code> بيفرق بس لو <em>الجهاز</em> مات: انقطاع كهربا أو kernel panic. هناك <code>everysec</code> ممكن يضيّع حوالي ثانية حسب الـ docs، و <code>always</code> المفروض ميضيعش حاجة اتعملها ack، و <code>no</code> بيضيّع اللي الـ OS لسه ما كتبوش (الـ docs بتقول Linux عادة كل 30 ثانية). <code>Not run here</code>: انقطاع الكهربا الحقيقي مينفعش يتعمل على الجهاز ده، فأرقام crash الجهاز من الـ docs بتاعة Redis. بس الثمن حقيقي: <code>always</code> عمل ≈750 write/s في الـ run ده (ووصل ≈120 في runs تانية، لأن الـ disk ده عليه شغل تاني) مقابل ≈7400 لـ <code>everysec</code>. و disk أسرع بيقلل الفرق بس مش بيلغيه.</p>
+    <p><b>الذيل المقطوع طبيعي.</b> الـ crash ممكن يقطع آخر command في النص. <code>redis-check-aof</code> بيبلّغ عنه، و <code>aof-load-truncated yes</code> (الـ default) بيخلّي Redis يشيل الـ command الناقص ويبدأ، ويسجّل عمل إيه. تحت، قص 5 bytes ضيّع آخر write بس، <code>order:1000</code>، ومعاها سطور الـ log الحقيقية. أما corruption في <em>نص</em> الملف فبيوقف الـ startup، و <code>--fix</code> ممكن يرمي كل اللي بعده، فخد backup الأول.</p>
+    <p><b>الـ fork والـ copy-on-write خطر على الـ memory.</b> <code>BGSAVE</code> و AOF rewrite بيعملوا fork. الـ child شايف نسخة متجمدة، وكل page الـ parent يغيرها بعد كده بتتنسخ. في أوحش حالة، instance عليها writes كتير محتاجة لحد ضعف الـ dataset في الـ RAM وقت الـ save، وبكده جهاز عند 60% memory بياخد OOM kill من الـ backup بتاعه. والـ fork نفسه بيوقف الـ main thread: الـ docs بتذكر حوالي 10–13ms لكل GB على Linux، وأوحش بكتير على بعض الـ hosts الـ virtualized. هنا خد ≈45ms لـ 100 MB (و ≈150ms في run تاني)، بس ده fork emulation بتاع نسخة Windows مش رقم Linux، و <code>rdb_last_cow_size</code> بيقرا 0 هنا حتى مع 38,000 write وقت الـ save، فالـ copy-on-write مينفعش يتقاس على الجهاز ده. على Linux، راقب الـ field ده، واقفل الـ transparent huge pages (حسب الـ docs)، وسيب مساحة. ومع الـ default <code>stop-writes-on-bgsave-error yes</code> (حقيقي)، فشل الـ save بيخلّي الـ writes تفشل، فـ alert على <code>rdb_last_bgsave_status</code> مكانه الـ dashboard.</p>
+    <p><b>جديد في 8.10:</b> commands الـ <code>BACKUP</code> بتطلّع base + incremental + manifest ينفعوا يترجّعوا من غير ما توقف الـ writes، وبتشتغل والـ AOF مقفول (حقيقي تحت). والـ node بتبدأ منهم بإعداد <code>preload-file</code> وقت الـ startup بس (من الـ docs، ما اتشغّلش هنا).</p>
+    <p><b>تشغّل إيه:</b> cache بحت مش محتاج حاجة، أو RDB عشان restart دافي. أي حاجة مش عايز تخسرها: الاتنين، زي نصيحة الـ docs. ولما الاتنين شغالين، Redis بيحمّل من الـ AOF وقت الـ startup لأنه الأكمل.</p>
+    <p>الـ <code>instance.ts</code> اللي فوق بيغلّف الـ helper اللي بيشغّل كل instance خاصة على port فاضي. على جهازك، بدّل الـ functions الاتنين بـ <code>redis-server --port N --dir D</code> ونفس الـ flags، وخلّي <code>WORK_DIR</code> يشاور على folder فاضي.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما تحجز Redis على managed service أو VM: الـ cache الخالص RDB كل ساعة عشان الـ restart ميبقاش cold. الـ instance بتاعة BullMQ والـ sessions: AOF <code>everysec</code> و RDB مع بعض. والـ sizing: لو الـ dataset 8 GB والـ writes عالية، متحجزش 10 GB RAM وتقول كفاية، الـ BGSAVE ممكن يطلب لحد 16 GB. لو اتسألت "ليه Redis اتقتل بـ OOM الساعة 3 الفجر؟" أول حاجة بص على ميعاد الـ snapshot.
+    </div>
+  </section>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Not a source of truth <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — مش مصدر الحقيقة</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Every setup above and below has a window in which an acknowledged write can disappear. Name yours before you put anything important in Redis:</p>
+  </section>
+
+<table>
+  <tr><th>What fails</th><th>Setup</th><th>What you lose</th><th>Evidence</th></tr>
+  <tr><td>Process</td><td>RDB</td><td>since the last snapshot</td><td>real: part 1</td></tr>
+  <tr><td>Process</td><td>AOF, any fsync policy</td><td>0 acknowledged writes here; a slow disk can hold back <code>write()</code> up to 2 s</td><td>real: part 1, and docs</td></tr>
+  <tr><td>Machine</td><td>AOF <code>everysec</code></td><td>up to about 1 s</td><td>docs</td></tr>
+  <tr><td>Machine</td><td>AOF <code>always</code></td><td>nothing acknowledged, slow</td><td>docs</td></tr>
+  <tr><td>Machine</td><td>AOF <code>no</code></td><td>what the OS hadn't flushed, often ≈30 s</td><td>docs</td></tr>
+  <tr><td>Failover</td><td>async replica</td><td>whatever hadn't arrived</td><td>real: part 6</td></tr>
+  <tr><td>Failover</td><td>replica + <code>WAIT</code></td><td>narrower, not zero</td><td>docs</td></tr>
+</table>
+  <div class="ar-note">صف صف: الـ process يقع مع RDB: اللي بعد آخر snapshot (حقيقي، الجزء 1). الـ process يقع مع AOF بأي fsync: صفر من اللي اتعمله ack هنا (حقيقي)، و disk بطيء ممكن يأخر الـ <code>write()</code> لحد ثانيتين (من الـ docs). الجهاز يقع مع <code>everysec</code>: حوالي ثانية (من الـ docs). الجهاز مع <code>always</code>: مفيش حاجة اتعملها ack بتضيع بس بطيء. الجهاز مع <code>no</code>: اللي الـ OS ما كتبوش، غالبًا ≈30 ثانية. failover مع replica عادية: اللي موصلش (حقيقي، الجزء 6). failover مع <code>WAIT</code>: أقل، بس مش صفر (من الـ docs).</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b><code>WAIT</code> and <code>WAITAOF</code> narrow the window without closing it.</b> <code>WAIT 1 500</code> blocks until 1 replica has the write, or 500 ms pass, and returns how many did. Below, <code>WAIT 2 300</code> with one replica returns 1 after the timeout, and <b>the write is still there</b>: nothing rolls back, so you check the number and decide. <code>WAITAOF numlocal numreplicas timeout</code> does the same for fsync, returning <code>[local, replicas]</code>: <code>[1,0]</code> took ≈550 ms because it waits for the next <code>everysec</code> tick. It errors if AOF is off. The docs say it directly: <code>WAIT</code> does not make Redis strongly consistent, and during failover a write replicated to several replicas can still be lost, since promotion is best effort.</p>
+    <p><b>The design rule:</b> anything in Redis can be rebuilt from Postgres. A leaderboard, a counter, a feed, a Bloom filter, sessions (if a re-login is acceptable) are views of data whose truth lives elsewhere. Write the rebuild, and run it: below, 500,000 orders become a sorted set of ≈50,000 members in ≈800 ms, built in a temp key and swapped with <code>RENAME</code> so readers see the old one or the new one, never half. If you can't write that function, you've got a source of truth in Redis whether you meant to or not.</p>
+    <p><b>The exception: queues.</b> BullMQ's jobs live only in Redis, so that instance needs <code>noeviction</code> and persistence (<a href="../../06-NodeJS/lessons/22-background-jobs-bullmq.html">Node lesson 22</a>). Below is why: BullMQ prints a warning at connect under <code>allkeys-lru</code>, and a burst of cache writes on the same instance evicted its keys: 2000 queued jobs became 0, with no error anywhere. Run it on a separate instance from the cache.</p>
+    <p><b>What "Redis as a primary database" really requires:</b> AOF <code>everysec</code> plus RDB, replicas, <code>min-replicas-to-write</code> and <code>WAIT</code> on the writes that matter, <code>noeviction</code> with capacity planning (it fails on writes when full), tested restores, and a business that accepts losing about a second on the worst day. Some systems qualify. Most orders and payments shouldn't: put those in Postgres with a real transaction.</p>
+  </section>
+
+<pre data-file="src/wait-aof.ts"><code class="language-typescript">import { rmSync } from "node:fs";
+import path from "node:path";
+import { connect, infoField, sleep, startInstance, stopInstance } from "./instance.ts";
+
+const root = process.env.WORK_DIR!;
+const dirA = path.join(root, "w-a");
+const dirB = path.join(root, "w-b");
+rmSync(dirA, { recursive: true, force: true });
+rmSync(dirB, { recursive: true, force: true });
+const portA = startInstance(dirA);
+const a = connect(portA);
+const b = connect(startInstance(dirB));
+await a.config("SET", "repl-diskless-sync-delay", "0");
+await b.replicaof("127.0.0.1", portA);
+while ((await infoField(b, "replication", "master_link_status")) !== "up") await sleep(50);
+
+await a.set("payment:1", "captured");
+let t0 = performance.now();
+console.log(`WAIT 1 500 -&gt; ${await a.wait(1, 500)} after ~${Math.round(performance.now() - t0)} ms`);
+
+await a.set("payment:2", "captured");
+t0 = performance.now();
+// مفيش غير replica واحدة، فالـ WAIT هيخلص بالـ timeout ويرجع 1
+console.log(`WAIT 2 300 -&gt; ${await a.wait(2, 300)} after ~${Math.round(performance.now() - t0)} ms`);
+// الـ WAIT مش بيعمل rollback: الـ write لسه موجود حتى لو العدد أقل من المطلوب
+console.log(`payment:2 on the master is still: ${await a.get("payment:2")}`);
+
+await a.call("WAITAOF", "1", "0", "100").catch((e: Error) =&gt; console.log(`WAITAOF with AOF off: ${e.message}`));
+await a.config("SET", "appendonly", "yes");
+while ((await infoField(a, "persistence", "aof_rewrite_in_progress")) !== "0" || (await infoField(a, "persistence", "aof_enabled")) !== "1") await sleep(50);
+await sleep(500);
+
+await a.set("payment:3", "captured");
+t0 = performance.now();
+console.log(`WAITAOF 1 0 2000 -&gt; ${JSON.stringify(await a.call("WAITAOF", "1", "0", "2000"))} after ~${Math.round(performance.now() - t0)} ms  [local fsynced, replicas fsynced]`);
+await a.set("payment:4", "captured");
+t0 = performance.now();
+console.log(`WAITAOF 1 1 1500, replica has AOF off -&gt; ${JSON.stringify(await a.call("WAITAOF", "1", "1", "1500"))} after ~${Math.round(performance.now() - t0)} ms`);
+
+a.disconnect();
+b.disconnect();
+stopInstance(dirA);
+stopInstance(dirB);</code></pre>
+
+<pre><code class="language-plaintext">WAIT 1 500 -&gt; 1 after ~1 ms
+WAIT 2 300 -&gt; 1 after ~355 ms
+payment:2 on the master is still: captured
+WAITAOF with AOF off: ERR WAITAOF cannot be used when numlocal is set but appendonly is disabled.
+WAITAOF 1 0 2000 -&gt; [1,0] after ~555 ms  [local fsynced, replicas fsynced]
+WAITAOF 1 1 1500, replica has AOF off -&gt; [1,0] after ~1525 ms</code></pre>
+  <div class="ar-note"><code>WAIT 1 500</code> رجع 1 فورًا. <code>WAIT 2 300</code> ومفيش غير replica واحدة: رجع 1 بعد الـ timeout، والـ write لسه موجود. <code>WAITAOF</code> والـ AOF مقفول: error. ولما اتفتح: <code>[1,0]</code> بعد حوالي 550ms (لحد دورة الـ fsync الجاية)، والمعنى: الـ master عمل fsync، و 0 replicas. آخر سطر: طلبنا replica كمان وهي الـ AOF عندها مقفول، فاستنى لحد الـ timeout ورجع برضه <code>[1,0]</code>.</div>
+
+<pre data-file="src/rebuild.ts"><code class="language-typescript">import { Redis } from "ioredis";
+import pg from "pg";
+
+// بيرفض أي URL من غير port صريح أو على الـ default port
+function testUrl(name: "DATABASE_URL" | "REDIS_URL"): string {
+  const raw = process.env[name];
+  if (!raw) throw new Error(`${name} is not set`);
+  const port = new URL(raw).port;
+  const n = Number(port);
+  if (!/^\d+$/.test(port) || n &lt; 1024 || n &gt; 65535 || [5432, 6379, 27017].includes(n)) throw new Error(`refusing ${name} port "${port}"`);
+  return raw;
+}
+
+const redis = new Redis(testUrl("REDIS_URL"));
+const db = new pg.Client({ connectionString: testUrl("DATABASE_URL") });
+await db.connect();
+await redis.flushall();
+
+await db.query(`create table orders(id bigint generated always as identity primary key, customer_id int not null, total_cents int not null)`);
+await db.query(`insert into orders(customer_id, total_cents) select 1 + (random() * 49999)::int, 100 + (random() * 100000)::int from generate_series(1, 500000)`);
+
+// الـ leaderboard في Redis مش مصدر الحقيقة: ده view بيتحسب من orders
+async function rebuildTopCustomers(): Promise&lt;number&gt; {
+  const tmp = "leaderboard:customers:rebuild";
+  await redis.del(tmp);
+  const { rows } = await db.query&lt;{ customer_id: number; spent: string }&gt;(
+    `select customer_id, sum(total_cents) as spent from orders group by customer_id`,
+  );
+  for (let i = 0; i &lt; rows.length; i += 5000) {
+    const pipe = redis.pipeline();
+    for (const row of rows.slice(i, i + 5000)) pipe.zadd(tmp, row.spent, String(row.customer_id));
+    for (const [err] of (await pipe.exec()) ?? []) if (err) throw err;
+  }
+  // الـ RENAME ذري: الـ readers بيشوفوا القديم كامل أو الجديد كامل
+  await redis.rename(tmp, "leaderboard:customers");
+  return rows.length;
+}
+
+await redis.zadd("leaderboard:customers", 1, "stale");
+const t0 = performance.now();
+const count = await rebuildTopCustomers();
+console.log(`rebuilt ${count} members from 500000 orders in ~${Math.round(performance.now() - t0)} ms`);
+console.log("top 3:", await redis.zrevrange("leaderboard:customers", 0, 2, "WITHSCORES"));
+const numeric = await db.query(`select customer_id, sum(total_cents) spent from orders group by 1 order by sum(total_cents) desc limit 1`);
+console.log(`postgres top 1: customer ${numeric.rows[0].customer_id} spent ${numeric.rows[0].spent}`);
+console.log(`stale member gone: ${await redis.zscore("leaderboard:customers", "stale")}`);
+
+await db.end();
+redis.disconnect();</code></pre>
+
+<pre><code class="language-plaintext">rebuilt 49999 members from 500000 orders in ~832 ms
+top 3: [ '35956', '1464074', '10438', '1373301', '13367', '1372694' ]
+postgres top 1: customer 35956 spent 1464074
+stale member gone: null</code></pre>
+  <div class="ar-note">الـ leaderboard اتبنى من 500 ألف order في حوالي 800ms، وأعلى customer طالع نفسه في Redis و Postgres، والعضو القديم (<code>stale</code>) راح لأن الـ RENAME بدّل الـ key كله.</div>
+
+<pre data-file="src/bullmq-eviction.ts"><code class="language-typescript">import { Queue } from "bullmq";
+import { Redis } from "ioredis";
+
+const url = process.env.REDIS_URL;
+const port = Number(new URL(url ?? "redis://x").port);
+if (!Number.isInteger(port) || port &lt; 1024 || [5432, 6379, 27017].includes(port)) throw new Error("refusing " + url);
+
+const admin = new Redis(url!);
+await admin.flushall();
+await admin.config("SET", "maxmemory-policy", "allkeys-lru");
+await admin.config("SET", "maxmemory", "3mb");
+
+// الـ BullMQ بيفحص الـ policy أول ما يتصل وبيطبع تحذير
+const queue = new Queue("emails", { connection: { host: "127.0.0.1", port, maxRetriesPerRequest: null } });
+await queue.waitUntilReady();
+for (let i = 0; i &lt; 2000; i++) await queue.add("send", { to: `user${i}@example.com` });
+console.log(`queued=2000, waiting before filling memory=${await queue.getWaitingCount()}`);
+
+// ضغط من cache على نفس الـ instance
+const pipe = admin.pipeline();
+for (let i = 0; i &lt; 40000; i++) pipe.set(`cache:${i}`, "x".repeat(200));
+await pipe.exec();
+const evicted = (await admin.info("stats")).match(/evicted_keys:(\d+)/)?.[1];
+const waiting = await queue.getWaitingCount();
+const ids = await queue.getWaiting(0, -1);
+const alive = ids.filter(Boolean).length;
+console.log(`after a cache burst: evicted_keys=${evicted} waiting=${waiting} jobs loadable=${alive}`);
+
+await queue.close();
+await admin.config("SET", "maxmemory", "0");
+await admin.config("SET", "maxmemory-policy", "noeviction");
+await admin.flushall();
+admin.disconnect();</code></pre>
+
+<pre><code class="language-plaintext">IMPORTANT! Eviction policy is allkeys-lru. It should be "noeviction"
+queued=2000, waiting before filling memory=2000
+after a cache burst: evicted_keys=34800 waiting=0 jobs loadable=0</code></pre>
+  <div class="ar-note">أول سطر تحذير حقيقي من BullMQ لما اتصل. بعدها 2000 job في الـ queue. وبعد ما ضغطنا بـ cache writes على نفس الـ instance: الـ eviction شال الـ keys، والـ list بقت 0 ومفيش ولا job. كل ده من غير أي error.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>كل setup فوق وتحت فيه فترة ممكن write اتعمله ack يختفي فيها، والجدول اللي فوق بيسمّيهم. سمّي بتاعك قبل ما تحط أي حاجة مهمة في Redis.</p>
+    <p><b>الـ <code>WAIT</code> و <code>WAITAOF</code> بيضيّقوا الفترة ومبيقفلوهاش.</b> <code>WAIT 1 500</code> بيوقف لحد ما replica واحدة تاخد الـ write، أو تعدّي 500ms، وبيرجّع عددهم. تحت، <code>WAIT 2 300</code> ومعاك replica واحدة بيرجّع 1 بعد الـ timeout، و<b>الـ write لسه موجود</b>: مفيش rollback، فإنت بتبص على الرقم وتقرر. <code>WAITAOF numlocal numreplicas timeout</code> بيعمل نفس الشيء للـ fsync، وبيرجّع <code>[local, replicas]</code>: الـ <code>[1,0]</code> خد ≈550ms لأنه بيستنى دورة <code>everysec</code> الجاية. وبيرجّع error لو الـ AOF مقفول. والـ docs بتقولها صريحة: <code>WAIT</code> مش بيخلّي Redis strongly consistent، ووقت الـ failover write اتنسخ على كذا replica لسه ممكن يضيع، لأن الـ promotion بيبقى best effort.</p>
+    <p><b>قاعدة التصميم:</b> أي حاجة في Redis لازم ينفع تتبني تاني من Postgres. الـ leaderboard، والـ counter، والـ feed، والـ Bloom filter، والـ sessions (لو الـ login تاني مقبول) كلها views لـ data الحقيقة بتاعتها في مكان تاني. اكتب الـ rebuild وشغّله: تحت، 500,000 order بقوا sorted set فيه حوالي 50,000 عضو في ≈800ms، اتبنى في key مؤقت واتبدل بـ <code>RENAME</code> فالـ readers بيشوفوا القديم أو الجديد، مش نص ده ونص ده. لو مش عارف تكتب الـ function دي، يبقى عندك source of truth في Redis سواء قصدت أو لأ.</p>
+    <p><b>الاستثناء: الـ queues.</b> الـ jobs بتاعة BullMQ عايشة في Redis بس، فالـ instance دي محتاجة <code>noeviction</code> و persistence (<a href="../../06-NodeJS/lessons/22-background-jobs-bullmq.html">الدرس 22 في Node</a>). وتحت السبب: BullMQ بيطبع تحذير وقت الاتصال مع <code>allkeys-lru</code>، و burst من cache writes على نفس الـ instance شال الـ keys بتاعته: 2000 job في الـ queue بقوا 0، ومن غير أي error. شغّله على instance منفصلة عن الـ cache.</p>
+    <p><b>"Redis كـ primary database" محتاج إيه بجد:</b> AOF <code>everysec</code> مع RDB، و replicas، و <code>min-replicas-to-write</code> و <code>WAIT</code> على الـ writes المهمة، و <code>noeviction</code> مع تخطيط للسعة (بيفشل في الـ writes لما يتملى)، و restores متجربة، و business يقبل يخسر حوالي ثانية في أوحش يوم. فيه أنظمة تنفع. بس معظم الـ orders والـ payments مينفعش: دول في Postgres بـ transaction حقيقية.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما حد يقترح "نخزن رصيد المحفظة في Redis عشان أسرع": اسأله سؤال واحد "لو Redis اتمسح دلوقتي، نبني الرصيد منين؟". لو الإجابة "من ledger في Postgres" يبقى Redis cache وتمام. لو "مش هنعرف" يبقى ده source of truth، ولازم يتحط في Postgres. ولو عندك instance واحدة فيها cache و BullMQ مع بعض بـ <code>allkeys-lru</code>، ده incident مستني يحصل: افصلهم النهارده.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Can we use Redis as our primary database, with AOF on?" → It depends on what you can lose. AOF <code>everysec</code> protects against a process crash but can lose about a second on a machine failure, and replication is asynchronous, so a failover can lose acknowledged writes; <code>WAIT</code> narrows that without closing it. For money or orders I'd keep the truth in Postgres and treat Redis as something I can rebuild. For data where a second of loss is acceptable, it can work, with replicas, <code>noeviction</code>, capacity planning and tested restores.
+    <div class="ar-note">"ينفع نستخدم Redis كـ primary database والـ AOF شغال؟" ← على حسب اللي تقدر تخسره. الـ AOF <code>everysec</code> بيحميك من crash الـ process، بس ممكن يضيّع حوالي ثانية لو الجهاز وقع، والـ replication asynchronous، فالـ failover ممكن يضيّع writes اتعملها ack، و <code>WAIT</code> بيضيّق ده من غير ما يقفله. للفلوس والـ orders بخلّي الحقيقة في Postgres وأعامل Redis كحاجة أقدر أبنيها تاني. ولـ data ينفع تخسر منها ثانية، ممكن يشتغل، مع replicas و <code>noeviction</code> وتخطيط سعة و restores متجربة.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Eviction <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ eviction</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><code>maxmemory</code> sets a limit (default 0, meaning none on 64-bit, real), and <code>maxmemory-policy</code> says what happens at the limit (default <code>noeviction</code>, real). So a Redis you installed and forgot <b>grows until the OS kills it</b>. Set both.</p>
+    <p><b><code>noeviction</code></b> refuses writes: below, at 5 MB, ≈27,800 small keys, then the real error <code>OOM command not allowed when used memory &gt; 'maxmemory'.</code> Reads and deletes keep working. Switch the same instance to <code>allkeys-lru</code> and the writes continue, with ≈21,000 keys evicted to stay at 5 MB. The trap is the <code>volatile-*</code> family: it only evicts keys that have a TTL, so with no TTLs it behaves exactly like <code>noeviction</code> (real below: <code>evicted_keys=0</code> and OOM). <code>volatile-ttl</code> takes the nearest expiry first: below, keys with 10 minutes left were mostly gone, 24-hour keys all stayed, and keys with no TTL were safe.</p>
+    <p><b>LRU and LFU are approximations.</b> Redis samples <code>maxmemory-samples</code> keys (default 5, real) and evicts the best candidate, instead of keeping a full list, because a full list costs memory per key. Below on a Zipf workload, samples=1 scores the same as random (78%), 5 equals 10 (80.9%), and LFU wins a little (81.9%). These gaps are small because the workload is simple, so measure yours. <b>LRM, new in 8.6,</b> tracks the last <em>modification</em> and ignores reads. Below, 3000 catalog keys read constantly and never modified: LFU kept all of them, LRU kept 58%, and LRM evicted nearly all, and that's what it's for: evicting data that hasn't been updated however often it's read. It's a poor default for a read cache (lowest hit ratio below), and useful when old unmodified data is what you want gone. <code>Not run here</code>: 8.12 RC lists a <code>BLESS</code> command that protects chosen keys from eviction, per its release notes. It isn't stable and isn't in this build.</p>
+    <p><b>Choosing:</b> watch <code>evicted_keys</code> together with your hit ratio. Evictions rising while hits fall means the instance is too small or the policy is wrong. <code>expired_keys</code> high with few evictions means TTLs are too short. And <b>leave room for replication and AOF buffers:</b> per the docs they aren't counted against <code>maxmemory</code>, deliberately (<code>mem_not_counted_for_evict</code>), so a 10 GB box shouldn't have <code>maxmemory 10gb</code>. Add the fork headroom from part 1 on top.</p>
+  </section>
+
+<table>
+  <tr><th>Policy</th><th>Evicts</th><th>Use it for</th></tr>
+  <tr><td><code>noeviction</code></td><td>nothing: writes fail with OOM</td><td>queues, locks, anything you can't lose</td></tr>
+  <tr><td><code>allkeys-lru</code></td><td>least recently used, any key</td><td>a general cache: the usual default</td></tr>
+  <tr><td><code>allkeys-lfu</code></td><td>least frequently used, any key</td><td>a stable hot set; resists one-off scans</td></tr>
+  <tr><td><code>allkeys-lrm</code></td><td>least recently modified, any key (8.6+)</td><td>dropping data that hasn't changed, read or not</td></tr>
+  <tr><td><code>allkeys-random</code></td><td>random, any key</td><td>uniform access, for example a repeating cycle</td></tr>
+  <tr><td><code>volatile-lru</code> / <code>-lfu</code> / <code>-lrm</code> / <code>-random</code></td><td>the same, only keys with a TTL</td><td>one instance with cache and permanent keys (better: two instances)</td></tr>
+  <tr><td><code>volatile-ttl</code></td><td>shortest remaining TTL</td><td>when your TTLs encode what's disposable</td></tr>
+</table>
+  <div class="ar-note">صف صف: <code>noeviction</code> مبيشيلش حاجة والـ writes بتفشل بـ OOM، وده للـ queues والـ locks. <code>allkeys-lru</code> أقل حاجة اتاستخدمت قريب من أي key، وده الـ default المعتاد للـ cache. <code>allkeys-lfu</code> أقل حاجة بتتكرر، وكويس لـ hot set ثابت وبيقاوم الـ scans اللي بتحصل مرة واحدة. <code>allkeys-lrm</code> أقل حاجة اتعدلت قريب (من 8.6)، لما عايز تشيل اللي متغيرش سواء اتقرا أو لأ. <code>allkeys-random</code> عشوائي، للوصول المتساوي زي دورة متكررة. عيلة <code>volatile-*</code> نفس الكلام بس على keys عليها TTL، لـ instance فيها cache و keys دائمة (والأحسن اتنين instances). <code>volatile-ttl</code> أقل TTL باقي، لما الـ TTL بتاعك نفسه بيعبّر عن اللي ينفع يترمي.</div>
+
+<pre data-file="src/evict-policies.ts"><code class="language-typescript">import { rmSync } from "node:fs";
+import path from "node:path";
+import { connect, infoField, startInstance, stopInstance } from "./instance.ts";
+
+const dir = path.join(process.env.WORK_DIR!, "e1");
+rmSync(dir, { recursive: true, force: true });
+const r = connect(startInstance(dir));
+const VALUE = "x".repeat(100);
+const evicted = async () =&gt; Number(await infoField(r, "stats", "evicted_keys"));
+
+async function fresh(policy: string, maxmemory: string) {
+  await r.flushall();
+  await r.config("RESETSTAT");
+  await r.config("SET", "maxmemory", maxmemory);
+  await r.config("SET", "maxmemory-policy", policy);
+}
+
+console.log(`defaults: maxmemory-policy=${(await r.config("GET", "maxmemory-policy"))[1]} maxmemory=${(await r.config("GET", "maxmemory"))[1]} maxmemory-samples=${(await r.config("GET", "maxmemory-samples"))[1]}`);
+
+console.log("--- noeviction at maxmemory 5mb");
+await fresh("noeviction", "5mb");
+let n = 0;
+try {
+  for (; n &lt; 200_000; n++) await r.set(`k:${n}`, VALUE);
+} catch (e) {
+  console.log(`writes accepted=${n}, then: ${(e as Error).message}`);
+}
+console.log(`reads still work: GET k:1 length=${(await r.get("k:1"))?.length}; DEL still works: ${await r.del("k:1")}`);
+
+console.log("--- allkeys-lru: the same writes continue");
+await r.config("SET", "maxmemory-policy", "allkeys-lru");
+for (let i = 0; i &lt; 20_000; i++) await r.set(`e:${i}`, VALUE);
+console.log(`dbsize=${await r.dbsize()} evicted_keys=${await evicted()} used_memory=${await infoField(r, "memory", "used_memory_human")}`);
+
+console.log("--- volatile-lru with no TTLs behaves like noeviction");
+await fresh("volatile-lru", "2mb");
+n = 0;
+try {
+  for (; n &lt; 200_000; n++) await r.set(`k:${n}`, VALUE);
+} catch (e) {
+  console.log(`writes accepted=${n}, then OOM, evicted_keys=${await evicted()}`);
+}
+
+console.log("--- volatile-ttl: the nearest expiry goes first; no TTL is safe");
+await fresh("volatile-ttl", "2mb");
+for (let i = 0; i &lt; 2000; i++) {
+  await r.set(`short:${i}`, VALUE, "EX", 600);
+  await r.set(`long:${i}`, VALUE, "EX", 86_400);
+  if (i &lt; 500) await r.set(`forever:${i}`, VALUE);
+}
+for (let i = 0; i &lt; 5000; i++) await r.set(`new:${i}`, VALUE, "EX", 3600);
+async function countOf(prefix: string) {
+  let cursor = "0";
+  let c = 0;
+  do {
+    const [next, keys] = await r.scan(cursor, "MATCH", `${prefix}:*`, "COUNT", 1000);
+    cursor = next;
+    c += keys.length;
+  } while (cursor !== "0");
+  return c;
+}
+console.log(`left: short(10m)=${await countOf("short")}/2000 new(1h)=${await countOf("new")}/5000 long(24h)=${await countOf("long")}/2000 forever=${await countOf("forever")}/500`);
+
+r.disconnect();
+stopInstance(dir);</code></pre>
+
+<pre><code class="language-plaintext">defaults: maxmemory-policy=noeviction maxmemory=0 maxmemory-samples=5
+--- noeviction at maxmemory 5mb
+writes accepted=27777, then: OOM command not allowed when used memory &gt; 'maxmemory'.
+reads still work: GET k:1 length=100; DEL still works: 1
+--- allkeys-lru: the same writes continue
+dbsize=26614 evicted_keys=21321 used_memory=5.00M
+--- volatile-lru with no TTLs behaves like noeviction
+writes accepted=8515, then OOM, evicted_keys=0
+--- volatile-ttl: the nearest expiry goes first; no TTL is safe
+left: short(10m)=434/2000 new(1h)=4083/5000 long(24h)=2000/2000 forever=500/500</code></pre>
+  <div class="ar-note">الـ defaults: <code>noeviction</code> و maxmemory صفر (يعني مفيش حد) و 5 samples. عند 5mb بـ <code>noeviction</code>: عدد الـ keys اللي اتقبلت، وبعدين الـ OOM، والـ reads والـ DEL شغالين عادي. <code>allkeys-lru</code>: الـ writes كملت و <code>evicted_keys</code> بالآلاف والـ memory ثابتة 5M. <code>volatile-lru</code> من غير TTLs: OOM و <code>evicted_keys=0</code>. <code>volatile-ttl</code>: الـ keys القصيرة راحت الأول، والـ 24 ساعة كاملة، واللي من غير TTL كامل.</div>
+
+<pre data-file="src/evict-compare.ts"><code class="language-typescript">import { rmSync } from "node:fs";
+import path from "node:path";
+import { connect, infoField, sleep, startInstance, stopInstance } from "./instance.ts";
+
+const dir = path.join(process.env.WORK_DIR!, "e2");
+rmSync(dir, { recursive: true, force: true });
+const r = connect(startInstance(dir));
+const VALUE = "x".repeat(100);
+const evicted = async () =&gt; Number(await infoField(r, "stats", "evicted_keys"));
+
+async function fresh(policy: string, maxmemory: string) {
+  await r.flushall();
+  await r.config("RESETSTAT");
+  await r.config("SET", "maxmemory", maxmemory);
+  await r.config("SET", "maxmemory-policy", policy);
+}
+async function countOf(prefix: string) {
+  let cursor = "0";
+  let c = 0;
+  do {
+    const [next, keys] = await r.scan(cursor, "MATCH", `${prefix}:*`, "COUNT", 1000);
+    cursor = next;
+    c += keys.length;
+  } while (cursor !== "0");
+  return c;
+}
+
+console.log("--- 3000 catalog keys read constantly and never modified, while sessions are written");
+for (const policy of ["allkeys-lru", "allkeys-lfu", "allkeys-lrm"]) {
+  await fresh(policy, "2mb");
+  for (let i = 0; i &lt; 3000; i++) await r.set(`catalog:${i}`, VALUE);
+  for (let round = 0; round &lt; 24; round++) {
+    const reads = r.pipeline();
+    for (let i = 0; i &lt; 3000; i++) reads.get(`catalog:${i}`);
+    await reads.exec();
+    const writes = r.pipeline();
+    for (let i = 0; i &lt; 1000; i++) writes.set(`session:${round}:${i}`, VALUE);
+    await writes.exec();
+    await sleep(150);
+  }
+  console.log(`${policy.padEnd(12)} catalog left=${String(await countOf("catalog")).padStart(4)}/3000  sessions left=${await countOf("session")}  evicted=${await evicted()}`);
+}
+
+// الـ Zipf: قلة من الـ keys بتاخد معظم الـ reads، زي الـ traffic الحقيقي
+function zipfSampler(n: number, s: number) {
+  const cdf = new Float64Array(n);
+  let sum = 0;
+  for (let i = 0; i &lt; n; i++) {
+    sum += 1 / (i + 1) ** s;
+    cdf[i] = sum;
+  }
+  return () =&gt; {
+    const u = Math.random() * sum;
+    let lo = 0;
+    let hi = n - 1;
+    while (lo &lt; hi) {
+      const mid = (lo + hi) &gt;&gt; 1;
+      if (cdf[mid] &lt; u) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+}
+const pick = zipfSampler(100_000, 1);
+
+async function hitRatio(policy: string, samples: number, seconds: number) {
+  await fresh(policy, "4mb");
+  await r.config("SET", "maxmemory-samples", String(samples));
+  let hits = 0;
+  let misses = 0;
+  const start = performance.now();
+  // أول 5 ثواني تسخين، والحساب بعدها بس
+  const warmUntil = start + 5000;
+  while (performance.now() - start &lt; seconds * 1000) {
+    const keys = Array.from({ length: 200 }, () =&gt; `product:${pick()}`);
+    const got = await r.mget(keys);
+    const fill = r.pipeline();
+    const counting = performance.now() &gt; warmUntil;
+    got.forEach((v, i) =&gt; {
+      if (v === null) {
+        fill.set(keys[i], VALUE);
+        if (counting) misses++;
+      } else if (counting) hits++;
+    });
+    await fill.exec();
+    await sleep(10);
+  }
+  console.log(`${policy.padEnd(15)} samples=${String(samples).padEnd(2)}  hit ratio=${((hits / (hits + misses)) * 100).toFixed(1)}%  keys held=${await r.dbsize()}  evicted=${await evicted()}`);
+}
+console.log("--- hit ratio, Zipf reads over 100k keys, memory for ~19k");
+for (const [policy, samples] of [["allkeys-random", 5], ["allkeys-lru", 1], ["allkeys-lru", 5], ["allkeys-lru", 10], ["allkeys-lfu", 5], ["allkeys-lrm", 5]] as const) {
+  await hitRatio(policy, samples, 20);
+}
+
+r.disconnect();
+stopInstance(dir);</code></pre>
+
+<pre><code class="language-plaintext">--- 3000 catalog keys read constantly and never modified, while sessions are written
+allkeys-lru  catalog left=1752/3000  sessions left=5792  evicted=19456
+allkeys-lfu  catalog left=3000/3000  sessions left=4615  evicted=19385
+allkeys-lrm  catalog left=   2/3000  sessions left=7418  evicted=19580
+--- hit ratio, Zipf reads over 100k keys, memory for ~19k
+allkeys-random  samples=5   hit ratio=78.0%  keys held=19453  evicted=40138
+allkeys-lru     samples=1   hit ratio=77.8%  keys held=19499  evicted=39735
+allkeys-lru     samples=5   hit ratio=80.9%  keys held=19590  evicted=34905
+allkeys-lru     samples=10  hit ratio=80.9%  keys held=19565  evicted=34791
+allkeys-lfu     samples=5   hit ratio=81.9%  keys held=19760  evicted=32796
+allkeys-lrm     samples=5   hit ratio=77.7%  keys held=19529  evicted=40950</code></pre>
+  <div class="ar-note">أول جزء: 3000 catalog key بيتقروا طول الوقت ومبيتعدلوش. الـ LFU سابتهم كلهم، والـ LRU سابت 58%، والـ LRM شالت تقريبًا كلهم، لأنها مبتحسبش الـ reads. تاني جزء: الـ hit ratio على Zipf. الـ random و LRU بـ sample واحد نفس الرقم تقريبًا (الـ sample الواحد عشوائي فعلًا)، و 5 زي 10، والـ LFU الأعلى بفرق صغير، والـ LRM الأقل. الفروق هنا صغيرة، فقيس على الـ workload بتاعك.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <code>maxmemory</code> بيحدد الحد (الـ default صفر، يعني مفيش حد على 64-bit، حقيقي)، و <code>maxmemory-policy</code> بيقول إيه اللي يحصل عند الحد (الـ default <code>noeviction</code>، حقيقي). فـ Redis اتثبت واتنسي <b>بيكبر لحد ما الـ OS يقتله</b>. حدد الاتنين.</p>
+    <p><b><code>noeviction</code></b> بيرفض الـ writes: تحت، عند 5 MB، حوالي 27,800 key صغير، وبعدين الـ error الحقيقي <code>OOM command not allowed when used memory &gt; 'maxmemory'.</code>. الـ reads والـ deletes بتفضل شغالة. حوّل نفس الـ instance لـ <code>allkeys-lru</code> والـ writes بتكمل، و ≈21,000 key بيطلعوا عشان تفضل عند 5 MB. الفخ في عيلة <code>volatile-*</code>: بتشيل بس الـ keys اللي عليها TTL، فمن غير TTLs بتتصرف زي <code>noeviction</code> بالظبط (حقيقي تحت: <code>evicted_keys=0</code> و OOM). <code>volatile-ttl</code> بياخد أقرب expiry الأول: تحت، الـ keys اللي فاضلها 10 دقايق معظمها راح، وبتاعة الـ 24 ساعة كلها فضلت، واللي من غير TTL في أمان.</p>
+    <p><b>الـ LRU والـ LFU تقريبيين.</b> Redis بياخد عينة <code>maxmemory-samples</code> keys (الـ default 5، حقيقي) ويشيل أحسن مرشح، بدل ما يحتفظ بقايمة كاملة، لأن القايمة الكاملة بتكلف memory لكل key. تحت على Zipf، sample=1 جابت نفس نتيجة العشوائي (78%)، و 5 زي 10 (80.9%)، و LFU كسبت بفرق صغير (81.9%). الفروق صغيرة لأن الـ workload بسيط، فقيس على بتاعك. <b>الـ LRM، جديدة في 8.6،</b> بتتابع آخر <em>تعديل</em> وبتتجاهل الـ reads. تحت، 3000 catalog key بيتقروا طول الوقت ومبيتعدلوش: الـ LFU سابتهم كلهم، والـ LRU سابت 58%، والـ LRM شالت تقريبًا كلهم، وده اللي هي معمولة ليه: تشيل data متحدثتش مهما كانت بتتقرا. كـ default لـ read cache مش كويسة (أقل hit ratio تحت)، ومفيدة لما تكون عايز تشيل القديم اللي متعدلش. <code>Not run here</code>: نسخة 8.12 RC فيها command اسمه <code>BLESS</code> بيحمي keys معينة من الـ eviction، حسب الـ release notes، ولسه مش stable ومش في الـ build ده.</p>
+    <p><b>الاختيار:</b> راقب <code>evicted_keys</code> مع الـ hit ratio. evictions بتطلع والـ hits بتنزل معناها الـ instance صغيرة أو الـ policy غلط. و <code>expired_keys</code> عالي مع evictions قليلة معناها الـ TTLs قصيرة. و<b>سيب مكان لـ buffers الـ replication والـ AOF:</b> حسب الـ docs مش بتتحسب من الـ <code>maxmemory</code> عن قصد (<code>mem_not_counted_for_evict</code>)، فجهاز 10 GB ميتحطش عليه <code>maxmemory 10gb</code>. وزوّد مساحة الـ fork من الجزء 1 فوق كده.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      أول حاجة تعملها مع أي Redis موروث: <code>CONFIG GET maxmemory</code> و <code>maxmemory-policy</code>. لو الـ cache على <code>noeviction</code>، أول ما يتملى كل write هيفشل بـ OOM، و cache-aside اللي مش عامل catch هيوقّع الـ requests. لو على <code>volatile-lru</code> والكود مش حاطط TTL في كل مكان، نفس الحادثة. الـ cache: <code>allkeys-lru</code> أو <code>allkeys-lfu</code>. الـ BullMQ والـ locks: instance تانية بـ <code>noeviction</code>.
+    </div>
+  </section>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Memory analysis <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — تحليل الـ memory</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b><code>MEMORY USAGE key</code></b> tells you what one key costs, including its overhead: below, a small integer ≈25 bytes, a short string ≈38, and a 100 KB string 100,034. For collections it samples 5 nested values by default, so use <code>SAMPLES 0</code> when you need the exact size. <code>OBJECT ENCODING key</code> tells you <em>why</em>.</p>
+    <p><b>Encodings are the biggest lever you have.</b> Small collections are stored as a compact <code>listpack</code>, one flat byte array, and they switch to real hash tables or skiplists past a limit. The switch is a cliff: below, a hash with 512 fields is 4,525 bytes, and with 513 fields it's 22,009, nearly 5× for one more field. A single 65-byte value flips it too (<code>hash-max-listpack-value</code> 64). The limits, all real: hash 512 entries or 64-byte values; zset 128 entries or 64-byte values; set 128 strings in a listpack; integer sets stay in an <code>intset</code> up to 512.</p>
+    <p><b>The classic trick is bucketing.</b> A million small values as a million top-level keys cost ≈65 bytes each, mostly key overhead. Put them in hashes of 500 fields, <code>seen:&lt;id/500&gt;</code> with field <code>&lt;id%500&gt;</code>, and each stays a listpack: ≈9 bytes per value, about <b>7× less</b>. Use buckets of 1000 and you've crossed the limit, so every bucket is a hash table and you're back at ≈44 bytes. One giant hash is about the same (≈47) and is also a big key (part 5). The limit is tunable, at a price: a listpack is scanned, so <code>HGET</code> is O(n). Below, the last field took ≈15 µs at 500 entries and ≈390 µs at 20,000, on the main thread. Going to ≈1000 is common; much past that you're trading memory for latency. The 8.10 docs also mention a compact hash encoding with shared templates, which is off by default here (<code>hash-max-template-entries</code> is 0) and isn't measured in this lesson.</p>
+    <p><b>Small things multiply.</b> A TTL added ≈31 bytes per key; a 54-character key name added ≈49 bytes over <code>u:123</code>. Across 100 million keys that's 2.9 GB and 4.6 GB. Shorten prefixes on your highest-count keys only, because readable names are worth a lot elsewhere.</p>
+    <p><b>The numbers to read:</b> <code>used_memory</code> (what Redis allocated) vs <code>used_memory_rss</code> (what the OS gave it). Their ratio is <code>mem_fragmentation_ratio</code>: well above 1 means fragmentation (after deleting a lot, say), below 1 suggests swapping, which is terrible. <code>MEMORY STATS</code> gives overhead and bytes per key, and <code>MEMORY DOCTOR</code> gives a plain-language opinion. This Windows build uses libc malloc, and active defragmentation needs Redis's jemalloc build (real error below), so treat its fragmentation number as not representative; on Linux, <code>activedefrag yes</code> can fix fragmentation online.</p>
+  </section>
+
+<pre data-file="src/mem-encodings.ts"><code class="language-typescript">import { rmSync } from "node:fs";
+import path from "node:path";
+import { connect, startInstance, stopInstance } from "./instance.ts";
+
+const dir = path.join(process.env.WORK_DIR!, "m1");
+rmSync(dir, { recursive: true, force: true });
+const r = connect(startInstance(dir));
+const usage = async (k: string) =&gt; Number(await r.memory("USAGE", k));
+const enc = (k: string) =&gt; r.object("ENCODING", k);
+
+console.log("--- strings");
+await r.set("visits", "12345");
+await r.set("name", "hello world");
+await r.set("doc", "x".repeat(100_000));
+for (const k of ["visits", "name", "doc"]) console.log(`${k.padEnd(7)} encoding=${String(await enc(k)).padEnd(7)} MEMORY USAGE=${await usage(k)}`);
+
+console.log("--- the thresholds");
+for (const name of ["hash-max-listpack-entries", "hash-max-listpack-value", "zset-max-listpack-entries", "zset-max-listpack-value", "set-max-listpack-entries", "set-max-intset-entries"]) {
+  console.log(`${name}=${(await r.config("GET", name))[1]}`);
+}
+
+console.log("--- where the encoding flips (bytes from MEMORY USAGE)");
+async function hashOf(key: string, fields: number, value = "v") {
+  await r.del(key);
+  const pipe = r.pipeline();
+  for (let i = 0; i &lt; fields; i++) pipe.hset(key, `f${i}`, value);
+  await pipe.exec();
+}
+const row = async (label: string, key: string) =&gt; console.log(`${label.padEnd(22)} ${String(await enc(key)).padEnd(10)} ${await usage(key)}`);
+await hashOf("h", 512);
+await row("hash 512 fields", "h");
+await hashOf("h", 513);
+await row("hash 513 fields", "h");
+await hashOf("h", 1000);
+await row("hash 1000 fields", "h");
+await hashOf("h", 3, "x".repeat(64));
+await row("hash, value 64 bytes", "h");
+await hashOf("h", 3, "x".repeat(65));
+await row("hash, value 65 bytes", "h");
+for (let i = 0; i &lt; 128; i++) await r.zadd("z", i, `m${i}`);
+await row("zset 128 members", "z");
+await r.zadd("z", 999, "m999");
+await row("zset 129 members", "z");
+for (let i = 0; i &lt; 128; i++) await r.sadd("s", `m${i}`);
+await row("set 128 strings", "s");
+await r.sadd("s", "m999");
+await row("set 129 strings", "s");
+for (let i = 0; i &lt; 512; i++) await r.sadd("si", i);
+await row("set 512 integers", "si");
+await r.sadd("si", 99_999);
+await row("set 513 integers", "si");
+
+r.disconnect();
+stopInstance(dir);</code></pre>
+
+<pre><code class="language-plaintext">--- strings
+visits  encoding=int     MEMORY USAGE=25
+name    encoding=embstr  MEMORY USAGE=38
+doc     encoding=raw     MEMORY USAGE=100034
+--- the thresholds
+hash-max-listpack-entries=512
+hash-max-listpack-value=64
+zset-max-listpack-entries=128
+zset-max-listpack-value=64
+set-max-listpack-entries=128
+set-max-intset-entries=512
+--- where the encoding flips (bytes from MEMORY USAGE)
+hash 512 fields        listpack   4525
+hash 513 fields        hashtable  22009
+hash 1000 fields       hashtable  35158
+hash, value 64 bytes   listpack   240
+hash, value 65 bytes   hashtable  375
+zset 128 members       listpack   941
+zset 129 members       skiplist   10060
+set 128 strings        listpack   685
+set 129 strings        hashtable  4852
+set 512 integers       intset     1053
+set 513 integers       hashtable  18934</code></pre>
+  <div class="ar-note">الجزء الأول: تمن كل key وطريقة تخزينه. الجزء التاني: الحدود الحقيقية. الجزء التالت: نقطة التحول: كل سطر فيه الـ encoding و bytes. لاحظ الفرق بين 512 و 513 field، و 64 و 65 byte، و 128 و 129 عضو، و 512 و 513 integer: كل واحدة قفزة كبيرة عشان عنصر واحد زيادة.</div>
+
+<pre data-file="src/mem-layouts.ts"><code class="language-typescript">import { rmSync } from "node:fs";
+import path from "node:path";
+import { connect, infoField, startInstance, stopInstance } from "./instance.ts";
+
+const dir = path.join(process.env.WORK_DIR!, "m2");
+rmSync(dir, { recursive: true, force: true });
+const r = connect(startInstance(dir));
+const used = async () =&gt; Number(await infoField(r, "memory", "used_memory"));
+const usage = async (k: string) =&gt; Number(await r.memory("USAGE", k));
+const enc = (k: string) =&gt; r.object("ENCODING", k);
+
+console.log("--- 1,000,000 last_seen timestamps, four layouts");
+const STAMP = "1793764560";
+async function layout(name: string, sampleKey: string, write: (pipe: ReturnType&lt;typeof r.pipeline&gt;, id: number) =&gt; void) {
+  await r.flushall();
+  const before = await used();
+  for (let i = 0; i &lt; 1_000_000; i += 10_000) {
+    const pipe = r.pipeline();
+    for (let id = i; id &lt; i + 10_000; id++) write(pipe, id);
+    await pipe.exec();
+  }
+  const bytes = (await used()) - before;
+  console.log(`${name.padEnd(30)} keys=${String(await r.dbsize()).padStart(7)}  ${(bytes / 1024 / 1024).toFixed(1).padStart(5)} MB  ${(bytes / 1_000_000).toFixed(1).padStart(5)} bytes/value  ${await enc(sampleKey)}`);
+}
+await layout("flat: user:&lt;id&gt;:last_seen", "user:1:last_seen", (p, id) =&gt; p.set(`user:${id}:last_seen`, STAMP));
+// الـ bucket: الـ id/500 هو الـ key، والباقي هو الـ field، وأقل من حد الـ 512
+await layout("buckets of 500 ids", "seen:1", (p, id) =&gt; p.hset(`seen:${Math.floor(id / 500)}`, String(id % 500), STAMP));
+await layout("buckets of 1000 ids", "seen:1", (p, id) =&gt; p.hset(`seen:${Math.floor(id / 1000)}`, String(id % 1000), STAMP));
+await layout("one giant hash", "seen", (p, id) =&gt; p.hset("seen", String(id), STAMP));
+
+console.log("--- the price of a longer listpack: O(n) per field");
+await r.flushall();
+await r.config("SET", "hash-max-listpack-entries", "20000");
+async function hget(size: number) {
+  const key = `lp:${size}`;
+  const pipe = r.pipeline();
+  for (let i = 0; i &lt; size; i++) pipe.hset(key, `f${i}`, STAMP);
+  await pipe.exec();
+  const t0 = performance.now();
+  const reads = r.pipeline();
+  for (let i = 0; i &lt; 20_000; i++) reads.hget(key, `f${size - 1}`);
+  await reads.exec();
+  const us = ((performance.now() - t0) * 1000) / 20_000;
+  console.log(`listpack ${String(size).padStart(5)} fields: ${String(await usage(key)).padStart(6)} bytes, HGET of the last field ~${us.toFixed(1)} us per call`);
+}
+await hget(500);
+await hget(5000);
+await hget(20000);
+await r.config("SET", "hash-max-listpack-entries", "512");
+
+console.log("--- cost of a long key name and of a TTL (100k keys)");
+async function perKey(name: string, keyOf: (i: number) =&gt; string, ttl: boolean) {
+  await r.flushall();
+  const before = await used();
+  for (let i = 0; i &lt; 100_000; i += 5000) {
+    const pipe = r.pipeline();
+    for (let j = i; j &lt; i + 5000; j++) {
+      if (ttl) pipe.set(keyOf(j), "1", "EX", 3600);
+      else pipe.set(keyOf(j), "1");
+    }
+    await pipe.exec();
+  }
+  console.log(`${name.padEnd(30)} ${(((await used()) - before) / 100_000).toFixed(1)} bytes per key`);
+}
+await perKey("short name, no TTL", (i) =&gt; `u:${i}`, false);
+await perKey("short name, with TTL", (i) =&gt; `u:${i}`, true);
+await perKey("54-char name, no TTL", (i) =&gt; `application:production:users:profile:cache:v2:${String(i).padStart(8, "0")}`, false);
+
+console.log("--- INFO memory, MEMORY STATS, MEMORY DOCTOR");
+for (const f of ["used_memory_human", "used_memory_rss_human", "mem_fragmentation_ratio", "mem_allocator"]) console.log(`${f}:${await infoField(r, "memory", f)}`);
+const stats = (await r.memory("STATS")) as unknown as (string | number)[];
+const stat = (name: string) =&gt; stats[stats.indexOf(name) + 1];
+console.log(`MEMORY STATS: keys.count=${stat("keys.count")} keys.bytes-per-key=${stat("keys.bytes-per-key")} overhead.total=${stat("overhead.total")} dataset.percentage=${Number(stat("dataset.percentage")).toFixed(1)}`);
+console.log(`MEMORY DOCTOR: ${String(await r.memory("DOCTOR")).split("\n").slice(0, 3).join(" ").slice(0, 160)}`);
+await r.config("SET", "activedefrag", "yes").catch((e: Error) =&gt; console.log(`CONFIG SET activedefrag yes: ${e.message.replace(/^.*- /, "")}`));
+
+r.disconnect();
+stopInstance(dir);</code></pre>
+
+<pre><code class="language-plaintext">--- 1,000,000 last_seen timestamps, four layouts
+flat: user:&lt;id&gt;:last_seen      keys=1000000   61.8 MB   64.8 bytes/value  int
+buckets of 500 ids             keys=   2000    8.5 MB    8.9 bytes/value  listpack
+buckets of 1000 ids            keys=   1000   42.1 MB   44.1 bytes/value  hashtable
+one giant hash                 keys=      1   44.6 MB   46.8 bytes/value  hashtable
+--- the price of a longer listpack: O(n) per field
+listpack   500 fields:   5922 bytes, HGET of the last field ~14.7 us per call
+listpack  5000 fields:  63923 bytes, HGET of the last field ~93.3 us per call
+listpack 20000 fields: 268924 bytes, HGET of the last field ~390.7 us per call
+--- cost of a long key name and of a TTL (100k keys)
+short name, no TTL             57.1 bytes per key
+short name, with TTL           88.3 bytes per key
+54-char name, no TTL           105.9 bytes per key
+--- INFO memory, MEMORY STATS, MEMORY DOCTOR
+used_memory_human:11.04M
+used_memory_rss_human:10.23M
+mem_fragmentation_ratio:1.00
+mem_allocator:libc
+MEMORY STATS: keys.count=100000 keys.bytes-per-key=60 overhead.total=5502604 dataset.percentage=55.5
+MEMORY DOCTOR: Sam, I detected a few issues in this Redis instance memory implants:   * Peak memory: In the past this instance used more than 150% the memory that is currently
+CONFIG SET activedefrag yes: Active defragmentation cannot be enabled: it requires a Redis server compiled with a modified Jemalloc like the one shipped by default with the Redis source distribution</code></pre>
+  <div class="ar-note">نفس المليون قيمة بـ 4 أشكال: flat حوالي 65 byte للقيمة، و buckets 500 حوالي 9 (listpack)، و buckets 1000 حوالي 44 (عدّى الحد فبقى hashtable)، و hash واحد عملاق حوالي 47. بعدها ثمن الـ listpack الطويل: الـ HGET لآخر field من 15µs لـ 390µs. بعدها: الـ TTL زوّد حوالي 31 byte، والاسم الطويل حوالي 49. وآخر جزء: أرقام INFO، و <code>mem_allocator:libc</code>، وإن الـ activedefrag محتاج jemalloc.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b><code>MEMORY USAGE key</code></b> بيقولك الـ key الواحد بيكلف قد إيه بالـ overhead بتاعه: تحت، رقم صغير ≈25 byte، و string قصير ≈38، و string بـ 100 KB بـ 100,034. وفي الـ collections بياخد عينة 5 عناصر بالـ default، فاستخدم <code>SAMPLES 0</code> لما تحتاج الحجم بالظبط. و <code>OBJECT ENCODING key</code> بيقولك <em>ليه</em>.</p>
+    <p><b>الـ encodings هي أكبر عتلة في إيدك.</b> الـ collections الصغيرة بتتخزن كـ <code>listpack</code> مضغوط، array واحدة من الـ bytes، وبتتحول لـ hash tables أو skiplists حقيقية بعد حد معين. التحول ده جرف: تحت، hash بـ 512 field بياخد 4,525 byte، وبـ 513 بياخد 22,009، حوالي 5 أضعاف عشان field واحد. وقيمة واحدة بـ 65 byte بتقلبه برضه (<code>hash-max-listpack-value</code> هو 64). الحدود، وكلها حقيقية: الـ hash بـ 512 entry أو قيم 64 byte، والـ zset بـ 128 entry أو قيم 64 byte، والـ set بـ 128 string في listpack، و sets الـ integers بتفضل <code>intset</code> لحد 512.</p>
+    <p><b>الحيلة الكلاسيكية هي الـ bucketing.</b> مليون قيمة صغيرة كمليون key بتكلف ≈65 byte للواحدة، معظمها overhead الـ key. حطهم في hashes بـ 500 field، <code>seen:&lt;id/500&gt;</code> والـ field هو <code>&lt;id%500&gt;</code>، وكل واحد يفضل listpack: ≈9 byte للقيمة، حوالي <b>7 مرات أقل</b>. خد buckets بـ 1000 وتكون عدّيت الحد، فكل bucket بقى hash table ورجعت لـ ≈44 byte. و hash واحد عملاق تقريبًا نفس الشيء (≈47) وكمان big key (الجزء 5). الحد ينفع يتغير بثمن: الـ listpack بيتمشي عليه، فالـ <code>HGET</code> بقى O(n). تحت، آخر field خد ≈15µs عند 500 entry و ≈390µs عند 20,000، على الـ main thread. الوصول لحوالي 1000 شايع، وبعد كده بكتير إنت بتبدّل memory بـ latency. والـ docs بتاعة 8.10 بتذكر كمان compact hash encoding بـ templates مشتركة، وده مقفول بالـ default هنا (<code>hash-max-template-entries</code> صفر) ومش متقاس في الدرس ده.</p>
+    <p><b>الحاجات الصغيرة بتتضاعف.</b> الـ TTL زوّد ≈31 byte للـ key، واسم key بـ 54 حرف زوّد ≈49 byte عن <code>u:123</code>. على 100 مليون key دول 2.9 GB و 4.6 GB. قصّر الـ prefixes على أكتر الـ keys عددًا بس، لأن الأسامي المقرية قيمتها كبيرة في باقي الأماكن.</p>
+    <p><b>الأرقام اللي تقراها:</b> <code>used_memory</code> (اللي Redis خده) مقابل <code>used_memory_rss</code> (اللي الـ OS إداه). النسبة بينهم <code>mem_fragmentation_ratio</code>: فوق 1 بكتير معناها fragmentation (بعد ما تمسح كتير مثلًا)، وتحت 1 معناها غالبًا swapping، وده وحش جدًا. <code>MEMORY STATS</code> بيدّي الـ overhead و bytes لكل key، و <code>MEMORY DOCTOR</code> بيدّي رأيه بكلام عادي. نسخة Windows دي بتستخدم libc malloc، والـ active defragmentation محتاج jemalloc بتاع Redis (الـ error الحقيقي تحت)، فاعتبر رقم الـ fragmentation هنا مش معبّر. على Linux، <code>activedefrag yes</code> بيصلح الـ fragmentation وهو شغال.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      فاتورة Redis طالعة و 300 مليون key من نوع <code>user:123:last_seen</code>: 300M × 65 byte = 19 GB. نفس الـ data في buckets بـ 500 حوالي 2.7 GB، وفرق الفاتورة حقيقي. قبل ما تعملها: اتأكد إن الكود مش محتاج TTL لكل عنصر لوحده (أو استخدم <code>HEXPIRE</code> اللي بيخلي الحساب يتغير)، وإن مفيش قيمة أكبر من 64 byte بتقلب الـ bucket كله لـ hashtable. قيس بـ <code>MEMORY USAGE</code> على عينة حقيقية الأول.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: bucketing isn't free</b>
+    You lose per-value TTLs on plain hashes unless you use <code>HEXPIRE</code>, which adds its own metadata; <code>SCAN</code> no longer lists items; and code gets a layer. One oversized value flips a whole bucket to a hash table, losing the saving for that bucket. It's worth it for hundreds of millions of tiny values, and not for ten thousand.
+    <div class="ar-note">بتخسر الـ TTL لكل قيمة في الـ hashes العادية إلا لو استخدمت <code>HEXPIRE</code>، وده ليه metadata لوحده. و <code>SCAN</code> مبقاش بيعرض العناصر. والكود بقى فيه طبقة زيادة. وقيمة واحدة كبيرة بتقلب الـ bucket كله لـ hash table فبتخسر التوفير فيه. يستاهل لمئات الملايين من القيم الصغيرة، مش لعشرة آلاف.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Big keys <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — الـ big keys</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Redis runs commands on one main thread, so one slow command makes every other client wait. A <b>big key</b> is one collection or value large enough that touching it is slow. To measure the real effect, a <em>separate process</em> pings Redis continuously, so the time Node spends parsing a reply doesn't count. Below, on a hash with 1,000,000 fields (≈36 MB):</p>
+    <ul>
+      <li><b><code>HGET</code></b> of one field: under 1 ms, no effect on others. Big keys are safe until you touch all of them.</li>
+      <li><b><code>HGETALL</code></b>: ≈1.3 s on the client, and other clients stalled ≈125 ms while the server built the reply; the reply also fills an output buffer and crosses the network.</li>
+      <li><b><code>DEL</code></b>: ≈390 ms, and PING from another connection waited ≈375 ms. Deleting is O(elements), which surprises people: it's freeing a million allocations.</li>
+      <li><b><code>UNLINK</code></b>: ≈1 ms, and PING didn't notice. It removes the key from the keyspace now and frees the memory on a background thread. <code>lazyfree-lazy-user-del</code> is <code>no</code> in this build (real), which makes <code>DEL</code> synchronous; setting it to <code>yes</code> made <code>DEL</code> behave like <code>UNLINK</code> (under 1 ms). So use <code>UNLINK</code> in code and don't rely on a server flag. Expiry and eviction of big keys block too, unless <code>lazyfree-lazy-expire</code> and <code>lazyfree-lazy-eviction</code> are on (both <code>no</code> here).</li>
+    </ul>
+    <p><b><code>KEYS</code> is the same mistake on the whole keyspace.</b> On 1,000,000 keys, <code>KEYS order:9999*</code> blocked everyone for ≈100 ms. <code>SCAN</code> with <code>COUNT 1000</code> did the same work in 1000 calls, taking longer in total (≈420 ms) with PING never above ≈1 ms. That's the trade: longer for you, invisible for everyone. <code>SCAN</code> can return duplicates, and keys added during the scan may or may not appear, so your code must tolerate both. <code>HSCAN</code>, <code>SSCAN</code> and <code>ZSCAN</code> do the same inside a collection.</p>
+    <p><b>Find them before they find you.</b> <code>redis-cli --bigkeys</code> scans with <code>SCAN</code> and reports the largest key of each type by element count. <code>--memkeys</code> uses <code>MEMORY USAGE</code>, so it reports bytes, which is usually what you want. Both are safe on production and add load only while they run, and <code>-i 0.1</code> slows them further. <code>SLOWLOG GET</code> records commands over <code>slowlog-log-slower-than</code> (10 ms by default, real): below it caught <code>hgetall</code>, <code>del</code>, <code>flushall</code> and <code>keys</code>. Note it measures execution only, not the time spent sending the reply or waiting in the queue.</p>
+    <p><b>Fix it in the data model.</b> Split into buckets: the same million fields in 1000 hashes means <code>HGETALL</code> on one bucket takes ≈3 ms and PING doesn't notice. A bounded collection is a design decision: cap lists with <code>LTRIM</code>, cap sorted sets with <code>ZREMRANGEBYRANK</code>, and put big payloads in object storage with a pointer in Redis. In a cluster a big key also means one shard holds more than its share and migrating its slot is slow.</p>
+  </section>
+
+<pre data-file="src/pinger.ts"><code class="language-typescript">import { Redis } from "ioredis";
+
+// ده process منفصل عشان تأخير الـ parsing في الـ process التاني ميتحسبش هنا
+const port = Number(process.argv[2]);
+if (!Number.isInteger(port) || port &lt; 1024 || [5432, 6379, 27017].includes(port)) throw new Error("refusing port " + process.argv[2]);
+const r = new Redis({ host: "127.0.0.1", port });
+let samples: number[] = [];
+let running = true;
+
+process.on("message", (m) =&gt; {
+  if (m === "reset") samples = [];
+  if (m === "report") {
+    const sorted = [...samples].sort((a, b) =&gt; a - b);
+    process.send!({
+      count: sorted.length,
+      p50: sorted[Math.floor(sorted.length / 2)] ?? 0,
+      max: sorted[sorted.length - 1] ?? 0,
+    });
+  }
+  if (m === "quit") {
+    running = false;
+    r.disconnect();
+    process.exit(0);
+  }
+});
+
+await r.ping();
+process.send!("ready");
+while (running) {
+  const t0 = performance.now();
+  await r.ping();
+  samples.push(performance.now() - t0);
+  await new Promise((res) =&gt; setTimeout(res, 1));
+}</code></pre>
+
+<pre data-file="src/bigkeys.ts"><code class="language-typescript">import { execFileSync, fork } from "node:child_process";
+import { rmSync } from "node:fs";
+import path from "node:path";
+import { connect, infoField, sleep, startInstance, stopInstance } from "./instance.ts";
+
+const dir = path.join(process.env.WORK_DIR!, "b1");
+rmSync(dir, { recursive: true, force: true });
+const port = startInstance(dir);
+const r = connect(port);
+const cli = process.env.REDIS_CLI ?? "redis-cli";
+
+// الـ pinger في process تاني: بيقيس Redis نفسه مش الـ event loop بتاع الـ script ده
+const pinger = fork(new URL("./pinger.ts", import.meta.url), [String(port)]);
+await new Promise((res) =&gt; pinger.once("message", res));
+type Report = { count: number; p50: number; max: number };
+const report = () =&gt;
+  new Promise&lt;Report&gt;((res) =&gt; {
+    pinger.once("message", (m) =&gt; res(m as Report));
+    pinger.send("report");
+  });
+
+async function measured(name: string, fn: () =&gt; Promise&lt;unknown&gt;) {
+  await sleep(100);
+  pinger.send("reset");
+  await sleep(100);
+  const t0 = performance.now();
+  await fn();
+  const ms = performance.now() - t0;
+  await sleep(50);
+  const p = await report();
+  console.log(`${name.padEnd(34)} ~${String(Math.round(ms)).padStart(5)} ms | PING p50 ${p.p50.toFixed(1)}, max ${p.max.toFixed(0).padStart(4)} ms`);
+}
+
+async function buildHash(key: string, fields: number) {
+  await r.del(key);
+  for (let b = 0; b &lt; fields; b += 25_000) {
+    const pipe = r.pipeline();
+    for (let i = b; i &lt; b + 25_000 &amp;&amp; i &lt; fields; i++) pipe.hset(key, `f${i}`, "v");
+    await pipe.exec();
+  }
+}
+
+console.log("--- one hash with 1,000,000 fields");
+await buildHash("cart:big", 1_000_000);
+console.log(`MEMORY USAGE=${((await r.memory("USAGE", "cart:big")) as number / 1024 / 1024).toFixed(1)} MB encoding=${await r.object("ENCODING", "cart:big")}`);
+await measured("baseline: idle", () =&gt; sleep(500));
+await measured("HGET one field", () =&gt; r.hget("cart:big", "f5"));
+await r.config("SET", "slowlog-log-slower-than", "10000");
+await r.slowlog("RESET");
+await measured("HGETALL", () =&gt; r.hgetall("cart:big"));
+await measured("HSCAN COUNT 1000, whole hash", async () =&gt; {
+  let cursor = "0";
+  do {
+    [cursor] = await r.hscan("cart:big", cursor, "COUNT", 1000);
+  } while (cursor !== "0");
+});
+await measured("DEL", () =&gt; r.del("cart:big"));
+await buildHash("cart:big", 1_000_000);
+await measured("UNLINK", () =&gt; r.unlink("cart:big"));
+console.log(`lazyfree-lazy-user-del default=${(await r.config("GET", "lazyfree-lazy-user-del"))[1]}`);
+await r.config("SET", "lazyfree-lazy-user-del", "yes");
+await buildHash("cart:big", 1_000_000);
+await measured("DEL with lazyfree-lazy-user-del=yes", () =&gt; r.del("cart:big"));
+await r.config("SET", "lazyfree-lazy-user-del", "no");
+
+console.log("--- the same data split into 1000 hashes of 1000 fields");
+for (let b = 0; b &lt; 1000; b++) {
+  const pipe = r.pipeline();
+  for (let i = 0; i &lt; 1000; i++) pipe.hset(`cart:bucket:${b}`, `f${i}`, "v");
+  await pipe.exec();
+}
+await measured("HGETALL one bucket", () =&gt; r.hgetall("cart:bucket:7"));
+await r.flushall();
+
+console.log("--- KEYS vs SCAN on 1,000,000 keys");
+for (let i = 0; i &lt; 1_000_000; i += 25_000) {
+  const pipe = r.pipeline();
+  for (let j = i; j &lt; i + 25_000; j++) pipe.set(`order:${j}`, "1");
+  await pipe.exec();
+}
+await measured("KEYS order:9999*", () =&gt; r.keys("order:9999*"));
+let calls = 0;
+let found = 0;
+await measured("SCAN MATCH order:9999* COUNT 1000", async () =&gt; {
+  let cursor = "0";
+  do {
+    const [next, keys] = await r.scan(cursor, "MATCH", "order:9999*", "COUNT", 1000);
+    cursor = next;
+    found += keys.length;
+    calls++;
+  } while (cursor !== "0");
+});
+console.log(`SCAN: ${calls} calls, found=${found}`);
+
+console.log("--- SLOWLOG (commands slower than 10 ms)");
+const log = (await r.slowlog("GET", 20)) as [number, number, number, string[]][];
+for (const [, , micros, args] of log.slice().reverse()) console.log(`${String(Math.round(micros / 1000)).padStart(6)} ms  ${args.slice(0, 3).join(" ")}`);
+
+await r.flushall();
+console.log("--- redis-cli --bigkeys and --memkeys");
+await buildHash("cart:big", 200_000);
+await r.set("doc:huge", "x".repeat(5_000_000));
+for (let i = 0; i &lt; 2000; i++) await r.set(`small:${i}`, "y");
+for (let i = 0; i &lt; 100_000; i += 5000) {
+  const pipe = r.pipeline();
+  for (let j = i; j &lt; i + 5000; j++) pipe.zadd("leaderboard", j, `user:${j}`);
+  await pipe.exec();
+}
+const clip = (s: string) =&gt; s.split(/\r?\n/).filter((l) =&gt; /Biggest|Sampled|Total key|Summary|summary/i.test(l)).join("\n");
+console.log(clip(execFileSync(cli, ["-p", String(port), "--bigkeys"], { encoding: "utf8" })));
+console.log("-- memkeys");
+console.log(clip(execFileSync(cli, ["-p", String(port), "--memkeys"], { encoding: "utf8" })));
+console.log(`used_memory_peak=${await infoField(r, "memory", "used_memory_peak_human")}`);
+
+pinger.send("quit");
+r.disconnect();
+stopInstance(dir);
+process.exit(0);</code></pre>
+
+<pre><code class="language-plaintext">--- one hash with 1,000,000 fields
+MEMORY USAGE=36.5 MB encoding=hashtable
+baseline: idle                     ~  514 ms | PING p50 0.5, max    1 ms
+HGET one field                     ~    1 ms | PING p50 0.4, max    1 ms
+HGETALL                            ~ 1317 ms | PING p50 0.3, max  124 ms
+HSCAN COUNT 1000, whole hash       ~ 1097 ms | PING p50 0.4, max    3 ms
+DEL                                ~  391 ms | PING p50 0.4, max  376 ms
+UNLINK                             ~    1 ms | PING p50 0.3, max    1 ms
+lazyfree-lazy-user-del default=no
+DEL with lazyfree-lazy-user-del=yes ~    0 ms | PING p50 0.3, max    1 ms
+--- the same data split into 1000 hashes of 1000 fields
+HGETALL one bucket                 ~    3 ms | PING p50 0.3, max    0 ms
+--- KEYS vs SCAN on 1,000,000 keys
+KEYS order:9999*                   ~  115 ms | PING p50 0.4, max  100 ms
+SCAN MATCH order:9999* COUNT 1000  ~  422 ms | PING p50 0.3, max    1 ms
+SCAN: 1000 calls, found=111
+--- SLOWLOG (commands slower than 10 ms)
+   138 ms  hgetall cart:big
+   390 ms  del cart:big
+   267 ms  flushall
+   115 ms  keys order:9999*
+--- redis-cli --bigkeys and --memkeys
+-------- summary -------
+Sampled 2003 keys in the keyspace!
+Biggest   hash found "cart:big" has 200000 fields
+Biggest string found "doc:huge" has 5000000 bytes
+Biggest   zset found "leaderboard" has 100000 members
+-- memkeys
+-------- summary -------
+Sampled 2003 keys in the keyspace!
+Biggest   hash found "cart:big" has 9034701 bytes
+Biggest string found "doc:huge" has 5000039 bytes
+Biggest   zset found "leaderboard" has 8095320 bytes
+used_memory_peak=56.98M</code></pre>
+  <div class="ar-note">كل سطر: العملية خدت قد إيه على الـ client، و PING من process تاني: الـ p50 والـ max. لاحظ الـ <code>max</code>: الـ HGETALL وقّف الباقي حوالي 125ms، والـ DEL حوالي 375ms، والـ UNLINK حوالي 1ms. الـ KEYS حوالي 100ms والـ SCAN حوالي 1ms مع إنه خد وقت أطول على الـ client. الـ SLOWLOG مسك الـ commands البطيئة بوقت تنفيذها. آخر جزء من <code>--bigkeys</code> بعدد العناصر و <code>--memkeys</code> بالـ bytes.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>Redis بيشغّل الـ commands على main thread واحد، فـ command واحد بطيء بيخلّي كل الـ clients التانيين يستنوا. الـ <b>big key</b> هو collection أو قيمة كبيرة لدرجة إن لمسها بياخد وقت. عشان نقيس التأثير الحقيقي، <em>process منفصل</em> بيعمل ping لـ Redis طول الوقت، فوقت Node في parsing الرد ميتحسبش. تحت، على hash فيه 1,000,000 field (≈36 MB):</p>
+    <ul>
+      <li><b><code>HGET</code></b> لـ field واحد: أقل من ms، ومفيش تأثير على الباقي. الـ big keys آمنة لحد ما تلمسها كلها.</li>
+      <li><b><code>HGETALL</code></b>: ≈1.3 ثانية على الـ client، والـ clients التانيين وقفوا ≈125ms والسيرفر بيبني الرد، والرد كمان بيملى output buffer ويعدّي الشبكة.</li>
+      <li><b><code>DEL</code></b>: ≈390ms، و PING من connection تانية استنى ≈375ms. المسح O(عدد العناصر)، وده بيفاجئ ناس: ده تحرير لمليون allocation.</li>
+      <li><b><code>UNLINK</code></b>: ≈1ms، و PING مخدش باله. بيشيل الـ key من الـ keyspace دلوقتي وبيحرر الـ memory على background thread. <code>lazyfree-lazy-user-del</code> قيمته <code>no</code> في الـ build ده (حقيقي)، وده اللي بيخلي <code>DEL</code> synchronous، ولما خليناه <code>yes</code> الـ <code>DEL</code> بقى زي <code>UNLINK</code> (أقل من ms). فاستخدم <code>UNLINK</code> في الكود ومتعتمدش على flag في السيرفر. والـ expiry والـ eviction لـ big keys بيوقفوا برضه، إلا لو <code>lazyfree-lazy-expire</code> و <code>lazyfree-lazy-eviction</code> شغالين (الاتنين <code>no</code> هنا).</li>
+    </ul>
+    <p><b><code>KEYS</code> نفس الغلطة على الـ keyspace كله.</b> على 1,000,000 key، <code>KEYS order:9999*</code> وقّف الكل ≈100ms. و <code>SCAN</code> بـ <code>COUNT 1000</code> عمل نفس الشغل في 1000 call، خد وقت أطول إجمالًا (≈420ms) و PING عمره ما عدّى ≈1ms. ده الـ trade: أطول عليك، ومش محسوس عند أي حد تاني. <code>SCAN</code> ممكن يرجّع تكرار، والـ keys اللي بتتضاف وقت الـ scan ممكن تظهر أو لأ، فالكود بتاعك لازم يستحمل الاتنين. و <code>HSCAN</code> و <code>SSCAN</code> و <code>ZSCAN</code> بيعملوا نفس الشيء جوه الـ collection.</p>
+    <p><b>لاقيهم قبل ما يلاقوك.</b> <code>redis-cli --bigkeys</code> بيمشي بـ <code>SCAN</code> وبيطلّع أكبر key من كل نوع بعدد العناصر. و <code>--memkeys</code> بيستخدم <code>MEMORY USAGE</code> فبيطلّع bytes، وده غالبًا اللي إنت عايزه. الاتنين آمنين على production وبيزوّدوا ضغط بس وهما شغالين، و <code>-i 0.1</code> بيهدّيهم أكتر. و <code>SLOWLOG GET</code> بيسجّل الـ commands اللي عدّت <code>slowlog-log-slower-than</code> (10ms بالـ default، حقيقي): تحت مسك <code>hgetall</code> و <code>del</code> و <code>flushall</code> و <code>keys</code>. لاحظ إنه بيقيس التنفيذ بس، مش وقت إرسال الرد ولا الانتظار في الطابور.</p>
+    <p><b>صلّحها في الـ data model.</b> قسّم لـ buckets: نفس المليون field في 1000 hash معناها <code>HGETALL</code> على bucket واحد بياخد ≈3ms و PING مبياخدش باله. والـ collection المحدودة قرار تصميم: قصّر الـ lists بـ <code>LTRIM</code>، والـ sorted sets بـ <code>ZREMRANGEBYRANK</code>، وحط الـ payloads الكبيرة في object storage ومعاها pointer في Redis. وفي الـ cluster الـ big key معناها إن shard واحدة شايلة أكتر من نصيبها، ونقل الـ slot بتاعها بطيء.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ p99 على كل الـ API بينط كل ساعة ومفيش deploy ولا traffic زيادة: شغّل <code>SLOWLOG GET 20</code> هتلاقي job بيعمل <code>DEL report:all-users</code> على set فيه 3 مليون عضو. الحل <code>UNLINK</code> سطر واحد. وفي code review: أي <code>KEYS</code> أو <code>HGETALL</code> أو <code>SMEMBERS</code> على key ممكن يكبر من غير حد يبقى comment منك، حتى لو حجمه النهارده صغير.
+    </div>
+  </section>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Replication &amp; Sentinel <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — الـ replication والـ Sentinel</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><code>REPLICAOF host port</code> attaches a replica. It takes a snapshot (a full sync), then streams every write. Three things below tend to surprise people:</p>
+    <ul>
+      <li><b>The link isn't instant:</b> ≈5 s here, because <code>repl-diskless-sync-delay</code> defaults to 5 (real), waiting for more replicas to share one snapshot. Until then, reading from the replica returns <code>null</code> with no error, and <code>WAIT 0 0</code> returns 0. A health check should read <code>master_link_status:up</code>.</li>
+      <li><b>Replicas reject writes:</b> <code>READONLY You can't write against a read only replica.</code> (real).</li>
+      <li><b>A short disconnect doesn't need a full sync.</b> The master keeps a backlog (<code>repl-backlog-size</code>, 1 MB by default, real) and the replica resumes with <code>PSYNC</code>: below <code>sync_partial_ok</code> went up and <code>sync_full</code> didn't. On a busy instance 1 MB is seconds of traffic, and a replica that falls behind that triggers a full sync, with a fork, so raise it.</li>
+    </ul>
+    <p><b>It's asynchronous, so promotion loses data.</b> The master acknowledges before the replica has the write. Below, a real crash of the master straight after a burst: with a healthy replica on localhost nothing was lost, and with a replica stalled for 1.5 s (a slow network or a paused VM), 19,830 of 20,000 acknowledged payments were gone after promotion. The number isn't a rate, it's however far behind the replica happened to be. <code>REPLICAOF NO ONE</code> is the manual failover (real below).</p>
+    <p><b>Split brain.</b> Promote a replica without stopping the old master and you have two masters. Below, both accepted writes for the same balance, 70 and 90. When the old one rejoined, it replaced its data with the new master's: its balance became 90 and <code>order:old-master</code> vanished with no error. That's why failover needs fencing, and <code>min-replicas-to-write 1</code> helps: a master with no replica refuses writes (<code>NOREPLICAS</code>, real below), so an isolated old master stops accepting them sooner, at the cost of availability when replicas are down.</p>
+    <p><b>Sentinel</b> is high availability for one master, with no sharding. Separate <code>redis-sentinel</code> processes monitor master and replicas, agree a failure by <b>quorum</b>, elect a leader by <b>majority</b>, promote a replica, reconfigure the rest, and tell clients the new address. So clients must support it: they ask a Sentinel who's master rather than holding a fixed address. You need at least three Sentinels on independent machines (per the docs), because with two, a partition can give you the split brain above. It doesn't change the write guarantee: per the docs, it doesn't guarantee that acknowledged writes survive a failure. <code>Not run here: the helper doesn't start redis-sentinel, so the config and client code below are real but only compile-checked.</code> Read replicas, lag and read-your-writes work as in <a href="./23-replication-read-replicas.html">lesson 23</a>.</p>
+  </section>
+
+<pre class="diagram">
+ Replication only             Sentinel                       after a failover
+ ────────────────             ────────                       ────────────────
+   client                S1    S2    S3   (at least 3)           client
+     │                    └─────┼─────┘                            │ "who is master?" → R1
+     ▼                          │ monitor, quorum, vote            ▼
+   master ──▶ replica       master ──▶ replica R1             (old master: gone)
+                                  └──▶ replica R2             R1 = master ──▶ R2
+ failover: you, by hand     failover: automatic               writes not yet on R1: lost
+</pre>
+  <div class="ar-note">على الشمال replication بس: لو الـ master وقع، إنت اللي بتعمل الـ failover بإيدك. في النص Sentinel: 3 عمليات على الأقل بتراقب وبتتفق بالـ quorum وبتصوّت. على اليمين بعد الـ failover: R1 بقى master و R2 بقى بينسخ منه، والـ client بيسأل مين الـ master، وأي writes موصلتش لـ R1 ضاعت.</div>
+
+<pre data-file="src/repl-attach.ts"><code class="language-typescript">import { rmSync } from "node:fs";
+import path from "node:path";
+import { connect, infoField, sleep, startInstance, stopInstance } from "./instance.ts";
+
+const root = process.env.WORK_DIR!;
+const dirA = path.join(root, "ra-a");
+const dirB = path.join(root, "ra-b");
+rmSync(dirA, { recursive: true, force: true });
+rmSync(dirB, { recursive: true, force: true });
+const portA = startInstance(dirA);
+const a = connect(portA);
+const b = connect(startInstance(dirB));
+
+async function linkUp(r: typeof a) {
+  const t0 = Date.now();
+  while ((await infoField(r, "replication", "master_link_status")) !== "up") {
+    if (Date.now() - t0 &gt; 20_000) throw new Error("replica link did not come up");
+    await sleep(50);
+  }
+  return Date.now() - t0;
+}
+
+console.log(`repl-diskless-sync-delay=${(await a.config("GET", "repl-diskless-sync-delay"))[1]}`);
+await b.replicaof("127.0.0.1", portA);
+await a.set("order:1", "paid");
+// الـ replica لسه ما عملتش sync: القراءة منها بترجع null من غير أي error
+console.log(`right after REPLICAOF: replica GET order:1 = ${await b.get("order:1")}, WAIT 0 0 = ${await a.wait(0, 0)}`);
+console.log(`link up after ~${(await linkUp(b) / 1000).toFixed(1)} s`);
+console.log(`now: replica GET order:1 = ${await b.get("order:1")}, WAIT 1 500 = ${await a.wait(1, 500)}`);
+await b.set("x", "1").catch((e: Error) =&gt; console.log(`write on the replica: ${e.message}`));
+for (const f of ["role", "connected_slaves", "repl_backlog_size"]) console.log(`${f}:${await infoField(a, "replication", f)}`);
+
+console.log("--- min-replicas-to-write");
+await a.config("SET", "min-replicas-to-write", "1");
+await a.set("order:2", "paid");
+console.log("replica attached: write OK");
+await b.replicaof("NO", "ONE");
+await sleep(200);
+await a.set("order:3", "paid").catch((e: Error) =&gt; console.log(`replica gone: ${e.message}`));
+await a.config("SET", "min-replicas-to-write", "0");
+
+console.log("--- a short disconnect uses the backlog, not a full sync");
+await a.config("SET", "repl-diskless-sync-delay", "0");
+await b.replicaof("127.0.0.1", portA);
+await linkUp(b);
+const full = await infoField(a, "stats", "sync_full");
+const partial = await infoField(a, "stats", "sync_partial_ok");
+// بنقطع الاتصال من ناحية الـ master، والـ replica بترجع بـ PSYNC
+await a.call("CLIENT", "KILL", "TYPE", "replica");
+await a.set("during-the-gap", "1");
+await sleep(100);
+await linkUp(b);
+await sleep(1200);
+console.log(`write made during the gap: ${await b.get("during-the-gap")}`);
+console.log(`sync_full ${full} -&gt; ${await infoField(a, "stats", "sync_full")}, sync_partial_ok ${partial} -&gt; ${await infoField(a, "stats", "sync_partial_ok")}`);
+
+a.disconnect();
+b.disconnect();
+stopInstance(dirA);
+stopInstance(dirB);</code></pre>
+
+<pre><code class="language-plaintext">repl-diskless-sync-delay=5
+right after REPLICAOF: replica GET order:1 = null, WAIT 0 0 = 0
+link up after ~5.1 s
+now: replica GET order:1 = paid, WAIT 1 500 = 1
+write on the replica: READONLY You can't write against a read only replica.
+role:master
+connected_slaves:1
+repl_backlog_size:1048576
+--- min-replicas-to-write
+replica attached: write OK
+replica gone: NOREPLICAS Not enough good replicas to write.
+--- a short disconnect uses the backlog, not a full sync
+write made during the gap: 1
+sync_full 2 -&gt; 2, sync_partial_ok 0 -&gt; 1</code></pre>
+  <div class="ar-note">بعد <code>REPLICAOF</code> على طول: القراءة <code>null</code> و <code>WAIT</code> صفر، ومفيش error. الـ link طلعت بعد حوالي 5 ثواني، وبعدها كله تمام. الكتابة على الـ replica: <code>READONLY</code>. <code>min-replicas-to-write 1</code>: لما الـ replica مشيت، الـ write رجّع <code>NOREPLICAS</code>. آخر سطرين: قطع الاتصال القصير عدّى بـ partial sync: <code>sync_partial_ok</code> زاد و <code>sync_full</code> ثابت، والـ write بتاع الفترة دي وصل.</div>
+
+<pre data-file="src/repl-failover.ts"><code class="language-typescript">import { rmSync } from "node:fs";
+import path from "node:path";
+import type { Redis } from "ioredis";
+import { connect, infoField, sleep, startInstance, stopInstance } from "./instance.ts";
+
+const root = process.env.WORK_DIR!;
+const dirA = path.join(root, "rf-a");
+const dirB = path.join(root, "rf-b");
+rmSync(dirA, { recursive: true, force: true });
+rmSync(dirB, { recursive: true, force: true });
+const flags = ["--enable-debug-command", "yes"];
+
+async function linkUp(r: Redis) {
+  while ((await infoField(r, "replication", "master_link_status")) !== "up") await sleep(50);
+}
+
+let portA = startInstance(dirA, ...flags);
+const portB = startInstance(dirB, ...flags);
+let a = connect(portA);
+const b = connect(portB);
+await a.config("SET", "repl-diskless-sync-delay", "0");
+await b.config("SET", "repl-diskless-sync-delay", "0");
+
+const payload = "x".repeat(1024);
+async function burst(n: number) {
+  let done = 0;
+  for (let batch = 0; batch &lt; n / 500; batch++) {
+    const pipe = a.pipeline();
+    for (let i = 0; i &lt; 500; i++) pipe.set(`payment:${done + i}`, payload);
+    await pipe.exec();
+    done += 500;
+  }
+  return done;
+}
+async function restartMaster() {
+  a.disconnect();
+  stopInstance(dirA);
+  portA = startInstance(dirA, ...flags);
+  a = connect(portA);
+  await a.config("SET", "repl-diskless-sync-delay", "0");
+  await b.flushall();
+  await b.replicaof("127.0.0.1", portA);
+  await linkUp(b);
+}
+
+console.log("--- acknowledged writes vs a crash of the master");
+await b.replicaof("127.0.0.1", portA);
+await linkUp(b);
+{
+  const acked = await burst(20_000);
+  await a.call("DEBUG", "SEGFAULT").catch(() =&gt; {});
+  await sleep(1000);
+  await b.replicaof("NO", "ONE");
+  const kept = await b.dbsize();
+  console.log(`healthy replica: acknowledged=${acked} on the replica=${kept} lost=${acked - kept}`);
+}
+await restartMaster();
+{
+  // الـ replica متعطلة 1.5 ثانية، زي شبكة بطيئة أو VM واقفة
+  void b.call("DEBUG", "SLEEP", "1.5").catch(() =&gt; {});
+  await sleep(100);
+  const acked = await burst(20_000);
+  console.log(`stalled replica: acknowledged=${acked}, WAIT 0 0 says replicas=${await a.wait(0, 0)}`);
+  await a.call("DEBUG", "SEGFAULT").catch(() =&gt; {});
+  await sleep(2500);
+  const link = await infoField(b, "replication", "master_link_status");
+  await b.replicaof("NO", "ONE");
+  const kept = await b.dbsize();
+  console.log(`master crashed, link=${link}. After REPLICAOF NO ONE: kept=${kept} lost=${acked - kept}`);
+}
+
+console.log("--- split brain: promote without fencing the old master");
+await restartMaster();
+await a.set("balance:7", "100");
+await a.wait(1, 500);
+// الـ replica اتعملها promote، بس الـ master القديم لسه شغال وفيه clients
+await b.replicaof("NO", "ONE");
+await a.set("balance:7", "70");
+await a.set("order:old-master", "paid");
+await b.set("balance:7", "90");
+console.log(`two masters: A balance=${await a.get("balance:7")} (role ${await infoField(a, "replication", "role")}), B balance=${await b.get("balance:7")} (role ${await infoField(b, "replication", "role")})`);
+await a.replicaof("127.0.0.1", portB);
+await linkUp(a);
+console.log(`A rejoined as a replica of B: balance=${await a.get("balance:7")} order:old-master=${await a.get("order:old-master")}`);
+
+a.disconnect();
+b.disconnect();
+stopInstance(dirA);
+stopInstance(dirB);
+process.exit(0);</code></pre>
+
+<pre><code class="language-plaintext">--- acknowledged writes vs a crash of the master
+healthy replica: acknowledged=20000 on the replica=20000 lost=0
+stalled replica: acknowledged=20000, WAIT 0 0 says replicas=0
+master crashed, link=down. After REPLICAOF NO ONE: kept=170 lost=19830
+--- split brain: promote without fencing the old master
+two masters: A balance=70 (role master), B balance=90 (role master)
+A rejoined as a replica of B: balance=90 order:old-master=null</code></pre>
+  <div class="ar-note">الـ replica السليمة على localhost ماضيعتش حاجة. الـ replica المتعطلة 1.5 ثانية: <code>WAIT 0 0</code> قال 0، والـ master وقع، وبعد الـ promote معظم الـ 20,000 ضاع. الجزء التاني split brain: اتنين masters، A فيه 70 و B فيه 90. لما A رجع كـ replica لـ B: الرصيد بقى 90 و <code>order:old-master</code> اختفى من غير أي error.</div>
+
+<pre data-file="sentinel.conf"><code class="language-bash"># متشغّلش هنا (Not run here): الـ helper مش بيشغّل redis-sentinel. ده config حقيقي بس
+port 26379
+# الاسم والعنوان والـ quorum: 2 sentinels لازم يتفقوا إن الـ master واقع
+sentinel monitor orders-cache 10.0.1.10 6379 2
+# بعد 5 ثواني من غير رد بيعتبره واقع من وجهة نظره
+sentinel down-after-milliseconds orders-cache 5000
+sentinel failover-timeout orders-cache 60000
+# كام replica تعمل sync من الـ master الجديد في نفس الوقت
+sentinel parallel-syncs orders-cache 1</code></pre>
+
+<pre data-file="start-sentinel.sh"><code class="language-bash"># متشغّلش هنا (Not run here): على 3 أجهزة مستقلة
+redis-sentinel /etc/redis/sentinel.conf
+redis-cli -p 26379 SENTINEL get-master-addr-by-name orders-cache</code></pre>
+
+<pre data-file="src/clients-ha.ts"><code class="language-typescript">// متشغّلش هنا (Not run here): اتعمله compile بس. الـ hosts دي مثال لشكل الـ config في production
+import { Cluster, Redis } from "ioredis";
+
+// الـ client بيسأل الـ Sentinels مين الـ master، ويعيد السؤال بعد الـ failover
+export const viaSentinel = new Redis({
+  sentinels: [
+    { host: "sentinel-1.internal", port: 26379 },
+    { host: "sentinel-2.internal", port: 26379 },
+    { host: "sentinel-3.internal", port: 26379 },
+  ],
+  name: "orders-cache",
+  role: "master",
+  maxRetriesPerRequest: 1,
+});
+
+// الـ client بيحمّل خريطة الـ slots من أي node، وبيتابع MOVED و ASK لوحده
+export const viaCluster = new Cluster(
+  [
+    { host: "redis-1.internal", port: 6379 },
+    { host: "redis-2.internal", port: 6379 },
+    { host: "redis-3.internal", port: 6379 },
+  ],
+  {
+    scaleReads: "master",
+    maxRedirections: 16,
+    redisOptions: { maxRetriesPerRequest: 1, commandTimeout: 200 },
+  },
+);</code></pre>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><code>REPLICAOF host port</code> بيربط replica. بياخد snapshot (full sync)، وبعدين بيبعت كل write. تلات حاجات تحت بتفاجئ الناس:</p>
+    <ul>
+      <li><b>الـ link مش فورية:</b> ≈5 ثواني هنا، لأن <code>repl-diskless-sync-delay</code> الـ default بتاعه 5 (حقيقي)، بيستنى replicas تانية تشارك نفس الـ snapshot. لحد كده، القراءة من الـ replica بترجع <code>null</code> من غير أي error، و <code>WAIT 0 0</code> بيرجع 0. الـ health check لازم يقرا <code>master_link_status:up</code>.</li>
+      <li><b>الـ replicas بترفض الـ writes:</b> <code>READONLY You can't write against a read only replica.</code> (حقيقي).</li>
+      <li><b>القطع القصير مش محتاج full sync.</b> الـ master بيحتفظ بـ backlog (<code>repl-backlog-size</code>، 1 MB بالـ default، حقيقي)، والـ replica بتكمل بـ <code>PSYNC</code>: تحت <code>sync_partial_ok</code> زاد و <code>sync_full</code> لأ. على instance مشغولة 1 MB ده ثواني من الـ traffic، والـ replica اللي تتأخر أكتر من كده بتعمل full sync ومعاه fork، فزوّده.</li>
+    </ul>
+    <p><b>الـ replication asynchronous، فالـ promotion بيضيّع data.</b> الـ master بيعمل ack قبل ما الـ replica تاخد الـ write. تحت، crash حقيقي للـ master بعد burst على طول: مع replica سليمة على localhost مفيش حاجة ضاعت، ومع replica متعطلة 1.5 ثانية (شبكة بطيئة أو VM واقفة)، 19,830 من 20,000 payment اتعملها ack اختفوا بعد الـ promotion. الرقم مش معدل، هو بس الـ replica كانت متأخرة قد إيه. و <code>REPLICAOF NO ONE</code> هو الـ failover اليدوي (حقيقي تحت).</p>
+    <p><b>الـ split brain.</b> اعمل promote لـ replica من غير ما توقف الـ master القديم يبقى عندك اتنين masters. تحت، الاتنين قبلوا writes لنفس الرصيد، 70 و 90. ولما القديم رجع، استبدل الـ data بتاعته ببتاعة الـ master الجديد: الرصيد بقى 90 و <code>order:old-master</code> اختفى من غير أي error. عشان كده الـ failover محتاج fencing، و <code>min-replicas-to-write 1</code> بيساعد: master من غير replica بيرفض الـ writes (<code>NOREPLICAS</code>، حقيقي تحت)، فالـ master القديم المعزول بيبطل يقبل writes بدري، وثمنها availability لما الـ replicas تقع.</p>
+    <p>الـ <b>Sentinel</b> هو high availability لـ master واحد، من غير sharding. عمليات <code>redis-sentinel</code> منفصلة بتراقب الـ master والـ replicas، بتتفق على الفشل بـ <b>quorum</b>، وبتنتخب leader بـ <b>majority</b>، وبتعمل promote لـ replica، وبتظبط الباقي، وبتقول للـ clients العنوان الجديد. فالـ clients لازم تدعمه: بتسأل Sentinel مين الـ master بدل ما تمسك عنوان ثابت. ومحتاج 3 Sentinels على الأقل على أجهزة مستقلة (حسب الـ docs)، لأن باتنين الـ partition ممكن يدّيك الـ split brain اللي فوق. ومبيغيرش ضمان الـ writes: حسب الـ docs، مش بيضمن إن الـ writes اللي اتعملها ack تعدّي الفشل. <code>Not run here</code>: الـ helper مش بيشغّل <code>redis-sentinel</code>، فالـ config وكود الـ client تحت حقيقيين، بس الكود اتعمله compile بس. والـ read replicas والـ lag و read-your-writes زي <a href="./23-replication-read-replicas.html">الدرس 23</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ service بتقرا من replica Redis عشان تقلل الضغط، وبعد deploy الـ replica لسه بتعمل sync، فالـ cache بيرجّع null كتير، والـ DB بتتضرب، ومفيش errors. الحل: الـ readiness probe بتاع الـ replica يتأكد من <code>master_link_status:up</code>. وفي الـ failover drill: جرب تعمل failover في staging تحت writes وعدّ اللي ضاع، بدل ما تعرف الرقم أول مرة في production.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks: a master that restarts empty</b>
+    Per the replication docs: a master with persistence off that auto-restarts comes back empty, and its replicas sync from it and <em>delete their copies</em>. If you replicate with persistence off, disable auto-restart. The docs warn that Sentinel doesn't save you: the master can restart fast enough for Sentinel not to notice.
+    <div class="ar-note">حسب docs الـ replication: master الـ persistence عنده مقفولة ورجع لوحده بعد restart بيرجع فاضي، والـ replicas بتعمل sync منه و<em>بتمسح نسخها</em>. لو بتعمل replication والـ persistence مقفولة، اقفل الـ auto-restart. والـ docs بتحذر إن Sentinel مش هينقذك: الـ master ممكن يرجع بسرعة قبل ما Sentinel ياخد باله.</div>
+  </div>
+
+  <!-- ===================== PART 7 ===================== -->
+  <h2 id="p7">Part 7 — Cluster <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 7 — الـ Cluster</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Redis Cluster</b> is what you use when the data or the write load no longer fits one master. The keyspace is split into <b>16384 hash slots</b>: <code>slot = CRC16(key) mod 16384</code>. Each master owns a range of slots, each master has its own replicas, and failover is built in, decided by a majority of masters, so there's no Sentinel. Clients keep a slot map and talk to the right node directly. There's no proxy.</p>
+    <p><code>Not run here: Redis Cluster mode wasn't started on this machine; a cluster-enabled start hung in testing, so the real command below is CLUSTER KEYSLOT's error and the rest is a labelled stand-in.</code> The stand-in is a Node router over 3 real independent instances: slots are real CRC16 from <code>cluster-key-slot</code>, the same function clients use, <code>MIGRATE</code> is real, and <code>MOVED</code>, <code>ASK</code> and <code>CROSSSLOT</code> are simulated in the router with the format Redis uses.</p>
+    <p><b>Redirects.</b> Ask the wrong node and it answers <code>MOVED 3999 host:port</code>: this slot lives there, permanently, so fix your map. During a migration, a key that has already moved gets <code>ASK slot host:port</code>: go there this one time, sending <code>ASKING</code> first, and don't change your map. Real clients handle both. Below, a read during resharding got an ASK and one after it got a MOVED, then the fixed map needed no more.</p>
+    <p><b>Multi-key operations need one slot.</b> That covers <code>MGET</code>, <code>MULTI</code>, Lua scripts and <code>SUNION</code>, and the error is <code>CROSSSLOT</code>. The fix is <b>hash tags</b>: only the part inside <code>{…}</code> is hashed, so <code>{user:1}:cart</code> and <code>{user:1}:orders</code> share slot 10778, while <code>user:1:cart</code> and <code>user:1:orders</code> land on 6211 and 13944. It's a schema decision, so design it before you need it: the tag sets what must stay together. Tags also concentrate load, so a tag per tenant with one huge tenant makes a hot shard. Empty braces don't count (<code>foo{}{bar}</code> hashes the whole key, per the spec). Cluster has only database 0, per the docs.</p>
+    <p><b>Resharding</b> moves slots between masters while running: <code>redis-cli --cluster reshard</code> does the classic key-by-key <code>MIGRATE</code> with <code>CLUSTER SETSLOT</code>, and since 8.4 <code>CLUSTER MIGRATION IMPORT</code> does atomic slot migration, handing a slot over in one step with a short write pause (per the docs; not run). Big keys hurt most here, because <code>MIGRATE</code> of a large key blocks both nodes.</p>
+    <p><b>Consistency stays the same.</b> Per the docs, Cluster doesn't guarantee strong consistency and can lose acknowledged writes during failover, because replication is asynchronous. Each node also needs a second port, data port + 10000 by default, for the cluster bus. By default the cluster stops accepting writes if slots aren't covered (<code>cluster-require-full-coverage yes</code>). Topology at system level is in <a href="../../12-System-Design/lessons/18-cache-stampede-hot-keys-topology.html">section 12, lesson 18</a>.</p>
+  </section>
+
+<pre class="diagram">
+ key "user:123"  →  CRC16 mod 16384  →  slot 12893
+
+  slots 0-5460          slots 5461-10922       slots 10923-16383
+ ┌──────────────┐      ┌──────────────┐       ┌──────────────┐
+ │  master A    │      │  master B    │       │  master C    │ ◀── user:123
+ │  └ replica   │      │  └ replica   │       │  └ replica   │
+ └──────────────┘      └──────────────┘       └──────────────┘
+        ▲
+   client asks A → "MOVED 12893 C" → client fixes its map, goes to C
+   {user:1}:cart and {user:1}:orders → hash only "user:1" → same slot, MGET allowed
+</pre>
+  <div class="ar-note">الـ key بيتحسب ليه slot من 16384، وكل master ماسك range من الـ slots ومعاه replica. الـ client لو سأل الـ node الغلط بيرد عليه <code>MOVED</code> فبيصلح الخريطة ويروح للصح. وآخر سطر: الـ hash tag بيخلي بس اللي جوه الأقواس يتحسب، فالـ keys دي في نفس الـ slot والـ MGET عليها مسموح.</div>
+
+<pre data-file="src/cluster-standin.ts"><code class="language-typescript">// ده stand-in مش Redis Cluster: راوتر Node فوق 3 instances حقيقية، والـ MOVED و ASK و CROSSSLOT متقلّدين هنا
+import { rmSync } from "node:fs";
+import path from "node:path";
+import slotOf from "cluster-key-slot";
+import type { Redis } from "ioredis";
+import { connect, startInstance, stopInstance } from "./instance.ts";
+
+const root = process.env.WORK_DIR!;
+const dirs = ["c1", "c2", "c3"].map((d) =&gt; path.join(root, d));
+dirs.forEach((d) =&gt; rmSync(d, { recursive: true, force: true }));
+const ports = dirs.map((d) =&gt; startInstance(d));
+const nodes: Redis[] = ports.map(connect);
+
+await nodes[0].call("CLUSTER", "KEYSLOT", "user:1").catch((e: Error) =&gt; console.log(`CLUSTER KEYSLOT on this instance: ${e.message}`));
+
+console.log("--- slots (real CRC16 from cluster-key-slot, the algorithm Redis Cluster uses)");
+for (const k of ["user:123", "user:124", "{user:1}:cart", "{user:1}:orders", "{user:1}:profile", "user:1:cart", "user:1:orders", "{}:empty-tag", "foo{}{bar}"]) {
+  console.log(`${k.padEnd(20)} slot ${slotOf(k)}`);
+}
+
+// الـ server side: كل node عارفة الـ slots بتاعتها، ولو مش بتاعتها بترد MOVED
+const SLOTS = 16384;
+const owner = new Int16Array(SLOTS);
+for (let s = 0; s &lt; SLOTS; s++) owner[s] = s &lt;= 5460 ? 0 : s &lt;= 10922 ? 1 : 2;
+const migrating = new Map&lt;number, number&gt;();
+
+class ClusterError extends Error {}
+
+async function serverExecute(nodeIndex: number, keys: string[], run: (r: Redis) =&gt; Promise&lt;unknown&gt;): Promise&lt;unknown&gt; {
+  const slots = new Set(keys.map(slotOf));
+  if (slots.size &gt; 1) throw new ClusterError("CROSSSLOT Keys in request don't hash to the same slot");
+  const slot = [...slots][0];
+  if (owner[slot] !== nodeIndex) throw new ClusterError(`MOVED ${slot} 127.0.0.1:${ports[owner[slot]]}`);
+  // الـ slot بيتنقل: لو الـ key اتنقل خلاص، الـ node بترد ASK مرة واحدة
+  const target = migrating.get(slot);
+  if (target !== undefined &amp;&amp; (await nodes[nodeIndex].exists(...keys)) === 0) {
+    throw new ClusterError(`ASK ${slot} 127.0.0.1:${ports[target]}`);
+  }
+  return run(nodes[nodeIndex]);
+}
+
+// الـ client side: نسخة من خريطة الـ slots، وبتتصلح لما يوصل MOVED
+class StandInClient {
+  private map = Int16Array.from(owner);
+  moved = 0;
+  asked = 0;
+  async exec(keys: string[], run: (r: Redis) =&gt; Promise&lt;unknown&gt;): Promise&lt;unknown&gt; {
+    let node = this.map[slotOf(keys[0])];
+    for (let attempt = 0; attempt &lt; 5; attempt++) {
+      try {
+        return await serverExecute(node, keys, run);
+      } catch (e) {
+        const m = (e as Error).message.match(/^(MOVED|ASK) (\d+) [\d.]+:(\d+)$/);
+        if (!m) throw e;
+        const target = ports.indexOf(Number(m[3]));
+        if (m[1] === "MOVED") {
+          this.moved++;
+          this.map[Number(m[2])] = target;
+          node = target;
+        } else {
+          // الـ ASK لمرة واحدة بس، ومبيغيرش الخريطة
+          this.asked++;
+          return run(nodes[target]);
+        }
+      }
+    }
+    throw new Error("too many redirects");
+  }
+  get(key: string) {
+    return this.exec([key], (r) =&gt; r.get(key));
+  }
+  set(key: string, value: string) {
+    return this.exec([key], (r) =&gt; r.set(key, value));
+  }
+  mget(...keys: string[]) {
+    return this.exec(keys, (r) =&gt; r.mget(keys));
+  }
+}
+
+const client = new StandInClient();
+
+console.log("--- distribution of 30,000 keys");
+for (let i = 0; i &lt; 30_000; i += 500) await Promise.all(Array.from({ length: 500 }, (_, j) =&gt; client.set(`user:${i + j}`, "x")));
+console.log(`keys per node: ${(await Promise.all(nodes.map((n) =&gt; n.dbsize()))).join(" / ")}`);
+
+console.log("--- multi-key commands need one slot");
+await client.set("user:1:cart", "c");
+await client.set("user:1:orders", "o");
+await client.mget("user:1:cart", "user:1:orders").catch((e: Error) =&gt; console.log(`MGET with no tag -&gt; ${e.message}`));
+await client.set("{user:1}:cart", "c");
+await client.set("{user:1}:orders", "o");
+console.log(`MGET {user:1}:cart {user:1}:orders -&gt; ${JSON.stringify(await client.mget("{user:1}:cart", "{user:1}:orders"))}`);
+
+console.log("--- real MIGRATE moving one key between instances");
+const k = "user:123";
+const from = owner[slotOf(k)];
+const to = (from + 1) % 3;
+console.log(`slot ${slotOf(k)} owned by node ${from}; before: source=${await nodes[from].get(k)} destination=${await nodes[to].get(k)}`);
+console.log(`MIGRATE -&gt; ${await nodes[from].migrate("127.0.0.1", ports[to], k, 0, 1000)}`);
+console.log(`after: source=${await nodes[from].get(k)} destination=${await nodes[to].get(k)}`);
+await nodes[to].migrate("127.0.0.1", ports[from], k, 0, 1000);
+
+console.log("--- resharding one slot: ASK while it moves, MOVED after");
+const slot = slotOf("user:123");
+const keysInSlot: string[] = [];
+let cursor = "0";
+do {
+  const [next, batch] = await nodes[from].scan(cursor, "COUNT", 1000);
+  cursor = next;
+  keysInSlot.push(...batch.filter((key) =&gt; slotOf(key) === slot));
+} while (cursor !== "0");
+// بنضيف keys كمان في نفس الـ slot عشان النقل يبان
+for (let i = 0; i &lt; 200; i++) await client.set(`{user:123}:item:${i}`, "x");
+const inSlot = [...keysInSlot, ...Array.from({ length: 200 }, (_, i) =&gt; `{user:123}:item:${i}`)].filter((key) =&gt; slotOf(key) === slot);
+console.log(`keys in slot ${slot}: ${inSlot.length}`);
+migrating.set(slot, to);
+const half = Math.floor(inSlot.length / 2);
+for (const key of inSlot.slice(0, half)) await nodes[from].migrate("127.0.0.1", ports[to], key, 0, 1000);
+console.log(`half moved: read a moved key = ${await client.get(inSlot[0])}, read a key not moved yet = ${await client.get(inSlot[half])} | moved=${client.moved} asked=${client.asked}`);
+for (const key of inSlot.slice(half)) await nodes[from].migrate("127.0.0.1", ports[to], key, 0, 1000);
+migrating.delete(slot);
+owner[slot] = to;
+console.log(`done: read = ${await client.get(inSlot[0])} | moved=${client.moved} asked=${client.asked}`);
+console.log(`second read uses the fixed map: ${await client.get(inSlot[1])} | moved=${client.moved} asked=${client.asked}`);
+
+nodes.forEach((n) =&gt; n.disconnect());
+dirs.forEach(stopInstance);
+process.exit(0);</code></pre>
+
+<pre><code class="language-plaintext">CLUSTER KEYSLOT on this instance: ERR This instance has cluster support disabled
+--- slots (real CRC16 from cluster-key-slot, the algorithm Redis Cluster uses)
+user:123             slot 12893
+user:124             slot 698
+{user:1}:cart        slot 10778
+{user:1}:orders      slot 10778
+{user:1}:profile     slot 10778
+user:1:cart          slot 6211
+user:1:orders        slot 13944
+{}:empty-tag         slot 15110
+foo{}{bar}           slot 4015
+--- distribution of 30,000 keys
+keys per node: 10016 / 9979 / 10005
+--- multi-key commands need one slot
+MGET with no tag -&gt; CROSSSLOT Keys in request don't hash to the same slot
+MGET {user:1}:cart {user:1}:orders -&gt; ["c","o"]
+--- real MIGRATE moving one key between instances
+slot 12893 owned by node 2; before: source=x destination=null
+MIGRATE -&gt; OK
+after: source=null destination=x
+--- resharding one slot: ASK while it moves, MOVED after
+keys in slot 12893: 203
+half moved: read a moved key = x, read a key not moved yet = x | moved=0 asked=1
+done: read = x | moved=1 asked=1
+second read uses the fixed map: x | moved=1 asked=1</code></pre>
+  <div class="ar-note">أول سطر الـ error الحقيقي: الـ instance دي مش cluster. بعدها الـ slots الحقيقية: <code>user:1:cart</code> و <code>user:1:orders</code> في slots مختلفة، وبالـ hash tag كلهم 10778. الـ 30,000 key اتوزعوا حوالي 10,000 على كل node. الـ MGET من غير tag: CROSSSLOT (متقلّد)، وبالـ tag نجح. الـ MIGRATE حقيقي: المصدر بقى null والوجهة فيها القيمة. آخر جزء: نقل slot كامل: وقت النقل ASK مرة، وبعد ما خلص MOVED مرة، والـ read اللي بعدها مش محتاج حاجة لأن الخريطة اتصلحت.</div>
+
+<pre data-file="create-cluster.sh"><code class="language-bash"># متشغّلش هنا (Not run here): أقل شكل عملي 3 masters كل واحد ليه replica
+redis-cli --cluster create \
+  10.0.1.11:6379 10.0.1.12:6379 10.0.1.13:6379 \
+  10.0.1.14:6379 10.0.1.15:6379 10.0.1.16:6379 \
+  --cluster-replicas 1
+
+# نقل 1000 slot بين masters وهو شغال
+redis-cli --cluster reshard 10.0.1.11:6379 \
+  --cluster-from &lt;node-id&gt; --cluster-to &lt;node-id&gt; \
+  --cluster-slots 1000 --cluster-yes
+
+# من 8.4 على الـ master اللي هياخد الـ slots: نقل ذري
+redis-cli -h 10.0.1.12 CLUSTER MIGRATION IMPORT 0 1000
+redis-cli -h 10.0.1.12 CLUSTER MIGRATION STATUS ALL</code></pre>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>Redis Cluster</b> هو اللي بتستخدمه لما الـ data أو ضغط الـ writes ميبقوش ينفعوا على master واحد. الـ keyspace بيتقسم لـ <b>16384 hash slot</b>: <code>slot = CRC16(key) mod 16384</code>. كل master ماسك range من الـ slots، وكل master ليه replicas بتوعه، والـ failover جوه الـ cluster نفسه بقرار من أغلبية الـ masters، فمفيش Sentinel. الـ clients بتحتفظ بخريطة الـ slots وبتكلم الـ node الصح على طول. مفيش proxy.</p>
+    <p><code>Not run here</code>: وضع Redis Cluster ما اشتغلش على الجهاز ده، لأن تشغيله بـ <code>cluster-enabled</code> علّق في التجربة، فالـ command الحقيقي تحت هو error الـ <code>CLUSTER KEYSLOT</code>، والباقي stand-in متعلّم عليه. الـ stand-in ده router في Node فوق 3 instances حقيقية مستقلة: الـ slots هي CRC16 حقيقي من <code>cluster-key-slot</code>، نفس الـ function اللي الـ clients بتستخدمها، و <code>MIGRATE</code> حقيقي، و <code>MOVED</code> و <code>ASK</code> و <code>CROSSSLOT</code> متقلّدين في الـ router بنفس الشكل بتاع Redis.</p>
+    <p><b>الـ redirects.</b> اسأل الـ node الغلط تردّ <code>MOVED 3999 host:port</code>: الـ slot ده هناك بشكل دائم، فصلّح خريطتك. ووقت النقل، key اتنقل خلاص بياخد <code>ASK slot host:port</code>: روح هناك المرة دي بس، وابعت <code>ASKING</code> الأول، ومتغيرش خريطتك. الـ clients الحقيقية بتتعامل مع الاتنين. تحت، read وقت الـ resharding خد ASK، و read بعده خد MOVED، وبعدها الخريطة المتصلحة مش محتاجة حاجة.</p>
+    <p><b>الـ commands على كذا key محتاجة slot واحد.</b> ده بيشمل <code>MGET</code> و <code>MULTI</code> و Lua scripts و <code>SUNION</code>، والـ error هو <code>CROSSSLOT</code>. الحل <b>hash tags</b>: اللي جوه <code>{…}</code> بس هو اللي بيتحسب، فـ <code>{user:1}:cart</code> و <code>{user:1}:orders</code> في slot 10778 مع بعض، بينما <code>user:1:cart</code> و <code>user:1:orders</code> في 6211 و 13944. ده قرار schema، فصممه قبل ما تحتاجه: الـ tag بيحدد إيه لازم يفضل مع بعض. والـ tags كمان بتركّز الضغط، فـ tag لكل tenant مع tenant واحد ضخم بيعمل shard ساخنة. والأقواس الفاضية مبتتحسبش (<code>foo{}{bar}</code> بيتحسب الـ key كله، حسب الـ spec). والـ Cluster فيه database 0 بس، حسب الـ docs.</p>
+    <p>الـ <b>resharding</b> بينقل slots بين masters وهو شغال: <code>redis-cli --cluster reshard</code> بيعمل النقل الكلاسيكي key بـ key بـ <code>MIGRATE</code> مع <code>CLUSTER SETSLOT</code>، ومن 8.4 <code>CLUSTER MIGRATION IMPORT</code> بيعمل نقل ذري للـ slot، بيسلّمه خطوة واحدة مع وقفة writes قصيرة (حسب الـ docs، ما اتشغّلش). والـ big keys بتوجع هنا أكتر، لأن <code>MIGRATE</code> لـ key كبير بيوقف الـ nodes الاتنين.</p>
+    <p><b>الـ consistency زي ما هي.</b> حسب الـ docs، الـ Cluster مش بيضمن strong consistency وممكن يضيّع writes اتعملها ack وقت الـ failover، لأن الـ replication asynchronous. وكل node محتاجة port تاني، الـ data port + 10000 بالـ default، للـ cluster bus. وبالـ default الـ cluster بيبطل يقبل writes لو فيه slots مش متغطية (<code>cluster-require-full-coverage yes</code>). الـ topology على مستوى الـ system في <a href="../../12-System-Design/lessons/18-cache-stampede-hot-keys-topology.html">القسم 12، الدرس 18</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ rate limiter أو الـ invalidate بـ Lua شغال تمام على instance واحدة، وأول ما تنقل لـ managed Redis Cluster كل حاجة تقع بـ <code>CROSSSLOT</code>. عشان كده من دلوقتي: أي script أو MULTI على كذا key يبقى بـ hash tag (<code>{tenant:5}:…</code>، <code>{user:1}:…</code>). وقبل ما تختار Cluster أصلًا: لو الـ data بتشيلها node واحدة والمشكلة availability بس، Sentinel أو managed failover أبسط بكتير. ولو المشكلة hot key، الـ Cluster مش هيحلها: ارجع للجزء 6 في <a href="./37-cache-failure-modes.html">الدرس 37</a>.
+    </div>
+  </section>
+
+<table>
+  <tr><th></th><th>Replication only</th><th>Sentinel</th><th>Cluster</th></tr>
+  <tr><td>Failover</td><td>by hand</td><td>automatic</td><td>automatic, per shard</td></tr>
+  <tr><td>Scale reads</td><td>yes, with lag</td><td>yes, with lag</td><td>yes, with lag</td></tr>
+  <tr><td>Scale writes / data</td><td>no</td><td>no</td><td>yes</td></tr>
+  <tr><td>Multi-key commands</td><td>any keys</td><td>any keys</td><td>same slot only</td></tr>
+  <tr><td>Client needs</td><td>nothing special</td><td>Sentinel support</td><td>Cluster support</td></tr>
+  <tr><td>Typical minimum</td><td>2 nodes</td><td>2 Redis + 3 Sentinels</td><td>6 nodes (3 + 3)</td></tr>
+  <tr><td>Can lose acknowledged writes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+  <tr><td>Complexity</td><td>low</td><td>medium</td><td>high</td></tr>
+</table>
+  <div class="ar-note">عمود عمود: الـ replication بس: الـ failover بإيدك، وبيوزع الـ reads بس، وأي multi-key مسموح، وبسيط، و 2 nodes كفاية. الـ Sentinel: failover أوتوماتيك، ونفس الكلام في الـ reads والـ multi-key، والـ client لازم يدعمه، و 2 Redis مع 3 Sentinels، ومتوسط التعقيد. الـ Cluster: failover أوتوماتيك لكل shard، وبيوزع الـ writes والـ data، بس الـ multi-key في نفس الـ slot بس، والـ client لازم يدعمه، و 6 nodes كشكل معتاد، وأعلى تعقيد. والتلاتة ممكن يضيّعوا writes اتعملها ack.</div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Sentinel or Cluster?" → They solve different problems. Sentinel gives automatic failover for one master: use it when the data and writes fit one node and availability is the concern, and it keeps every multi-key command working. Cluster shards across masters: use it when data or write load exceeds one node, and accept that multi-key commands, transactions and scripts must stay in one slot, which means designing hash tags. Neither guarantees that acknowledged writes survive failover, because replication is asynchronous. And neither fixes a hot key, since one key still lives on one node. In practice I'd take the managed offering and choose by data size.
+    <div class="ar-note">"Sentinel ولا Cluster؟" ← بيحلوا مشاكل مختلفة. الـ Sentinel بيدّي failover أوتوماتيك لـ master واحد: استخدمه لما الـ data والـ writes تنفع على node واحدة والمشكلة availability، وكل الـ multi-key commands بتفضل شغالة. الـ Cluster بيعمل sharding على كذا master: استخدمه لما الـ data أو الـ writes تعدّي node واحدة، واقبل إن الـ multi-key والـ transactions والـ scripts لازم تفضل في slot واحد، يعني تصمم hash tags. ولا واحد فيهم بيضمن إن الـ writes اللي اتعملها ack تعدّي الـ failover، لأن الـ replication asynchronous. ولا واحد بيحل hot key، لأن الـ key الواحد لسه على node واحدة. عمليًا باخد الـ managed وباختار على حسب حجم الـ data.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>KEYS</code> in production code</b>
+<pre><code class="language-typescript">const keys = await redis.keys(`tenant:${id}:*`);
+await redis.del(...keys);
+// الـ KEYS بيوقف الكل، والـ DEL كمان لو keys كبيرة</code></pre></div>
+    <div class="good"><b>✅ <code>SCAN</code> + <code>UNLINK</code></b>
+<pre><code class="language-typescript">let cursor = "0";
+do {
+  const [next, keys] = await redis.scan(cursor, "MATCH", `tenant:${id}:*`, "COUNT", 1000);
+  cursor = next;
+  if (keys.length) await redis.unlink(...keys);
+} while (cursor !== "0");</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>KEYS</code> بيمشي على الـ keyspace كله في command واحد: على مليون key وقّف الكل حوالي 100ms. ✅ الـ <code>SCAN</code> بيقسم الشغل على calls صغيرة، فـ PING مبيعدّيش ≈1ms، و <code>UNLINK</code> بيحرر في الخلفية. أطول عليك، ومش محسوس عند أي حد تاني.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>DEL</code> on a big collection</b>
+<pre><code class="language-typescript">await redis.del("report:all-users");
+// مليون عنصر: حوالي 390ms والـ server كله واقف</code></pre></div>
+    <div class="good"><b>✅ <code>UNLINK</code></b>
+<pre><code class="language-typescript">await redis.unlink("report:all-users");
+// حوالي 1ms: التحرير على background thread</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>DEL</code> بيحرر العناصر كلها على الـ main thread، و PING من connection تانية استنى ≈375ms. ✅ <code>UNLINK</code> بيشيل الـ key فورًا وبيحرر في الخلفية، و PING مخدش باله. استخدمه دايمًا لما الحجم مش معروف.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Cache and queue on one instance</b>
+<pre><code class="language-bash"># الـ instance واحدة فيها cache و BullMQ
+maxmemory-policy allkeys-lru
+# أول burst على الـ cache بيشيل الـ jobs: 2000 بقوا 0</code></pre></div>
+    <div class="good"><b>✅ Two instances, two policies</b>
+<pre><code class="language-bash"># الـ instance بتاعة الـ cache
+maxmemory-policy allkeys-lru
+# الـ instance بتاعة الـ queue: AOF ومن غير eviction
+maxmemory-policy noeviction
+appendonly yes</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ eviction مش بيفرّق بين cache و job: حقيقي في الجزء 2، 2000 job اختفوا من غير أي error، والتحذير الوحيد سطر طبعه BullMQ وقت الاتصال. ✅ كل نوع على instance لوحده بالـ policy اللي تناسبه، حتى لو على نفس الجهاز.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Treating <code>WAIT</code> as a guarantee</b>
+<pre><code class="language-typescript">await redis.set("coupon:1", "used");
+await redis.wait(1, 200);
+// الرقم الراجع مش متشاف، ولو 0 محدش عرف</code></pre></div>
+    <div class="good"><b>✅ Read the number and decide</b>
+<pre><code class="language-typescript">await redis.set("coupon:1", "used");
+const replicas = await redis.wait(1, 200);
+if (replicas &lt; 1) metrics.increment("redis.write.master_only");
+// الـ write موجود في الحالتين: مفيش rollback</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>WAIT</code> بيرجع بعد الـ timeout حتى لو ولا replica خدته، ومفيش error، فلو مبصيتش على الرقم يبقى ملوش لازمة. ✅ بص على الرقم وقرر: سجّل metric، أو رجّع حالة "غير مؤكد" للعميل. وتذكر إن الـ write مبيترجعش في الحالتين.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Reading a replica that just attached</b>
+<pre><code class="language-typescript">await replica.replicaof(masterHost, masterPort);
+const order = await replica.get("order:1");
+// راجع null ومفيش error: الـ sync لسه ما خلصش</code></pre></div>
+    <div class="good"><b>✅ Wait for the link</b>
+<pre><code class="language-typescript">await replica.replicaof(masterHost, masterPort);
+while (!(await replica.info("replication")).includes("master_link_status:up")) {
+  await new Promise((r) =&gt; setTimeout(r, 100));
+}
+const order = await replica.get("order:1");</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ replica لسه بتعمل sync بترد على الـ reads عادي من data فاضية أو قديمة، ومن غير أي error: حقيقي في الجزء 6، <code>null</code> لحوالي 5 ثواني. ✅ استنى <code>master_link_status:up</code>، وخليه جزء من الـ readiness probe قبل ما الـ traffic يوصلها.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Your own <code>--memkeys</code> <span class="lvl lvl-1">🟢 easy</span></b>
+    Write <code>topKeys(limit)</code>: the biggest keys by bytes, safe to run on production. Test it on a throwaway instance with 20,000 small keys and three big ones.
+    <div class="ar-note">اكتب <code>topKeys(limit)</code>: أكبر الـ keys بالـ bytes، وآمنة تتشغّل على production. جربها على instance مؤقتة فيها 20,000 key صغير و 3 كبار.</div>
+    <details><summary>Hint · تلميح</summary>
+      <code>SCAN</code> for names, <code>MEMORY USAGE</code> in a pipeline for sizes, and keep only the top few so memory stays small.
+      <div class="ar-note"><code>SCAN</code> للأسامي، و <code>MEMORY USAGE</code> في pipeline للأحجام، واحتفظ بالأكبر بس عشان الـ memory تفضل صغيرة.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-top-keys.ts"><code class="language-typescript">import { rmSync } from "node:fs";
+import path from "node:path";
+import { connect, startInstance, stopInstance } from "./instance.ts";
+
+const dir = path.join(process.env.WORK_DIR!, "x1");
+rmSync(dir, { recursive: true, force: true });
+const r = connect(startInstance(dir));
+
+// بيانات تجربة: 20k key صغير و 3 كبار
+for (let i = 0; i &lt; 20_000; i += 2000) {
+  const pipe = r.pipeline();
+  for (let j = i; j &lt; i + 2000; j++) pipe.set(`session:${j}`, "s");
+  await pipe.exec();
+}
+await r.set("export:report", "x".repeat(3_000_000));
+for (let i = 0; i &lt; 50_000; i += 5000) {
+  const pipe = r.pipeline();
+  for (let j = i; j &lt; i + 5000; j++) pipe.hset("cart:big", `f${j}`, "v");
+  await pipe.exec();
+}
+for (let i = 0; i &lt; 10_000; i += 1000) {
+  const pipe = r.pipeline();
+  for (let j = i; j &lt; i + 1000; j++) pipe.zadd("leaderboard", j, `u${j}`);
+  await pipe.exec();
+}
+
+// الحل: SCAN + MEMORY USAGE في pipeline، مش KEYS
+async function topKeys(limit: number) {
+  const top: { key: string; bytes: number }[] = [];
+  let cursor = "0";
+  let scanned = 0;
+  do {
+    const [next, keys] = await r.scan(cursor, "COUNT", 1000);
+    cursor = next;
+    scanned += keys.length;
+    const pipe = r.pipeline();
+    for (const k of keys) pipe.memory("USAGE", k);
+    const sizes = (await pipe.exec()) ?? [];
+    keys.forEach((key, i) =&gt; top.push({ key, bytes: Number(sizes[i][1] ?? 0) }));
+    top.sort((a, b) =&gt; b.bytes - a.bytes);
+    top.length = Math.min(top.length, limit);
+  } while (cursor !== "0");
+  return { scanned, top };
+}
+
+const { scanned, top } = await topKeys(4);
+console.log(`scanned=${scanned}`);
+for (const { key, bytes } of top) console.log(`${key.padEnd(16)} ${bytes}`);
+
+r.disconnect();
+stopInstance(dir);</code></pre>
+<pre><code class="language-plaintext">scanned=20003
+export:report    3000044
+cart:big         2225405
+leaderboard      800536
+session:13444    37</code></pre>
+      <div class="ar-note">مشي على كل الـ keys وطلّع الكبار بالترتيب. الـ <code>session:*</code> الصغيرين ظهروا بعد الكبار بفرق ضخم، وده اللي <code>--memkeys</code> بيعمله تقريبًا.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Split a big hash behind the same API <span class="lvl lvl-2">🟡 medium</span></b>
+    Write <code>BucketedHash</code> with <code>hset</code>, <code>hget</code> and a way to iterate everything, hashing each field to one of N keys. For 200,000 fields, compare memory with one big hash, and check that the buckets stay listpacks.
+    <div class="ar-note">اكتب <code>BucketedHash</code> فيها <code>hset</code> و <code>hget</code> وطريقة تلف بيها على كله، بحيث كل field يروح لواحد من N key. لـ 200,000 field، قارن الـ memory بـ hash واحد كبير، واتأكد إن الـ buckets لسه listpack.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-bucketed.ts"><code class="language-typescript">import { rmSync } from "node:fs";
+import path from "node:path";
+import type { Redis } from "ioredis";
+import { connect, infoField, startInstance, stopInstance } from "./instance.ts";
+
+const dir = path.join(process.env.WORK_DIR!, "x2");
+rmSync(dir, { recursive: true, force: true });
+const r = connect(startInstance(dir));
+
+// الـ hash الكبير بيتقسم buckets صغيرة بنفس الـ API
+class BucketedHash {
+  private redis: Redis;
+  private name: string;
+  private buckets: number;
+  constructor(redis: Redis, name: string, buckets: number) {
+    this.redis = redis;
+    this.name = name;
+    this.buckets = buckets;
+  }
+  // الـ CRC سهل، بس هنا hash بسيط يكفي: المهم إن الـ field يروح لنفس الـ bucket دايمًا
+  private bucketOf(field: string) {
+    let h = 0;
+    for (let i = 0; i &lt; field.length; i++) h = (Math.imul(h, 31) + field.charCodeAt(i)) &gt;&gt;&gt; 0;
+    return `${this.name}:${h % this.buckets}`;
+  }
+  hset(field: string, value: string) {
+    return this.redis.hset(this.bucketOf(field), field, value);
+  }
+  hget(field: string) {
+    return this.redis.hget(this.bucketOf(field), field);
+  }
+  async *hscanAll(): AsyncGenerator&lt;[string, string]&gt; {
+    for (let b = 0; b &lt; this.buckets; b++) {
+      const flat = await this.redis.hgetall(`${this.name}:${b}`);
+      for (const [f, v] of Object.entries(flat)) yield [f, v];
+    }
+  }
+}
+
+const used = async () =&gt; Number(await infoField(r, "memory", "used_memory"));
+const N = 200_000;
+const VALUE = "2026-11-04";
+
+let before = await used();
+for (let i = 0; i &lt; N; i += 10_000) {
+  const pipe = r.pipeline();
+  for (let j = i; j &lt; i + 10_000; j++) pipe.hset("seen", `user:${j}`, VALUE);
+  await pipe.exec();
+}
+console.log(`one hash: ${((await used()) - before) / 1024 / 1024 | 0} MB, encoding=${await r.object("ENCODING", "seen")}`);
+await r.flushall();
+
+// 1000 bucket لـ 200k field يعني ~200 في كل bucket: أقل من حد الـ 512 بأمان
+const seen = new BucketedHash(r, "seen", 1000);
+before = await used();
+for (let i = 0; i &lt; N; i += 2000) await Promise.all(Array.from({ length: 2000 }, (_, j) =&gt; seen.hset(`user:${i + j}`, VALUE)));
+console.log(`1000 buckets: ${((await used()) - before) / 1024 / 1024 | 0} MB, encoding=${await r.object("ENCODING", "seen:7")}, HLEN of one bucket=${await r.hlen("seen:7")}`);
+console.log(`hget user:4242 = ${await seen.hget("user:4242")}`);
+let count = 0;
+for await (const _ of seen.hscanAll()) count++;
+console.log(`iterated ${count} fields, one bucket at a time`);
+
+r.disconnect();
+stopInstance(dir);</code></pre>
+<pre><code class="language-plaintext">one hash: 11 MB, encoding=hashtable
+1000 buckets: 4 MB, encoding=listpack, HLEN of one bucket=197
+hget user:4242 = 2026-11-04
+iterated 200000 fields, one bucket at a time</code></pre>
+      <div class="ar-note">نفس الـ data بـ memory أقل بكتير، والـ encoding لسه <code>listpack</code> لأن كل bucket حوالي 200 field. والـ iteration بتمشي bucket bucket فمبتوقفش الـ server.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. A write that tells the truth <span class="lvl lvl-3">🔴 hard</span></b>
+    Write <code>writeThenWait()</code>, returning <code>"replicated"</code> or <code>"master-only"</code>. Test both results on two real instances, stalling the replica with <code>DEBUG SLEEP</code> (it needs <code>--enable-debug-command yes</code>). What should an API do with <code>"master-only"</code> on a coupon redemption?
+    <div class="ar-note">اكتب <code>writeThenWait()</code> بترجع <code>"replicated"</code> أو <code>"master-only"</code>. جرب النتيجتين على 2 instances حقيقيين، وعطّل الـ replica بـ <code>DEBUG SLEEP</code> (محتاج <code>--enable-debug-command yes</code>). الـ API المفروض يعمل إيه مع <code>"master-only"</code> وقت استخدام كوبون؟</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-safe-write.ts"><code class="language-typescript">import { rmSync } from "node:fs";
+import path from "node:path";
+import type { Redis } from "ioredis";
+import { connect, infoField, sleep, startInstance, stopInstance } from "./instance.ts";
+
+const root = process.env.WORK_DIR!;
+const dirA = path.join(root, "x3-a");
+const dirB = path.join(root, "x3-b");
+rmSync(dirA, { recursive: true, force: true });
+rmSync(dirB, { recursive: true, force: true });
+const portA = startInstance(dirA);
+const a = connect(portA);
+const b = connect(startInstance(dirB, "--enable-debug-command", "yes"));
+await a.config("SET", "repl-diskless-sync-delay", "0");
+await b.replicaof("127.0.0.1", portA);
+while ((await infoField(b, "replication", "master_link_status")) !== "up") await sleep(50);
+
+type Outcome = "replicated" | "master-only";
+
+// الـ write بيتعمل في كل الأحوال: الـ WAIT بيقولك وصل فين، مش بيلغيه
+async function writeThenWait(r: Redis, key: string, value: string, timeoutMs: number): Promise&lt;Outcome&gt; {
+  await r.set(key, value);
+  const replicas = await r.wait(1, timeoutMs);
+  return replicas &gt;= 1 ? "replicated" : "master-only";
+}
+
+console.log(`healthy replica: ${await writeThenWait(a, "coupon:1", "used", 200)}`);
+void b.call("DEBUG", "SLEEP", "1").catch(() =&gt; {});
+await sleep(50);
+const t0 = performance.now();
+const outcome = await writeThenWait(a, "coupon:2", "used", 200);
+console.log(`stalled replica: ${outcome} after ~${Math.round(performance.now() - t0)} ms, value on master=${await a.get("coupon:2")}`);
+
+await sleep(1100);
+a.disconnect();
+b.disconnect();
+stopInstance(dirA);
+stopInstance(dirB);</code></pre>
+<pre><code class="language-plaintext">healthy replica: replicated
+stalled replica: master-only after ~207 ms, value on master=used</code></pre>
+      <div class="ar-note">الـ replica السليمة: <code>replicated</code>. المتعطلة: <code>master-only</code> بعد الـ timeout، والقيمة لسه موجودة على الـ master. وللكوبون: رجّع نجاح وسجّل metric، وخلي مصدر الحقيقة صف في Postgres عليه unique constraint، لأن Redis هنا مش هو الضمان. الـ WAIT بيقولك إيه اللي حصل، مش بيضمن اللي هيحصل.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project / at work: audit one Redis <span class="lvl lvl-3">🔴 project</span></b>
+    For one real Redis (a staging one is fine): write down <code>maxmemory</code>, the policy, persistence, and <code>rdb_last_bgsave_status</code>. Answer "if this were wiped now, how would each kind of key come back?". Run <code>--memkeys</code> and <code>SLOWLOG GET 20</code>, and grep your code for <code>KEYS</code>, <code>HGETALL</code> and <code>DEL</code> on keys that can grow. Note any multi-key commands that would hit <code>CROSSSLOT</code> in a cluster. In your side project, write the rebuild function for whatever Redis holds.
+    <div class="ar-note">لـ Redis حقيقي واحد (staging ينفع): اكتب <code>maxmemory</code>، والـ policy، والـ persistence، و <code>rdb_last_bgsave_status</code>. وجاوب "لو ده اتمسح دلوقتي، كل نوع key هيرجع إزاي؟". شغّل <code>--memkeys</code> و <code>SLOWLOG GET 20</code>، ودوّر في الكود على <code>KEYS</code> و <code>HGETALL</code> و <code>DEL</code> على keys ممكن تكبر. وسجّل أي multi-key commands هتقع بـ <code>CROSSSLOT</code> في cluster. وفي مشروعك الجانبي، اكتب function الـ rebuild لأي حاجة في Redis.</div>
+    <details><summary>Hint · تلميح</summary>
+      Keep the answers in your project's <code>docs/</code> folder. A one-page table with instance, policy, persistence, what's in it and how to rebuild it is worth more than any dashboard during an incident.
+      <div class="ar-note">احتفظ بالإجابات في folder الـ <code>docs/</code> بتاع مشروعك. جدول صفحة واحدة فيه الـ instance والـ policy والـ persistence وفيها إيه وتتبني إزاي، أنفع من أي dashboard وقت الحادثة.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li><b>RDB:</b> snapshot; loses everything since. <b>AOF:</b> log; <code>everysec</code> by default. Use both for data you care about.</li>
+    <li><b>Process crash vs machine crash:</b> AOF lost 0 acknowledged writes on a process crash under every policy here; <code>fsync</code> matters when the machine dies.</li>
+    <li><b>Fork:</b> blocks about 10–13 ms per GB on Linux (docs), and copy-on-write can reach 2× memory during a save. Alert on <code>rdb_last_bgsave_status</code>.</li>
+    <li><b>Design rule:</b> anything in Redis can be rebuilt from Postgres. <code>WAIT</code> narrows loss without closing it and never rolls back.</li>
+    <li><b>Queues:</b> BullMQ needs <code>noeviction</code> and persistence on its own instance: 2000 jobs became 0 under <code>allkeys-lru</code>.</li>
+    <li><b>Eviction:</b> defaults are no limit and <code>noeviction</code>. <code>volatile-*</code> with no TTLs is <code>noeviction</code>. LRM (8.6+) ignores reads. Watch <code>evicted_keys</code> with hit ratio, and leave room for buffers.</li>
+    <li><b>Encodings:</b> hash 512 fields / 64-byte values, zset 128, set 128, intset 512. Crossing one is ≈5× memory. Buckets of 500 cost ≈9 bytes per value against ≈65 flat.</li>
+    <li><b>Big keys:</b> <code>DEL</code> on 1M fields blocked everyone ≈375 ms; <code>UNLINK</code> ≈1 ms. <code>SCAN</code>, never <code>KEYS</code>. Find them with <code>--memkeys</code> and <code>SLOWLOG</code>.</li>
+    <li><b>Replication:</b> async, link ≈5 s by default, reads <code>null</code> until up, <code>PSYNC</code> within the backlog. Promotion loses what hadn't arrived; split brain loses the old master's writes.</li>
+    <li><b>Sentinel:</b> HA for one master, 3+ Sentinels, client support. <b>Cluster:</b> 16384 slots, <code>CRC16 mod 16384</code>, MOVED and ASK, one slot per multi-key command, so hash tags <code>{user:1}</code>. Neither prevents lost writes or fixes a hot key.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li><b>الـ RDB:</b> snapshot، بيضيّع كل اللي بعده. <b>الـ AOF:</b> log، و <code>everysec</code> هو الـ default. استخدم الاتنين للـ data اللي تهمك.</li>
+      <li><b>crash الـ process غير crash الجهاز:</b> الـ AOF ضيّع 0 من اللي اتعمله ack لما الـ process وقع بكل الـ policies هنا، والـ <code>fsync</code> بيفرق لما الجهاز يموت.</li>
+      <li><b>الـ fork:</b> بيوقف حوالي 10–13ms لكل GB على Linux (من الـ docs)، والـ copy-on-write ممكن يوصل لضعف الـ memory وقت الـ save. حط alert على <code>rdb_last_bgsave_status</code>.</li>
+      <li><b>قاعدة التصميم:</b> أي حاجة في Redis لازم ينفع تتبني تاني من Postgres. و <code>WAIT</code> بيقلل الخسارة من غير ما يلغيها ومبيعملش rollback.</li>
+      <li><b>الـ queues:</b> BullMQ محتاج <code>noeviction</code> و persistence على instance لوحدها: 2000 job بقوا 0 تحت <code>allkeys-lru</code>.</li>
+      <li><b>الـ eviction:</b> الـ defaults مفيش حد و <code>noeviction</code>. <code>volatile-*</code> من غير TTLs هو <code>noeviction</code>. الـ LRM (من 8.6) بتتجاهل الـ reads. راقب <code>evicted_keys</code> مع الـ hit ratio، وسيب مكان للـ buffers.</li>
+      <li><b>الـ encodings:</b> الـ hash بـ 512 field أو قيم 64 byte، والـ zset بـ 128، والـ set بـ 128، والـ intset بـ 512. تعدية واحد منهم ≈5 أضعاف الـ memory. و buckets بـ 500 بتكلف ≈9 byte للقيمة مقابل ≈65 لو flat.</li>
+      <li><b>الـ big keys:</b> <code>DEL</code> على مليون field وقّف الكل ≈375ms، و <code>UNLINK</code> ≈1ms. <code>SCAN</code> مش <code>KEYS</code> أبدًا. ولاقيهم بـ <code>--memkeys</code> و <code>SLOWLOG</code>.</li>
+      <li><b>الـ replication:</b> asynchronous، والـ link ≈5 ثواني بالـ default، والقراءة <code>null</code> لحد ما تطلع، و <code>PSYNC</code> جوه الـ backlog. الـ promotion بيضيّع اللي موصلش، والـ split brain بيضيّع writes الـ master القديم.</li>
+      <li><b>الـ Sentinel:</b> HA لـ master واحد، و 3 Sentinels أو أكتر، ودعم من الـ client. <b>الـ Cluster:</b> 16384 slot، و <code>CRC16 mod 16384</code>، و MOVED و ASK، و slot واحد لكل multi-key command، فـ hash tags زي <code>{user:1}</code>. ولا واحد بيمنع ضياع الـ writes ولا بيحل hot key.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 09 · 2.9 — Persistence: RDB vs AOF، وإنك متعتمدش على Redis كـ source of truth</label>
+    <label><input type="checkbox" data-key="r2"> 09 · 2.9 — Eviction policies (<code>allkeys-lru</code>، <code>volatile-ttl</code>)، <code>maxmemory</code></label>
+    <label><input type="checkbox" data-key="r3"> 09 · 3.5 — Redis Cluster (hash slots، resharding، multi-key limitations) vs Sentinel (HA لـ single master) vs replication</label>
+    <label><input type="checkbox" data-key="r4"> 09 · 3.5 — Big keys وليه خطر (blocking)، <code>SCAN</code> بدل <code>KEYS</code></label>
+    <label><input type="checkbox" data-key="r5"> 09 · 3.5 — Memory analysis: <code>MEMORY USAGE</code>، <code>--bigkeys</code>، encoding optimizations</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/">Redis docs — Persistence</a></li>
+    <li><a href="https://redis.io/docs/latest/develop/reference/eviction/">Redis docs — Key eviction</a></li>
+    <li><a href="https://redis.io/docs/latest/operate/oss_and_stack/management/replication/">Redis docs — Replication</a></li>
+    <li><a href="https://redis.io/docs/latest/operate/oss_and_stack/management/sentinel/">Redis docs — High availability with Sentinel</a></li>
+    <li><a href="https://redis.io/docs/latest/operate/oss_and_stack/management/scaling/">Redis docs — Scale with Redis Cluster</a></li>
+    <li><a href="https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/memory-optimization/">Redis docs — Memory optimization</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <!-- ===== Prev / Next (use class="empty" on a span when there is no prev/next) ===== -->
+  <nav class="lesson-nav">
+    <a class="prev" href="./37-cache-failure-modes.html"><small>← Previous</small>37 · Cache Failures</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./39-queues-logs-streams-rabbitmq.html"><small>Next →</small>39 · Queues &amp; Streams</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

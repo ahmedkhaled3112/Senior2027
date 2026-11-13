@@ -1,0 +1,2339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Hash, GIN, GiST, BRIN &amp; When Indexes Hurt — 09 Databases</title>
+<meta name="section" content="09-Databases">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">09 · Databases</a></span>
+    <span>·</span>
+    <span>Lesson 11 / 43</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Hash, GIN, GiST, BRIN &amp; When Indexes Hurt</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 11 of 43 — Databases</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">PostgreSQL 18.4 · Node 22 · TypeScript 7</span>
+      <span class="chip">Prereq: <a href="./08-explain-scans-nodes.html">08 Reading EXPLAIN</a> · <a href="./10-btree-composite-partial-covering.html">10 B-tree Mastery</a></span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>09 · 2.2 — <b>Hash</b>: equality بس (نادر الاستخدام)</li>
+        <li>09 · 2.2 — <b>GIN</b>: JSONB، arrays، full-text — inverted index</li>
+        <li>09 · 2.2 — <b>GiST</b>: geometric، ranges، nearest neighbor</li>
+        <li>09 · 2.2 — <b>BRIN</b>: جداول ضخمة مرتبة طبيعيًا (timestamps) — صغير جدًا</li>
+        <li>09 · 2.2 — <b>إمتى الـ index بيضر</b>: write-heavy tables، low-selectivity columns (boolean)، indexes مش بتتستخدم (<code>pg_stat_user_indexes</code>)</li>
+        <li>09 · 2.2 — Index bloat و <code>REINDEX</code></li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Hash: long keys, equality only</a></li>
+      <li><a href="#p2">Part 2 — GIN: the inverted index and its write bill</a></li>
+      <li><a href="#p3">Part 3 — GiST: bounding predicates, ranges and nearest neighbour</a></li>
+      <li><a href="#p4">Part 4 — BRIN: tiny until the order breaks</a></li>
+      <li><a href="#p5">Part 5 — When an index hurts writes: HOT updates</a></li>
+      <li><a href="#p6">Part 6 — Unused, duplicate and invalid indexes</a></li>
+      <li><a href="#p7">Part 7 — Bloat and REINDEX</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>B-tree is the right default, and <a href="./10-btree-composite-partial-covering.html">lesson 10</a> covered it. This lesson covers the two questions that come next. First, which queries does a B-tree simply not serve: "orders whose attrs contain this", "the nearest five stores", "one day out of a billion rows"? Second, what is every index costing you? In this lesson's measurements, one index on one frequently updated column took a table from 97% HOT updates to 0% and multiplied WAL per update by about 4, without any query getting faster.</p>
+    <p>Interviewers ask "when would you not add an index?" because the answer separates people who add indexes from people who own a database. Every number below comes from real runs on Postgres 18.4 in a throwaway cluster on Windows, on a machine other jobs were loading. So treat times as <code>≈</code>, and trust buffers, row counts, sizes and WAL bytes.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ B-tree هو الاختيار الصح كبداية، و<a href="./10-btree-composite-partial-covering.html">lesson 10</a> غطّاه. الدرس ده بيجاوب على السؤالين اللي بعده. الأول: إيه الـ queries اللي الـ B-tree مش بيخدمها أصلًا؟ زي "الـ orders اللي الـ attrs بتاعتها فيها كذا"، و"أقرب 5 فروع"، و"يوم واحد من مليار صف". التاني: كل index بيكلّفك كام؟ في القياسات اللي هنا، index واحد على عمود بيتعدّل كتير نزّل الجدول من 97% HOT updates لـ 0%، وضرب الـ WAL لكل update في 4 تقريبًا، ومفيش query واحدة بقت أسرع.</p>
+    <p>الـ interviewer بيسأل "إمتى متضيفش index؟" لأن الإجابة بتفرّق بين اللي بيضيف indexes واللي شايل الـ database على كتافه. كل رقم هنا طالع من تشغيل حقيقي على Postgres 18.4 في cluster مؤقت على Windows، والجهاز كان عليه شغل تاني. فخد الأوقات على إنها <code>≈</code>، واعتمد على الـ buffers وعدد الصفوف والأحجام وبايتات الـ WAL.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Hash: long keys, equality only <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الـ Hash: مفاتيح طويلة و equality بس</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A Postgres hash index stores a 4-byte hash of the key in buckets, never the key itself. A lookup hashes the value, jumps to the bucket, and checks the candidates against the table. That gives it one strength: size and lookup speed barely depend on key length. The idea itself is the one from <a href="../../03-CS-Fundamentals/lessons/04-hash-tables-lru.html">hash tables in section 03</a>, stored on disk.</p>
+    <p>It also has hard limits: only the <code>=</code> operator, no uniqueness, no multi-column keys and no <code>ORDER BY</code>. The old warning "hash indexes aren't crash-safe" is out of date: they have been WAL-logged since PG 10. Tested here on 18.4: after an immediate shutdown with fresh rows in the index, recovery replayed the WAL and a lookup found the new row through the hash index. The docs add one limit worth knowing: they suit unique or nearly unique data, because many rows per bucket means overflow pages.</p>
+    <p>The comparison below is on 500k rows, with a 176-character URL and a UUID, each indexed both ways. On long URLs the hash wins on both counts: 40 MB against 109 MB, and about twice as fast. On UUIDs it's <em>bigger</em> than the B-tree (40 MB against 15 MB) and only about 1.5× as fast. In absolute terms that speed gain is around 5 µs per lookup, which a single network round trip dwarfs. So the honest verdict: a real win on long text with equality only, and rarely worth giving up uniqueness, ranges and sorting for.</p>
+  </section>
+
+<pre data-file="p1-hash.sql"><code class="language-sql">-- جدول short links فيه URLs طويلة و UUIDs: ده أحسن سيناريو ممكن للـ hash index
+create table short_links (
+  id    bigint generated always as identity primary key,
+  url   text not null,
+  token uuid not null
+);
+insert into short_links (url, token)
+select 'https://shop.example.com/products/' || md5(i::text)
+       || '/variants/' || md5((i * 7)::text)
+       || '?utm_source=newsletter&amp;utm_campaign=' || md5((i * 13)::text),
+       uuidv4()
+from generate_series(1, 500000) i;
+
+create index links_url_btree   on short_links (url);
+create index links_url_hash    on short_links using hash (url);
+create index links_token_btree on short_links (token);
+create index links_token_hash  on short_links using hash (token);
+analyze short_links;
+
+select indexrelname as index,
+       pg_size_pretty(pg_relation_size(indexrelid)) as size
+from pg_stat_user_indexes
+where relname = 'short_links' and indexrelname like 'links_%'
+order by indexrelname;</code></pre>
+<pre><code class="language-plaintext">       index       |  size  
+-------------------+--------
+ links_token_btree | 15 MB
+ links_token_hash  | 40 MB
+ links_url_btree   | 109 MB
+ links_url_hash    | 40 MB</code></pre>
+  <div class="ar-note">الـ token (UUID): الـ B-tree حجمه 15 MB والـ hash حجمه 40 MB، يعني الـ hash هنا أكبر. الـ url (نص طويل): الـ B-tree حجمه 109 MB والـ hash فضل 40 MB، لأنه بيخزّن hash مش النص نفسه، فطول المفتاح مبيفرقش معاه.</div>
+
+<pre data-file="p1-speed.sql"><code class="language-sql">create temp table probes as
+  select url, token from short_links order by random() limit 100000;
+create index links_url_btree   on short_links (url);
+create index links_url_hash    on short_links using hash (url);
+create index links_token_btree on short_links (token);
+create index links_token_hash  on short_links using hash (token);
+analyze short_links;
+analyze probes;
+-- إجبار nested loop عشان كل صف في probes يعمل lookup حقيقي في الـ index
+set enable_hashjoin = off;
+set enable_mergejoin = off;
+set enable_seqscan = off;
+set max_parallel_workers_per_gather = 0;
+
+begin; drop index links_url_btree;
+select count(*) from probes p join short_links l using (url);
+select count(*) from probes p join short_links l using (url);
+select count(*) from probes p join short_links l using (url);
+rollback;</code></pre>
+
+  <table>
+    <tr><th>Column</th><th>B-tree size</th><th>Hash size</th><th>B-tree: 100k lookups</th><th>Hash: 100k lookups</th></tr>
+    <tr><td><code>url</code> (176 chars)</td><td>109 MB</td><td>40 MB</td><td>≈800 ms</td><td>≈330 ms</td></tr>
+    <tr><td><code>token</code> (uuid)</td><td>15 MB</td><td>40 MB</td><td>≈480 ms</td><td>≈270 ms</td></tr>
+  </table>
+  <div class="ar-note">الصف الأول (الـ URL الطويل): الـ hash أصغر بحوالي 2.7 مرة وأسرع بحوالي 2.4 مرة. الصف التاني (الـ UUID): الـ hash أكبر بحوالي 2.7 مرة وأسرع بحوالي 1.7 مرة بس. الأوقات من آخر تشغيلتين من تلاتة لكل index عشان الـ cache يكون دافي، وفي تشغيل تاني كانت النسب حوالي 2.1 و 1.4، فالمهم الاتجاه مش الرقم بالظبط.</div>
+
+<pre data-file="p1-hash.sql"><code class="language-sql">-- القيود بتاعته: كل سطر هنا يا إما error حقيقي يا إما plan من غير الـ index
+create unique index on short_links using hash (url);
+create index on short_links using hash (url, token);
+begin;
+drop index links_url_btree;
+explain (costs off)
+select id from short_links where url &gt; 'https://shop.example.com/products/ff';
+explain (costs off)
+select id from short_links order by url limit 5;
+rollback;
+
+-- الميزة الوحيدة الواضحة: الـ hash بيخزّن 32-bit hash بس، فمش بيتأثر بطول النص
+create table signed_documents (
+  id   bigint generated always as identity primary key,
+  body text not null
+);
+insert into signed_documents (body)
+select string_agg(md5(i::text || g::text), '')
+from generate_series(1, 1000) i, generate_series(1, 200) g
+group by i;
+select length(body) as chars, pg_column_size(body) as stored_bytes
+from signed_documents limit 1;
+create index docs_body_btree on signed_documents (body);
+create index docs_body_hash on signed_documents using hash (body);
+select pg_size_pretty(pg_relation_size('docs_body_hash')) as hash_size;
+analyze signed_documents;
+explain (costs off)
+select id from signed_documents where body = 'abc';
+
+-- البديل اللي بيكسب غالبًا: B-tree على md5 كـ uuid، صغير و unique وبيقبل نفس السؤال
+create unique index links_url_md5 on short_links ((md5(url)::uuid));
+select pg_size_pretty(pg_relation_size('links_url_md5')) as btree_on_md5;
+explain (costs off)
+select id from short_links where md5(url)::uuid = md5('https://shop.example.com/x')::uuid;</code></pre>
+<pre><code class="language-plaintext">ERROR:  access method "hash" does not support unique indexes
+ERROR:  access method "hash" does not support multicolumn indexes
+ Gather
+   -&gt;  Parallel Seq Scan on short_links
+         Filter: (url &gt; 'https://shop.example.com/products/ff'::text)
+
+ Limit
+   -&gt;  Gather Merge
+         -&gt;  Sort
+               Sort Key: url
+               -&gt;  Parallel Seq Scan on short_links
+
+ chars | stored_bytes 
+-------+--------------
+  6400 |         6400
+
+ERROR:  index row size 6416 exceeds btree version 4 maximum 2704 for index "docs_body_btree"
+DETAIL:  Index row references tuple (5,82) in relation "signed_documents".
+HINT:  Values larger than 1/3 of a buffer page cannot be indexed.
+Consider a function index of an MD5 hash of the value, or use full text indexing.
+ hash_size 
+ 48 kB
+
+ Index Scan using docs_body_hash on signed_documents
+   Index Cond: (body = 'abc'::text)
+
+ btree_on_md5 
+ 15 MB
+
+ Index Scan using links_url_md5 on short_links
+   Index Cond: ((md5(url))::uuid = '4c55937c-6329-4682-efa9-80b5316bf6fb'::uuid)</code></pre>
+  <div class="ar-note">أول سطرين: Postgres بيرفض <code>unique</code> وبيرفض أكتر من عمود بـ error صريح. بعدهم الـ range والـ <code>ORDER BY</code> بيروحوا لـ Seq Scan لأن الـ hash مش عارف الترتيب أصلًا. في جزء <code>signed_documents</code>: نص طوله 6400 حرف، الـ B-tree رفضه بـ error الـ 2704 byte (الحد اللي شرحناه في <a href="./10-btree-composite-partial-covering.html">lesson 10</a>)، والـ hash عدّاه وحجمه 48 kB لـ 1000 صف. آخر حاجة: B-tree على <code>md5(url)::uuid</code> حجمه 15 MB وكمان <code>unique</code>، وده اللي الـ hash مش بيقدر يعمله.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ hash index في Postgres بيخزّن hash طوله 4 bytes للمفتاح جوه buckets، ومبيخزّنش المفتاح نفسه أبدًا. الـ lookup بيحسب الـ hash، يروح للـ bucket، ويراجع المرشحين على الجدول. ده بيديله ميزة واحدة: الحجم وسرعة الـ lookup تقريبًا مش بيتأثروا بطول المفتاح. الفكرة نفسها هي بتاعة <a href="../../03-CS-Fundamentals/lessons/04-hash-tables-lru.html">الـ hash tables في section 03</a> بس على الـ disk.</p>
+    <p>وعنده قيود حادة: <code>=</code> بس، مفيش uniqueness، مفيش أكتر من عمود، ومفيش <code>ORDER BY</code>. التحذير القديم "الـ hash مش crash-safe" بقى قديم: من PG 10 وهو بيتكتب في الـ WAL. جرّبناها هنا على 18.4: عملنا immediate shutdown وفيه صفوف جديدة في الـ index، والـ recovery عمل replay للـ WAL، والـ lookup لقى الصف الجديد من الـ hash index. والـ docs بتضيف حد مهم: هو مناسب للـ data الـ unique أو القريبة من كده، لأن صفوف كتير في نفس الـ bucket معناها overflow pages.</p>
+    <p>القياس على 500 ألف صف، بـ URL طوله 176 حرف و UUID، وكل واحد متعمله index بالطريقتين. على الـ URL الطويل الـ hash كسب في الاتنين: 40 MB قصاد 109 MB، وأسرع حوالي الضعف. على الـ UUID طلع <em>أكبر</em> من الـ B-tree (40 MB قصاد 15 MB) وأسرع حوالي 1.5 مرة بس. وبالأرقام المطلقة المكسب ده حوالي 5 µs في الـ lookup، وأي network round trip بيبلعه. فالحكم بصراحة: مكسب حقيقي على نص طويل و equality بس، ونادرًا ما يستاهل تتنازل عن الـ uniqueness والـ ranges والترتيب.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عندك جدول <code>webhook_events</code> بتعمل عليه dedupe بـ signature طولها كام KB، أو <code>short_links</code> بتدوّر فيه بالـ URL الكامل. الـ B-tree هيقع على حد الـ 2704 byte أو هيبقى ضخم، فـ hash index على العمود بيحل المشكلة. بس لو محتاج الـ dedupe يتفرض من الـ database، استخدم <code>create unique index on webhook_events ((md5(payload)::uuid))</code>: حجمه صغير و unique، والتمن إنك لازم تكتب نفس الـ expression في كل query (<a href="./10-btree-composite-partial-covering.html">lesson 10</a>). ولو الـ input جاي من حد ممكن يتعمد collisions، استخدم <code>sha256</code> بدل <code>md5</code>. الغلطة الشائعة: تستخدم hash على UUID عشان "أسرع"، فتدفع مساحة 2.7 مرة وتخسر الـ unique.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "When would you pick a hash index over a B-tree in Postgres?" → Only for equality lookups on long values you can't or won't sort, such as a multi-KB payload that exceeds the B-tree's 2704-byte limit. It can't be unique, multi-column or serve ranges and sorts. On short keys like UUIDs it can be bigger than the B-tree. Often a B-tree on a hash expression, such as <code>md5(url)::uuid</code>, is the better answer because it can enforce uniqueness. The "not crash-safe" objection stopped being true in PG 10.
+    <div class="ar-note">"إمتى تختار hash index بدل B-tree في Postgres؟" ← بس في الـ equality على قيم طويلة مش محتاج ترتبها، زي payload حجمه كام KB وبيعدّي حد الـ 2704 byte بتاع الـ B-tree. مينفعش يبقى unique ولا multi-column ولا يخدم ranges أو sort. وعلى المفاتيح القصيرة زي الـ UUID ممكن يطلع أكبر من الـ B-tree. وكتير الأحسن B-tree على hash expression زي <code>md5(url)::uuid</code> لأنه يقدر يفرض الـ uniqueness. واعتراض "مش crash-safe" بطل صحيح من PG 10.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — GIN: the inverted index and its write bill <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ GIN: الـ inverted index وفاتورة الكتابة بتاعته</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A B-tree has one entry per row. GIN (Generalized Inverted Index) flips that: one entry per <em>element</em>, each pointing at a sorted posting list of the rows containing it. A row with three tags appears under three keys. That is what makes "which rows contain X?" fast for jsonb, arrays, <code>tsvector</code> and trigrams.</p>
+    <p>On 500k catalog items, <code>attrs @&gt; '{"brand": "brand-37", "color": "red"}'</code> went from a parallel Seq Scan touching 8470 buffers to a Bitmap Index Scan touching 34 index buffers plus the 530 heap pages holding the 543 matches. Which opclass to use, <code>jsonb_ops</code> or <code>jsonb_path_ops</code>, is in <a href="./07-upserts-semijoins-jsonb-arrays.html">lesson 07</a>; full-text and trigram use in <a href="./12-search-fts-trgm-elasticsearch.html">lesson 12</a>.</p>
+    <p>The index doesn't remove the need to read matching rows, though. <code>tags &amp;&amp; array['clearance','gift']</code> matched 113127 rows: 23 index buffers, then every one of the table's 8470 pages. GIN gives you no ordering and no index-only scan either: <code>ORDER BY attrs</code> sorts, and <code>attrs -&gt;&gt; 'brand' = ...</code> doesn't use it at all. That form needs an expression index (<a href="./10-btree-composite-partial-covering.html">lesson 10</a>).</p>
+  </section>
+
+<pre class="diagram">
+ rows in the table                 GIN: element -&gt; posting list (sorted row ids)
+ --------------------------        ---------------------------------------------
+ row 1  tags = {sale, gift}        bundle  -&gt; [ 3 ]
+ row 2  tags = {new}               gift    -&gt; [ 1, 4 ]
+ row 3  tags = {sale, bundle}      new     -&gt; [ 2 ]
+ row 4  tags = {gift, sale}        sale    -&gt; [ 1, 3, 4 ]
+
+ tags @&gt; {sale, gift}    -&gt;  intersect [1,3,4] and [1,4]  -&gt;  rows 1, 4
+ tags &amp;&amp; {new, bundle}   -&gt;  union     [2] and [3]        -&gt;  rows 2, 3
+</pre>
+  <div class="ar-note">على الشمال الصفوف، وعلى اليمين الـ GIN: كل tag بيشاور على قايمة مرتبة بأرقام الصفوف اللي فيها، ودي اسمها posting list. السؤال بتاع <code>@&gt;</code> (فيه الاتنين) هو تقاطع القايمتين فبيطلع الصفين 1 و 4. وسؤال <code>&amp;&amp;</code> (فيه أي واحد) هو اتحاد القايمتين فبيطلع الصفين 2 و 3.</div>
+
+<pre data-file="p2-gin.sql"><code class="language-sql">-- كتالوج منتجات: attrs متغيّرة من tenant للتاني، و tags كـ array
+create table catalog_items (
+  id    bigint generated always as identity primary key,
+  name  text   not null,
+  attrs jsonb  not null,
+  tags  text[] not null
+);
+select setseed(0.42);
+insert into catalog_items (name, attrs, tags)
+select 'Item ' || i,
+       jsonb_build_object(
+         'color', (array['red','blue','black','white','green'])[1 + floor(random() * 5)::int],
+         'brand', 'brand-' || floor(random() * 200)::int,
+         'size',  (array['s','m','l','xl'])[1 + floor(random() * 4)::int]
+       ),
+       coalesce((select array_agg(t)
+                 from unnest(array['sale','new','bundle','clearance','gift','eco','imported','local']) as t
+                 where random() &lt; 0.12 + i * 0), '{}')
+from generate_series(1, 500000) i;
+analyze catalog_items;
+
+create index catalog_attrs_gin on catalog_items using gin (attrs jsonb_path_ops);
+create index catalog_tags_gin  on catalog_items using gin (tags);
+analyze catalog_items;
+
+explain (analyze, costs off, timing off)
+select id from catalog_items
+where attrs @&gt; '{"brand": "brand-37", "color": "red"}';
+
+explain (analyze, costs off, timing off)
+select count(*) from catalog_items
+where tags &amp;&amp; array['clearance', 'gift'];
+
+-- إيه اللي الـ GIN مبيعرفش يعمله: مفيش ترتيب، ومفيش index only
+explain (costs off)
+select id from catalog_items order by attrs limit 5;
+explain (costs off)
+select id from catalog_items where attrs -&gt;&gt; 'brand' = 'brand-37';</code></pre>
+<pre><code class="language-plaintext">-- jsonb @&gt; before the index
+ Gather (actual rows=543.00 loops=1)
+   Buffers: shared hit=8470
+   -&gt;  Parallel Seq Scan on catalog_items (actual rows=181.00 loops=3)
+         Filter: (attrs @&gt; '{"brand": "brand-37", "color": "red"}'::jsonb)
+         Rows Removed by Filter: 166486
+         Buffers: shared hit=8470
+ Execution Time: 140.597 ms
+
+-- jsonb @&gt; with GIN
+ Bitmap Heap Scan on catalog_items (actual rows=543.00 loops=1)
+   Recheck Cond: (attrs @&gt; '{"brand": "brand-37", "color": "red"}'::jsonb)
+   Heap Blocks: exact=530
+   Buffers: shared hit=564
+   -&gt;  Bitmap Index Scan on catalog_attrs_gin (actual rows=543.00 loops=1)
+         Index Cond: (attrs @&gt; '{"brand": "brand-37", "color": "red"}'::jsonb)
+         Index Searches: 1
+         Buffers: shared hit=34
+ Execution Time: 1.907 ms
+
+-- array &amp;&amp; matching 113127 rows
+ Aggregate (actual rows=1.00 loops=1)
+   Buffers: shared hit=8493
+   -&gt;  Bitmap Heap Scan on catalog_items (actual rows=113127.00 loops=1)
+         Recheck Cond: (tags &amp;&amp; '{clearance,gift}'::text[])
+         Heap Blocks: exact=8470
+         Buffers: shared hit=8493
+         -&gt;  Bitmap Index Scan on catalog_tags_gin (actual rows=113127.00 loops=1)
+               Index Cond: (tags &amp;&amp; '{clearance,gift}'::text[])
+               Index Searches: 1
+               Buffers: shared hit=23
+ Execution Time: 40.756 ms
+
+-- what GIN can't do
+ Limit
+   -&gt;  Gather Merge
+         -&gt;  Sort
+               Sort Key: attrs
+               -&gt;  Parallel Seq Scan on catalog_items
+
+ Gather
+   -&gt;  Parallel Seq Scan on catalog_items
+         Filter: ((attrs -&gt;&gt; 'brand'::text) = 'brand-37'::text)</code></pre>
+  <div class="ar-note">قبل الـ index: Seq Scan بيقرا 8470 page عشان 543 صف. بعد الـ GIN: 34 buffer في الـ index و 530 page في الجدول، والوقت نزل من ≈140 ms لـ ≈2 ms. في سؤال الـ <code>&amp;&amp;</code>: الـ index خد 23 buffer بس، لكن الصفوف المطابقة 113127 فالجدول كله اتقرا (8470 page)، يعني الـ index ميقدرش ينقذك من query نتيجتها كبيرة. آخر بلوك: <code>ORDER BY attrs</code> و <code>attrs -&gt;&gt; 'brand'</code> الاتنين راحوا Seq Scan لأن الـ GIN مش بيخدمهم.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p>Writes pay for this. One inserted row can touch dozens of posting lists, so GIN has a shortcut, <code>fastupdate</code> (on by default): new entries go to an unsorted <em>pending list</em> and get merged into the main structure later, by vacuum, autoanalyze, <code>gin_clean_pending_list()</code>, or when the list passes <code>gin_pending_list_limit</code> (4 MB by default). Inserts get cheaper on average, but two costs appear: every search must scan the pending list sequentially, and the insert that overflows the list does the whole merge.</p>
+    <p>The script below measures all of it: a 100k-row bulk insert in one statement, 10k single-row inserts like an API would do, and a search against a full pending list. Bulk insert is where the index cost shows clearly, and single-row p99 barely moves because the round trip hides it. The <code>max</code> column shows the merge landing on one unlucky request. In the run shown, bulk insert cost about ×22 with <code>fastupdate</code> off and ×8 with the default, the worst single insert with the default was ≈2.8 s, and a full pending list made the search about 4.5× slower (935 buffers against 297). Ratios move with machine load: another run on this machine gave ×11 and ×2 for bulk, and 5 ms against 74 ms for the worst insert. The order never changed, though.</p>
+  </section>
+
+<pre data-file="gin-writes.ts"><code class="language-typescript">import pg from "pg";
+
+// حارس: من غير port صريح الـ driver بيروح للـ default، وده ممكن يبقى الـ database الحقيقية بتاعتك
+const url = process.env.DATABASE_URL ?? "";
+const port = URL.canParse(url) ? new URL(url).port : "";
+const n = Number(port);
+if (!/^\d+$/.test(port) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) throw new Error("refusing port " + port);
+const client = new pg.Client({ connectionString: url });
+await client.connect();
+
+// تعريف الجدول: 200 ألف صف جاهزين عشان الـ GIN يبقى ليه حجم حقيقي
+async function freshTable(indexSql: string): Promise&lt;void&gt; {
+  await client.query(`drop table if exists catalog_items`);
+  await client.query(`
+    create table catalog_items (
+      id bigint generated always as identity primary key,
+      attrs jsonb not null
+    ) with (autovacuum_enabled = off)`);
+  await client.query(`
+    insert into catalog_items (attrs)
+    select jsonb_build_object('brand', 'brand-' || (i % 200), 'sku', 'sku-' || i, 'color', 'c' || (i % 7),
+                              'size', 's' || (i % 9), 'origin', 'o' || (i % 40), 'batch', 'b' || (i % 5000))
+    from generate_series(1, 200000) i`);
+  if (indexSql) await client.query(indexSql);
+}
+
+// الكتابة الأولى: statement واحد بيدخّل 100 ألف صف، هنا تكلفة الـ index بتبان صافية
+const bulkInsert = `
+  insert into catalog_items (attrs)
+  select jsonb_build_object('brand', 'brand-' || (i % 200), 'sku', 'new-sku-' || i, 'color', 'c' || (i % 7),
+                            'size', 's' || (i % 9), 'origin', 'o' || (i % 40), 'batch', 'b' || (i % 5000))
+  from generate_series(1, 100000) i`;
+
+// الكتابة التانية: 10 آلاف insert، كل واحد transaction لوحده زي API حقيقي
+async function insertOneByOne(n: number): Promise&lt;{ p99Ms: number; maxMs: number }&gt; {
+  const samples: number[] = [];
+  for (let i = 0; i &lt; n; i++) {
+    const t = performance.now();
+    await client.query(`insert into catalog_items (attrs) values ($1)`, [
+      JSON.stringify({ brand: `brand-${i % 200}`, sku: `api-sku-${i}`, color: `c${i % 7}`, size: `s${i % 9}`, origin: `o${i % 40}`, batch: `b${i % 5000}` }),
+    ]);
+    samples.push(performance.now() - t);
+  }
+  samples.sort((a, b) =&gt; a - b);
+  return { p99Ms: +samples[Math.floor(n * 0.99)]!.toFixed(2), maxMs: Math.round(samples.at(-1)!) };
+}
+
+const median = (xs: number[]): number =&gt; [...xs].sort((a, b) =&gt; a - b)[Math.floor(xs.length / 2)]!;
+const variants: [string, string][] = [
+  ["no GIN", ""],
+  ["GIN fastupdate=off", `create index items_gin on catalog_items using gin (attrs) with (fastupdate = off)`],
+  ["GIN fastupdate=on (default)", `create index items_gin on catalog_items using gin (attrs)`],
+];
+
+for (const [label, ddl] of variants) {
+  const bulkMs: number[] = [];
+  const rows: { p99Ms: number; maxMs: number }[] = [];
+  for (let run = 0; run &lt; 3; run++) {
+    await freshTable(ddl);
+    const t0 = performance.now();
+    await client.query(bulkInsert);
+    bulkMs.push(performance.now() - t0);
+    await freshTable(ddl);
+    rows.push(await insertOneByOne(10000));
+  }
+  const p99 = median(rows.map((r) =&gt; r.p99Ms));
+  const max = median(rows.map((r) =&gt; r.maxMs));
+  console.log(`${label.padEnd(28)} bulk 100k≈${String(Math.round(median(bulkMs))).padStart(6)} ms   one-by-one p99≈${String(p99).padStart(5)} ms  max≈${String(max).padStart(4)} ms`);
+}
+
+// الـ pending list: نكبّره عمدًا (64MB) ونشوف القراءة بتدفع التمن إزاي
+await client.query(`create extension if not exists pgstattuple`);
+await freshTable(`create index items_gin on catalog_items using gin (attrs) with (gin_pending_list_limit = 65536)`);
+await insertOneByOne(20000);
+
+async function report(label: string): Promise&lt;void&gt; {
+  const { rows: [stat] } = await client.query(`select pending_pages, pending_tuples from pgstatginindex('items_gin')`);
+  const q = `select id from catalog_items where attrs @&gt; '{"brand":"brand-37","color":"c2"}'`;
+  // تكرار الـ query عشان الـ cache يبقى دافي ونقيس CPU مش disk
+  for (let i = 0; i &lt; 3; i++) await client.query(q);
+  const { rows } = await client.query(`explain (analyze, costs off, timing off) ${q}`);
+  const lines: string[] = rows.map((r: { "QUERY PLAN": string }) =&gt; r["QUERY PLAN"]);
+  const buffers = lines.find((l) =&gt; /Buffers/.test(l))!.trim();
+  const time = lines.find((l) =&gt; /Execution Time/.test(l))!.trim();
+  console.log(`${label.padEnd(20)} pending_pages=${String(stat.pending_pages).padStart(4)}  pending_tuples=${String(stat.pending_tuples).padStart(6)}  ${buffers}  ${time}`);
+}
+
+await report("pending list full");
+const { rows: [merged] } = await client.query(`select gin_clean_pending_list('items_gin') as merged_pages`);
+console.log(`gin_clean_pending_list merged ${merged.merged_pages} pages`);
+await report("after merge");
+
+await client.end();</code></pre>
+<pre><code class="language-plaintext">no GIN                       bulk 100k≈   868 ms   one-by-one p99≈ 0.61 ms  max≈   7 ms
+GIN fastupdate=off           bulk 100k≈ 19026 ms   one-by-one p99≈ 0.75 ms  max≈ 268 ms
+GIN fastupdate=on (default)  bulk 100k≈  7075 ms   one-by-one p99≈ 0.82 ms  max≈2812 ms
+pending list full    pending_pages= 646  pending_tuples= 20000  Buffers: shared hit=935  Execution Time: 6.907 ms
+gin_clean_pending_list merged 646 pages
+after merge          pending_pages=   0  pending_tuples=     0  Buffers: shared hit=297  Execution Time: 1.522 ms</code></pre>
+  <div class="ar-note">أول 3 سطور: الـ bulk insert لـ 100 ألف صف كان ≈868 ms من غير GIN، و≈19 ثانية بـ <code>fastupdate=off</code> (حوالي 22 مرة)، و≈7 ثواني بالـ default (حوالي 8 مرات). الـ p99 في الـ insert الواحد تقريبًا مبيتحركش (0.6 لـ 0.8 ms) لأن الـ round trip مغطّي عليه، لكن الـ max بيطلع ≈2.8 ثانية بالـ default، وده الـ merge اللي وقع على request واحد سيء الحظ. آخر 3 سطور: بحث والـ pending list فيها 20 ألف tuple قرا 935 buffer في ≈6.9 ms، وبعد الـ merge بقى 297 buffer في ≈1.5 ms، يعني حوالي 4.5 مرات أسرع. والنسب بتتغير مع ضغط الجهاز: في تشغيل تاني الـ bulk كان 11 مرة و 2 مرة وأسوأ insert كان 5 ms قصاد 74 ms، بس الترتيب نفسه متغيرش.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ B-tree فيه entry واحد لكل صف. الـ GIN (Generalized Inverted Index) بيقلب الآية: entry لكل <em>عنصر</em>، وكل واحد بيشاور على posting list مرتبة بالصفوف اللي فيها العنصر ده. صف فيه 3 tags بيظهر تحت 3 مفاتيح. وده اللي بيخلّي سؤال "إيه الصفوف اللي فيها X؟" سريع مع الـ jsonb والـ arrays والـ <code>tsvector</code> والـ trigrams.</p>
+    <p>على 500 ألف منتج، <code>attrs @&gt; '{"brand": "brand-37", "color": "red"}'</code> اتحوّل من parallel Seq Scan بيلمس 8470 buffer لـ Bitmap Index Scan بيلمس 34 buffer في الـ index، زائد الـ 530 page في الجدول اللي فيها الـ 543 نتيجة. تختار <code>jsonb_ops</code> ولا <code>jsonb_path_ops</code>؟ ده في <a href="./07-upserts-semijoins-jsonb-arrays.html">lesson 07</a>، واستخدامه للـ full-text والـ trigrams في <a href="./12-search-fts-trgm-elasticsearch.html">lesson 12</a>.</p>
+    <p>بس الـ index مش بيلغي قراية الصفوف المطابقة. <code>tags &amp;&amp; array['clearance','gift']</code> طابق 113127 صف: 23 buffer في الـ index، وبعدين كل الـ 8470 page بتوع الجدول. وكمان الـ GIN مبيديكش ترتيب ولا index-only scan: <code>ORDER BY attrs</code> بيعمل sort، و<code>attrs -&gt;&gt; 'brand' = ...</code> مبيستخدمهوش خالص، ودي محتاجة expression index (<a href="./10-btree-composite-partial-covering.html">lesson 10</a>).</p>
+    <p>الكتابة هي اللي بتدفع التمن. صف واحد ممكن يلمس عشرات الـ posting lists، فالـ GIN عنده اختصار اسمه <code>fastupdate</code> (شغال by default): الـ entries الجديدة بتروح لـ <em>pending list</em> مش مرتبة، وبتتدمج في الهيكل الأساسي بعدين عن طريق vacuum أو autoanalyze أو <code>gin_clean_pending_list()</code>، أو لما القايمة تعدّي <code>gin_pending_list_limit</code> (4 MB by default). الـ insert بيرخص في المتوسط، بس بيظهر تمنين: كل بحث لازم يقرا الـ pending list بالتتابع، والـ insert اللي بيفيّض القايمة هو اللي بيعمل الـ merge كله.</p>
+    <p>السكريبت فوق بيقيس ده كله: bulk insert لـ 100 ألف صف في statement واحد، و10 آلاف insert واحد واحد زي الـ API، وبحث على pending list مليانة. الـ bulk هو اللي تكلفة الـ index بتبان فيه بوضوح، والـ p99 في الـ insert الواحد بالكاد بيتحرك لأن الـ round trip مغطّي عليه. وعمود <code>max</code> بيوريك الـ merge وهو واقع على request واحد.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      فلاتر منتجات لكل tenant: الـ attributes مختلفة من tenant للتاني، فبتخزّنها <code>jsonb</code> وتفلتر بـ <code>@&gt;</code> عليها GIN. لو جالك alert إن <code>POST /products</code> ساعات بياخد ثانيتين والـ p50 تمام، بص على الـ pending list بـ <code>pgstatginindex</code>. الحل يا إما <code>fastupdate = off</code> لو ثبات الـ latency أهم، يا إما <code>gin_pending_list_limit</code> أصغر مع autovacuum أنشط. ولو بتعمل import كبير، امسح الـ GIN وابنيه بعد الـ import زي ما الـ docs بتقول. الغلطة الشائعة: تضيف GIN على عمود بيتكتب فيه طول الوقت عشان فلتر بيتستخدم مرة في اليوم.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: fastupdate on or off</b>
+    On: cheaper writes on average, slower searches while the list is full, and a rare big spike on one insert. Off: every insert pays in full, with steady latency. Pick off when a latency SLO matters more than write throughput, and keep the pending list small with autovacuum when you leave it on.
+    <div class="ar-note">الـ on: كتابة أرخص في المتوسط، وبحث أبطأ طول ما القايمة مليانة، وقفزة كبيرة نادرة على insert واحد. الـ off: كل insert بيدفع تمنه كامل، بس الـ latency ثابتة. اختار الـ off لو الـ latency SLO أهم من سرعة الكتابة، ولو سبته on خلّي autovacuum يحافظ على القايمة صغيرة.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — GiST: bounding predicates, ranges and nearest neighbour <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ GiST: الـ bounding predicates والـ ranges وأقرب جار</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>GiST (Generalized Search Tree) is a balanced tree of <em>bounding predicates</em>. Each entry in an inner page says "everything below me fits inside this box or range". Unlike a B-tree, sibling entries can overlap, so a search may have to go down several branches. That's the price of indexing things with no single sort order: ranges, geometry, even text signatures.</p>
+    <p><strong>Ranges.</strong> The exclusion constraint from <a href="./04-types-constraints.html">lesson 04</a> is a GiST index underneath, and it costs real space: 16 MB on 200k bookings against 4408 kB for the primary key. It also serves queries: an overlap search for one room used an Index Only Scan with 5 buffers. <code>btree_gist</code> is what lets a plain <code>room_id</code> join the range in the same index.</p>
+    <p><strong>Nearest neighbour.</strong> <code>ORDER BY location &lt;-&gt; point(31.2, 30.0) LIMIT 5</code> without an index reads the whole table and sorts: 2539 buffers on 300k stores. With GiST the plan shows <code>Order By</code> inside the Index Scan and stops after 5 rows: 11 buffers. It walks the tree with a priority queue, nearest box first, so nothing else gets sorted. One caveat: <code>point</code> distance is flat-plane maths on raw coordinates, not metres on a globe. PostGIS is the real tool for geography. It isn't installed here, so it's <strong>not run here</strong>.</p>
+    <p><strong>Lossy results.</strong> GiST often stores an approximation. A polygon's index entry is its bounding box, so a match in the index is only a "maybe": the plan rechecks against the table. Here the index returned 239 candidates, the recheck removed 116, and 123 were real. That's what <code>Rows Removed by Index Recheck</code> means, and a high number there tells you the approximation is costing you. <strong>SP-GiST</strong> is the sibling for space you can split without overlap (quad-trees, radix trees): on the same points it was 13 MB against 19 MB and also served nearest-neighbour search.</p>
+  </section>
+
+<pre class="diagram">
+ root     [ box A: x 22..27 ]              [ box B: x 26..32 ]     boxes may overlap
+             /          \                     /           \
+ inner   [ A1 ]        [ A2 ]             [ B1 ]         [ B2 ]
+            |             |                  |              |
+ leaf   store 7, 12   store 3, 40        store 5, 9     store 1, 88
+
+ search x = 26.5:   A and B both might match, so both branches are visited
+ nearest neighbour: a priority queue ordered by distance to each box opens the
+                    closest box first, and the scan stops after LIMIT rows
+</pre>
+  <div class="ar-note">كل entry في الشجرة بيقول "كل اللي تحتي جوه الـ box ده"، والـ boxes ممكن تتداخل. لو بتدوّر على x = 26.5 فالـ box A و B الاتنين ممكن يطابقوا، فبينزل في الفرعين، وده الفرق عن الـ B-tree. وفي أقرب جار: طابور أولويات مرتب بالمسافة لكل box، بيفتح الأقرب الأول، ويقف بعد عدد الـ LIMIT من الصفوف من غير ما يرتب كل حاجة.</div>
+
+<pre data-file="p3-gist.sql"><code class="language-sql">-- الجزء الأول: range + exclusion constraint، نفس فكرة lesson 04 بس هنشوف الـ index نفسه
+create extension btree_gist;
+create table room_bookings (
+  id      bigint generated always as identity primary key,
+  room_id int not null,
+  during  tstzrange not null,
+  exclude using gist (room_id with =, during with &amp;&amp;)
+);
+insert into room_bookings (room_id, during)
+select (i % 500) + 1,
+       tstzrange(timestamptz '2026-01-01' + (i * interval '1 hour'),
+                 timestamptz '2026-01-01' + (i * interval '1 hour') + interval '30 minutes')
+from generate_series(1, 200000) i;
+analyze room_bookings;
+
+select indexrelname as index, pg_size_pretty(pg_relation_size(indexrelid)) as size
+from pg_stat_user_indexes where relname = 'room_bookings';
+
+insert into room_bookings (room_id, during)
+values (43, tstzrange('2026-01-02 18:10+00', '2026-01-02 18:20+00'));
+
+explain (analyze, costs off, timing off, summary off)
+select count(*) from room_bookings
+where room_id = 43
+  and during &amp;&amp; tstzrange('2026-03-01', '2026-03-08');
+
+-- الجزء التاني: أقرب الفروع، عندنا 300 ألف فرع على الخريطة
+create table stores (
+  id       bigint generated always as identity primary key,
+  name     text  not null,
+  location point not null
+);
+select setseed(0.7);
+insert into stores (name, location)
+select 'Store ' || i, point(22 + random() * 10, 25 + random() * 10)
+from generate_series(1, 300000) i;
+analyze stores;
+
+explain (analyze, costs off, timing off, summary off)
+select id, name, location &lt;-&gt; point(31.2, 30.0) as distance
+from stores
+order by location &lt;-&gt; point(31.2, 30.0)
+limit 5;
+
+create index stores_location_gist on stores using gist (location);
+analyze stores;
+
+explain (analyze, costs off, timing off, summary off)
+select id, name, location &lt;-&gt; point(31.2, 30.0) as distance
+from stores
+order by location &lt;-&gt; point(31.2, 30.0)
+limit 5;
+
+select id, name, round((location &lt;-&gt; point(31.2, 30.0))::numeric, 4) as distance
+from stores
+order by location &lt;-&gt; point(31.2, 30.0)
+limit 5;
+
+select pg_size_pretty(pg_relation_size('stores_location_gist')) as gist_size,
+       pg_size_pretty(pg_relation_size('stores')) as table_size;
+
+-- الجزء التالت: lossy: مناطق التوصيل كـ polygons، والـ index شايل bounding box بس
+create table delivery_zones (
+  id   bigint generated always as identity primary key,
+  area polygon not null
+);
+select setseed(0.3);
+insert into delivery_zones (area)
+select format('((%s,%s),(%s,%s),(%s,%s))', x, y, x + 0.5, y, x, y + 0.5)::polygon
+from (select 22 + random() * 10 as x, 25 + random() * 10 as y
+      from generate_series(1, 100000)) s;
+create index zones_area_gist on delivery_zones using gist (area);
+analyze delivery_zones;
+
+explain (analyze, costs off, timing off, summary off)
+select count(*) from delivery_zones
+where area @&gt; polygon '((31.2,30.0),(31.2001,30.0),(31.2,30.0001))';
+
+-- اسمه بس هنا: SP-GiST نفس الفكرة على مساحة بتتقسم من غير تداخل (quad-tree و radix)
+create index stores_location_spgist on stores using spgist (location);
+select pg_size_pretty(pg_relation_size('stores_location_spgist')) as spgist_size;
+begin;
+drop index stores_location_gist;
+explain (costs off)
+select id from stores order by location &lt;-&gt; point(31.2, 30.0) limit 5;
+rollback;</code></pre>
+<pre><code class="language-plaintext">               index               |  size   
+-----------------------------------+---------
+ room_bookings_pkey                | 4408 kB
+ room_bookings_room_id_during_excl | 16 MB
+
+ERROR:  conflicting key value violates exclusion constraint "room_bookings_room_id_during_excl"
+
+-- overlap search for one room
+   Buffers: shared hit=5
+   -&gt;  Index Only Scan using room_bookings_room_id_during_excl on room_bookings (actual rows=1.00 loops=1)
+         Heap Fetches: 1
+
+-- nearest 5 with no index
+ Limit (actual rows=5.00 loops=1)
+   Buffers: shared hit=2539
+               Sort Method: top-N heapsort  Memory: 25kB
+               -&gt;  Parallel Seq Scan on stores (actual rows=150000.00 loops=2)
+
+-- nearest 5 with GiST
+ Limit (actual rows=5.00 loops=1)
+   Buffers: shared hit=5 read=6
+   -&gt;  Index Scan using stores_location_gist on stores (actual rows=5.00 loops=1)
+         Order By: (location &lt;-&gt; '(31.2,30)'::point)
+         Index Searches: 1
+         Buffers: shared hit=5 read=6
+
+   id   |     name     | distance 
+--------+--------------+----------
+ 216716 | Store 216716 |   0.0073
+ 228192 | Store 228192 |   0.0192
+  22710 | Store 22710  |   0.0226
+  71170 | Store 71170  |   0.0270
+  88054 | Store 88054  |   0.0273
+
+ gist_size | table_size 
+-----------+------------
+ 19 MB     | 20 MB
+
+-- lossy: polygons stored as bounding boxes
+   -&gt;  Bitmap Heap Scan on delivery_zones (actual rows=123.00 loops=1)
+         Rows Removed by Index Recheck: 116
+         -&gt;  Bitmap Index Scan on zones_area_gist (actual rows=239.00 loops=1)
+
+-- SP-GiST on the same points
+ spgist_size 
+ 13 MB
+
+ Limit
+   -&gt;  Index Scan using stores_location_spgist on stores
+         Order By: (location &lt;-&gt; '(31.2,30)'::point)</code></pre>
+  <div class="ar-note">
+    <ul>
+      <li>الـ exclusion index حجمه 16 MB قصاد 4408 kB للـ PK، والحجز المتداخل وقع بالـ error بتاع <code>conflicting key value violates exclusion constraint</code>.</li>
+      <li>البحث عن تداخل لأوضة واحدة: Index Only Scan بـ 5 buffers.</li>
+      <li>أقرب 5 من غير index: Seq Scan و top-N sort بـ 2539 buffer. مع GiST: <code>Order By</code> جوه الـ Index Scan بـ 11 buffer (5 + 6).</li>
+      <li>الـ GiST حجمه 19 MB والجدول 20 MB، يعني تقريبًا قد الجدول.</li>
+      <li>الـ polygons: الـ index طلّع 239 مرشح، والـ recheck رمى 116، وفضل 123 نتيجة حقيقية.</li>
+      <li>الـ SP-GiST على نفس الـ points حجمه 13 MB وخدم نفس الـ query.</li>
+    </ul>
+  </div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>Races on exclusion constraints.</strong> The constraint holds: every room in every run below ended with exactly one row. But the <em>error you get</em> isn't always the same. For a plain insert, Postgres adds the index entry first and then scans for conflicts. So two sessions can each find the other's uncommitted row and wait on each other. The deadlock detector aborts one after <code>deadlock_timeout</code> (1 s by default) with <code>40P01</code> instead of the <code>23P01</code> you expected. The Postgres source calls this fairly harmless, since one of them was bound to fail anyway, but your handler must cover both codes.</p>
+    <p>How often it happens depends on timing, and that's what makes it nasty. With 2 callers over 40 rounds, two runs each gave 39 × <code>23P01</code> and 1 × <code>40P01</code>, and that one round took ≈1 s instead of ≈50 ms. With 20 callers, most rounds gave 19 × <code>23P01</code> in under ≈500 ms, and the run shown below had no deadlocks at all. But one run of the same race on a fresh pool gave 19 × <code>40P01</code> and took ≈19.3 s, about one second per victim. <code>ON CONFLICT DO NOTHING</code> avoids this: it inserts speculatively and backs out instead of waiting in a cycle. It raised no exceptions in any run here, and the answer is just <code>rowCount</code>. <code>DO UPDATE</code> isn't supported with exclusion constraints (real error, 42809).</p>
+    <p><strong>A race test has to really race.</strong> The last script has no constraint, only a check in code, which is the bug the test exists to catch. On a warm pool it double-booked every room, with all 20 callers winning. On a cold pool the connections open one after another, so requests spread out in time: rooms got anywhere from 1 to 20 rows, and in the first batch 2 of 10 rooms had exactly one row. So a cold-pool test can pass by luck. Open the connections first, and assert over many rounds.</p>
+  </section>
+
+<pre data-file="book-room.ts"><code class="language-typescript">import pg from "pg";
+import { setTimeout as sleep } from "node:timers/promises";
+
+// حارس: من غير port صريح الـ driver بيروح للـ default، وده ممكن يبقى الـ database الحقيقية بتاعتك
+const url = process.env.DATABASE_URL ?? "";
+const port = URL.canParse(url) ? new URL(url).port : "";
+const n = Number(port);
+if (!/^\d+$/.test(port) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) throw new Error("refusing port " + port);
+
+const admin = new pg.Client({ connectionString: url });
+await admin.connect();
+await admin.query(`create extension if not exists btree_gist`);
+await admin.query(`
+  create table room_bookings (
+    id bigint generated always as identity primary key,
+    room_id int not null,
+    during tstzrange not null,
+    constraint no_overlap exclude using gist (room_id with =, during with &amp;&amp;)
+  )`);
+
+const INSERT = `insert into room_bookings (room_id, during)
+  values ($1, tstzrange('2026-06-01 10:00+00', '2026-06-01 11:00+00'))`;
+
+type Outcome = "booked" | "taken" | "deadlock";
+type Book = (pool: pg.Pool, roomId: number) =&gt; Promise&lt;Outcome&gt;;
+
+// الطريقة الأولى: insert عادي من غير retry، عشان نشوف الأكواد زي ما هي
+const plain: Book = async (pool, roomId) =&gt; {
+  try {
+    await pool.query(INSERT, [roomId]);
+    return "booked";
+  } catch (e) {
+    const code = (e as pg.DatabaseError).code;
+    // الكود 23P01: الأوضة محجوزة، وده رد طبيعي للمستخدم مش error
+    if (code === "23P01") return "taken";
+    // الكود 40P01: ضحية deadlock، والـ statement اتلغى ومعرفناش الأوضة اتحجزت ولا لأ
+    if (code === "40P01") return "deadlock";
+    throw e;
+  }
+};
+
+// الطريقة التانية: نفس الـ insert مع retry و backoff بـ jitter للـ 40P01 بس
+const withRetry: Book = async (pool, roomId) =&gt; {
+  for (let attempt = 1; attempt &lt;= 5; attempt++) {
+    const outcome = await plain(pool, roomId);
+    if (outcome !== "deadlock") return outcome;
+    await sleep(100 * attempt + Math.random() * 200);
+  }
+  return "deadlock";
+};
+
+// الطريقة التالتة: DO NOTHING من غير exceptions، والـ rowCount هو الإجابة
+const quiet: Book = async (pool, roomId) =&gt; {
+  const r = await pool.query(`${INSERT} on conflict do nothing`, [roomId]);
+  return r.rowCount === 1 ? "booked" : "taken";
+};
+
+let nextRoom = 1;
+const CALLERS = 20;
+
+for (const [label, book] of [["plain, no retry", plain], ["plain + retry + jitter", withRetry], ["on conflict do nothing", quiet]] as const) {
+  // السخّان: كل الـ connections مفتوحة قبل السباق، بس الـ backends لسه جديدة
+  const pool = new pg.Pool({ connectionString: url, max: CALLERS });
+  const clients = await Promise.all(Array.from({ length: CALLERS }, () =&gt; pool.connect()));
+  clients.forEach((c) =&gt; c.release());
+
+  for (let round = 1; round &lt;= 3; round++) {
+    const room = nextRoom++;
+    const t0 = performance.now();
+    const results = await Promise.all(Array.from({ length: CALLERS }, () =&gt; book(pool, room)));
+    const count = (x: Outcome): number =&gt; results.filter((r) =&gt; r === x).length;
+    const ms = Math.round(performance.now() - t0);
+    console.log(
+      `${label.padEnd(24)} round ${round}: booked=${count("booked")} taken=${String(count("taken")).padStart(2)} deadlock=${String(count("deadlock")).padStart(2)}  ≈${ms} ms`,
+    );
+  }
+  await pool.end();
+}
+
+const { rows: [check] } = await admin.query(`select count(*)::int as rooms, max(c)::int as most from
+  (select count(*) as c from room_bookings group by room_id) s`);
+console.log(`rooms booked=${check.rooms}, most rows in one room=${check.most}`);
+
+// الـ DO UPDATE مش مدعوم مع exclusion constraints، و DO NOTHING بس اللي شغال
+try {
+  await admin.query(`${INSERT} on conflict on constraint no_overlap do update set room_id = excluded.room_id`, [999]);
+} catch (e) {
+  console.log(`DO UPDATE: ${(e as pg.DatabaseError).code} ${(e as Error).message}`);
+}
+await admin.end();</code></pre>
+<pre><code class="language-plaintext">plain, no retry          round 1: booked=1 taken=19 deadlock= 0  ≈26 ms
+plain, no retry          round 2: booked=1 taken=19 deadlock= 0  ≈498 ms
+plain, no retry          round 3: booked=1 taken=19 deadlock= 0  ≈272 ms
+plain + retry + jitter   round 1: booked=1 taken=19 deadlock= 0  ≈40 ms
+plain + retry + jitter   round 2: booked=1 taken=19 deadlock= 0  ≈212 ms
+plain + retry + jitter   round 3: booked=1 taken=19 deadlock= 0  ≈249 ms
+on conflict do nothing   round 1: booked=1 taken=19 deadlock= 0  ≈284 ms
+on conflict do nothing   round 2: booked=1 taken=19 deadlock= 0  ≈3 ms
+on conflict do nothing   round 3: booked=1 taken=19 deadlock= 0  ≈2 ms
+rooms booked=9, most rows in one room=1
+DO UPDATE: 42809 ON CONFLICT DO UPDATE not supported with exclusion constraints
+
+-- the same plain race, another run, on a fresh pool
+round 1: {"40P01":19,"ok":1} ≈19321 ms
+round 2: {"ok":1,"23P01":19} ≈192 ms
+round 3: {"ok":1,"23P01":19} ≈159 ms
+round 4: {"ok":1,"23P01":19} ≈163 ms
+round 5: {"ok":1,"23P01":19} ≈150 ms
+round 6: {"ok":1,"23P01":19} ≈159 ms</code></pre>
+  <div class="ar-note">في التشغيلة دي مفيش deadlocks خالص: كل جولة واحد حجز و 19 أخدوا "محجوزة"، والأوضة فيها صف واحد بس. وفي آخرها <code>DO UPDATE</code> اترفض بكود 42809. البلوك التحتاني تشغيلة تانية لنفس السباق على pool جديد: أول جولة 19 × <code>40P01</code> و≈19.3 ثانية، يعني حوالي ثانية لكل ضحية، وباقي الجولات 19 × <code>23P01</code> في حوالي 160 ms. فنفس الكود ممكن يديك النتيجتين، حسب التوقيت.</div>
+
+<pre data-file="cold-warm.ts"><code class="language-typescript">import pg from "pg";
+
+// حارس: من غير port صريح الـ driver بيروح للـ default، وده ممكن يبقى الـ database الحقيقية بتاعتك
+const url = process.env.DATABASE_URL ?? "";
+const port = URL.canParse(url) ? new URL(url).port : "";
+const n = Number(port);
+if (!/^\d+$/.test(port) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) throw new Error("refusing port " + port);
+
+const admin = new pg.Client({ connectionString: url });
+await admin.connect();
+// من غير constraint خالص: الفحص في الكود بس، وده الكود اللي عايزين الاختبار يكشفه
+await admin.query(`create table room_bookings (room_id int not null, during tstzrange not null)`);
+await admin.query(`create index on room_bookings (room_id)`);
+
+const RANGE = `tstzrange('2026-06-01 10:00+00', '2026-06-01 11:00+00')`;
+
+// الغلط: اسأل الأول وبعدين اكتب، فاتنين ممكن يعدّوا السؤال مع بعض
+async function bookWithCheck(pool: pg.Pool, roomId: number): Promise&lt;void&gt; {
+  const { rows } = await pool.query(
+    `select 1 from room_bookings where room_id = $1 and during &amp;&amp; ${RANGE} limit 1`,
+    [roomId],
+  );
+  if (rows.length === 0) {
+    await pool.query(`insert into room_bookings (room_id, during) values ($1, ${RANGE})`, [roomId]);
+  }
+}
+
+async function warmPool(size: number): Promise&lt;pg.Pool&gt; {
+  const pool = new pg.Pool({ connectionString: url, max: size });
+  const clients = await Promise.all(Array.from({ length: size }, () =&gt; pool.connect()));
+  clients.forEach((c) =&gt; c.release());
+  return pool;
+}
+
+let nextRoom = 1;
+async function scenario(label: string, racers: number, rounds: number, cold: boolean): Promise&lt;void&gt; {
+  const first = nextRoom;
+  const shared = cold ? null : await warmPool(racers);
+  for (let round = 0; round &lt; rounds; round++) {
+    const pool = shared ?? new pg.Pool({ connectionString: url, max: racers });
+    const room = nextRoom++;
+    await Promise.all(Array.from({ length: racers }, () =&gt; bookWithCheck(pool, room)));
+    if (!shared) await pool.end();
+  }
+  if (shared) await shared.end();
+  const { rows } = await admin.query&lt;{ c: number }&gt;(
+    `select count(*)::int as c from room_bookings where room_id &gt;= $1 and room_id &lt; $2 group by room_id order by room_id`,
+    [first, nextRoom],
+  );
+  const counts = rows.map((r) =&gt; r.c);
+  const bad = counts.filter((c) =&gt; c &gt; 1).length;
+  console.log(`${label.padEnd(16)} racers=${racers}  rounds=${rounds}  double-booked rooms=${String(bad).padStart(2)}/${rounds}  rows per room: ${counts.join(",")}`);
+}
+
+await scenario("cold pool", 20, 10, true);
+await scenario("warm pool", 20, 10, false);
+await scenario("cold pool again", 20, 10, true);
+await scenario("warm pool again", 20, 10, false);
+await admin.end();</code></pre>
+<pre><code class="language-plaintext">cold pool        racers=20  rounds=10  double-booked rooms= 8/10  rows per room: 3,1,1,10,5,11,20,15,14,9
+warm pool        racers=20  rounds=10  double-booked rooms=10/10  rows per room: 20,20,20,20,20,20,20,20,20,20
+cold pool again  racers=20  rounds=10  double-booked rooms=10/10  rows per room: 20,16,13,14,6,2,18,18,14,16
+warm pool again  racers=20  rounds=10  double-booked rooms=10/10  rows per room: 20,20,20,20,20,20,20,20,20,20</code></pre>
+  <div class="ar-note">الكود ده غلط عن قصد: بيسأل وبعدين يكتب من غير constraint. على الـ warm pool الـ bug ظاهر كل مرة: 20 صف في كل أوضة. على الـ cold pool الأرقام بتتنطط من 1 لـ 20، وفي أول دفعة أوضتين من 10 طلع فيهم صف واحد بس، يعني لو الاختبار جولة واحدة ممكن يعدّي بالصدفة والكود لسه غلط.</div>
+
+  <div class="callout warn">
+    <b>A hang seen in this lab, cause not found</b>
+    Several runs of the plain-insert race on fresh pools never finished. The last one stuck after 3 pools: three backends were <code>active</code> with no wait event, each holding only its own transaction lock, with CPU time frozen at 0.03 s. <code>deadlocks</code> was 0, and <code>pg_cancel_backend</code> returned true without stopping the target. It stayed that way until the run limit, about 10 minutes. It's not understood and not reproducible on demand: reads on 200 fresh pools never did it. It may belong to this Windows machine or build, and nothing here can test Linux. Don't read it as normal Postgres behaviour. The practical lesson is smaller: give race tests a client-side <code>query_timeout</code>, which works without the server's help, so a stuck test fails instead of hanging CI.
+<pre data-file="query-timeout.ts"><code class="language-typescript">import pg from "pg";
+
+// حارس: من غير port صريح الـ driver بيروح للـ default، وده ممكن يبقى الـ database الحقيقية بتاعتك
+const url = process.env.DATABASE_URL ?? "";
+const port = URL.canParse(url) ? new URL(url).port : "";
+const n = Number(port);
+if (!/^\d+$/.test(port) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) throw new Error("refusing port " + port);
+
+// الـ query_timeout في الـ client: الـ test بيفشل حتى لو السيرفر مش بيرد خالص
+const pool = new pg.Pool({ connectionString: url, max: 2, query_timeout: 300 });
+const t0 = performance.now();
+try {
+  await pool.query(`select pg_sleep(2)`);
+} catch (e) {
+  console.log(`rejected after ≈${Math.round(performance.now() - t0)} ms: ${(e as Error).message}`);
+}
+await pool.end().catch(() =&gt; {});
+process.exit(0);</code></pre>
+<pre><code class="language-plaintext">rejected after ≈354 ms: Query read timeout</code></pre>
+    <div class="ar-note">كذا تشغيلة لسباق الـ insert العادي على pools جديدة مخلصتش. آخر واحدة وقفت بعد 3 pools: تلات backends حالتهم <code>active</code> من غير wait event، وكل واحد ماسك الـ transaction lock بتاعه بس، والـ CPU واقف عند 0.03 ثانية. <code>deadlocks</code> كان صفر، و<code>pg_cancel_backend</code> رجّع true ومن غير ما يوقّف الـ backend. وفضلوا كده لحد حد التشغيلة، حوالي 10 دقايق. السبب مش معروف ومش بيتكرر عند الطلب: القراية على 200 pool جديد عمرها ما عملت كده. ممكن تكون حاجة في الجهاز ده أو نسخة Windows، ومفيش هنا طريقة نجرّب على Linux. فمتعتبرهاش سلوك طبيعي لـ Postgres. الدرس العملي أصغر من كده: حط <code>query_timeout</code> من ناحية الـ client في اختبارات السباق، لأنه بيشتغل من غير مساعدة السيرفر، فالاختبار يفشل بدل ما يعلّق الـ CI.</div>
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ GiST (Generalized Search Tree) شجرة متوازنة من الـ <em>bounding predicates</em>. كل entry في صفحة داخلية بيقول "كل اللي تحتي جوه الـ box أو الـ range ده". وعلى عكس الـ B-tree، الـ entries الجنب بعض ممكن تتداخل، فالبحث ممكن ينزل في كذا فرع. وده تمن إنك بتعمل index لحاجات ملهاش ترتيب واحد: ranges، و geometry، وحتى text signatures.</p>
+    <p><strong>الـ ranges.</strong> الـ exclusion constraint من <a href="./04-types-constraints.html">lesson 04</a> هو GiST index من تحت، وليه حجم حقيقي: 16 MB على 200 ألف حجز قصاد 4408 kB للـ primary key. وكمان بيخدم queries: البحث عن تداخل لأوضة واحدة استخدم Index Only Scan بـ 5 buffers. و<code>btree_gist</code> هو اللي بيخلّي <code>room_id</code> العادي يدخل مع الـ range في نفس الـ index.</p>
+    <p><strong>أقرب جار.</strong> <code>ORDER BY location &lt;-&gt; point(31.2, 30.0) LIMIT 5</code> من غير index بيقرا الجدول كله ويرتب: 2539 buffer على 300 ألف فرع. مع GiST الـ plan بيوريك <code>Order By</code> جوه الـ Index Scan ويقف بعد 5 صفوف: 11 buffer. هو بيمشي في الشجرة بطابور أولويات، الـ box الأقرب الأول، فمفيش حاجة تانية بتترتب. بس خد بالك: مسافة الـ <code>point</code> حساب على مستوى مسطح بالإحداثيات زي ما هي، مش متر على الكرة الأرضية. الأداة الحقيقية للجغرافيا هي PostGIS، ومش متسطبة هنا فـ <strong>متشغّلتش هنا</strong>.</p>
+    <p><strong>النتايج الـ lossy.</strong> الـ GiST كتير بيخزّن قيمة تقريبية. الـ polygon في الـ index هو الـ bounding box بتاعه، فالمطابقة في الـ index معناها "يمكن" بس، والـ plan بيراجع على الجدول. هنا الـ index طلّع 239 مرشح، والـ recheck رمى 116، و123 كانوا حقيقيين. ده معنى <code>Rows Removed by Index Recheck</code>، ولو الرقم كبير يبقى التقريب بيكلّفك. والـ <strong>SP-GiST</strong> أخوه للمساحات اللي تتقسم من غير تداخل (quad-trees و radix trees): على نفس الـ points كان 13 MB قصاد 19 MB، وخدم أقرب جار كمان.</p>
+    <p><strong>السباقات على الـ exclusion constraints.</strong> الـ constraint بيصمد: كل أوضة في كل تشغيلة فوق انتهت بصف واحد بالظبط. بس <em>الـ error اللي بيرجع</em> مش دايمًا واحد. في الـ insert العادي، Postgres بيضيف الـ index entry الأول وبعدين يدوّر على التعارض. فممكن session يلاقي الصف غير الـ committed بتاع التاني والتاني يلاقي بتاعه، ويستنوا بعض. الـ deadlock detector بيلغي واحد بعد <code>deadlock_timeout</code> (ثانية by default) بـ <code>40P01</code> بدل الـ <code>23P01</code> اللي كنت مستنيه. والـ source بتاع Postgres بيقول إن ده مش مشكلة كبيرة لأن واحد منهم كان هيفشل كده كده، بس الـ handler بتاعك لازم يغطي الكودين.</p>
+    <p>بيحصل قد إيه؟ ده حسب التوقيت، وده اللي مخليه خبيث. مع 2 callers على 40 جولة، تشغيلتين طلّعوا 39 × <code>23P01</code> و 1 × <code>40P01</code>، والجولة دي خدت ≈1 ثانية بدل ≈50 ms. مع 20 caller، معظم الجولات طلّعت 19 × <code>23P01</code> في أقل من ≈500 ms، والتشغيلة اللي فوق مفيهاش deadlocks خالص. بس تشغيلة تانية لنفس السباق على pool جديد طلّعت 19 × <code>40P01</code> وخدت ≈19.3 ثانية، يعني حوالي ثانية لكل ضحية. <code>ON CONFLICT DO NOTHING</code> بيتجنب ده: بيعمل insert تجريبي ويتراجع بدل ما يستنى في دايرة. مطلّعش exceptions في أي تشغيلة هنا، والإجابة هي <code>rowCount</code> وخلاص. و<code>DO UPDATE</code> مش مدعوم مع الـ exclusion constraints (error حقيقي، 42809).</p>
+    <p><strong>اختبار السباق لازم يبقى سباق بجد.</strong> آخر سكريبت مفيهوش constraint، فيه check في الكود بس، وده الـ bug اللي الاختبار معمول عشان يمسكه. على warm pool حجز كل أوضة أكتر من مرة، وكل الـ 20 كسبوا. على cold pool الـ connections بتتفتح ورا بعض، فالـ requests بتتفرق في الوقت: الأوض خدت من 1 لـ 20 صف، وفي أول دفعة 2 من 10 أوض كان فيهم صف واحد بالظبط. يعني اختبار على cold pool ممكن يعدّي بالصدفة. افتح الـ connections الأول، وتأكد على جولات كتير.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      <code>POST /bookings</code> لحجز أوضة أو ميعاد دكتور: اعمل exclusion constraint، واستخدم <code>ON CONFLICT DO NOTHING</code>، ولو <code>rowCount</code> بصفر رجّع 409. لو لازم insert عادي، اتعامل مع <code>23P01</code> على إنها 409 ومع <code>40P01</code> على إنها retry بـ backoff (نفس فكرة <a href="./13-isolation-anomalies-retries.html">lesson 13</a>). وفي الـ integration test اعمل warm للـ pool قبل السباق، وكرره جولات كتير. و"أقرب فرع" لتطبيق توصيل: GiST على <code>location</code> بيكفي كبداية لو المسافات تقريبية، ولو محتاج متر حقيقي يبقى PostGIS. الغلطة الشائعة: <code>catch</code> على <code>23P01</code> بس، فأول deadlock يطلع 500 للمستخدم وفي الـ logs شكله مشكلة كبيرة.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: GiST against B-tree</b>
+    GiST answers questions a B-tree can't (overlap, containment, nearest), and it's bigger and slower to maintain: 12 MB and 86 MB of WAL for 200k points, against a B-tree's 4408 kB and 66 MB on a timestamp (Part 4's table). If your data sorts and your question is equality or range, keep the B-tree.
+    <div class="ar-note">الـ GiST بيجاوب أسئلة الـ B-tree مش بيعرفها (تداخل، احتواء، أقرب جار)، بس أكبر وصيانته أغلى: 12 MB و 86 MB WAL على 200 ألف point، قصاد 4408 kB و 66 MB للـ B-tree على timestamp (جدول Part 4). لو الـ data بتترتب والسؤال equality أو range، خليك على الـ B-tree.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — BRIN: tiny until the order breaks <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ BRIN: صغير جدًا لحد ما الترتيب يبوظ</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>BRIN (Block Range INdex) doesn't point at rows. It keeps one summary per <em>block range</em>, by default 128 pages: for a timestamp, just the min and max in those pages. A query reads the summaries, then reads every page of each range that might match, and rechecks every row. It's a lossy map of the table, and it only works if neighbouring pages hold neighbouring values.</p>
+    <p>On 1M orders where <code>created_at</code> follows insertion order (correlation 1.000), BRIN is <strong>24 kB</strong> against 21 MB for the B-tree, about 900 times smaller. For one day of orders (2880 rows) the B-tree touches 44 buffers, and BRIN touches 261 and throws away 20016 rows in <code>Rows Removed by Index Recheck</code>. With <code>pages_per_range = 16</code> it grows to 40 kB and drops to 52 buffers. So BRIN doesn't compete on point lookups. It wins when you need a range scan on a huge append-only table and can't afford a B-tree's size or write cost.</p>
+    <p>Two things break it. <strong>Drift:</strong> an <code>UPDATE</code> writes the new row version wherever there's room, so physical order decays. After updating about a third of the rows, correlation fell to 0.694 and the same query read 1822 buffers, 7 times more. <strong>Outliers:</strong> one late-arriving row widens its range's min/max for good. With only 0.2% of rows arriving late, correlation still reads a reassuring 0.998, yet the plain minmax index scanned all 7353 pages and removed 997121 rows. Correlation isn't a safe test on its own: run the query. The <code>minmax-multi</code> opclass (PG 14+) keeps several small intervals per range and survives outliers: 1280 pages in the run shown and about 2300 in another (the outliers are random), for 32 kB.</p>
+    <p>One operational trap: new pages have no summary until vacuum, <code>brin_summarize_new_values()</code>, or the <code>autosummarize</code> storage option gets to them, and an unsummarized range must always be read. After inserting 100k rows with no vacuum, the same query rose from 261 to 1294 buffers, and summarizing 9 new ranges brought it back to 258.</p>
+  </section>
+
+<pre class="diagram">
+ pages            0..127          128..255        256..383        384..511
+ summary          Jan 01-Jan 05   Jan 05-Jan 09   Jan 09-Jan 13   Jan 13-Jan 17
+
+ created_at on Jan 10: only one range overlaps -&gt; read 128 pages, recheck each row
+
+ after updates moved rows around, or a few late arrivals landed in each range:
+ summary          Jan 01-Mar 30   Jan 02-Apr 11   Jan 03-Mar 02   Jan 01-Apr 20
+
+ created_at on Jan 10: every range overlaps -&gt; read nearly the whole table
+</pre>
+  <div class="ar-note">كل 128 page ليهم سطر ملخص فيه أقل وأكبر تاريخ بس. لما الداتا مرتبة، يوم 10 يناير بيقع في range واحد فبنقرا 128 page ونراجع صفوفهم. لما الصفوف تتحرك أو تيجي صفوف متأخرة، كل range بيغطي فترة واسعة، فيوم 10 يناير بيقع في كل الـ ranges، وبنقرا الجدول كله تقريبًا والـ index مبقاش ليه لازمة.</div>
+
+<pre data-file="p4-brin.sql"><code class="language-sql">-- الـ orders جاية من الـ seed بترتيب created_at: كل صف بعد اللي قبله بـ 30 ثانية
+select attname, round(correlation::numeric, 3) as correlation
+from pg_stats
+where tablename = 'orders' and attname in ('created_at', 'tenant_id');
+
+create index orders_created_btree on orders (created_at);
+create index orders_created_brin  on orders using brin (created_at);
+analyze orders;
+
+select relname as object, pg_size_pretty(pg_relation_size(oid)) as size
+from pg_class
+where relname in ('orders', 'orders_created_btree', 'orders_created_brin')
+order by pg_relation_size(oid) desc;
+
+begin;
+drop index orders_created_btree;
+explain (analyze, costs off, timing off, summary off)
+select count(*), sum(total_cents) from orders
+where created_at &gt;= '2025-03-01' and created_at &lt; '2025-03-02';
+rollback;
+
+-- كل block range بيغطي كام page؟ لو صغّرنا الرقم: index أكبر و recheck أقل
+create index orders_created_brin16 on orders using brin (created_at) with (pages_per_range = 16);
+select relname as index, pg_size_pretty(pg_relation_size(oid)) as size
+from pg_class where relname in ('orders_created_brin', 'orders_created_brin16');
+begin;
+drop index orders_created_btree;
+drop index orders_created_brin;
+explain (analyze, costs off, timing off, summary off)
+select count(*), sum(total_cents) from orders
+where created_at &gt;= '2025-03-01' and created_at &lt; '2025-03-02';
+rollback;
+drop index orders_created_brin16;</code></pre>
+<pre><code class="language-plaintext">  attname   | correlation 
+------------+-------------
+ tenant_id  |       0.040
+ created_at |       1.000
+
+        object        | size  
+----------------------+-------
+ orders               | 87 MB
+ orders_created_btree | 21 MB
+ orders_created_brin  | 24 kB
+
+-- B-tree, one day
+ Aggregate (actual rows=1.00 loops=1)
+   Buffers: shared hit=33 read=11
+   -&gt;  Index Scan using orders_created_btree on orders (actual rows=2880.00 loops=1)
+         Index Cond: ((created_at &gt;= '2025-03-01 00:00:00+00'::timestamp with time zone…
+         Index Searches: 1
+         Buffers: shared hit=33 read=11
+
+-- BRIN, one day
+ Aggregate (actual rows=1.00 loops=1)
+   Buffers: shared hit=261
+   -&gt;  Bitmap Heap Scan on orders (actual rows=2880.00 loops=1)
+         Recheck Cond: ((created_at &gt;= '2025-03-01 00:00:00+00'::timestamp with time zo…
+         Rows Removed by Index Recheck: 20016
+         Heap Blocks: lossy=256
+         Buffers: shared hit=261
+         -&gt;  Bitmap Index Scan on orders_created_brin (actual rows=2560.00 loops=1)
+               Index Cond: ((created_at &gt;= '2025-03-01 00:00:00+00'::timestamp with tim…
+               Index Searches: 1
+               Buffers: shared hit=5
+
+-- BRIN with pages_per_range = 16
+ Aggregate (actual rows=1.00 loops=1)
+   Buffers: shared hit=52
+   -&gt;  Bitmap Heap Scan on orders (actual rows=2880.00 loops=1)
+         Recheck Cond: ((created_at &gt;= '2025-03-01 00:00:00+00'::timestamp with time zo…
+         Rows Removed by Index Recheck: 1408
+         Heap Blocks: lossy=48
+         Buffers: shared hit=52
+         -&gt;  Bitmap Index Scan on orders_created_brin16 (actual rows=480.00 loops=1)
+               Index Cond: ((created_at &gt;= '2025-03-01 00:00:00+00'::timestamp with tim…
+               Index Searches: 1
+               Buffers: shared hit=4</code></pre>
+  <div class="ar-note"><code>created_at</code> الـ correlation بتاعه 1.000 يعني الترتيب الفيزيائي مطابق للقيم. الجدول 87 MB، والـ B-tree 21 MB، والـ BRIN 24 kB. يوم واحد بالـ B-tree: 44 buffer. نفس اليوم بالـ BRIN: 261 buffer، و<code>Heap Blocks: lossy=256</code> يعني قرا 256 page كاملين، و<code>Rows Removed by Index Recheck: 20016</code> يعني رمى 20016 صف بعد ما قراهم. بـ <code>pages_per_range = 16</code>: الحجم 40 kB، والقراية بقت 52 buffer، والمرمي 1408 صف بس.</div>
+
+<pre data-file="p4-brin.sql"><code class="language-sql">-- فخ الـ pages الجديدة: مش متلخّصة لحد VACUUM، وأي range مش متلخّص لازم يتقرا كله
+insert into orders (tenant_id, customer_id, status, total_cents, currency, created_at)
+select tenant_id, customer_id, status, total_cents, currency, created_at + interval '1 year'
+from orders where id &lt;= 100000;
+begin;
+drop index orders_created_btree;
+explain (analyze, costs off, timing off, summary off)
+select count(*), sum(total_cents) from orders
+where created_at &gt;= '2025-03-01' and created_at &lt; '2025-03-02';
+rollback;
+
+select brin_summarize_new_values('orders_created_brin') as new_ranges;
+begin;
+drop index orders_created_btree;
+explain (analyze, costs off, timing off, summary off)
+select count(*), sum(total_cents) from orders
+where created_at &gt;= '2025-03-01' and created_at &lt; '2025-03-02';
+rollback;
+
+-- هنكسره: كل update بيحط نسخة جديدة في مكان تاني، فالترتيب الفيزيائي بيبوظ
+update orders set total_cents = total_cents + 1 where id % 5 = 0;
+vacuum orders;
+update orders set total_cents = total_cents + 1 where id % 7 = 0;
+vacuum analyze orders;
+select attname, round(correlation::numeric, 3) as correlation
+from pg_stats where tablename = 'orders' and attname = 'created_at';
+begin;
+drop index orders_created_btree;
+explain (analyze, costs off, timing off, summary off)
+select count(*), sum(total_cents) from orders
+where created_at &gt;= '2025-03-01' and created_at &lt; '2025-03-02';
+rollback;
+begin;
+drop index orders_created_brin;
+explain (analyze, costs off, timing off, summary off)
+select count(*), sum(total_cents) from orders
+where created_at &gt;= '2025-03-01' and created_at &lt; '2025-03-02';
+rollback;</code></pre>
+<pre><code class="language-plaintext">-- 100k new rows, no vacuum yet: BRIN
+         Rows Removed by Index Recheck: 112655
+         Heap Blocks: lossy=1292
+
+-- after brin_summarize_new_values
+ new_ranges 
+          9
+         Rows Removed by Index Recheck: 20016
+         Heap Blocks: lossy=256
+
+-- drift: correlation, then BRIN, then B-tree
+ created_at |       0.694
+   Buffers: shared hit=1822
+         Rows Removed by Index Recheck: 140395
+         Heap Blocks: lossy=1820
+         Buffers: shared hit=1822
+               Buffers: shared hit=2
+   Buffers: shared hit=1181
+   -&gt;  Index Scan using orders_created_btree on orders (actual rows=2880.00 loops=1)
+         Buffers: shared hit=1181</code></pre>
+  <div class="ar-note">بعد 100 ألف صف جديد من غير vacuum: 1292 page و 112655 صف مرمي. بعد <code>brin_summarize_new_values</code> اللي لخّص 9 ranges جديدة: رجع 256 page و 20016 صف. بعد الـ updates: الـ correlation نزل لـ 0.694، والـ BRIN قرا 1820 page ورمى 140395 صف. لاحظ إن الـ B-tree كمان اتأثر: من 44 buffer لـ 1181، لأن صفوف اليوم الواحد نفسها اتفرقت على pages كتير، بس الـ BRIN دفع أكتر.</div>
+
+<pre data-file="p4b-multi.sql"><code class="language-sql">-- جدول events: append-only بس بعض الصفوف جاية بتاريخ قديم (late arrivals من mobile offline)
+create table audit_events (
+  id bigint generated always as identity primary key,
+  happened_at timestamptz not null,
+  payload text not null
+);
+insert into audit_events (happened_at, payload)
+select case when i % 500 = 0
+            then timestamptz '2025-01-01' + (random() * 300 * interval '1 day')
+            else timestamptz '2025-01-01' + (i * interval '30 seconds')
+       end,
+       'event-' || i
+from generate_series(1, 1000000) i;
+analyze audit_events;
+
+select round(correlation::numeric, 3) as correlation
+from pg_stats where tablename = 'audit_events' and attname = 'happened_at';
+
+create index audit_brin_minmax on audit_events using brin (happened_at);
+create index audit_brin_multi  on audit_events
+  using brin (happened_at timestamptz_minmax_multi_ops);
+
+select relname as index, pg_size_pretty(pg_relation_size(oid)) as size
+from pg_class where relname in ('audit_brin_minmax', 'audit_brin_multi');
+
+begin;
+drop index audit_brin_multi;
+explain (analyze, costs off, timing off, summary off)
+select count(*) from audit_events
+where happened_at &gt;= '2025-03-01' and happened_at &lt; '2025-03-02';
+rollback;</code></pre>
+<pre><code class="language-plaintext"> correlation 
+-------------
+       0.998
+
+       index       | size  
+-------------------+-------
+ audit_brin_minmax | 24 kB
+ audit_brin_multi  | 32 kB
+
+-- plain minmax
+         Rows Removed by Index Recheck: 997121
+         Heap Blocks: lossy=7353
+
+-- minmax-multi
+         Rows Removed by Index Recheck: 171201
+         Heap Blocks: lossy=1280</code></pre>
+  <div class="ar-note">صف واحد متأخر من كل 500 (0.2%)، والـ correlation لسه 0.998 فشكله تمام. بس الـ minmax العادي قرا 7353 page، يعني الجدول كله، ورمى 997121 صف من مليون. الـ <code>minmax-multi</code> بـ 32 kB نزّلها لـ 1280 page و 171201 صف في التشغيلة دي، وحوالي 2300 page في تشغيلة تانية لأن الصفوف المتأخرة عشوائية. فالدرس: الـ correlation العالي مش ضمان، جرّب الـ query بنفسك.</div>
+
+  <table>
+    <tr><th>Method</th><th>Data shape</th><th>Operators</th><th>Size (measured)</th><th>Write cost: 200k rows, WAL (53 MB with no index)</th></tr>
+    <tr><td><b>B-tree</b></td><td>Sortable values, the default</td><td><code>= &lt; &gt;</code>, <code>BETWEEN</code>, <code>ORDER BY</code>, prefix <code>LIKE</code></td><td>4408 kB on a timestamp; 24 MB on a 64-char token</td><td>66 MB timestamp; 90 MB random token</td></tr>
+    <tr><td><b>Hash</b></td><td>Long values, equality only</td><td><code>=</code></td><td>7272 kB on the token</td><td>70 MB</td></tr>
+    <tr><td><b>GIN</b></td><td>Many values in one row: jsonb, arrays, tsvector, trigrams</td><td><code>@&gt; ? &amp;&amp; @@</code></td><td>6048 kB on a 3-tag array</td><td>94 MB, plus the pending list</td></tr>
+    <tr><td><b>GiST</b></td><td>Things that overlap: ranges, geometry, nearest neighbour</td><td><code>&amp;&amp; @&gt; &lt;@ &lt;-&gt;</code></td><td>12 MB on points</td><td>86 MB</td></tr>
+    <tr><td><b>BRIN</b></td><td>Huge, append-only, physically ordered</td><td><code>= &lt; &gt;</code> over ranges</td><td>24 kB on a timestamp</td><td>53 MB: nothing extra</td></tr>
+  </table>
+  <div class="ar-note">
+    <p>الجدول ده الخلاصة، وكل الأرقام من <code>five-writes.ts</code> تحت: 200 ألف صف، و index واحد في كل مرة. من غير index الـ WAL كان 53 MB.</p>
+    <ul>
+      <li><b>B-tree:</b> لأي قيمة بتترتب، وده الاختيار الأول. بيخدم <code>=</code> والـ ranges والـ <code>ORDER BY</code> والـ prefix. حجمه 4408 kB على timestamp و 24 MB على token طوله 64 حرف، والـ WAL 66 MB على الـ timestamp و 90 MB على الـ token العشوائي.</li>
+      <li><b>Hash:</b> قيم طويلة و equality بس. حجمه 7272 kB على نفس الـ token، والـ WAL 70 MB.</li>
+      <li><b>GIN:</b> لما الصف الواحد فيه قيم كتير زي jsonb و arrays و tsvector و trigrams. بيخدم <code>@&gt; ? &amp;&amp; @@</code>. حجمه 6048 kB على array فيها 3 tags، والـ WAL 94 MB غير الـ pending list.</li>
+      <li><b>GiST:</b> للحاجات اللي بتتداخل زي ranges و geometry و nearest neighbour. بيخدم <code>&amp;&amp; @&gt; &lt;@ &lt;-&gt;</code>. حجمه 12 MB على points، والـ WAL 86 MB.</li>
+      <li><b>BRIN:</b> جدول ضخم append-only ومرتب فيزيائيًا. بيخدم <code>= &lt; &gt;</code> بالـ ranges. حجمه 24 kB، والـ WAL 53 MB يعني مفيش زيادة خالص.</li>
+    </ul>
+  </div>
+
+<pre data-file="five-writes.ts"><code class="language-typescript">import pg from "pg";
+
+// حارس: من غير port صريح الـ driver بيروح للـ default، وده ممكن يبقى الـ database الحقيقية بتاعتك
+const url = process.env.DATABASE_URL ?? "";
+const port = URL.canParse(url) ? new URL(url).port : "";
+const n = Number(port);
+if (!/^\d+$/.test(port) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) throw new Error("refusing port " + port);
+const client = new pg.Client({ connectionString: url });
+await client.connect();
+
+// نفس الـ 200 ألف صف في كل مرة، والفرق الوحيد هو الـ index الواحد الموجود
+const insert = `
+  insert into shipments (shipped_at, token, tags, location)
+  select timestamptz '2025-01-01' + i * interval '30 seconds',
+         md5(i::text) || md5((i * 3)::text),
+         array['sale', 'tag-' || (i % 500), 'batch-' || (i % 40)],
+         point(22 + (i % 1000) / 100.0, 25 + (i % 777) / 100.0)
+  from generate_series(1, 200000) i`;
+
+const variants: [string, string][] = [
+  ["no index", ""],
+  ["B-tree (shipped_at)", `create index ix on shipments (shipped_at)`],
+  ["BRIN (shipped_at)", `create index ix on shipments using brin (shipped_at)`],
+  ["Hash (token)", `create index ix on shipments using hash (token)`],
+  ["B-tree (token)", `create index ix on shipments (token)`],
+  ["GIN (tags)", `create index ix on shipments using gin (tags)`],
+  ["GiST (location)", `create index ix on shipments using gist (location)`],
+];
+
+const median = (xs: number[]): number =&gt; [...xs].sort((a, b) =&gt; a - b)[Math.floor(xs.length / 2)]!;
+const lsn = async (): Promise&lt;string&gt; =&gt; (await client.query(`select pg_current_wal_insert_lsn() as l`)).rows[0].l;
+
+console.log("index                 insert 200k     WAL      index size");
+for (const [label, ddl] of variants) {
+  const times: number[] = [];
+  const wals: number[] = [];
+  let size = "-";
+  for (let run = 0; run &lt; 3; run++) {
+    await client.query(`drop table if exists shipments`);
+    await client.query(`create table shipments (
+      id bigint generated always as identity primary key,
+      shipped_at timestamptz not null, token text not null, tags text[] not null, location point not null
+    ) with (autovacuum_enabled = off)`);
+    if (ddl) await client.query(ddl);
+    const a = await lsn();
+    const t0 = performance.now();
+    await client.query(insert);
+    times.push(performance.now() - t0);
+    const b = await lsn();
+    wals.push(Number((await client.query(`select pg_wal_lsn_diff($1, $2) as d`, [b, a])).rows[0].d));
+    if (ddl) size = (await client.query(`select pg_size_pretty(pg_relation_size('ix')) as s`)).rows[0].s;
+  }
+  const mb = (median(wals) / 1048576).toFixed(0);
+  console.log(`${label.padEnd(20)} ≈${String(Math.round(median(times))).padStart(7)} ms  ${mb.padStart(5)} MB  ${size.padStart(10)}`);
+}
+await client.end();</code></pre>
+<pre><code class="language-plaintext">index                 insert 200k     WAL      index size
+no index             ≈   4263 ms     53 MB           -
+B-tree (shipped_at)  ≈   5871 ms     66 MB     4408 kB
+BRIN (shipped_at)    ≈   6693 ms     53 MB       24 kB
+Hash (token)         ≈   5850 ms     70 MB     7272 kB
+B-tree (token)       ≈   9679 ms     90 MB       24 MB
+GIN (tags)           ≈   8915 ms     94 MB     6048 kB
+GiST (location)      ≈   6655 ms     86 MB       12 MB</code></pre>
+  <div class="ar-note">عمود الـ WAL والحجم ثابتين وتعتمد عليهم. عمود الوقت بيتحرك مع ضغط الجهاز، فخده كاتجاه مش كرقم: كل index بيزوّد على ≈4.3 ثانية، وأغلى اتنين هنا B-tree على token عشوائي (≈9.7 ثانية) و GIN (≈8.9 ثانية). ولاحظ إن الـ B-tree على الـ timestamp المتزايد أرخص كتير من الـ B-tree على الـ token العشوائي، وده نفس درس الـ page splits من <a href="../../03-CS-Fundamentals/lessons/05-trees-bst-btrees.html">lesson 05 في section 03</a>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ BRIN (Block Range INdex) مش بيشاور على صفوف. هو بيحتفظ بملخص واحد لكل <em>block range</em>، وده 128 page by default: في حالة الـ timestamp، أقل وأكبر قيمة في الـ pages دي بس. الـ query بيقرا الملخصات، وبعدين بيقرا كل page في أي range ممكن يطابق، ويراجع كل صف. يعني خريطة تقريبية للجدول، ومش بتشتغل غير لو الـ pages الجنب بعض فيها قيم جنب بعض.</p>
+    <p>على مليون order و <code>created_at</code> ماشي مع ترتيب الإدخال (correlation 1.000)، الـ BRIN حجمه <strong>24 kB</strong> قصاد 21 MB للـ B-tree، يعني أصغر حوالي 900 مرة. ليوم واحد من الطلبات (2880 صف) الـ B-tree بيلمس 44 buffer، والـ BRIN بيلمس 261 ويرمي 20016 صف في <code>Rows Removed by Index Recheck</code>. بـ <code>pages_per_range = 16</code> بيكبر لـ 40 kB وينزل لـ 52 buffer. فالـ BRIN مش بينافس في الـ point lookups، هو بيكسب لما تكون محتاج range scan على جدول append-only ضخم ومش قادر تستحمل حجم الـ B-tree أو تكلفة كتابته.</p>
+    <p>حاجتين بيكسروه. <strong>الـ drift:</strong> الـ <code>UPDATE</code> بيكتب النسخة الجديدة في أي مكان فاضي، فالترتيب الفيزيائي بيبوظ. بعد ما عدّلنا حوالي تلت الصفوف، الـ correlation نزل لـ 0.694 ونفس الـ query قرا 1822 buffer، يعني 7 مرات أكتر. <strong>الـ outliers:</strong> صف واحد متأخر بيوسّع الـ min/max بتاع الـ range بتاعه للأبد. بـ 0.2% صفوف متأخرة بس، الـ correlation لسه 0.998 وشكله مطمّن، ومع كده الـ minmax العادي قرا كل الـ 7353 page ورمى 997121 صف. فالـ correlation لوحده مش اختبار كفاية: شغّل الـ query. والـ opclass بتاع <code>minmax-multi</code> (من PG 14) بيحتفظ بكذا فترة صغيرة لكل range فبيستحمل الـ outliers: 1280 page في التشغيلة اللي فوق وحوالي 2300 في تشغيلة تانية (الصفوف المتأخرة عشوائية)، بحجم 32 kB.</p>
+    <p>فخ تشغيلي كمان: الـ pages الجديدة ملهاش ملخص لحد ما يوصلها vacuum أو <code>brin_summarize_new_values()</code> أو خيار <code>autosummarize</code>، وأي range من غير ملخص لازم يتقرا دايمًا. بعد 100 ألف صف جديد من غير vacuum، نفس الـ query طلع من 261 لـ 1294 buffer، وبعد تلخيص 9 ranges جديدة رجع 258.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      جدول <code>audit_logs</code> أو <code>events</code> فيه مليارات الصفوف وبيتكتب فيه بس، وكل الـ queries بتاعته "الفترة من كذا لكذا". B-tree هناك ممكن يبقى عشرات الـ GB ويبطّأ كل insert، والـ BRIN حجمه MBs ومزوّدش WAL في القياس بتاعنا (53 MB زي مفيش index). بس لو الـ mobile app بتبعت events متأخرة، استخدم <code>minmax-multi</code> أو خلّي <code>happened_at</code> هو وقت الوصول مش وقت الحدث. والغلطة الشائعة: BRIN على جدول <code>orders</code> اللي بيتعدّل طول الوقت، زي ما شفت بعد الـ updates فوق.
+    </div>
+  </section>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — When an index hurts writes: HOT updates <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — إمتى الـ index بيضر الكتابة: الـ HOT updates</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>An <code>UPDATE</code> in Postgres writes a new row version (<a href="./14-mvcc-vacuum-long-transactions.html">lesson 14</a> covers why). Normally every index on the table then needs a new entry pointing at it, even indexes on columns that didn't change. <strong>HOT</strong> (heap-only tuple) avoids that when two conditions hold: the update changes no column referenced by an index, and the page has room for the new version. The old version just chains to the new one on the same page, and no index is touched.</p>
+    <p>That produces a result that surprises many people. Extra indexes on <em>other</em> columns barely hurt an update: with 0, 2 and 5 extra indexes, HOT stayed around 97%, WAL stayed at about 190 bytes per update, and indexes didn't grow. Add one index on the column being updated, and HOT goes to <strong>0%</strong>, WAL rises to 744 bytes per update (about 3.9×), and indexes grow from 12.1 MB to 15.1 MB in 6 seconds. Same table, same statement. Plain inserts get no such escape: every index takes an entry for every row, so WAL for the same 200k rows went 27.6 → 68 → 109.3 MB with 0, 2 and 5 extra indexes.</p>
+    <p>Three refinements. A column that appears only in a partial index's <code>WHERE</code> counts as indexed: on one table, 10000 updates gave 8683 HOT before adding <code>create index ... (id) where updated_at &lt; ...</code>, and the next 10000 gave 0. <code>fillfactor</code> leaves room on each page: at 70, HOT reached 100% and no update had to move to a new page (<code>n_tup_newpage_upd</code>, since PG 16, counts those), at the price of a table 44% larger, and only pages written after the change get it unless you rewrite the table. And BRIN doesn't block HOT, because since PG 16 "summarizing" indexes are exempt: a BRIN on <code>stock</code> kept HOT at 96.1%.</p>
+    <p>Throughput is the noisy signal here. On this loaded machine, tps ranges overlapped across every layout, so trust HOT% and WAL rather than a single tps figure. The btree-on-<code>stock</code> layout's best run (≈22.5k) was still below the median of most others.</p>
+  </section>
+
+<pre class="diagram">
+ Non-HOT update (an indexed column changed, or no room on the page)
+   idx_pk  ---&gt; v1      idx_sku ---&gt; v1
+   idx_pk  ---&gt; v2      idx_sku ---&gt; v2      every index gets a new entry for v2
+
+ HOT update (no indexed column changed, and the page has room)
+   idx_pk  ---&gt; [line pointer] ---&gt; v1 ---&gt; v2       v2 on the same page
+   idx_sku ---&gt; [line pointer] ---'                  no new index entries
+</pre>
+  <div class="ar-note">فوق: update عادي. النسخة الجديدة v2 محتاجة entry جديد في كل index، حتى الـ index اللي عموده متغيرش. تحت: HOT update. الـ index entries القديمة زي ما هي، والنسخة القديمة v1 بتشاور على v2 جوه نفس الـ page، فمفيش كتابة في أي index.</div>
+
+<pre data-file="hot-schema.sql"><code class="language-sql">-- الجدول: stock هو اللي بيتعدّل، وباقي الأعمدة عليها indexes حسب كل تجربة
+create table products (
+  id int primary key,
+  sku text not null,
+  name text not null,
+  category text not null,
+  brand text not null,
+  price_cents int not null,
+  stock int not null
+) with (fillfactor = 100, autovacuum_enabled = off);
+insert into products
+select i, 'SKU-' || i, 'Product name ' || i, 'cat-' || (i % 50), 'brand-' || (i % 200), 100 + (i % 9000), 50
+from generate_series(1, 100000) i;
+
+-- الخمسة دول: 2 منهم في التجربة التانية، وكلهم في التالتة
+create index on products (sku);
+create index on products (name);
+create index on products (category);
+create index on products (brand);
+create index on products (price_cents);
+
+-- التجربة الرابعة: index على العمود اللي بيتعدّل نفسه
+create index on products (stock);
+-- التجربة الأخيرة بدل اللي فوق: BRIN على نفس العمود
+create index on products using brin (stock);
+vacuum analyze products;
+
+-- بعد كل تجربة: ده اللي بنقراه
+select n_tup_upd, n_tup_hot_upd, n_tup_newpage_upd
+from pg_stat_user_tables where relname = 'products';</code></pre>
+<pre data-file="update_stock.sql"><code class="language-sql">-- سكريبت pgbench: كل transaction بيغيّر stock لمنتج عشوائي (عمود مش عليه index)
+\set id random(1, 100000)
+update products set stock = stock + 1 where id = :id;</code></pre>
+<pre data-file="bench.sh"><code class="language-bash"># حارس: port فاضي معناه الـ default، فارفض قبل ما pgbench يتصل بأي حاجة
+case "$LAB_PORT" in ''|*[!0-9]*|0|27017|5432|6379) echo "refusing port '$LAB_PORT'"; exit 1;; esac
+pgbench -n -f update_stock.sql -c 8 -j 4 -T 6 -h 127.0.0.1 -p "$LAB_PORT" -U app postgres</code></pre>
+<pre><code class="language-plaintext">layout                       tps(median)  tps range      HOT%   newpage%  WAL/update  indexes before -&gt; after
+0 extra indexes                  26812     24504-31401    96.9       3.1       182 B        2.2 MB -&gt; 2.2 MB
+2 extra indexes                  28024     23424-34084    97.0       3.0       186 B        9.1 MB -&gt; 9.1 MB
+5 extra indexes                  32822     23127-33653    97.4       2.6       190 B      11.4 MB -&gt; 11.4 MB
+5 extra + BTREE on stock         21897      8339-22563     0.0       5.2       744 B      12.1 MB -&gt; 15.1 MB
+5 extra, fillfactor=70           32290     29859-32514   100.0       0.0       176 B      11.4 MB -&gt; 11.4 MB
+5 extra + BRIN on stock          16668     16193-31441    96.1       3.9       196 B      11.4 MB -&gt; 11.4 MB
+
+insert 200k rows in one statement:
+  0 extra indexes    ≈  1808 ms   WAL 27.6 MB
+  2 extra indexes    ≈  2227 ms   WAL 68.0 MB
+  5 extra indexes    ≈  2300 ms   WAL 109.3 MB</code></pre>
+  <div class="ar-note">كل layout اتشغّل 3 مرات بترتيب متبدّل، وده الوسيط (median) ومعاه أقل وأكبر tps. بص على الـ HOT% والـ WAL: مع 0 و 2 و 5 indexes تانية، الـ HOT حوالي 97% والـ WAL حوالي 190 byte والـ indexes مكبرتش. مع B-tree على <code>stock</code>: الـ HOT صفر، والـ WAL 744 byte، والـ indexes كبرت من 12.1 لـ 15.1 MB. مع <code>fillfactor=70</code>: الـ HOT 100% ومفيش update انتقل لـ page جديدة. ومع BRIN على <code>stock</code>: الـ HOT لسه 96.1%. تحت خالص الـ insert: الـ WAL 27.6 ثم 68 ثم 109.3 MB مع 0 و 2 و 5 indexes، لأن الـ insert ملوش HOT. عمود الـ tps متداخل بين الـ layouts بسبب الضغط على الجهاز، وزمن الـ insert كمان اتغيّر كتير بين التشغيلات (في تشغيلة تانية كان ≈2.8 و≈12.6 و≈9.8 ثانية)، فمتبنيش قرار عليهم.</div>
+
+<pre data-file="p5-fillfactor.sql"><code class="language-sql">-- التمن بتاع fillfactor: مساحة فاضية محجوزة من الأول، ومش بتتطبق على القديم لوحدها
+create table products_ff100 (id int primary key, sku text, stock int);
+create table products_ff70  (id int primary key, sku text, stock int) with (fillfactor = 70);
+insert into products_ff100 select i, 'SKU-' || i, 50 from generate_series(1, 100000) i;
+insert into products_ff70  select i, 'SKU-' || i, 50 from generate_series(1, 100000) i;
+
+select relname as table_name, pg_size_pretty(pg_relation_size(oid)) as size
+from pg_class where relname in ('products_ff100', 'products_ff70') order by relname;
+
+-- الـ ALTER بيغيّر الإعداد بس: الـ pages الموجودة زي ما هي لحد rewrite
+alter table products_ff100 set (fillfactor = 70);
+select pg_size_pretty(pg_relation_size('products_ff100')) as after_alter;
+vacuum full products_ff100;
+select pg_size_pretty(pg_relation_size('products_ff100')) as after_rewrite;</code></pre>
+<pre><code class="language-plaintext">   table_name   |  size   
+----------------+---------
+ products_ff100 | 5088 kB
+ products_ff70  | 7336 kB
+
+ after_alter 
+-------------
+ 5088 kB
+
+ after_rewrite 
+---------------
+ 7336 kB</code></pre>
+  <div class="ar-note"><code>fillfactor=70</code> بيخلّي الجدول 7336 kB بدل 5088 kB، يعني أكبر بـ 44%. والـ <code>ALTER</code> مغيّرش الحجم، فالـ pages القديمة فضلت مليانة، ولما عملنا rewrite بس وصل 7336 kB. والـ <code>VACUUM FULL</code> ده بياخد ACCESS EXCLUSIVE lock، فمتشغّلوش على جدول شغال في production: استخدمناه هنا عشان المعمل بس.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p>Low selectivity is the other classic way an index earns nothing. An index on a 50/50 boolean is ignored, and rightly: half the table is on nearly every page, so the plan is a Seq Scan touching 9082 buffers. Force the index and you read those same 9082 heap pages <em>plus</em> 213 index pages. The planner was right, and the index was 3408 kB of write cost for nothing. Flip the question: if only 0.5% of rows are <code>is_flagged</code>, a partial index on that rare value is 72 kB and really gets used.</p>
+  </section>
+
+<pre data-file="p5-partial-hot.sql"><code class="language-sql">-- الفخ: عمود جوه WHERE بتاع partial index بيتحسب برضه، فالـ HOT بيقع
+create table carts (id int primary key, items int not null, updated_at timestamptz not null)
+  with (fillfactor = 70);
+insert into carts select i, 0, '2026-01-01' from generate_series(1, 20000) i;
+
+update carts set updated_at = updated_at + interval '1 minute' where id % 2 = 0;
+select pg_stat_force_next_flush();
+select pg_sleep(0.3);
+select n_tup_upd, n_tup_hot_upd from pg_stat_user_tables where relname = 'carts';
+
+create index carts_stale_idx on carts (id) where updated_at &lt; '2020-01-01';
+update carts set updated_at = updated_at + interval '1 minute' where id % 2 = 1;
+select pg_stat_force_next_flush();
+select pg_sleep(0.3);
+select n_tup_upd, n_tup_hot_upd from pg_stat_user_tables where relname = 'carts';</code></pre>
+<pre><code class="language-plaintext">-- no index yet: updates, HOT updates
+ n_tup_upd | n_tup_hot_upd 
+     10000 |          8683
+
+-- after the partial index: 10000 more updates
+ n_tup_upd | n_tup_hot_upd 
+     20000 |          8683</code></pre>
+  <div class="ar-note">قبل الـ partial index: 10000 update منهم 8683 HOT. بعده: الإجمالي بقى 20000 والـ HOT لسه 8683، يعني الـ 10000 الجداد طلّعوا صفر HOT، مع إن الـ index نفسه على <code>id</code> وعمود <code>updated_at</code> موجود في الـ <code>WHERE</code> بس.</div>
+
+<pre data-file="p5-selectivity.sql"><code class="language-sql">-- مستخدمين: is_active نصهم تقريبًا، و is_flagged نادر جدًا (0.5%)
+create table app_users (
+  id         bigint generated always as identity primary key,
+  email      text    not null,
+  is_active  boolean not null,
+  is_flagged boolean not null,
+  bio        text    not null
+);
+select setseed(0.11);
+insert into app_users (email, is_active, is_flagged, bio)
+select 'user' || i || '@example.com', random() &lt; 0.5, random() &lt; 0.005, repeat('x', 80)
+from generate_series(1, 500000) i;
+create index users_active_idx on app_users (is_active);
+vacuum analyze app_users;
+
+explain (analyze, costs off, timing off, summary off)
+select id, email from app_users where is_active;
+
+-- لو أجبرت الـ planner يستخدم الـ index: هتشوف إنه كان عنده حق
+begin;
+set local enable_seqscan = off;
+explain (analyze, costs off, timing off, summary off)
+select id, email from app_users where is_active;
+rollback;
+
+explain (analyze, costs off, timing off, summary off)
+select id, email from app_users where is_flagged;
+
+select pg_size_pretty(pg_relation_size('users_flagged_partial')) as partial_index_size;</code></pre>
+<pre><code class="language-plaintext">-- is_active, the planner's choice
+ Seq Scan on app_users (actual rows=250390.00 loops=1)
+   Filter: is_active
+   Rows Removed by Filter: 249610
+   Buffers: shared hit=9082
+
+-- is_active, index forced
+ Bitmap Heap Scan on app_users (actual rows=250390.00 loops=1)
+   Recheck Cond: is_active
+   Heap Blocks: exact=9082
+   Buffers: shared hit=9082 read=213
+   -&gt;  Bitmap Index Scan on users_active_idx (actual rows=250390.00 loops=1)
+         Index Cond: (is_active = true)
+         Index Searches: 1
+         Buffers: shared read=213
+
+-- is_flagged, partial index
+ Index Scan using users_flagged_partial on app_users (actual rows=2474.00 loops=1)
+   Index Searches: 1
+   Buffers: shared hit=2162 read=8
+ partial_index_size 
+--------------------
+ 72 kB</code></pre>
+  <div class="ar-note"><code>is_active</code> نصهم: الـ planner اختار Seq Scan بـ 9082 buffer. لما أجبرناه على الـ index: نفس الـ 9082 page زائد 213 page بتوع الـ index، يعني أوحش. <code>is_flagged</code> نادر (2474 صف من 500 ألف): partial index بـ 72 kB اتستخدم فعلًا بـ 2170 buffer بس.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <code>UPDATE</code> في Postgres بيكتب نسخة جديدة من الصف (<a href="./14-mvcc-vacuum-long-transactions.html">lesson 14</a> بيشرح ليه). المفروض كل index على الجدول ياخد entry جديد ليها، حتى لو عموده متغيرش. الـ <strong>HOT</strong> (heap-only tuple) بيوفّر ده لما شرطين يتحققوا: الـ update ميغيّرش أي عمود عليه index، والـ page فيها مكان للنسخة الجديدة. النسخة القديمة بتشاور على الجديدة في نفس الـ page، ومفيش index بيتلمس.</p>
+    <p>وده بيطلّع نتيجة بتفاجئ ناس كتير. الـ indexes الزيادة على أعمدة <em>تانية</em> بالكاد بتضر الـ update: مع 0 و 2 و 5 indexes، الـ HOT فضل حوالي 97%، والـ WAL حوالي 190 byte لكل update، والـ indexes مكبرتش. ضيف index واحد على العمود اللي بيتعدّل، والـ HOT يبقى <strong>0%</strong>، والـ WAL يوصل 744 byte (حوالي 3.9 مرة)، والـ indexes تكبر من 12.1 MB لـ 15.1 MB في 6 ثواني. نفس الجدول ونفس الـ statement. أما الـ insert فملوش مهرب: كل index بياخد entry لكل صف، فالـ WAL لنفس الـ 200 ألف صف بقى 27.6 ثم 68 ثم 109.3 MB مع 0 و 2 و 5 indexes.</p>
+    <p>تلات نقط كمان. العمود اللي موجود في <code>WHERE</code> بتاع partial index بس بيتحسب عليه index: على جدول واحد، 10000 update طلّعوا 8683 HOT قبل ما نضيف <code>create index ... (id) where updated_at &lt; ...</code>، والـ 10000 اللي بعدهم طلّعوا صفر. الـ <code>fillfactor</code> بيسيب مكان في كل page: عند 70 الـ HOT وصل 100% ومفيش update اضطر ينتقل لـ page جديدة (<code>n_tup_newpage_upd</code> من PG 16 هو اللي بيعد ده)، والتمن جدول أكبر بـ 44%، والإعداد بيتطبق على الـ pages الجديدة بس لحد ما تعمل rewrite. والـ BRIN مش بيمنع الـ HOT، لأن من PG 16 الـ "summarizing" indexes مستثناة: BRIN على <code>stock</code> سابت الـ HOT عند 96.1%.</p>
+    <p>والـ throughput هنا إشارة فيها دوشة. على الجهاز ده وهو عليه ضغط، نطاقات الـ tps اتداخلت بين كل الـ layouts، فاعتمد على الـ HOT% والـ WAL مش على رقم tps واحد. وأحسن تشغيلة لـ layout الـ B-tree على <code>stock</code> (≈22.5 ألف) فضلت تحت وسيط معظم الباقيين.</p>
+    <p>والـ low selectivity هي الطريقة التانية المشهورة اللي الـ index فيها مبيكسبش حاجة. index على boolean نصه true ونصه false بيتجاهل، وده صح: نص الجدول موجود في كل page تقريبًا، فالـ plan بيبقى Seq Scan بـ 9082 buffer. لو أجبرت الـ index هتقرا نفس الـ 9082 page <em>زائد</em> 213 page للـ index. الـ planner كان عنده حق، والـ index كان 3408 kB تكلفة كتابة على الفاضي. اقلب السؤال: لو 0.5% بس من الصفوف <code>is_flagged</code>، partial index على القيمة النادرة دي حجمه 72 kB وبيتستخدم فعلًا.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ code review اللي فيه <code>create index on orders (updated_at)</code>، وعمود <code>updated_at</code> بيتغيّر مع كل update. الـ index ده بيقتل الـ HOT على الجدول كله، فكل update يكتب في كل الـ indexes. قبل ما توافق اسأل: "مين بيقرا بيه؟ وكام مرة؟". لو dashboard مرة في اليوم، سيبه يعمل Seq Scan على replica أو اعمل له summary table، ومتحلهاش بـ partial index على نفس العمود لأنه برضه بيقتل الـ HOT. نفس الكلام لعمود <code>view_count</code> أو <code>last_seen_at</code>: طلّعه في جدول صغير لوحده بـ <code>fillfactor</code> واطي. وفي الـ monitoring اطبع <code>n_tup_hot_upd / n_tup_upd</code> لأهم 10 جداول: لو الرقم وقع فجأة بعد deploy، يبقى في migration ضافت index على عمود بيتعدّل. والغلطة الشائعة: تحكم إن "الـ indexes بتبطّأ الـ updates" من غير ما تفرّق بين الـ indexes على الأعمدة المتغيرة والباقي.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "This table has 6 indexes and updates feel slow. Will dropping 5 of them help?" → It depends on what the updates change. If they touch no indexed column and pages have room, updates are HOT and those indexes cost nearly nothing on update: 5 extra indexes moved WAL from 182 to 190 bytes here. They still cost on insert (about 4× WAL) and during vacuum, which has to walk every index. If one index covers the updated column, that single index is the problem: HOT dropped to 0% and WAL per update rose about 3.9×. Check <code>n_tup_hot_upd</code> against <code>n_tup_upd</code> first, then look at <code>fillfactor</code>.
+    <div class="ar-note">"الجدول ده عليه 6 indexes والـ updates حاسس إنها بطيئة. لو مسحت 5 منهم هيفرق؟" ← حسب الـ updates بتغيّر إيه. لو مش بتلمس عمود عليه index والـ pages فيها مكان، يبقى الـ updates دي HOT والـ indexes دي تقريبًا مش بتكلّف حاجة في الـ update: 5 indexes زيادة حرّكوا الـ WAL من 182 لـ 190 byte هنا. بس لسه بيكلّفوا في الـ insert (حوالي 4 مرات WAL) وفي الـ vacuum، لأنه لازم يلف على كل index. لو index واحد على العمود اللي بيتعدّل، يبقى هو ده المشكلة: الـ HOT وقع لـ 0% والـ WAL لكل update طلع حوالي 3.9 مرة. بص الأول على <code>n_tup_hot_upd</code> قصاد <code>n_tup_upd</code>، وبعدين على <code>fillfactor</code>.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Unused, duplicate and invalid indexes <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ indexes اللي مش بتتستخدم والمتكررة والـ invalid</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Every index you can safely remove gives back disk, cache and write throughput. <code>pg_stat_user_indexes</code> is the starting point: <code>idx_scan</code> counts scans and <code>last_idx_scan</code> (since PG 16) says when the last one happened. But <code>idx_scan = 0</code> is a lead, not a verdict. Check these before you drop anything:</p>
+    <ul>
+      <li><strong>Stats are per server.</strong> A primary's counters say nothing about queries on a read replica. Check every replica.</li>
+      <li><strong>The window.</strong> Counters start at the last reset. Tested here: a clean restart kept <code>idx_scan = 5</code>, but crash recovery put it back to 0 and <code>last_idx_scan</code> to NULL, while <code>stats_reset</code> stayed NULL. So a fresh-looking zero can simply mean a recent crash. Also cover your longest business cycle, or the month-end report's index looks dead for 29 days.</li>
+      <li><strong>Unique indexes enforce a rule with zero scans.</strong> So do primary keys and exclusion constraints. The report below filters them out.</li>
+      <li><strong>Expression indexes also feed the planner.</strong> Postgres keeps statistics on indexed expressions, so dropping an unscanned one can change estimates (<a href="./10-btree-composite-partial-covering.html">lesson 10</a>).</li>
+    </ul>
+    <p>Twins confuse the counters too. Here <code>orders_tenant_created_idx</code> shows 0 scans because the planner sent everything to its identical twin <code>_dup</code>. Dropping the one the duplicates query names keeps one copy. Read the unused report and the duplicates report together, and never drop from one alone.</p>
+    <p><strong>Invalid indexes</strong> are leftovers from a failed <code>CONCURRENTLY</code> build (<a href="./17-safe-migrations.html">lesson 17</a>). No query can use them, but they aren't always harmless. Check <code>indisready</code>: when it's true, every write still maintains the index. Remove indexes with <code>DROP INDEX CONCURRENTLY</code>, which can't run inside a transaction (real error below), so a migration tool that wraps everything in <code>BEGIN</code> needs its transaction turned off for that step. Your rollback plan is the definition from <code>pg_get_indexdef()</code>, saved first and recreated with <code>CREATE INDEX CONCURRENTLY</code>.</p>
+  </section>
+
+<pre data-file="p6-report.sql"><code class="language-sql">-- معمل صغير: indexes حقيقية، و indexes زبالة، و duplicate، و invalid
+create extension if not exists pgstattuple;
+create index orders_tenant_idx          on orders (tenant_id);
+create index orders_tenant_created_idx  on orders (tenant_id, created_at);
+create index orders_tenant_created_dup  on orders (tenant_id, created_at);
+create index orders_customer_idx        on orders (customer_id);
+-- ده الـ junk اللي هنكتشفه: حد ضافه من سنة عشان query اتمسحت
+create index orders_currency_status_idx on orders (currency, status);
+-- قاعدة بيزنس: مفيش منتجين بنفس الـ sku لنفس الـ tenant، عمره ما هيتعمله scan بس لازم يفضل
+create unique index products_tenant_sku_uq on products (tenant_id, sku);
+
+-- حركة حقيقية عشان الـ scans تتحسب
+select count(*) from orders where tenant_id = 7;
+select count(*) from orders where tenant_id = 7 and created_at &gt; '2025-02-01';
+select count(*) from orders where customer_id = 42;
+
+-- الاستعلام بياخد لحظة عشان الـ stats تتكتب، فبنجبرها
+select pg_stat_force_next_flush();
+select pg_sleep(0.2);
+
+select stats_reset from pg_stat_database where datname = current_database();
+select column_name from information_schema.columns
+where table_name = 'pg_stat_user_indexes' and column_name in ('idx_scan', 'last_idx_scan', 'stats_reset')
+order by column_name;
+
+-- تقرير الـ unused: الـ unique والـ PK والـ constraints مستبعدين لأنهم بيحرسوا قاعدة
+select s.relname as table_name,
+       s.indexrelname as index_name,
+       pg_size_pretty(pg_relation_size(s.indexrelid)) as size,
+       s.idx_scan,
+       s.last_idx_scan
+from pg_stat_user_indexes s
+join pg_index i using (indexrelid)
+where s.idx_scan = 0
+  and not i.indisunique
+  and not i.indisprimary
+  and not exists (select 1 from pg_constraint c where c.conindid = s.indexrelid)
+order by pg_relation_size(s.indexrelid) desc;
+
+-- لو فلتر الـ unique شيلناه هتلاقي إيه؟ ده اللي ممنوع تمسحه
+select indexrelname as index_name, idx_scan
+from pg_stat_user_indexes
+where idx_scan = 0 and indexrelname like '%uq';
+
+-- الـ duplicates: نفس الأعمدة بنفس الـ opclass، أو prefix من index أكبر
+select a.indrelid::regclass as table_name,
+       a.indexrelid::regclass as redundant,
+       b.indexrelid::regclass as covered_by,
+       pg_size_pretty(pg_relation_size(a.indexrelid)) as wasted
+from pg_index a
+join pg_index b
+  on a.indrelid = b.indrelid
+ and a.indexrelid &lt;&gt; b.indexrelid
+ and (b.indkey::text = a.indkey::text or b.indkey::text like a.indkey::text || ' %')
+ and (b.indclass::text = a.indclass::text or b.indclass::text like a.indclass::text || ' %')
+where not a.indisunique
+  and a.indpred is null and b.indpred is null
+  and a.indexprs is null and b.indexprs is null
+  and (b.indkey::text &lt;&gt; a.indkey::text or a.indexrelid &gt; b.indexrelid)
+order by pg_relation_size(a.indexrelid) desc;
+
+-- بنعمل invalid بجد: unique concurrently على عمود فيه تكرار
+create unique index concurrently orders_customer_uq on orders (customer_id);
+
+select indexrelid::regclass as index_name,
+       indrelid::regclass as table_name,
+       indisvalid,
+       indisready,
+       pg_size_pretty(pg_relation_size(indexrelid)) as size
+from pg_index
+where not indisvalid;
+
+-- الإزالة الآمنة: احفظ التعريف الأول، ده الـ rollback بتاعك
+select pg_get_indexdef('orders_currency_status_idx'::regclass) as rollback_ddl;
+begin;
+drop index concurrently orders_currency_status_idx;
+rollback;
+drop index concurrently orders_currency_status_idx;
+drop index concurrently orders_customer_uq;
+drop index concurrently orders_tenant_created_dup;
+select count(*) as remaining_invalid from pg_index where not indisvalid;</code></pre>
+<pre><code class="language-plaintext">-- window: stats_reset, then the columns this version has
+ stats_reset 
+-------------
+ 
+
+  column_name  
+---------------
+ idx_scan
+ last_idx_scan
+
+-- unused
+ table_name |         index_name         |  size   | idx_scan | last_idx_scan 
+------------+----------------------------+---------+----------+---------------
+ orders     | orders_tenant_created_idx  | 6184 kB |        0 | 
+ orders     | orders_currency_status_idx | 1400 kB |        0 | 
+
+-- never drop this one
+       index_name       | idx_scan 
+------------------------+----------
+ products_tenant_sku_uq |        0
+
+-- duplicates
+ table_name |         redundant         |        covered_by         | wasted  
+------------+---------------------------+---------------------------+---------
+ orders     | orders_tenant_created_dup | orders_tenant_created_idx | 6184 kB
+ orders     | orders_tenant_idx         | orders_tenant_created_idx | 1408 kB
+ orders     | orders_tenant_idx         | orders_tenant_created_dup | 1408 kB
+
+-- invalid
+ERROR:  could not create unique index "orders_customer_uq"
+DETAIL:  Key (customer_id)=(11394) is duplicated.
+     index_name     | table_name | indisvalid | indisready |  size   
+--------------------+------------+------------+------------+---------
+ orders_customer_uq | orders     | f          | f          | 0 bytes
+
+-- safe removal
+                                      rollback_ddl                                       
+-----------------------------------------------------------------------------------------
+ CREATE INDEX orders_currency_status_idx ON public.orders USING btree (currency, status)
+
+ERROR:  DROP INDEX CONCURRENTLY cannot run inside a transaction block
+ remaining_invalid 
+-------------------
+                 0</code></pre>
+  <div class="ar-note">
+    <ul>
+      <li><b>window:</b> <code>stats_reset</code> فاضي يعني محدش عمل reset، و<code>pg_stat_user_indexes</code> في 18 فيه <code>idx_scan</code> و<code>last_idx_scan</code> ومفيهوش <code>stats_reset</code>.</li>
+      <li><b>unused:</b> التقرير طلّع الـ junk بتاعنا <code>orders_currency_status_idx</code>، وكمان <code>orders_tenant_created_idx</code> لأن الـ scans كلها راحت لتوأمه.</li>
+      <li><b>unique:</b> <code>products_tenant_sku_uq</code> عنده 0 scans وبيحرس قاعدة، فممنوع يتمسح.</li>
+      <li><b>duplicates:</b> <code>_dup</code> نسخة طبق الأصل (6184 kB ضايعين)، و<code>orders_tenant_idx</code> الـ prefix بتاعه مغطّى بالـ index الأكبر فظهر مرتين، مرة مع كل توأم.</li>
+      <li><b>invalid:</b> الـ <code>unique concurrently</code> وقع على تكرار حقيقي، وساب index بـ <code>indisvalid = f</code> و<code>indisready = f</code> وحجمه 0 bytes.</li>
+      <li><b>safe removal:</b> حفظنا الـ DDL الأول، و<code>DROP INDEX CONCURRENTLY</code> جوه <code>begin</code> رجّع error، وبره الـ transaction نجح، وفضل 0 invalid.</li>
+    </ul>
+  </div>
+
+<pre><code class="language-plaintext">before clean restart {"indexrelname":"t_v","idx_scan":"5","has_last":true}
+after clean restart  {"indexrelname":"t_v","idx_scan":"5","has_last":true}
+after crash recovery {"indexrelname":"t_v","idx_scan":"0","has_last":false}
+stats_reset set      {"has_reset":false}</code></pre>
+  <div class="ar-note">restart عادي: الـ 5 scans فضلوا. crash recovery: الـ <code>idx_scan</code> بقى 0 و<code>last_idx_scan</code> اتمسح، و<code>stats_reset</code> لسه فاضي. فـ <code>stats_reset</code> الفاضي مش دليل إن العدادات قديمة: بص كمان على <code>pg_postmaster_start_time()</code> وعلى الـ logs.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>كل index تقدر تمسحه بأمان بيرجّعلك disk و cache وسرعة كتابة. نقطة البداية <code>pg_stat_user_indexes</code>: عمود <code>idx_scan</code> بيعد الـ scans، و<code>last_idx_scan</code> (من PG 16) بيقولك آخر scan كان إمتى. بس <code>idx_scan = 0</code> خيط تبدأ منه مش حكم نهائي. راجع دول قبل ما تمسح:</p>
+    <ul>
+      <li><strong>الـ stats لكل سيرفر لوحده.</strong> عدادات الـ primary ملهاش علاقة بالـ queries اللي على read replica. راجع كل replica.</li>
+      <li><strong>الفترة.</strong> العدادات بتبدأ من آخر reset. جرّبنا هنا: restart عادي سايب <code>idx_scan = 5</code>، بس crash recovery رجّعه 0 و<code>last_idx_scan</code> بقى NULL، و<code>stats_reset</code> فضل NULL. فالصفر ممكن يكون معناه crash قريب وخلاص. وكمان لازم الفترة تغطي أطول دورة شغل عندك، وإلا الـ index بتاع تقرير آخر الشهر هيبان ميت 29 يوم.</li>
+      <li><strong>الـ unique indexes بتفرض قاعدة وهي 0 scans.</strong> وكمان الـ primary keys والـ exclusion constraints. التقرير تحت بيستبعدهم.</li>
+      <li><strong>الـ expression indexes بتغذّي الـ planner كمان.</strong> Postgres بيحتفظ بـ statistics على الـ expressions اللي عليها index، فمسح واحد 0 scans ممكن يغيّر الـ estimates (<a href="./10-btree-composite-partial-covering.html">lesson 10</a>).</li>
+    </ul>
+    <p>التوائم كمان بتلخبط العدادات. هنا <code>orders_tenant_created_idx</code> بيقول 0 scans لأن الـ planner بعت كل حاجة لتوأمه <code>_dup</code>. لما تمسح اللي كويري الـ duplicates بتسمّيه، بتفضل نسخة واحدة. اقرا تقرير الـ unused وتقرير الـ duplicates مع بعض، ومتمسحش من واحد لوحده.</p>
+    <p>الـ <strong>invalid indexes</strong> بواقي build فاشل بـ <code>CONCURRENTLY</code> (<a href="./17-safe-migrations.html">lesson 17</a>). مفيش query تقدر تستخدمها، بس مش دايمًا بريئة. بص على <code>indisready</code>: لو true يبقى كل write لسه بيحدّث الـ index. وامسح بـ <code>DROP INDEX CONCURRENTLY</code>، وده مينفعش جوه transaction (الـ error الحقيقي فوق)، فأي migration tool بيلف كل حاجة في <code>BEGIN</code> لازم تقفل الـ transaction بتاعه للخطوة دي. والـ rollback plan هو التعريف من <code>pg_get_indexdef()</code>: احفظه الأول، ولو احتجته ابنيه بـ <code>CREATE INDEX CONCURRENTLY</code>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      تعمل "index audit" كل ربع سنة على الجداول الكبيرة: شغّل التلات تقارير على الـ primary وعلى كل replica، وحط النتايج في ticket فيها الحجم والـ DDL بتاع الـ rollback. بعدين migration منفصلة لكل index بـ <code>DROP INDEX CONCURRENTLY</code> في وقت هادي، وتراقب <code>pg_stat_statements</code> (<a href="./25-monitoring-tuning.html">lesson 25</a>) أسبوع. والغلطة الشائعة: تمسح index عنده 0 scans على الـ primary وهو اللي شايل كل الـ reports على الـ replica، فالـ dashboard يقع تاني يوم.
+    </div>
+  </section>
+
+  <!-- ===================== PART 7 ===================== -->
+  <h2 id="p7">Part 7 — Bloat and REINDEX <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 7 — الـ bloat والـ REINDEX</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A B-tree page that splits never merges back unless it empties completely. So when every row is updated with a changed indexed value, the index grows and its pages get sparser. <code>pgstatindex</code> shows it directly. Here, on 300k invoices with <code>VACUUM</code> after each round, as autovacuum would do: size went from 6600 kB to 17 MB, <code>avg_leaf_density</code> fell from 90 to 34.37, and <code>leaf_fragmentation</code> sat near 50. <strong>VACUUM doesn't shrink it:</strong> it makes the dead space reusable, and the file stays big. Rebuilding brings back exactly 6600 kB and density 90.</p>
+    <p>You rebuild with <code>REINDEX</code>, and the choice of form is what matters. Plain <code>REINDEX</code> locks out writes on the table, and also blocks reads that want that index, including planning of queries on the table. <code>REINDEX CONCURRENTLY</code> builds a new index beside the old one and swaps them. With a writer running against a 2M-row table, plain REINDEX stalled it for ≈1132 ms (it managed 22 updates), and CONCURRENTLY took a little longer, ≈1459 ms, with a worst stall of ≈67 ms and 5146 updates done. (Another run on a busier machine: ≈2498 ms against ≈7 ms.) The price: it needs disk for both copies at once, it does more total work, it can't run inside a transaction block, and it has to wait out older transactions, so a long-running transaction delays it.</p>
+    <p>If it fails, it leaves <code>idx_ccnew</code> behind with <code>indisvalid = false</code>. How much that costs depends on when it died. Cancelling early left 0 bytes. Mid-build left 21 MB with <code>indisready = false</code>. Later it left the full 43 MB with <code>indisready = true</code>, and 2000 updates then wrote 716824 bytes of WAL against 578088 once it was dropped, about 24% more for an index no query can use. The docs' recovery: drop it, then run REINDEX again. (<code>_ccold</code> is the old index that couldn't be dropped: drop that too.)</p>
+    <p>Bloat is less common than old advice suggests, thanks to two B-tree improvements. <strong>Deduplication</strong> (PG 13) stores a repeated key once with a list of row ids: on 1M orders, <code>status</code> took 6888 kB against 29 MB with it turned off, and <code>tenant_id</code> 6880 kB against 21 MB. <strong>Bottom-up deletion</strong> (PG 14) clears dead versions out of a page before it would split, when an index's own value didn't change. After 300k non-HOT updates with no vacuum at all, the primary key on those rows stayed at 6.4–6.5 MB. It can't be switched off, so no before-and-after comparison is possible on one version; the docs describe the older behaviour. <code>pg_repack</code> isn't installed here and wasn't run. PostgreSQL 19 isn't released; its RC notes list <code>REPACK</code> and <code>REPACK (CONCURRENTLY)</code> replacing <code>VACUUM FULL</code> and <code>CLUSTER</code>, also not run here.</p>
+  </section>
+
+<pre data-file="bloat-rounds.ts"><code class="language-typescript">import pg from "pg";
+
+// حارس: من غير port صريح الـ driver بيروح للـ default، وده ممكن يبقى الـ database الحقيقية بتاعتك
+const url = process.env.DATABASE_URL ?? "";
+const port = URL.canParse(url) ? new URL(url).port : "";
+const n = Number(port);
+if (!/^\d+$/.test(port) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) throw new Error("refusing port " + port);
+const client = new pg.Client({ connectionString: url });
+await client.connect();
+await client.query(`create extension if not exists pgstattuple`);
+
+// جدول invoices: كل تعديل بيغيّر عمود عليه index، يعني مفيش HOT خالص
+await client.query(`
+  create table invoices (
+    id bigint generated always as identity primary key,
+    customer_id bigint not null,
+    status_changed_at timestamptz not null
+  ) with (autovacuum_enabled = off)`);
+await client.query(`
+  insert into invoices (customer_id, status_changed_at)
+  select i % 5000, timestamptz '2025-01-01' + random() * interval '365 days'
+  from generate_series(1, 300000) i`);
+await client.query(`create index invoices_changed_idx on invoices (status_changed_at)`);
+await client.query(`vacuum analyze invoices`);
+
+type Stat = { size: string; leaf_pages: string; density: string; frag: string };
+async function stat(label: string): Promise&lt;void&gt; {
+  const { rows: [s] } = await client.query&lt;Stat&gt;(`
+    select pg_size_pretty(index_size) as size, leaf_pages,
+           avg_leaf_density as density, leaf_fragmentation as frag
+    from pgstatindex('invoices_changed_idx')`);
+  console.log(`${label.padEnd(16)} size=${s!.size.padStart(7)}  leaf_pages=${s!.leaf_pages.padStart(5)}  density=${String(s!.density).padStart(5)}  fragmentation=${String(s!.frag).padStart(5)}`);
+}
+
+await stat("fresh");
+// نحاكي شغل حقيقي: كل round كل الصفوف بتتعدل، و VACUUM بيجري بعدها زي الـ autovacuum
+for (let round = 1; round &lt;= 10; round++) {
+  await client.query(`update invoices set status_changed_at = timestamptz '2025-01-01' + random() * interval '365 days'`);
+  await client.query(`vacuum invoices`);
+  await stat(`round ${round} + vacuum`);
+}
+await client.query(`reindex index concurrently invoices_changed_idx`);
+await stat("after REINDEX");
+await client.end();</code></pre>
+<pre><code class="language-plaintext">fresh            size=6600 kB  leaf_pages=  820  density=   90  fragmentation=    0
+round 1 + vacuum size=  13 MB  leaf_pages= 1671  density=44.29  fragmentation=49.91
+round 2 + vacuum size=  14 MB  leaf_pages= 1822  density=40.64  fragmentation=49.62
+round 3 + vacuum size=  15 MB  leaf_pages= 1896  density=39.06  fragmentation=49.53
+round 4 + vacuum size=  15 MB  leaf_pages= 1963  density=37.74  fragmentation=49.47
+round 5 + vacuum size=  16 MB  leaf_pages= 2010  density=36.86  fragmentation= 49.6
+round 6 + vacuum size=  16 MB  leaf_pages= 2051  density=36.13  fragmentation=49.54
+round 7 + vacuum size=  16 MB  leaf_pages= 2084  density=35.56  fragmentation=49.47
+round 8 + vacuum size=  17 MB  leaf_pages= 2109  density=35.14  fragmentation=49.36
+round 9 + vacuum size=  17 MB  leaf_pages= 2133  density=34.75  fragmentation=49.32
+round 10 + vacuum size=  17 MB  leaf_pages= 2157  density=34.37  fragmentation= 49.1
+after REINDEX    size=6600 kB  leaf_pages=  820  density=   90  fragmentation=    0</code></pre>
+  <div class="ar-note">كل سطر بعد round فيه update لكل الـ 300 ألف صف و VACUUM. الحجم طلع من 6600 kB لـ 17 MB، والـ density نزلت من 90 لـ 34.37، يعني كل page مليانة حوالي التلت بس. أغلب الضرر حصل في أول round (نص الـ density راح مرة واحدة بسبب الـ page splits)، وبعدها بيزحف ببطء. والـ VACUUM كان شغال كل مرة ومصغّرش الملف. آخر سطر: بعد <code>REINDEX CONCURRENTLY</code> رجعنا 6600 kB و density 90.</div>
+
+<pre data-file="reindex-stall.ts"><code class="language-typescript">import pg from "pg";
+
+// حارس: من غير port صريح الـ driver بيروح للـ default، وده ممكن يبقى الـ database الحقيقية بتاعتك
+const url = process.env.DATABASE_URL ?? "";
+const port = URL.canParse(url) ? new URL(url).port : "";
+const n = Number(port);
+if (!/^\d+$/.test(port) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) throw new Error("refusing port " + port);
+const admin = new pg.Client({ connectionString: url });
+const writer = new pg.Client({ connectionString: url });
+await admin.connect();
+await writer.connect();
+await admin.query(`create extension if not exists pgstattuple`);
+
+await admin.query(`
+  create table invoices (
+    id bigint generated always as identity primary key,
+    customer_id bigint not null,
+    status_changed_at timestamptz not null
+  )`);
+await admin.query(`
+  insert into invoices (customer_id, status_changed_at)
+  select i % 5000, timestamptz '2025-01-01' + random() * interval '365 days'
+  from generate_series(1, 2000000) i`);
+await admin.query(`create index invoices_changed_idx on invoices (status_changed_at)`);
+await admin.query(`vacuum analyze invoices`);
+
+// الـ writer: API بيعدّل فاتورة كل شوية، وبيسجّل أبطأ update شافه
+let running = true;
+let maxStallMs = 0;
+let updates = 0;
+const writerLoop = (async () =&gt; {
+  while (running) {
+    const id = 1 + Math.floor(Math.random() * 2_000_000);
+    const t0 = performance.now();
+    await writer.query(`update invoices set status_changed_at = now() where id = $1`, [id]);
+    maxStallMs = Math.max(maxStallMs, performance.now() - t0);
+    updates++;
+  }
+})();
+
+async function measure(label: string, sql: string): Promise&lt;void&gt; {
+  await new Promise((r) =&gt; setTimeout(r, 2000));
+  maxStallMs = 0;
+  updates = 0;
+  const t0 = performance.now();
+  await admin.query(sql);
+  const took = performance.now() - t0;
+  console.log(`${label.padEnd(22)} took≈${String(Math.round(took)).padStart(6)} ms  writer max stall≈${String(Math.round(maxStallMs)).padStart(6)} ms  updates during=${updates}`);
+}
+
+await measure("baseline (idle 3 s)", `select pg_sleep(3)`);
+await measure("REINDEX", `reindex index invoices_changed_idx`);
+await measure("REINDEX CONCURRENTLY", `reindex index concurrently invoices_changed_idx`);
+
+running = false;
+await writerLoop;
+
+// نكسره في النص: statement_timeout صغير بيلغي الـ REINDEX CONCURRENTLY بعد ما عمل الـ index الجديد
+await admin.query(`set statement_timeout = '400ms'`);
+try {
+  await admin.query(`reindex index concurrently invoices_changed_idx`);
+  console.log("reindex finished before the timeout");
+} catch (e) {
+  console.log(`failed: ${(e as pg.DatabaseError).code} ${(e as Error).message}`);
+}
+await admin.query(`reset statement_timeout`);
+
+const { rows } = await admin.query(`
+  select indexrelid::regclass::text as index_name, indisvalid, indisready,
+         pg_size_pretty(pg_relation_size(indexrelid)) as size
+  from pg_index
+  where indrelid = 'invoices'::regclass and indexrelid::regclass::text &lt;&gt; 'invoices_pkey'
+  order by 1`);
+console.table(rows);
+
+// التنضيف: امسح الـ ⁦_ccnew⁩ بالاسم وبعدين جرّب تاني من غير timeout
+for (const r of rows) {
+  if (r.index_name.includes("_ccnew")) {
+    await admin.query(`drop index concurrently ${r.index_name}`);
+    console.log(`dropped ${r.index_name}`);
+  }
+}
+await admin.query(`reindex index concurrently invoices_changed_idx`);
+const { rows: after } = await admin.query(`
+  select indexrelid::regclass::text as index_name, indisvalid
+  from pg_index where indrelid = 'invoices'::regclass and indexrelid::regclass::text &lt;&gt; 'invoices_pkey'`);
+console.table(after);
+
+await admin.end();
+await writer.end();</code></pre>
+<pre><code class="language-plaintext">baseline (idle 3 s)    took≈  3006 ms  writer max stall≈    12 ms  updates during=13416
+REINDEX                took≈  1138 ms  writer max stall≈  1132 ms  updates during=22
+REINDEX CONCURRENTLY   took≈  1459 ms  writer max stall≈    67 ms  updates during=5146
+failed: 57014 canceling statement due to statement timeout
+┌─────────┬──────────────────────────────┬────────────┬────────────┬───────────┐
+│ (index) │ index_name                   │ indisvalid │ indisready │ size      │
+├─────────┼──────────────────────────────┼────────────┼────────────┼───────────┤
+│ 0       │ 'invoices_changed_idx'       │ true       │ true       │ '43 MB'   │
+│ 1       │ 'invoices_changed_idx_ccnew' │ false      │ false      │ '0 bytes' │
+└─────────┴──────────────────────────────┴────────────┴────────────┴───────────┘
+dropped invoices_changed_idx_ccnew
+┌─────────┬────────────────────────┬────────────┐
+│ (index) │ index_name             │ indisvalid │
+├─────────┼────────────────────────┼────────────┤
+│ 0       │ 'invoices_changed_idx' │ true       │
+└─────────┴────────────────────────┴────────────┘
+
+-- ccnew-phases.ts: the same cancel at different moments
+timeout 300 ms -&gt; 57014: [{"name":"invoices_changed_idx_ccnew","indisvalid":false,"indisready":false,"size":"0 bytes"}]
+timeout 900 ms -&gt; 57014: [{"name":"invoices_changed_idx_ccnew","indisvalid":false,"indisready":true,"size":"43 MB"}]
+  WAL for 2000 updates with leftover: 716824 bytes
+  WAL for 2000 updates without it:   578088 bytes
+timeout 1500 ms -&gt; finished: []
+timeout 1800 ms -&gt; finished: []
+timeout 2200 ms -&gt; finished: []
+timeout 2600 ms -&gt; 57014: [{"name":"invoices_changed_idx_ccnew","indisvalid":false,"indisready":false,"size":"21 MB"}]</code></pre>
+  <div class="ar-note">
+    <p>أول 3 سطور: من غير rebuild أبطأ update كان ≈12 ms. بـ <code>REINDEX</code> العادي الـ writer وقف ≈1132 ms وعمل 22 update بس. بـ <code>CONCURRENTLY</code> أبطأ update كان ≈67 ms وعمل 5146 update، والـ rebuild نفسه خد ≈1459 ms بدل ≈1138 ms. في تشغيلة تانية أبطأ جهاز خد ≈2498 ms stall قصاد ≈7 ms، والنمط نفسه.</p>
+    <p>بعدها: <code>statement_timeout</code> لغى الـ rebuild بـ <code>57014</code>، وساب <code>_ccnew</code> بـ <code>indisvalid = false</code>. امسحه بالاسم وأعد المحاولة، والـ index الأصلي طول الوقت سليم وشغال.</p>
+    <p>آخر بلوك بيلغي في أوقات مختلفة: بدري = 0 bytes و <code>indisready</code> false. في النص = 21 MB و false. بعد كده = 43 MB و <code>indisready</code> true، وساعتها 2000 update كتبوا 716824 byte WAL قصاد 578088 بعد مسحه، يعني حوالي 24% زيادة على index محدش بيقدر يقرا منه. السطور اللي فيها <code>finished</code> معناها إن الـ rebuild خلص قبل الـ timeout، وكل ده بيتغير مع ضغط الجهاز.</p>
+  </div>
+
+<pre data-file="p7-dedup.sql"><code class="language-sql">create index orders_status_dedup   on orders (status);
+create index orders_status_nodedup on orders (status) with (deduplicate_items = off);
+create index orders_tenant_dedup   on orders (tenant_id);
+create index orders_tenant_nodedup on orders (tenant_id) with (deduplicate_items = off);
+select relname as index, pg_size_pretty(pg_relation_size(oid)) as size
+from pg_class
+where relname in ('orders_status_dedup', 'orders_status_nodedup',
+                  'orders_tenant_dedup', 'orders_tenant_nodedup')
+order by relname;</code></pre>
+<pre><code class="language-plaintext">         index         |  size   
+-----------------------+---------
+ orders_status_dedup   | 6888 kB
+ orders_status_nodedup | 29 MB
+ orders_tenant_dedup   | 6880 kB
+ orders_tenant_nodedup | 21 MB</code></pre>
+  <div class="ar-note">نفس الـ index على مليون order. <code>status</code> (5 قيم بس): 6888 kB بالـ deduplication قصاد 29 MB من غيرها، يعني حوالي 4.3 مرة. <code>tenant_id</code> (200 قيمة): 6880 kB قصاد 21 MB، يعني حوالي 3 مرات. والـ deduplication شغال by default، فمش محتاج تعمل حاجة.</div>
+
+<pre data-file="bottom-up.ts"><code class="language-typescript">import pg from "pg";
+
+// حارس: من غير port صريح الـ driver بيروح للـ default، وده ممكن يبقى الـ database الحقيقية بتاعتك
+const url = process.env.DATABASE_URL ?? "";
+const port = URL.canParse(url) ? new URL(url).port : "";
+const n = Number(port);
+if (!/^\d+$/.test(port) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) throw new Error("refusing port " + port);
+const client = new pg.Client({ connectionString: url });
+await client.connect();
+
+// تعديل بيغيّر عمود واحد عليه index، فكل الـ indexes لازم تاخد entry جديد لأن مفيش HOT
+await client.query(`
+  create table invoices (
+    id bigint generated always as identity primary key,
+    customer_id bigint not null,
+    status_changed_at timestamptz not null
+  ) with (autovacuum_enabled = off)`);
+await client.query(`
+  insert into invoices (customer_id, status_changed_at)
+  select i % 5000, timestamptz '2025-01-01' + random() * interval '365 days'
+  from generate_series(1, 300000) i`);
+await client.query(`create index invoices_changed_idx on invoices (status_changed_at)`);
+await client.query(`create index invoices_customer_idx on invoices (customer_id)`);
+await client.query(`vacuum analyze invoices`);
+
+async function sizes(label: string): Promise&lt;void&gt; {
+  const { rows } = await client.query(`
+    select indexrelname as idx, pg_relation_size(indexrelid) / 1048576.0 as mb
+    from pg_stat_user_indexes where relname = 'invoices' order by 1`);
+  const parts = rows.map((r: { idx: string; mb: string }) =&gt; `${r.idx}=${Number(r.mb).toFixed(1)} MB`);
+  const { rows: [t] } = await client.query(`select pg_relation_size('invoices') / 1048576.0 as mb`);
+  console.log(`${label.padEnd(10)} table=${Number(t.mb).toFixed(0).padStart(4)} MB  ${parts.join("  ")}`);
+}
+
+await sizes("fresh");
+// كل ⁦round: 5%⁩ من الصفوف بتتعدل بشكل عشوائي، من غير VACUUM خالص
+for (let round = 1; round &lt;= 20; round++) {
+  await client.query(`
+    update invoices set status_changed_at = status_changed_at + interval '1 minute'
+    where id in (select 1 + floor(random() * 300000)::bigint from generate_series(1, 15000))`);
+  if (round % 5 === 0) await sizes(`round ${round}`);
+}
+await client.end();</code></pre>
+<pre><code class="language-plaintext">fresh      table=  15 MB  invoices_changed_idx=6.4 MB  invoices_customer_idx=2.0 MB  invoices_pkey=6.4 MB
+round 5    table=  16 MB  invoices_changed_idx=12.9 MB  invoices_customer_idx=3.9 MB  invoices_pkey=6.4 MB
+round 10   table=  16 MB  invoices_changed_idx=12.9 MB  invoices_customer_idx=3.9 MB  invoices_pkey=6.5 MB
+round 15   table=  17 MB  invoices_changed_idx=12.9 MB  invoices_customer_idx=3.9 MB  invoices_pkey=6.5 MB
+round 20   table=  17 MB  invoices_changed_idx=12.9 MB  invoices_customer_idx=3.9 MB  invoices_pkey=6.5 MB</code></pre>
+  <div class="ar-note">20 round × 15000 = 300 ألف non-HOT update، ومن غير أي VACUUM. <code>invoices_pkey</code> قيمته مبتتغيرش فالـ bottom-up deletion بينضّفه: فضل 6.4 لـ 6.5 MB. <code>invoices_changed_idx</code> قيمته بتتغير فعلًا، فكبر من 6.4 لـ 12.9 MB لحد ما استقر. <code>invoices_customer_idx</code> كبر من 2.0 لـ 3.9 MB لأن بعد الـ update التكرار بتاعه مش مضغوط زي ما كان وقت البناء، وبعدها استقر. والـ bottom-up deletion مينفعش يتقفل، فمفيش مقارنة قبل وبعد على نفس الإصدار هنا.</div>
+
+<pre data-file="p7-dashboard.sql"><code class="language-sql">-- كويري الـ dashboard: حجم، استخدام، وكثافة: الـ pgstatindex بيقرا الـ index كله فشغّله بالليل
+select s.relname as table_name,
+       s.indexrelname as index_name,
+       pg_size_pretty(pg_relation_size(s.indexrelid)) as size,
+       s.idx_scan,
+       round(p.avg_leaf_density::numeric, 1) as density,
+       round(p.leaf_fragmentation::numeric, 1) as fragmentation,
+       case when p.avg_leaf_density &lt; 50 then 'REINDEX candidate' else 'ok' end as verdict
+from pg_stat_user_indexes s
+join pg_class c on c.oid = s.indexrelid
+join pg_am a on a.oid = c.relam and a.amname = 'btree'
+join pg_index i on i.indexrelid = s.indexrelid and i.indisvalid
+cross join lateral pgstatindex(s.indexrelid::regclass) p
+where pg_relation_size(s.indexrelid) &gt; 1024 * 1024
+order by p.avg_leaf_density;</code></pre>
+<pre><code class="language-plaintext"> table_name |      index_name       |  size   | idx_scan | density | fragmentation |      verdict      
+------------+-----------------------+---------+----------+---------+---------------+-------------------
+ invoices   | invoices_changed_idx  | 14 MB   |        0 |    41.0 |          49.6 | REINDEX candidate
+ invoices   | invoices_customer_idx | 4040 kB |        1 |    46.8 |          49.9 | REINDEX candidate
+ invoices   | invoices_pkey         | 6600 kB |        0 |    90.0 |           0.0 | ok</code></pre>
+  <div class="ar-note">ده الكويري اللي تحطه في الـ dashboard: لكل B-tree أكبر من 1 MB، الحجم وعدد الـ scans والـ density والـ fragmentation وحكم بسيط. <code>invoices_changed_idx</code> كثافته 41 يعني مرشح لـ rebuild، و<code>invoices_customer_idx</code> كمان، و<code>invoices_pkey</code> اتبنى من جديد فكثافته 90 وحالته ok. <code>pgstatindex</code> بيقرا الـ index كله، فشغّله بالليل وخزّن النتيجة، ومتشغّلوش مع كل تحميل للـ dashboard. وحد الـ 50 ده نقطة بداية تعدّلها حسب شغلك، مش رقم مقدس.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ page في الـ B-tree لما تتقسم مبترجعش تتدمج إلا لو فضيت خالص. فلما كل صف يتعدّل بقيمة جديدة في عمود عليه index، الـ index بيكبر والـ pages بتفضى. و<code>pgstatindex</code> بيوريك ده مباشرة. هنا على 300 ألف invoice ومعاها <code>VACUUM</code> بعد كل round زي الـ autovacuum: الحجم راح من 6600 kB لـ 17 MB، و<code>avg_leaf_density</code> نزل من 90 لـ 34.37، و<code>leaf_fragmentation</code> حوالي 50. <strong>الـ VACUUM مش بيصغّره:</strong> هو بيخلّي المساحة الميتة قابلة لإعادة الاستخدام، والملف بيفضل كبير. الـ rebuild بيرجّع بالظبط 6600 kB و density 90.</p>
+    <p>الـ rebuild بيتعمل بـ <code>REINDEX</code>، والمهم أي شكل منه. الـ <code>REINDEX</code> العادي بيقفل الكتابة على الجدول، وكمان بيوقف القراية اللي عايزة الـ index ده، ومن ضمنها الـ planning بتاع أي query على الجدول. الـ <code>REINDEX CONCURRENTLY</code> بيبني index جديد جنب القديم ويبدّلهم. ومع writer شغال على جدول 2 مليون صف: العادي وقّفه ≈1132 ms (عمل 22 update بس)، والـ CONCURRENTLY خد وقت أطول شوية ≈1459 ms وأسوأ stall كان ≈67 ms و 5146 update خلصوا. (تشغيلة تانية والجهاز مشغول أكتر: ≈2498 ms قصاد ≈7 ms.) التمن: محتاج disk للنسختين في نفس الوقت، وبيعمل شغل أكتر إجمالًا، ومينفعش جوه transaction block، ولازم يستنى الـ transactions القديمة تخلص، فأي long transaction بيأخره.</p>
+    <p>لو فشل بيسيب <code>idx_ccnew</code> بـ <code>indisvalid = false</code>، والتكلفة حسب مات إمتى. الإلغاء البدري ساب 0 bytes. في نص البناء ساب 21 MB و <code>indisready = false</code>. بعد كده ساب الـ 43 MB كاملين و <code>indisready = true</code>، وساعتها 2000 update كتبوا 716824 byte WAL قصاد 578088 بعد ما اتمسح، يعني حوالي 24% زيادة على index مفيش query تقدر تستخدمه. والـ docs بتقول: امسحه وأعد الـ REINDEX. (و<code>_ccold</code> هو الـ index القديم اللي معرفش يتمسح: امسحه هو كمان.)</p>
+    <p>الـ bloat بقى أقل مما النصايح القديمة بتقول، بفضل تحسينين في الـ B-tree. الـ <strong>deduplication</strong> (PG 13) بيخزّن المفتاح المتكرر مرة واحدة ومعاه قايمة row ids: على مليون order، <code>status</code> خد 6888 kB قصاد 29 MB لما قفلناه، و<code>tenant_id</code> خد 6880 kB قصاد 21 MB. الـ <strong>bottom-up deletion</strong> (PG 14) بينضّف النسخ الميتة من الـ page قبل ما تتقسم، لما قيمة الـ index نفسها متتغيرش. بعد 300 ألف non-HOT update من غير vacuum خالص، الـ primary key فضل 6.4 لـ 6.5 MB. ومينفعش يتقفل، فمفيش مقارنة قبل وبعد على نفس الإصدار، والـ docs هي اللي بتشرح السلوك القديم. الـ <code>pg_repack</code> مش متسطب هنا ومتشغّلش. وPostgreSQL 19 لسه ما نزلش، والـ RC notes بتاعته بتذكر <code>REPACK</code> و<code>REPACK (CONCURRENTLY)</code> بدل <code>VACUUM FULL</code> و<code>CLUSTER</code>، وده كمان متشغّلش هنا.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      جالك alert إن الـ disk بيخلص، أو <code>GET /invoices?sort=status_changed_at</code> بقى أبطأ، والـ VACUUM شغال كويس. شغّل كويري الـ dashboard: index كثافته 34 وحجمه 3 أضعاف. الحل <code>REINDEX INDEX CONCURRENTLY</code> في وقت هادي، بعد ما تتأكد إن عندك disk لنسخة كاملة كمان، ومفيش long transaction شغال، وبـ <code>lock_timeout</code> مظبوط. وبعدها تأكد إن مفيش <code>_ccnew</code> فاضل. الغلطة الشائعة: تشغّل <code>REINDEX</code> من غير <code>CONCURRENTLY</code> في الـ production "عشان بياخد ثانية بس"، فالـ API كله يقف الثانية دي، وعلى جدول أكبر تبقى دقايق.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "An index is three times its expected size, and VACUUM runs fine. What's going on, and how do you fix it without downtime?" → B-tree bloat: splits leave sparse pages, and VACUUM only makes the space reusable. Confirm with <code>pgstatindex</code> (density around 34 here against 90 fresh). Fix with <code>REINDEX INDEX CONCURRENTLY</code>, after checking disk space for a second copy and that no long transaction will hold it up. Afterwards check for <code>_ccnew</code> leftovers with <code>indisvalid = false</code>. Then ask why: frequent updates to the indexed column, which also kills HOT.
+    <div class="ar-note">"index حجمه 3 أضعاف المتوقع والـ VACUUM شغال تمام. إيه اللي حاصل وتصلّحه إزاي من غير downtime؟" ← ده B-tree bloat: الـ splits بتسيب pages فاضية، والـ VACUUM بيخلّي المساحة قابلة لإعادة الاستخدام بس. أكّد بـ <code>pgstatindex</code> (الكثافة حوالي 34 هنا قصاد 90 وهو جديد). الحل <code>REINDEX INDEX CONCURRENTLY</code>، بعد ما تتأكد إن فيه disk لنسخة تانية ومفيش long transaction هيعطّله. بعدها دوّر على <code>_ccnew</code> بـ <code>indisvalid = false</code>. وبعدين اسأل ليه: تعديلات كتير على العمود اللي عليه index، وده كمان بيقتل الـ HOT.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Indexing a frequently updated column by habit</b>
+<pre><code class="language-sql">-- كل update بيغيّر updated_at، فالـ HOT بيبقى صفر
+create index on products (updated_at);
+-- الـ WAL لكل update طلع حوالي 3.9 مرة في القياس</code></pre></div>
+    <div class="good"><b>✅ Ask who reads it, and move hot columns out</b>
+<pre><code class="language-sql">-- العمود السريع في جدول لوحده، فالـ update مش بيلمس indexes بتاعة products
+create table product_stock (
+  product_id int primary key,
+  stock int not null,
+  updated_at timestamptz not null
+) with (fillfactor = 70);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ ❌: index على <code>updated_at</code> "عشان الاحتياط"، وكل update بيغيّر العمود ده، فالـ HOT بيقع لصفر وكل الـ indexes تكتب مع كل update. الـ WAL طلع حوالي 3.9 مرة هنا. الـ ✅: اسأل مين بيقرا بالعمود ده وكام مرة. لو القراية نادرة متعملش index خالص. ولو العمود بيتعدّل طول الوقت طلّعه في جدول صغير لوحده بـ <code>fillfactor</code> واطي، فالجدول الكبير بـ indexes بتاعته ميتلمسش. والـ partial index مش حل هنا: جرّبناها، 10000 update طلّعوا 0 HOT بعد <code>where updated_at &lt; ...</code>. والـ BRIN مش بيمنع الـ HOT، بس بيفيد لو الترتيب الفيزيائي ماشي مع العمود، وده مش حال عمود بيتعدّل عشوائي.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A plain index on a 50/50 boolean</b>
+<pre><code class="language-sql">create index users_active_idx on app_users (is_active);
+-- الـ planner بيتجاهله: Seq Scan بـ 9082 buffer
+-- وأنت بتدفع 3408 kB وتكلفة مع كل insert</code></pre></div>
+    <div class="good"><b>✅ A partial index on the rare value</b>
+<pre><code class="language-sql">create index users_flagged_partial on app_users (id)
+  where is_flagged;
+-- حجمه 72 kB وبيتستخدم فعلًا لـ 2474 صف</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ ❌: boolean نصه true ونصه false، الـ index بتاعه مبيتستخدمش لأن Seq Scan أرخص فعلًا، وإنت بتدفع مساحة وكتابة على الفاضي. الـ ✅: لو واحدة من القيمتين نادرة، partial index عليها بس: 72 kB وبيتستخدم فعلًا.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Dropping on <code>idx_scan = 0</code> alone</b>
+<pre><code class="language-sql">-- ممكن يكون unique، أو شغال على الـ replica، أو العدادات اتصفرت بعد crash
+drop index products_tenant_sku_uq;</code></pre></div>
+    <div class="good"><b>✅ Filter, check the window and replicas, keep a rollback</b>
+<pre><code class="language-sql">-- احفظ التعريف الأول، ده الـ rollback بتاعك
+select pg_get_indexdef(
+  'orders_junk_idx'::regclass);
+-- بره أي transaction عشان ميقفلش الجدول
+drop index concurrently orders_junk_idx;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ ❌: مسحت index عشان <code>idx_scan = 0</code>، وطلع unique فالـ duplicates بدأت تدخل، أو كان شايل الـ reports على الـ replica، أو العدادات اتصفرت بعد crash. وكمان <code>DROP INDEX</code> العادي بياخد ACCESS EXCLUSIVE lock. الـ ✅: استبعد الـ unique والـ constraints، راجع الفترة وكل replica، احفظ الـ DDL، وامسح بـ <code>CONCURRENTLY</code> بره أي transaction.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>REINDEX</code> on a live table</b>
+<pre><code class="language-sql">-- الـ writer وقف ⁦≈1132 ms⁩ على 2 مليون صف
+-- وعلى جدول أكبر بيبقى دقايق
+reindex index invoices_changed_idx;</code></pre></div>
+    <div class="good"><b>✅ <code>CONCURRENTLY</code>, then check for leftovers</b>
+<pre><code class="language-sql">reindex index concurrently invoices_changed_idx;
+-- لازم تتأكد إن مفيش ⁦_ccnew⁩ فاضل بعد أي فشل
+select indexrelid::regclass from pg_index where not indisvalid;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ ❌: <code>REINDEX</code> العادي بيقفل الكتابة وأي query محتاجة الـ index ده، وعلى 2 مليون صف وقّف الـ writer ≈1132 ms. الـ ✅: <code>CONCURRENTLY</code> أبطأ شوية لكن أسوأ stall كان ≈67 ms، وبعده لازم تدوّر على <code>_ccnew</code> بـ <code>indisvalid = false</code> لو حصل أي فشل.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Trusting correlation before choosing BRIN</b>
+<pre><code class="language-sql">-- الـ correlation بيقول 0.998، بس الـ query قرا الجدول كله
+create index audit_brin on audit_events
+  using brin (happened_at);</code></pre></div>
+    <div class="good"><b>✅ Run the query, and use minmax-multi for late arrivals</b>
+<pre><code class="language-sql">create index audit_brin_multi on audit_events
+  using brin (happened_at timestamptz_minmax_multi_ops);
+-- بص على Heap Blocks و Rows Removed by Index Recheck
+explain (analyze) select count(*) from audit_events
+where happened_at &gt;= '2025-03-01' and happened_at &lt; '2025-03-02';</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ ❌: شفت correlation 0.998 فقلت BRIN هيطير، وطلع بيقرا كل الـ 7353 page عشان 0.2% صفوف متأخرة وسّعت كل الـ ranges. الـ ✅: جرّب الـ query وبص على <code>Heap Blocks</code> و<code>Rows Removed by Index Recheck</code>، ولو عندك late arrivals استخدم <code>minmax-multi</code>، أو B-tree لو الحجم مش مشكلة.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Hash or B-tree on your own column <span class="lvl lvl-1">🟢 easy</span></b>
+    Create a table of 200k API tokens (64 characters). Index the token with a B-tree and a hash, and compare sizes. Then predict: which one wins on a UUID column, and why?
+    <div class="ar-note">اعمل جدول فيه 200 ألف API token طول كل واحد 64 حرف. اعمل على الـ token مرة B-tree ومرة hash وقارن الأحجام. وبعدين توقع: مين هيكسب على عمود UUID وليه؟</div>
+    <details><summary>Solution · الحل</summary>
+<pre><code class="language-sql">-- تمرين 1: حل: قارن الحجم على عمودك
+create table api_tokens (id bigint generated always as identity primary key, token text not null);
+insert into api_tokens (token) select md5(i::text) || md5((i * 3)::text) from generate_series(1, 200000) i;
+create index tokens_btree on api_tokens (token);
+create index tokens_hash on api_tokens using hash (token);
+select indexrelname as index, pg_size_pretty(pg_relation_size(indexrelid)) as size
+from pg_stat_user_indexes where relname = 'api_tokens' and indexrelname like 'tokens_%' order by 1;</code></pre>
+<pre><code class="language-plaintext">    index     | size  
+--------------+-------
+ tokens_btree | 18 MB
+ tokens_hash  | 10 MB</code></pre>
+      <div class="ar-note">على 64 حرف: الـ hash 10 MB والـ B-tree 18 MB. على UUID (16 byte) الـ B-tree بيكسب في الحجم: 15 MB قصاد 40 MB على 500 ألف صف في Part 1. السبب: الـ B-tree بيخزّن المفتاح نفسه فحجمه بيتبع طوله، والـ hash بيخزّن 4 bytes بس بس bucket structure بتاعته ليها overhead ثابت.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. Your HOT report <span class="lvl lvl-2">🟡 medium</span></b>
+    Make a <code>carts</code> table with 20k rows. Update half the rows changing only <code>items_count</code>. Add an index on <code>updated_at</code>, then update the other half changing <code>updated_at</code> too. Print updates, HOT updates, new-page updates and the HOT percentage. Explain the number you get: is it what you expected on a freshly loaded table?
+    <div class="ar-note">اعمل جدول <code>carts</code> فيه 20 ألف صف. عدّل نص الصفوف وغيّر <code>items_count</code> بس. ضيف index على <code>updated_at</code>، وبعدين عدّل النص التاني وغيّر <code>updated_at</code> كمان. اطبع عدد الـ updates والـ HOT والـ new-page ونسبة الـ HOT. فسّر الرقم اللي طلع: هو اللي كنت متوقعه على جدول لسه متحمّل جديد؟</div>
+    <details><summary>Hint · تلميح</summary>
+      A freshly loaded table with the default fillfactor has no free room on its pages, and a single statement updating many rows has no chance to prune between them.
+      <div class="ar-note">جدول لسه متحمّل بالـ fillfactor الافتراضي الـ pages بتاعته مليانة، و statement واحد بيعدّل صفوف كتير مفيش بينهم فرصة pruning.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre><code class="language-sql">-- تمرين 2: حل: تقرير HOT لكل جدول بيتعدّل
+create table carts (id int primary key, status text not null, items_count int not null, updated_at timestamptz not null);
+insert into carts select i, 'open', 0, now() from generate_series(1, 20000) i;
+update carts set items_count = items_count + 1 where id % 2 = 0;
+create index carts_updated_idx on carts (updated_at);
+update carts set items_count = items_count + 1, updated_at = now() where id % 2 = 1;
+select pg_stat_force_next_flush();
+select pg_sleep(0.3);
+select relname as table_name,
+       n_tup_upd,
+       n_tup_hot_upd,
+       n_tup_newpage_upd,
+       round(100.0 * n_tup_hot_upd / nullif(n_tup_upd, 0), 1) as hot_pct
+from pg_stat_user_tables
+where n_tup_upd &gt; 0
+order by n_tup_upd desc;</code></pre>
+<pre><code class="language-plaintext"> table_name | n_tup_upd | n_tup_hot_upd | n_tup_newpage_upd | hot_pct 
+------------+-----------+---------------+-------------------+---------
+ carts      |     20000 |             0 |             10765 |     0.0</code></pre>
+      <div class="ar-note">طلع 0% HOT، وده أقل من المتوقع حتى للنص الأول اللي مكانش عليه index وقتها. السبب إن الجدول متحمّل لسه جديد بـ fillfactor 100، فمفيش مكان في الـ pages، و<code>n_tup_newpage_upd</code> بيقول 10765 update انتقل لـ page جديدة، وكل واحد تاني في النص التاني كان ممنوع من الـ HOT بسبب الـ index. الدرس: الـ HOT محتاج الشرطين مع بعض، وجدول مليان بيخسره من غير أي index.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. Break a BRIN and read the damage <span class="lvl lvl-3">🔴 hard</span></b>
+    Load 500k <code>shipments</code> ordered by <code>shipped_at</code> with a BRIN index. Record <code>Heap Blocks</code> and <code>Rows Removed by Index Recheck</code> for one day. Update every fourth row in a column that isn't indexed, vacuum, and run the query again. Now say which you'd do in production: a smaller <code>pages_per_range</code>, <code>minmax-multi</code>, or a B-tree, and why.
+    <div class="ar-note">حمّل 500 ألف <code>shipments</code> مرتبين بـ <code>shipped_at</code> وعليهم BRIN. سجّل <code>Heap Blocks</code> و<code>Rows Removed by Index Recheck</code> ليوم واحد. عدّل كل رابع صف في عمود مش عليه index، واعمل vacuum، وشغّل الـ query تاني. قول بقى هتعمل إيه في production: <code>pages_per_range</code> أصغر، ولا <code>minmax-multi</code>، ولا B-tree، وليه.</div>
+    <details><summary>Solution · الحل</summary>
+<pre><code class="language-sql">-- تمرين 3: حل: بعد ما تكسر الـ BRIN شوف الـ correlation وحجم الـ ranges
+create table shipments (id bigint generated always as identity primary key, shipped_at timestamptz not null, note text not null);
+insert into shipments (shipped_at, note)
+select timestamptz '2025-01-01' + i * interval '30 seconds', 'x' from generate_series(1, 500000) i;
+create index shipments_brin on shipments using brin (shipped_at);
+analyze shipments;
+explain (analyze, costs off, timing off, summary off)
+select count(*) from shipments where shipped_at &gt;= '2025-02-01' and shipped_at &lt; '2025-02-02';
+update shipments set note = 'y' where id % 4 = 0;
+vacuum analyze shipments;
+select round(correlation::numeric, 3) as correlation from pg_stats where tablename = 'shipments' and attname = 'shipped_at';
+explain (analyze, costs off, timing off, summary off)
+select count(*) from shipments where shipped_at &gt;= '2025-02-01' and shipped_at &lt; '2025-02-02';</code></pre>
+<pre><code class="language-plaintext">         Rows Removed by Index Recheck: 17216
+         Heap Blocks: lossy=128
+ correlation 
+       0.627
+         Rows Removed by Index Recheck: 70080
+         Heap Blocks: lossy=525</code></pre>
+      <div class="ar-note">من 128 page و 17216 صف مرمي، لـ correlation 0.627 و 525 page و 70080 صف مرمي، يعني حوالي 4 مرات. الـ update طلع الصفوف من مكانها حتى لو العمود نفسه متغيرش. لو الجدول بيتعدّل بالشكل ده يبقى BRIN مش مناسب، وB-tree هو الإجابة الأمينة. <code>minmax-multi</code> بيفيد مع قلة outliers مش مع drift واسع، و<code>pages_per_range</code> أصغر بيقلل الضرر ومش بيلغيه.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project / at work: an index audit <span class="lvl lvl-3">🔴 project</span></b>
+    On your side project's database or a staging copy at work, run the three reports from Part 6 and the dashboard query from Part 7. Write one migration per index you'd remove, each with <code>DROP INDEX CONCURRENTLY</code> and its rollback DDL in a comment. For every candidate, write down the size, the stats window, and why it isn't enforcing a rule or serving a replica.
+    <div class="ar-note">على database المشروع الجانبي أو نسخة staging في الشغل، شغّل التلات تقارير من Part 6 وكويري الـ dashboard من Part 7. اكتب migration لكل index هتمسحه، فيها <code>DROP INDEX CONCURRENTLY</code> والـ DDL بتاع الـ rollback في comment. ولكل مرشح اكتب الحجم وفترة الـ stats وليه هو مش بيفرض قاعدة ومش شايل replica.</div>
+    <details><summary>Hint · تلميح</summary>
+      Most migration tools wrap each file in a transaction, and <code>DROP INDEX CONCURRENTLY</code> fails there with the error shown in Part 6. Look up how your tool turns that off for a single migration.
+      <div class="ar-note">معظم أدوات الـ migrations بتلف كل ملف في transaction، و<code>DROP INDEX CONCURRENTLY</code> بيفشل جواها بالـ error اللي في Part 6. دوّر إزاي الأداة بتاعتك بتقفل ده لـ migration واحدة.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li><b>Hash:</b> <code>=</code> only, no unique, no multi-column. Wins on long text (40 MB vs 109 MB), loses on UUID size (40 MB vs 15 MB). Crash-safe since PG 10. Often a B-tree on <code>md5(url)::uuid</code> is better.</li>
+    <li><b>GIN:</b> element → posting list, for <code>@&gt;</code>, <code>&amp;&amp;</code>, <code>@@</code>. No ordering. Writes are expensive: <code>fastupdate</code> defers them to a pending list, which slows searches and can spike one insert.</li>
+    <li><b>GiST:</b> a tree of bounding predicates. Ranges, exclusion constraints, nearest neighbour with <code>ORDER BY x &lt;-&gt; y LIMIT n</code>. Lossy cases show <code>Rows Removed by Index Recheck</code>.</li>
+    <li><b>Exclusion races:</b> a plain <code>INSERT</code> race can raise 23P01 or 40P01, so handle both or use <code>ON CONFLICT DO NOTHING</code>. Test races on a warm pool.</li>
+    <li><b>BRIN:</b> min/max per 128 pages. 24 kB vs 21 MB on 1M rows. Only for append-only, physically ordered data. High correlation isn't proof: run the query.</li>
+    <li><b>HOT:</b> no indexed column changed and room on the page means no index writes. One index on the updated column took HOT from 97% to 0% and WAL from ≈190 to 744 bytes per update.</li>
+    <li>Extra indexes on other columns barely cost on HOT updates, and cost fully on inserts: WAL 27.6 → 109.3 MB with 5 of them.</li>
+    <li><code>fillfactor = 70</code> gave 100% HOT for a 44% larger table, and existing pages need a rewrite to get it.</li>
+    <li>An index on a 50/50 boolean is dead weight. A partial index on the rare value isn't (72 kB).</li>
+    <li><code>idx_scan = 0</code> is a lead: check unique, replicas, the window (a crash zeroes it), twins and expression stats. Remove with <code>DROP INDEX CONCURRENTLY</code> outside a transaction, DDL saved.</li>
+    <li>Bloat: density 90 → 34 in 10 rounds, and VACUUM doesn't shrink it. <code>REINDEX CONCURRENTLY</code> kept the worst stall at ≈67 ms against ≈1132 ms. A failed run leaves <code>_ccnew</code>: drop it.</li>
+    <li>Deduplication (PG 13) and bottom-up deletion (PG 14) make bloat rarer: 6888 kB vs 29 MB, and a PK that stayed flat through 300k updates with no vacuum.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li><b>الـ Hash:</b> <code>=</code> بس، مفيش unique ومفيش أكتر من عمود. بيكسب على النص الطويل (40 MB قصاد 109 MB) وبيخسر في الحجم على الـ UUID (40 MB قصاد 15 MB). Crash-safe من PG 10. وكتير B-tree على <code>md5(url)::uuid</code> بيبقى أحسن.</li>
+      <li><b>الـ GIN:</b> عنصر ← posting list، لـ <code>@&gt;</code> و<code>&amp;&amp;</code> و<code>@@</code>. مفيش ترتيب. الكتابة غالية: <code>fastupdate</code> بيأجلها في pending list، وده بيبطّأ البحث وممكن يعمل قفزة على insert واحد.</li>
+      <li><b>الـ GiST:</b> شجرة bounding predicates. Ranges و exclusion constraints و nearest neighbour بـ <code>ORDER BY x &lt;-&gt; y LIMIT n</code>. الحالات الـ lossy بتبان في <code>Rows Removed by Index Recheck</code>.</li>
+      <li><b>سباقات الـ exclusion:</b> سباق <code>INSERT</code> عادي ممكن يرمي 23P01 أو 40P01، فتعامل مع الاتنين أو استخدم <code>ON CONFLICT DO NOTHING</code>. واختبر السباقات على warm pool.</li>
+      <li><b>الـ BRIN:</b> min/max لكل 128 page. 24 kB قصاد 21 MB على مليون صف. لـ data بتتكتب في الآخر بس ومرتبة فيزيائيًا. الـ correlation العالي مش إثبات: شغّل الـ query.</li>
+      <li><b>الـ HOT:</b> مفيش عمود عليه index اتغيّر وفيه مكان في الـ page، يبقى مفيش كتابة في الـ indexes. index واحد على العمود المتغيّر نزّل الـ HOT من 97% لـ 0% وطلّع الـ WAL من ≈190 لـ 744 byte لكل update.</li>
+      <li>الـ indexes الزيادة على أعمدة تانية بالكاد بتكلّف في الـ HOT updates، وبتكلّف كامل في الـ inserts: الـ WAL من 27.6 لـ 109.3 MB مع 5 منهم.</li>
+      <li><code>fillfactor = 70</code> إدّى 100% HOT والجدول أكبر بـ 44%، والـ pages الموجودة محتاجة rewrite عشان تستفيد.</li>
+      <li>index على boolean نص ونص حمل على الفاضي. والـ partial index على القيمة النادرة لأ (72 kB).</li>
+      <li><code>idx_scan = 0</code> خيط تبدأ منه: راجع الـ unique والـ replicas والفترة (الـ crash بيصفّره) والتوائم و statistics الـ expressions. وامسح بـ <code>DROP INDEX CONCURRENTLY</code> بره transaction وبعد ما تحفظ الـ DDL.</li>
+      <li>الـ bloat: الكثافة من 90 لـ 34 في 10 rounds، والـ VACUUM مش بيصغّره. <code>REINDEX CONCURRENTLY</code> خلّى أسوأ stall ≈67 ms قصاد ≈1132 ms. والفشل بيسيب <code>_ccnew</code>: امسحه.</li>
+      <li>الـ deduplication (PG 13) والـ bottom-up deletion (PG 14) خلّوا الـ bloat أندر: 6888 kB قصاد 29 MB، و PK فضل ثابت في 300 ألف update من غير vacuum.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 09 · 2.2 — <b>Hash</b>: equality بس (نادر الاستخدام)</label>
+    <label><input type="checkbox" data-key="r2"> 09 · 2.2 — <b>GIN</b>: JSONB، arrays، full-text — inverted index</label>
+    <label><input type="checkbox" data-key="r3"> 09 · 2.2 — <b>GiST</b>: geometric، ranges، nearest neighbor</label>
+    <label><input type="checkbox" data-key="r4"> 09 · 2.2 — <b>BRIN</b>: جداول ضخمة مرتبة طبيعيًا (timestamps) — صغير جدًا</label>
+    <label><input type="checkbox" data-key="r5"> 09 · 2.2 — <b>إمتى الـ index بيضر</b>: write-heavy tables، low-selectivity columns (boolean)، indexes مش بتتستخدم (<code>pg_stat_user_indexes</code>)</label>
+    <label><input type="checkbox" data-key="r6"> 09 · 2.2 — Index bloat و <code>REINDEX</code></label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.postgresql.org/docs/18/indexes-types.html">PostgreSQL 18 docs — Index Types</a></li>
+    <li><a href="https://www.postgresql.org/docs/18/gin.html">PostgreSQL 18 docs — GIN Indexes (fast update, pending list)</a></li>
+    <li><a href="https://www.postgresql.org/docs/18/brin.html">PostgreSQL 18 docs — BRIN Indexes</a></li>
+    <li><a href="https://www.postgresql.org/docs/18/storage-hot.html">PostgreSQL 18 docs — Heap-Only Tuples (HOT)</a></li>
+    <li><a href="https://www.postgresql.org/docs/18/sql-reindex.html">PostgreSQL 18 docs — REINDEX, including concurrent rebuilds</a></li>
+    <li><a href="https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/executor/execIndexing.c">PostgreSQL 18 source — execIndexing.c, the comment on exclusion constraint deadlocks and speculative insertion</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./10-btree-composite-partial-covering.html"><small>← Previous</small>10 · B-tree Mastery</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./12-search-fts-trgm-elasticsearch.html"><small>Next →</small>12 · Search</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
