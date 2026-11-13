@@ -1,0 +1,1561 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Resilience as Code I: Retry, Timeout &amp; Fallback — 10 Design Patterns</title>
+<meta name="section" content="10-Design-Patterns">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">10 · Design Patterns</a></span>
+    <span>·</span>
+    <span>Lesson 22 / 35</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Resilience as Code I: Retry, Timeout &amp; Fallback</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 22 of 35 — Design Patterns</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">Node 22 · TypeScript 7 · Postgres 18 · Redis 8</span>
+      <span class="chip">Prereq: 08 · Decorator, 04 · Timeouts</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>10 · 3.2 — <b>Retry مع exponential backoff + jitter</b>: تكتبه كـ decorator/wrapper بـ options (max attempts، retryable errors predicate، on-retry hook)</li>
+        <li>10 · 3.2 — <b>Timeout</b> كـ pattern: <code>AbortSignal.timeout</code>، <code>Promise.race</code> مع cleanup، timeout budgets عبر الـ chain</li>
+        <li>10 · 3.2 — <b>Fallback / Graceful degradation</b>: cached value، default، degraded response — كـ decorator</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Retry as a decorator</a></li>
+      <li><a href="#p2">Part 2 — Jitter and retry budgets</a></li>
+      <li><a href="#p3">Part 3 — Timeout, done properly</a></li>
+      <li><a href="#p4">Part 4 — Timeout budgets across a chain</a></li>
+      <li><a href="#p5">Part 5 — Fallback as a decorator</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Most outages that spread don't start big. A dependency slows down, callers wait without a limit, retries multiply the load, and a service that was healthy falls over too. Three small decorators decide whether that happens: retry, timeout and fallback. <a href="../../06-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html">Lesson 04 · 25</a> showed why they matter under load. This lesson writes them at library quality, with the details interviews and postmortems turn on: which errors to retry, what a timeout really stops, and what a fallback is allowed to claim.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>معظم الـ outages اللي بتنتشر مبتبدأش كبيرة. dependency بتبطأ، والـ callers بيستنوا من غير حد، والـ retries بتضاعف الحمل، و service كانت سليمة بتقع هي كمان. تلات decorators صغيرين هما اللي بيحددوا ده يحصل ولا لأ: الـ retry والـ timeout والـ fallback. <a href="../../06-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html">درس 04 · 25</a> وريك أهميتهم تحت الضغط. الدرس ده بيكتبهم بجودة library، بالتفاصيل اللي الـ interviews والـ postmortems بتقف عندها: أنهي errors تعمل لها retry، والـ timeout بيوقف إيه فعلًا، والـ fallback مسموح له يقول إيه.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Retry as a decorator <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — الـ Retry كـ decorator</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><a href="../../01-JavaScript/lessons/10-advanced-async.html#p5">Lesson 02 · 10</a> wrote a small <code>retry</code>, and <a href="../../06-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html#p2">lesson 04 · 25</a> showed the storm it can cause. Here's the version you'd publish: a typed <a href="./08-decorator-proxy.html">Decorator</a> that keeps <code>fn</code>'s signature and takes <code>maxAttempts</code>, <code>baseMs</code>, <code>maxMs</code>, <code>jitter</code>, <code>retryable</code>, <code>onRetry</code>, <code>signal</code>, <code>sleep</code> and <code>random</code>.</p>
+    <p><b>Inject time and randomness.</b> <code>sleep</code> and <code>random</code> are options, so a test replaces them, takes about a millisecond, and asserts the exact delays: <code>[100, 200]</code> with no jitter, <code>[50, 100]</code> with full jitter at <code>random = 0.5</code>, <code>[75, 150]</code> with equal jitter. Of the 14 tests, 13 ran in under 2 ms each on this loaded Windows machine. The abort test uses the real timer on purpose and took ≈29 ms.</p>
+    <p><b>Respect the server and the caller.</b> <code>Retry-After</code> overrides a shorter backoff, and if it's longer than <code>maxMs</code> we fail now rather than hold a request for a minute. An <code>AbortSignal</code> stops the sleep immediately, with no further attempt.</p>
+    <p><b>Most failures must not be retried.</b> A 400, a 404 or a validation error will fail the same way again. A <code>POST</code> with no idempotency key may have succeeded before the response was lost, so a retry can charge twice. Each of those is a test asserting exactly one attempt. With a key, the same POST may retry.</p>
+  </section>
+
+<pre data-file="src/with-retry.ts"><code class="language-typescript">export class HttpError extends Error {
+  readonly status: number;
+  readonly retryAfterMs: number | undefined;
+  constructor(status: number, retryAfterMs?: number) {
+    super(`HTTP ${status}`);
+    this.name = "HttpError";
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+export type Jitter = "none" | "full" | "equal";
+
+export type RetryOptions = {
+  maxAttempts: number;
+  baseMs: number;
+  maxMs: number;
+  jitter?: Jitter;
+  retryable?: (error: unknown, attempt: number) =&gt; boolean;
+  onRetry?: (info: { attempt: number; delayMs: number; error: unknown }) =&gt; void;
+  signal?: AbortSignal;
+  // الاتنين دول بيتحقنوا عشان الـ test ياخد 0 ms ويتأكد من الـ delays بالظبط
+  sleep?: (ms: number, signal?: AbortSignal) =&gt; Promise&lt;void&gt;;
+  random?: () =&gt; number;
+};
+
+// الأخطاء اللي تستاهل محاولة تانية: السيرفر قال "ارجع بعدين" أو الشبكة وقعت
+export function isTransient(error: unknown): boolean {
+  if (error instanceof HttpError) return [408, 425, 429, 500, 502, 503, 504].includes(error.status);
+  const code = (error as { code?: string; cause?: { code?: string } })?.cause?.code ?? (error as { code?: string })?.code;
+  return ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT"].includes(code ?? "");
+}
+
+export function backoffDelay(attempt: number, o: Pick&lt;RetryOptions, "baseMs" | "maxMs" | "jitter"&gt;, random: () =&gt; number): number {
+  const ceiling = Math.min(o.maxMs, o.baseMs * 2 ** (attempt - 1));
+  if (o.jitter === "full") return Math.floor(random() * ceiling);
+  if (o.jitter === "equal") return Math.floor(ceiling / 2 + random() * (ceiling / 2));
+  return ceiling;
+}
+
+export function abortableSleep(ms: number, signal?: AbortSignal): Promise&lt;void&gt; {
+  return new Promise((resolve, reject) =&gt; {
+    if (signal?.aborted) return reject(signal.reason);
+    const onAbort = () =&gt; { clearTimeout(timer); reject(signal!.reason); };
+    const timer = setTimeout(() =&gt; { signal?.removeEventListener("abort", onAbort); resolve(); }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+export function withRetry&lt;A extends unknown[], R&gt;(fn: (...args: A) =&gt; Promise&lt;R&gt;, options: RetryOptions) {
+  const { maxAttempts, retryable = isTransient, onRetry, signal, sleep = abortableSleep, random = Math.random } = options;
+  return async (...args: A): Promise&lt;R&gt; =&gt; {
+    for (let attempt = 1; ; attempt++) {
+      signal?.throwIfAborted();
+      try {
+        return await fn(...args);
+      } catch (error) {
+        if (attempt &gt;= maxAttempts || signal?.aborted || !retryable(error, attempt)) throw error;
+        const retryAfter = error instanceof HttpError ? error.retryAfterMs : undefined;
+        // السيرفر طلب وقت أطول من اللي مستعدين نستناه: نفشل دلوقتي أحسن
+        if (retryAfter !== undefined &amp;&amp; retryAfter &gt; options.maxMs) throw error;
+        const delayMs = Math.max(backoffDelay(attempt, options, random), retryAfter ?? 0);
+        onRetry?.({ attempt, delayMs, error });
+        await sleep(delayMs, signal);
+      }
+    }
+  };
+}
+
+// مش كل request ينفع يتكرر: الـ POST من غير idempotency key ممكن يتنفذ مرتين
+export const safeToRepeat = (req: { method: string; idempotencyKey?: string }) =&gt;
+  ["GET", "HEAD", "PUT", "DELETE"].includes(req.method) || Boolean(req.idempotencyKey);</code></pre>
+
+<pre data-file="src/with-retry.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { HttpError, abortableSleep, isTransient, safeToRepeat, withRetry, type RetryOptions } from "./with-retry.ts";
+
+// الـ sleep الوهمي: بيسجّل الـ delay ويرجع فورًا
+function harness(failures: unknown[], extra: Partial&lt;RetryOptions&gt; = {}) {
+  const delays: number[] = [];
+  let calls = 0;
+  const fn = async () =&gt; {
+    const failure = failures[calls++];
+    if (failure) throw failure;
+    return "paid";
+  };
+  const run = withRetry(fn, {
+    maxAttempts: 4, baseMs: 100, maxMs: 2000,
+    sleep: async (ms) =&gt; { delays.push(ms); },
+    random: () =&gt; 0.5,
+    ...extra,
+  });
+  return { run, delays, calls: () =&gt; calls };
+}
+const e503 = new HttpError(503);
+
+test("retries, then succeeds, with exact delays", async () =&gt; {
+  const h = harness([e503, e503]);
+  assert.equal(await h.run(), "paid");
+  assert.equal(h.calls(), 3);
+  assert.deepEqual(h.delays, [100, 200]);
+});
+test("full jitter with random 0.5 halves the ceiling", async () =&gt; {
+  const h = harness([e503, e503], { jitter: "full" });
+  await h.run();
+  assert.deepEqual(h.delays, [50, 100]);
+});
+test("equal jitter with random 0.5 is 75% of the ceiling", async () =&gt; {
+  const h = harness([e503, e503], { jitter: "equal" });
+  await h.run();
+  assert.deepEqual(h.delays, [75, 150]);
+});
+test("delay is capped at maxMs", async () =&gt; {
+  const h = harness([e503, e503, e503], { baseMs: 1500 });
+  await h.run();
+  assert.deepEqual(h.delays, [1500, 2000, 2000]);
+});
+test("stops after maxAttempts and throws the last error", async () =&gt; {
+  const h = harness([e503, e503, e503, e503, e503]);
+  await assert.rejects(h.run(), e503);
+  assert.equal(h.calls(), 4);
+});
+test("Retry-After wins over a shorter backoff", async () =&gt; {
+  const h = harness([new HttpError(429, 1500)]);
+  await h.run();
+  assert.deepEqual(h.delays, [1500]);
+});
+test("Retry-After beyond maxMs gives up at once", async () =&gt; {
+  const h = harness([new HttpError(429, 60_000)]);
+  await assert.rejects(h.run());
+  assert.equal(h.calls(), 1);
+  assert.deepEqual(h.delays, []);
+});
+test("onRetry fires with attempt, delay and error", async () =&gt; {
+  const seen: string[] = [];
+  const h = harness([e503], { onRetry: (i) =&gt; seen.push(`${i.attempt}:${i.delayMs}:${(i.error as Error).message}`) });
+  await h.run();
+  assert.deepEqual(seen, ["1:100:HTTP 503"]);
+});
+test("an AbortSignal stops the sleep, with no second call", async () =&gt; {
+  const ctrl = new AbortController();
+  let calls = 0;
+  const run = withRetry(async () =&gt; { calls++; throw e503; }, { maxAttempts: 5, baseMs: 60_000, maxMs: 60_000, signal: ctrl.signal, sleep: abortableSleep });
+  const started = performance.now();
+  setTimeout(() =&gt; ctrl.abort(new Error("client left")), 20);
+  await assert.rejects(run(), /client left/);
+  assert.equal(calls, 1);
+  assert.ok(performance.now() - started &lt; 2000);
+});
+for (const [name, error] of [["400", new HttpError(400)], ["404", new HttpError(404)], ["validation", new TypeError("amount must be &gt; 0")]] as const) {
+  test(`does not retry: ${name}`, async () =&gt; {
+    const h = harness([error]);
+    await assert.rejects(h.run());
+    assert.equal(h.calls(), 1);
+  });
+}
+test("a POST with no idempotency key is attempted once", async () =&gt; {
+  const req = { method: "POST" };
+  const h = harness([e503, e503], { retryable: (e) =&gt; safeToRepeat(req) &amp;&amp; isTransient(e) });
+  await assert.rejects(h.run());
+  assert.equal(h.calls(), 1);
+});
+test("the same POST with a key may retry", async () =&gt; {
+  const req = { method: "POST", idempotencyKey: "order-7-charge" };
+  const h = harness([e503, e503], { retryable: (e) =&gt; safeToRepeat(req) &amp;&amp; isTransient(e) });
+  assert.equal(await h.run(), "paid");
+  assert.equal(h.calls(), 3);
+});</code></pre>
+
+<pre><code class="language-plaintext">$ node --test src/with-retry.test.ts
+# tests 14
+# pass 14
+# fail 0</code></pre>
+  <div class="ar-note">الـ 14 test نجحوا. 13 منهم أقل من 2 ms لكل واحد لأن الـ sleep وهمي، وواحد بس (بتاع الـ abort) بيستخدم timer حقيقي وأخد ≈29 ms على الجهاز ده وهو عليه ضغط.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><a href="../../01-JavaScript/lessons/10-advanced-async.html#p5">درس 02 · 10</a> كتب <code>retry</code> صغير، و<a href="../../06-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html#p2">درس 04 · 25</a> ورّاك الـ storm اللي ممكن يعملها. دي النسخة اللي تنشرها: <a href="./08-decorator-proxy.html">Decorator</a> typed بيحافظ على signature الـ <code>fn</code> وبياخد <code>maxAttempts</code> و<code>baseMs</code> و<code>maxMs</code> و<code>jitter</code> و<code>retryable</code> و<code>onRetry</code> و<code>signal</code> و<code>sleep</code> و<code>random</code>.</p>
+    <p><b>احقن الوقت والعشوائية.</b> الـ <code>sleep</code> والـ <code>random</code> options، فالـ test بيبدّلهم، وبياخد حوالي millisecond، وبيتأكد من الـ delays بالظبط: <code>[100, 200]</code> من غير jitter، و<code>[50, 100]</code> بالـ full jitter لما <code>random = 0.5</code>، و<code>[75, 150]</code> بالـ equal jitter. من الـ 14 test، 13 خلصوا في أقل من 2 ms لكل واحد على جهاز Windows عليه ضغط، وtest الـ abort بيستخدم الـ timer الحقيقي بالقصد وأخد ≈29 ms.</p>
+    <p><b>احترم السيرفر واللي بينادي.</b> الـ <code>Retry-After</code> بيغلب أي backoff أقصر منه، ولو أطول من <code>maxMs</code> بنفشل دلوقتي بدل ما نمسك request دقيقة كاملة. والـ <code>AbortSignal</code> بيوقف الـ sleep فورًا من غير محاولة تانية.</p>
+    <p><b>معظم الأخطاء ممنوع تتعاد.</b> الـ 400 والـ 404 وأخطاء الـ validation هتفشل بنفس الطريقة تاني. والـ <code>POST</code> من غير idempotency key ممكن يكون نجح والـ response ضاع، فالـ retry ممكن يخصم مرتين. كل حالة من دول ليها test بيتأكد إن فيه محاولة واحدة بالظبط. ومع key، نفس الـ POST ينفع يتعاد. والغلطة الشائعة إنك تكتب <code>retryable: () =&gt; true</code>، وده في <a href="#mistakes">الغلطات</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ client بتاع Stripe أو shipping API في الـ orders service: <code>const getRate = withRetry(fetchRate, { maxAttempts: 3, baseMs: 200, maxMs: 2000, jitter: "full", onRetry: logRetry })</code>، و<code>onRetry</code> بيزوّد metric. و<code>createCharge</code> ميتعادش غير لو معاه idempotency key. والـ test بتاعه بياخد 0 ms فمش هيبطّأ الـ CI.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Not when</b>
+    Don't retry a non-idempotent POST with no key, any 4xx apart from 408, 425 and 429, or validation errors. Don't retry in a request handler when you've no time left: that's Part 4. And don't retry at every layer: that's Part 2.
+    <div class="ar-note"><b>إمتى لأ:</b> متعملش retry لـ POST مش idempotent ومن غير key، ولا لأي 4xx ماعدا 408 و425 و429، ولا لأخطاء الـ validation. ومتعملش retry جوّه request handler ومعندكش وقت فاضل: ده الجزء 4. ومتعملش retry في كل layer: ده الجزء 2.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Jitter and retry budgets <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — الـ Jitter والـ retry budgets</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The simulation below is a <b>model, not a measurement</b>, and its assumptions are in the code: 1000 clients all send at t = 0, the server is down until 2000 ms, then it accepts 100 requests per 100 ms bucket and rejects the rest. Each client tries up to 10 times, base 100 ms, cap 3200 ms, in 100 ms resolution, with a fixed seed so the output repeats.</p>
+    <p>With no jitter, clients stay in lockstep: a wave of 1000 lands after recovery, only 100 fit, and the same wave comes back. 500 clients give up and the last success is at 15.9 s. Any jitter breaks the wave: the peak after recovery falls from 1000 to 105–143, everyone (or nearly everyone) succeeds, and it's over by about 5 s. Every strategy shows 1000 in the first column because all clients start together, which is the model's starting condition. Don't over-read the ranking. Across 20 seeds, full jitter had the lowest post-recovery peak (81–110), and decorrelated left 26–43 clients out of attempts in this configuration. Use full jitter unless you've measured a reason not to.</p>
+    <p><b>Backoff doesn't limit total load.</b> In a full outage, three attempts still means three times the traffic. A <b>retry budget</b> does: each success earns 0.1 token, each retry spends 1, so retries stay near 10% of successes. In the real run with a 100% failure phase, traffic amplification was ×3.00 without a budget and ×1.01 with one.</p>
+    <p><b>Layers multiply.</b> Three nested services that each try 3 times give 3 × 3 × 3 = 27 calls to the failing one, and the run below counted exactly 27. Retry at one layer, usually the outermost that can retry safely, and the count drops to 3. <a href="../../12-System-Design/lessons/23-timeouts-retries-storms.html">Section 12 · 2.5</a> has the system view.</p>
+  </section>
+
+<pre data-file="src/sim-jitter.ts"><code class="language-typescript">import { backoffDelay } from "./with-retry.ts";
+
+// نموذج مش قياس: الـ server واقع لحد t=2000ms، وبعدها بيقبل 100 request كل 100ms
+const CLIENTS = 1000, DOWN_UNTIL = 2000, CAPACITY_PER_BUCKET = 100, BUCKET = 100, MAX_ATTEMPTS = 10;
+const BASE = 100, CAP = 3200;
+type Strategy = "none" | "full" | "equal" | "decorrelated";
+
+// الـ PRNG ثابت عشان الناتج يطلع هو هو في كل run
+function mulberry32(seed: number) {
+  return () =&gt; {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed &gt;&gt;&gt; 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+function simulate(strategy: Strategy, seed = 42) {
+  const random = mulberry32(seed);
+  type Ev = { at: number; attempt: number; prev: number };
+  const buckets = new Map&lt;number, Ev[]&gt;();
+  const push = (e: Ev) =&gt; {
+    const b = Math.floor(e.at / BUCKET);
+    (buckets.get(b) ?? buckets.set(b, []).get(b)!).push(e);
+  };
+  for (let i = 0; i &lt; CLIENTS; i++) push({ at: 0, attempt: 1, prev: BASE });
+
+  let total = 0, ok = 0, gaveUp = 0, peak = 0, peakAfter = 0, lastOk = 0;
+  for (let b = 0; buckets.size &gt; 0; b++) {
+    const arrivals = buckets.get(b);
+    if (!arrivals) continue;
+    buckets.delete(b);
+    total += arrivals.length;
+    peak = Math.max(peak, arrivals.length);
+    const up = b * BUCKET &gt;= DOWN_UNTIL;
+    if (up) peakAfter = Math.max(peakAfter, arrivals.length);
+    arrivals.forEach((e, index) =&gt; {
+      if (up &amp;&amp; index &lt; CAPACITY_PER_BUCKET) { ok++; lastOk = b * BUCKET; return; }
+      if (e.attempt &gt;= MAX_ATTEMPTS) { gaveUp++; return; }
+      const prev = e.prev;
+      const delay =
+        strategy === "decorrelated"
+          ? Math.min(CAP, Math.floor(BASE + random() * (prev * 3 - BASE)))
+          : backoffDelay(e.attempt, { baseMs: BASE, maxMs: CAP, jitter: strategy }, random);
+      // الدقة هنا 100ms: أي retry بيقع في الـ bucket اللي بعده على الأقل
+      push({ at: Math.max((b + 1) * BUCKET, b * BUCKET + delay), attempt: e.attempt + 1, prev: Math.max(delay, BASE) });
+    });
+  }
+  return { strategy, peak, peakAfter, total, ok, gaveUp, lastOk };
+}
+
+console.log("strategy      peak/100ms  peak after recovery  total calls  succeeded  gave up  last success");
+for (const s of ["none", "full", "equal", "decorrelated"] as Strategy[]) {
+  const r = simulate(s);
+  console.log(`${r.strategy.padEnd(14)}${String(r.peak).padStart(9)}${String(r.peakAfter).padStart(21)}${String(r.total).padStart(13)}${String(r.ok).padStart(11)}${String(r.gaveUp).padStart(9)}${(r.lastOk + " ms").padStart(14)}`);
+}
+
+// نفس النموذج بـ 20 seed: عشان متبنيش ترتيب على seed واحد
+for (const s of ["full", "equal", "decorrelated"] as Strategy[]) {
+  const peaks = Array.from({ length: 20 }, (_, i) =&gt; simulate(s, i + 1).peakAfter);
+  const gaveUp = Array.from({ length: 20 }, (_, i) =&gt; simulate(s, i + 1).gaveUp);
+  console.log(`${s.padEnd(14)} 20 seeds: peak after recovery ${Math.min(...peaks)}-${Math.max(...peaks)}, gave up ${Math.min(...gaveUp)}-${Math.max(...gaveUp)}`);
+}</code></pre>
+
+<pre><code class="language-plaintext">strategy      peak/100ms  peak after recovery  total calls  succeeded  gave up  last success
+none               1000                 1000         9000        500      500      15900 ms
+full               1000                  105         6968       1000        0       5000 ms
+equal              1000                  143         6346       1000        0       5300 ms
+decorrelated       1000                  124         6467        963       37       5100 ms
+full           20 seeds: peak after recovery 81-110, gave up 0-1
+equal          20 seeds: peak after recovery 121-162, gave up 0-0
+decorrelated   20 seeds: peak after recovery 109-149, gave up 26-43</code></pre>
+  <div class="ar-note">ده ناتج نموذج مش قياس حقيقي. من غير jitter (<code>none</code>) موجة الـ 1000 بترجع زي ما هي بعد الـ recovery، 500 client بيستسلموا وآخر نجاح عند 15.9 ثانية. الـ <code>full</code> والـ <code>equal</code> والـ <code>decorrelated</code> بينزّلوا الذروة بعد الـ recovery لـ 105 و143 و124 وبيخلصوا في حوالي 5 ثواني. الـ 1000 في العمود الأول طبيعية لأن كل الـ clients بدأوا مع بعض. وآخر 3 سطور بـ 20 seed: الـ <code>full</code> الأقل (81 لـ 110)، والـ <code>decorrelated</code> سيب 26 لـ 43 client خلصت محاولاتهم في الإعدادات دي.</div>
+
+<pre class="diagram">
+  no jitter (schematic)              full jitter (schematic)
+
+  arrivals                           arrivals
+  1000 |#      #      #              1000 |#
+       |#      #      #                   |#
+       |#      #      #                   |#
+   100 |#      #      #               100 |#  # # # # # #
+       +---------------- time             +---------------- time
+        waves stay in lockstep             waves spread out
+</pre>
+  <div class="ar-note">رسم توضيحي مش أرقام. الشمال من غير jitter: كل الـ clients بيرجعوا في نفس اللحظة، فالموجة بتتكرر. اليمين بالـ full jitter: الموجة الأولى موجودة، وبعدها الوصول بيتوزع على الوقت.</div>
+
+<pre data-file="src/retry-budget.ts"><code class="language-typescript">import { HttpError, isTransient, withRetry } from "./with-retry.ts";
+
+// الميزانية: كل success بيحط 0.1 token، وكل retry بياخد 1، يعني الـ retries بحد أقصى 10%
+export class RetryBudget {
+  private tokens: number;
+  private readonly ratio: number;
+  private readonly max: number;
+  constructor(ratio = 0.1, max = 10) {
+    this.ratio = ratio;
+    this.max = max;
+    this.tokens = max;
+  }
+  onSuccess() { this.tokens = Math.min(this.max, this.tokens + this.ratio); }
+  tryAcquire() {
+    if (this.tokens &lt; 1) return false;
+    this.tokens -= 1;
+    return true;
+  }
+}
+
+const noSleep = async () =&gt; {};
+
+async function phase(requests: number, failRate: () =&gt; boolean, budget: RetryBudget | null) {
+  let downstream = 0, failed = 0;
+  const call = withRetry(
+    async () =&gt; {
+      downstream++;
+      if (failRate()) throw new HttpError(503);
+      budget?.onSuccess();
+      return "ok";
+    },
+    {
+      maxAttempts: 3, baseMs: 1, maxMs: 1, sleep: noSleep,
+      retryable: (e) =&gt; isTransient(e) &amp;&amp; (budget ? budget.tryAcquire() : true),
+    },
+  );
+  for (let i = 0; i &lt; requests; i++) await call().catch(() =&gt; { failed++; });
+  return { requests, downstream, failed, amplification: (downstream / requests).toFixed(2) };
+}
+
+for (const [label, budget] of [["no budget", null], ["10% budget", new RetryBudget()]] as const) {
+  let n = 0;
+  const healthy = await phase(1000, () =&gt; ++n % 100 === 0, budget);
+  const outage = await phase(1000, () =&gt; true, budget);
+  console.log(`${label.padEnd(11)} healthy: ${healthy.downstream} calls for ${healthy.requests} requests (x${healthy.amplification})   100% failing: ${outage.downstream} calls (x${outage.amplification})`);
+}</code></pre>
+
+<pre><code class="language-plaintext">no budget   healthy: 1010 calls for 1000 requests (x1.01)   100% failing: 3000 calls (x3.00)
+10% budget  healthy: 1010 calls for 1000 requests (x1.01)   100% failing: 1009 calls (x1.01)</code></pre>
+  <div class="ar-note">في الوقت السليم (1% أخطاء) الاتنين زي بعض: 1010 call لـ 1000 request. في الـ outage الكامل، من غير budget الحمل بقى ×3.00، وبالـ budget ×1.01 لأن الـ tokens خلصت بسرعة. يعني الـ budget مبيضرش وقت السلامة، وبيحميك وقت الوقوع.</div>
+
+<pre data-file="src/retry-layers.ts"><code class="language-typescript">import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { HttpError, withRetry } from "./with-retry.ts";
+
+// تلات services حقيقية على port 0، و"inventory" الأخيرة واقعة دايمًا
+const listen = (s: Server) =&gt; new Promise&lt;number&gt;((r) =&gt; s.listen(0, "127.0.0.1", () =&gt; r((s.address() as AddressInfo).port)));
+
+async function run(retryAt: Set&lt;string&gt;) {
+  const calls: Record&lt;string, number&gt; = { checkout: 0, orders: 0, inventory: 0 };
+  const callDownstream = (layer: string, url: string) =&gt;
+    withRetry(
+      async () =&gt; {
+        const res = await fetch(url);
+        if (!res.ok) throw new HttpError(res.status);
+      },
+      { maxAttempts: retryAt.has(layer) ? 3 : 1, baseMs: 1, maxMs: 1, sleep: async () =&gt; {} },
+    )();
+
+  const make = (name: string, next?: () =&gt; Promise&lt;void&gt;) =&gt;
+    createServer(async (_req, res) =&gt; {
+      calls[name]!++;
+      try {
+        if (!next) throw new HttpError(503);
+        await next();
+        res.end("ok");
+      } catch {
+        res.statusCode = 503;
+        res.end("unavailable");
+      }
+    });
+
+  const inventory = make("inventory");
+  const inventoryUrl = `http://127.0.0.1:${await listen(inventory)}/`;
+  const orders = make("orders", () =&gt; callDownstream("orders", inventoryUrl));
+  const ordersUrl = `http://127.0.0.1:${await listen(orders)}/`;
+  const checkout = make("checkout", () =&gt; callDownstream("checkout", ordersUrl));
+  const checkoutUrl = `http://127.0.0.1:${await listen(checkout)}/`;
+
+  await callDownstream("client", checkoutUrl).catch(() =&gt; {});
+  for (const s of [checkout, orders, inventory]) s.closeAllConnections(), s.close();
+  return calls;
+}
+
+console.log("retry at every layer: ", await run(new Set(["client", "checkout", "orders"])));
+console.log("retry at the edge only:", await run(new Set(["client"])));</code></pre>
+
+<pre><code class="language-plaintext">retry at every layer:  { checkout: 3, orders: 9, inventory: 27 }
+retry at the edge only: { checkout: 3, orders: 3, inventory: 3 }</code></pre>
+  <div class="ar-note">تلات services حقيقية على port 0. لما كل layer بيعمل retry تلات مرات، الـ inventory الواقعة أخدت 27 call. ولما الـ retry بقى عند الـ edge بس، أخدت 3.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ simulation فوق <b>نموذج مش قياس</b>، والفرضيات مكتوبة في الكود: 1000 client بيبعتوا كلهم عند t = 0، والسيرفر واقع لحد 2000 ms، وبعدها بيقبل 100 request كل 100 ms ويرفض الباقي. كل client بيحاول لحد 10 مرات، base بـ 100 ms و cap بـ 3200 ms، بدقة 100 ms، و seed ثابت عشان الناتج يتكرر.</p>
+    <p>من غير jitter الـ clients بيفضلوا ماشيين مع بعض: موجة 1000 بتيجي بعد الـ recovery، 100 بس بيعدّوا، ونفس الموجة ترجع تاني. 500 client بيستسلموا وآخر نجاح عند 15.9 ثانية. أي jitter بيكسر الموجة: الذروة بعد الـ recovery بتنزل من 1000 لـ 105–143، وكلهم (أو تقريبًا كلهم) بينجحوا، وبتخلص في حوالي 5 ثواني. وكل strategy مكتوب قدامها 1000 في أول عمود لأن كل الـ clients بدأوا مع بعض، ودي نقطة بداية النموذج. ومتبنيش كتير على الترتيب. على 20 seed، الـ full jitter كان أقل ذروة بعد الـ recovery (81–110)، والـ decorrelated سيب 26–43 client خلصت محاولاتهم في الإعدادات دي. استخدم full jitter إلا لو قست سبب يخليك تغيّره.</p>
+    <p><b>الـ backoff مش بيحد الحمل الكلي.</b> في outage كامل، 3 محاولات يعني تلات أضعاف الترافيك برضه. الـ <b>retry budget</b> هو اللي بيحد: كل نجاح بيكسب 0.1 token، وكل retry بيصرف 1، فالـ retries بتفضل حوالي 10% من النجاحات. في الـ run الحقيقي مع مرحلة فشل 100%، الـ amplification كان ×3.00 من غير budget و×1.01 بيه.</p>
+    <p><b>الـ layers بتضرب في بعض.</b> تلات services جوّه بعض وكل واحدة بتحاول 3 مرات يعني 3 × 3 × 3 = 27 call للي واقعة، والـ run فوق عدّهم 27 بالظبط. اعمل retry في layer واحد، غالبًا أبعد layer يقدر يعيد بأمان، والعدد بينزل لـ 3. و<a href="../../12-System-Design/lessons/23-timeouts-retries-storms.html">القسم 12 · 2.5</a> فيه الصورة على مستوى الـ system.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ API gateway بيعمل retry، والـ orders service بتعمل retry، والـ SDK بيعمل retry. عند أول 503 من الـ inventory بيوصلها 27 ضعف. في الـ review اسأل: مين الـ layer الوحيدة اللي بتعيد؟ وحط budget على الـ client، و metric اسمها <code>retries_total</code> عشان تشوف الـ amplification قبل ما الـ outage يوريهولك.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "You added exponential backoff and the service still collapsed on recovery. Why?" → Synchronized clients retry in waves, so add jitter. In my model that took the post-recovery peak from 1000 to about 105. Backoff also doesn't cap total load, so add a retry budget (×3.00 down to ×1.01 in a full outage), and retry at only one layer, since 3 layers of 3 attempts made 27 calls.
+    <div class="ar-note">"ضفت exponential backoff والـ service برضه وقعت وقت الـ recovery. ليه؟" ← الـ clients المتزامنين بيعيدوا في موجات، فضيف jitter. في النموذج بتاعي ده نزّل الذروة بعد الـ recovery من 1000 لحوالي 105. والـ backoff كمان مش بيحدد الحمل الكلي، فضيف retry budget (من ×3.00 لـ ×1.01 في outage كامل)، واعمل retry في layer واحد بس، لأن 3 layers بـ 3 محاولات عملوا 27 call.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Timeout, done properly <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — الـ Timeout بالطريقة الصح</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><a href="../../06-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html#p1">Lesson 04 · 25</a> explains why every call needs a limit. The popular way to add one, <code>Promise.race([call, sleep(ms)])</code>, has three defects, each shown below. <b>(1) The loser keeps running:</b> the caller saw a timeout at 50 ms and the server still charged the card. <b>(2) The timer holds the process open:</b> the result was ready at 0 ms and the process exited at ≈1515 ms. On a server the same thing means one live timer per request until it fires. <b>(3) A late rejection goes nowhere:</b> <code>Promise.race</code> already attached a handler, so there's no <code>unhandledRejection</code> (the run counted 0), and the real failure is simply never seen.</p>
+    <p>A proper <code>withTimeout</code> gives <code>fn</code> a signal, and passing it into the I/O is what actually stops the work. <code>AbortSignal.timeout(ms)</code> supplies the deadline and <code>AbortSignal.any</code> merges a caller's signal. It rejects on time even if <code>fn</code> ignores the signal, and it removes its listener afterwards. There's no timer to clear, because Node's timeout timer is unref'd: the process exited at 3 ms. That has a flip side I hit while writing this lesson: if nothing else is pending, the event loop empties before the timeout fires, and <code>node:test</code> cancelled a test with <code>Promise resolution is still pending but the event loop has already resolved</code>. A real socket or a listening server keeps the loop alive. If you must keep <code>Promise.race</code>, <code>raceWithCleanup</code> below is the correct form: it aborts the loser and clears the timer in <code>finally</code>.</p>
+    <p><b>A client timeout isn't a server timeout.</b> On a private Postgres 18, both <code>Promise.race</code> and node-postgres's <code>query_timeout</code> let the caller walk away while <code>pg_stat_activity</code> still showed the query <code>active</code>. Only the server can stop it: <code>statement_timeout</code> ended it at ≈200 ms with error <code>57014</code>, and <code>pg_cancel_backend</code> did too. The <code>idle</code> row in (3) is the connection after the query stopped, because the <code>query</code> column keeps the last statement. Pick values from the downstream's p99, not from a round number: <a href="../../12-System-Design/lessons/23-timeouts-retries-storms.html">section 12 · 2.5</a>.</p>
+  </section>
+
+<pre data-file="src/timeout-race.ts"><code class="language-typescript">import { spawnSync } from "node:child_process";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+
+// ❌ الشكل المشهور: أول واحد يخلص يكسب، وخلاص
+const naiveTimeout = &lt;T&gt;(work: Promise&lt;T&gt;, ms: number) =&gt;
+  Promise.race([work, new Promise&lt;never&gt;((_, reject) =&gt; setTimeout(() =&gt; reject(new Error("timeout")), ms))]);
+
+let charged = 0;
+const server = createServer((_req, res) =&gt; {
+  setTimeout(() =&gt; { charged++; res.end("charged"); }, 200);
+});
+await new Promise&lt;void&gt;((r) =&gt; server.listen(0, "127.0.0.1", r));
+const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/charge`;
+
+// (1) الخسران بيكمل: العميل شاف timeout، والـ charge اتنفذ
+await naiveTimeout(fetch(url).then((r) =&gt; r.text()), 50).catch((e: Error) =&gt; console.log("(1) caller saw:", e.message, "| charged so far:", charged));
+await sleep(350);
+console.log("(1) 350 ms later, charged:", charged);
+
+// (2) الـ timer ماسك الـ process: الشغل خلص فورًا والـ process قعد
+const child = `
+const t0 = performance.now();
+Promise.race([Promise.resolve("ok"), new Promise((_, r) =&gt; setTimeout(() =&gt; r(new Error("timeout")), 1500))])
+  .then((v) =&gt; console.log("result", v, "at", Math.round(performance.now() - t0), "ms"));
+process.on("exit", () =&gt; console.log("process exit at", Math.round(performance.now() - t0), "ms"));`;
+console.log("(2)", spawnSync(process.execPath, ["-e", child], { encoding: "utf8" }).stdout.trim().replace("\n", " | "));
+
+// (3) الرفض المتأخر: بيوصل ومحدش بيشوفه
+let unhandled = 0;
+process.on("unhandledRejection", () =&gt; { unhandled++; });
+const lateFailure = (async () =&gt; { await sleep(60); throw new Error("card network down"); })();
+await naiveTimeout(lateFailure, 10).catch((e: Error) =&gt; console.log("(3) caller saw:", e.message));
+await sleep(120);
+console.log("(3) after the real failure happened, unhandledRejection events:", unhandled);
+
+server.closeAllConnections();
+server.close();</code></pre>
+
+<pre><code class="language-plaintext">(1) caller saw: timeout | charged so far: 0
+(1) 350 ms later, charged: 1
+(2) result ok at 0 ms | process exit at 1515 ms
+(3) caller saw: timeout
+(3) after the real failure happened, unhandledRejection events: 0</code></pre>
+  <div class="ar-note">(1) العميل شاف timeout، وبعد 350 ms الـ charge اتنفذ فعلًا. (2) النتيجة جاهزة عند 0 ms والـ process قعد لحد ≈1515 ms بسبب الـ timer. (3) الفشل الحقيقي حصل بعد الـ timeout، وعدد الـ <code>unhandledRejection</code> صفر: الخطأ وصل ومحدش شافه.</div>
+
+<pre data-file="src/with-timeout.ts"><code class="language-typescript">export class TimeoutError extends Error {
+  readonly ms: number;
+  constructor(ms: number) {
+    super(`timed out after ${ms} ms`);
+    this.name = "TimeoutError";
+    this.ms = ms;
+  }
+}
+
+// الـ fn لازم تاخد الـ signal وتوصّله للـ I/O، ده اللي بيوقف الشغل فعلًا
+export function withTimeout&lt;T&gt;(fn: (signal: AbortSignal) =&gt; Promise&lt;T&gt;, ms: number, parent?: AbortSignal): Promise&lt;T&gt; {
+  const timeout = AbortSignal.timeout(ms);
+  const signal = parent ? AbortSignal.any([parent, timeout]) : timeout;
+  return new Promise&lt;T&gt;((resolve, reject) =&gt; {
+    const onAbort = () =&gt; reject(timeout.aborted ? new TimeoutError(ms) : signal.reason);
+    if (signal.aborted) return onAbort();
+    signal.addEventListener("abort", onAbort, { once: true });
+    // بنشيل الـ listener في الآخر عشان منسيبش حاجة معلّقة على signal عايش طويل
+    (async () =&gt; fn(signal))()
+      .then(resolve, reject)
+      .finally(() =&gt; signal.removeEventListener("abort", onAbort));
+  });
+}
+
+// لو لازم Promise.race: الـ cleanup في finally، والـ abort هو اللي بيوقف الخسران
+export async function raceWithCleanup&lt;T&gt;(fn: (signal: AbortSignal) =&gt; Promise&lt;T&gt;, ms: number): Promise&lt;T&gt; {
+  const ctrl = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise&lt;never&gt;((_, reject) =&gt; {
+    timer = setTimeout(() =&gt; {
+      ctrl.abort();
+      reject(new TimeoutError(ms));
+    }, ms);
+  });
+  try {
+    return await Promise.race([fn(ctrl.signal), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}</code></pre>
+
+<pre data-file="src/timeout-good.ts"><code class="language-typescript">import { spawnSync } from "node:child_process";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+import { TimeoutError, withTimeout } from "./with-timeout.ts";
+
+let completed = 0, sawClose = 0;
+const server = createServer((_req, res) =&gt; {
+  const timer = setTimeout(() =&gt; { completed++; res.end("charged"); }, 200);
+  // الـ server بيوقف الشغل لما الـ client يقفل الـ connection
+  res.on("close", () =&gt; {
+    if (!res.writableEnded) { sawClose++; clearTimeout(timer); }
+  });
+});
+await new Promise&lt;void&gt;((r) =&gt; server.listen(0, "127.0.0.1", r));
+const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/charge`;
+
+const t0 = performance.now();
+await withTimeout((signal) =&gt; fetch(url, { signal }).then((r) =&gt; r.text()), 50).catch((e: Error) =&gt;
+  console.log(`(1) caller saw: ${e.name} at ≈${Math.round(performance.now() - t0)} ms`),
+);
+await sleep(350);
+console.log(`(1) server saw the connection close: ${sawClose}, charged: ${completed}`);
+
+const caller = new AbortController();
+setTimeout(() =&gt; caller.abort(new Error("user navigated away")), 20);
+await withTimeout((signal) =&gt; fetch(url, { signal }), 5000, caller.signal).catch((e: Error) =&gt; console.log("(2) parent abort wins:", e.message));
+
+// لو الـ fn مش بتسمع للـ signal، الـ withTimeout لسه بيرجع في ميعاده
+const ignoring = () =&gt; new Promise&lt;string&gt;((r) =&gt; setTimeout(() =&gt; r("late"), 200));
+await withTimeout(ignoring, 30).catch((e: unknown) =&gt; console.log("(3) signal ignored, still rejects:", e instanceof TimeoutError));
+
+const child = `
+const t0 = performance.now();
+const s = AbortSignal.timeout(30000);
+Promise.resolve("ok").then((v) =&gt; console.log("result", v, "at", Math.round(performance.now() - t0), "ms"));
+process.on("exit", () =&gt; console.log("process exit at", Math.round(performance.now() - t0), "ms"));`;
+console.log("(4)", spawnSync(process.execPath, ["-e", child], { encoding: "utf8" }).stdout.trim().replace("\n", " | "));
+
+server.closeAllConnections();
+server.close();</code></pre>
+
+<pre><code class="language-plaintext">(1) caller saw: TimeoutError at ≈60 ms
+(1) server saw the connection close: 1, charged: 0
+(2) parent abort wins: user navigated away
+(3) signal ignored, still rejects: true
+(4) result ok at 0 ms | process exit at 3 ms
+result ok at 0 ms
+process exit at 2 ms</code></pre>
+  <div class="ar-note">(1) الـ timeout اشتغل عند ≈60 ms، والسيرفر شاف الـ connection بيتقفل، ومفيش charge. (2) الـ signal بتاع اللي بينادي كسب بالسبب بتاعه. (3) حتى لو الـ fn مبتسمعش للـ signal، الـ <code>withTimeout</code> بيرجع في ميعاده. (4) الـ process خرج عند 3 ms لأن timer الـ <code>AbortSignal.timeout</code> معمول له unref. وآخر سطرين من <code>raceWithCleanup</code>: خرج عند 2 ms لأن الـ <code>finally</code> مسح الـ timer.</div>
+
+<pre data-file="src/pg-timeout.ts"><code class="language-typescript">import pg from "pg";
+import { startPg } from "./pg-throwaway.mjs";
+
+const lab = await startPg();
+const port = Number(lab.port);
+// فحص أمان: الـ port لازم يكون رقم حقيقي ومش port بتاع service عندك
+if (!/^\d+$/.test(String(lab.port)) || port &lt; 1024 || port &gt; 65535 || [27017, 5432, 6379].includes(port)) throw new Error("refusing port " + lab.port);
+
+const connect = async (options = {}) =&gt; {
+  const c = new pg.Client({ host: "127.0.0.1", port, user: "app", database: "postgres", ...options });
+  await c.connect();
+  return c;
+};
+const monitor = await connect();
+const active = async () =&gt; (await monitor.query(
+  "select pid, state, left(query, 22) as query from pg_stat_activity where query like 'select pg_sleep%' and pid &lt;&gt; pg_backend_pid()",
+)).rows;
+const cancelAll = async () =&gt; { for (const r of await active()) await monitor.query("select pg_cancel_backend($1)", [r.pid]); };
+const wait = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+const short = (e: { code?: string; message: string }) =&gt; `${e.code ?? "no code"} ${e.message}`;
+
+// (1) مع Promise.race العميل بطل يستنى، والسيرفر لسه شغال
+const a = await connect();
+const running = a.query("select pg_sleep(30)").catch((e: Error) =&gt; short(e));
+await Promise.race([running, wait(200)]);
+console.log("(1) caller stopped waiting. pg_stat_activity:", await active());
+await cancelAll();
+console.log("(1) after pg_cancel_backend, the query says:", await running);
+await a.end();
+
+// (2) الـ query_timeout بتاع node-postgres برضه من ناحية العميل بس
+const b = await connect({ query_timeout: 200 });
+const r2 = await b.query("select pg_sleep(30)").catch((e: Error) =&gt; short(e));
+console.log("(2) query_timeout result:", r2);
+console.log("(2) pg_stat_activity right after:", await active());
+await cancelAll();
+await wait(100);
+b.end().catch(() =&gt; {});
+
+// (3) الـ statement_timeout: السيرفر نفسه هو اللي بيوقف
+const c = await connect({ statement_timeout: 200 });
+const t0 = performance.now();
+const r3 = await c.query("select pg_sleep(30)").catch((e: Error) =&gt; short(e));
+console.log(`(3) statement_timeout result at ≈${Math.round((performance.now() - t0) / 50) * 50} ms:`, r3);
+console.log("(3) pg_stat_activity right after:", await active());
+await c.end();
+await monitor.end();
+await lab.stop();</code></pre>
+
+<pre><code class="language-plaintext">(1) caller stopped waiting. pg_stat_activity: [ { pid: 14012, state: 'active', query: 'select pg_sleep(30)' } ]
+(1) after pg_cancel_backend, the query says: 57014 canceling statement due to user request
+(2) query_timeout result: no code Query read timeout
+(2) pg_stat_activity right after: [ { pid: 14528, state: 'active', query: 'select pg_sleep(30)' } ]
+(3) statement_timeout result at ≈200 ms: 57014 canceling statement due to statement timeout
+(3) pg_stat_activity right after: [ { pid: 20988, state: 'idle', query: 'select pg_sleep(30)' } ]</code></pre>
+  <div class="ar-note">Postgres خاص بالتجربة دي بس، على port عشوائي. (1) العميل بطل يستنى والـ query لسه <code>active</code>، ووقفت لما عملنا <code>pg_cancel_backend</code> بـ error رقم 57014. (2) الـ <code>query_timeout</code> رجّع للعميل، والسيرفر لسه <code>active</code>. (3) الـ <code>statement_timeout</code> وقف الـ query عند ≈200 ms، والصف بقى <code>idle</code>: عمود <code>query</code> بيعرض آخر statement بس، والـ connection فاضية.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><a href="../../06-NodeJS/lessons/25-timeouts-retries-circuit-breakers.html#p1">درس 04 · 25</a> بيشرح ليه كل call محتاج حد. الطريقة المشهورة، <code>Promise.race([call, sleep(ms)])</code>، فيها 3 عيوب، وكل واحد باين فوق. <b>(1) الخسران بيكمل:</b> اللي بينادي شاف timeout عند 50 ms والسيرفر خصم من الكارت برضه. <b>(2) الـ timer ماسك الـ process:</b> النتيجة جاهزة عند 0 ms والـ process خرج عند ≈1515 ms، وعلى سيرفر ده معناه timer عايش لكل request لحد ما يخلص. <b>(3) الرفض المتأخر بيضيع:</b> <code>Promise.race</code> ربط handler خلاص، فمفيش <code>unhandledRejection</code> (الـ run عدّ صفر)، والفشل الحقيقي محدش بيشوفه أصلًا.</p>
+    <p>الـ <code>withTimeout</code> الصح بيدّي الـ <code>fn</code> signal، وتوصيله للـ I/O هو اللي بيوقف الشغل فعلًا. الـ <code>AbortSignal.timeout(ms)</code> بيدّي الميعاد، و<code>AbortSignal.any</code> بيدمج signal بتاع اللي بينادي. بيرفض في ميعاده حتى لو الـ <code>fn</code> بتتجاهل الـ signal، وبيشيل الـ listener بتاعه في الآخر. ومفيش timer يتمسح، لأن timer الـ timeout في Node معمول له unref: الـ process خرج عند 3 ms. وليها وش تاني قابلته وأنا بكتب الدرس: لو مفيش حاجة تانية مستنية، الـ event loop بيفضى قبل ما الـ timeout يشتغل، و<code>node:test</code> لغى test برسالة <code>Promise resolution is still pending but the event loop has already resolved</code>. الـ socket الحقيقي أو سيرفر شغال بيمسك الـ loop. ولو لازم تفضل على <code>Promise.race</code>، الـ <code>raceWithCleanup</code> فوق هو الشكل الصح: بيعمل abort للخسران وبيمسح الـ timer في <code>finally</code>.</p>
+    <p><b>الـ timeout من ناحية العميل مش timeout من ناحية السيرفر.</b> على Postgres 18 خاص، الـ <code>Promise.race</code> و<code>query_timeout</code> بتاع node-postgres سابوا اللي بينادي يمشي، والـ <code>pg_stat_activity</code> لسه بيقول إن الـ query <code>active</code>. السيرفر بس هو اللي يقدر يوقفها: الـ <code>statement_timeout</code> وقفها عند ≈200 ms بـ error رقم <code>57014</code>، و<code>pg_cancel_backend</code> برضه. والصف الـ <code>idle</code> في (3) هو الـ connection بعد ما الـ query وقفت، لأن عمود <code>query</code> بيفضل شايل آخر statement. واختار القيم من الـ p99 بتاع الـ downstream، مش من رقم مدوّر: <a href="../../12-System-Design/lessons/23-timeouts-retries-storms.html">القسم 12 · 2.5</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      endpoint بيعمل report: الـ HTTP client قطع بعد 3 ثواني والـ query لسه شغالة 40 ثانية وماسكة connection من الـ pool. بعد شوية الـ pool بيتملي والـ API كلها بتقف. الحل <code>SET statement_timeout</code> لكل connection أو في الـ pool config، و<code>withTimeout</code> للـ HTTP بتمرير الـ signal لـ <code>fetch</code>. وراجع <code>pg_stat_activity</code> وقت أي incident.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Does <code>Promise.race</code> with a timer cancel the operation?" → No. It only stops you waiting. The call keeps running, the timer stays until it fires unless you clear it, and a later rejection is swallowed. Cancellation needs an <code>AbortSignal</code> passed into the I/O, and for a database a server-side limit such as <code>statement_timeout</code>.
+    <div class="ar-note">"هل <code>Promise.race</code> مع timer بيلغي العملية؟" ← لأ. هو بيخليك تبطل تستنى وبس. الـ call بيكمل، والـ timer بيفضل لحد ما يشتغل لو ممسحتوش، والرفض المتأخر بيضيع. الإلغاء محتاج <code>AbortSignal</code> يتمرر للـ I/O، وللـ database محتاج حد من ناحية السيرفر زي <code>statement_timeout</code>.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Timeout budgets across a chain <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — ميزانية الـ timeout عبر الـ chain</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Per-hop timeouts don't add up to an SLA. Say the caller has 2 s, and each of three services uses 5 s with one retry. The experiment below scales that by 10 (SLA 200 ms, fixed timeout 500 ms) against three real local services on port 0, and the slowest takes 900 ms. In the <code>fixed</code> row the caller waited ≈1090 ms, over 5× its SLA, and <code>C</code> finished 2 pieces of work nobody was waiting for.</p>
+    <p>A <b>deadline</b> fixes that by travelling with the request. The caller sets a budget in <code>x-request-deadline</code>. Each service reads it into <code>AsyncLocalStorage</code>, so no function needs a parameter, and each outbound call gets <code>remaining - margin</code>. In the <code>budget</code> row the caller got its answer at ≈200 ms, <code>C</code> stopped when the budget ran out, and A's retry still happened: it used what was left, reached B, and B saw no budget for C, so it failed early without calling it. With a 20 ms budget, no downstream call was made at all. A's own 30 ms of work is why that row took ≈50 ms: work you've already started has to finish or be cancelled by you.</p>
+    <p>Send <b>remaining milliseconds, not an absolute time</b>. If the receiver's clock is 3 s ahead, an absolute deadline arrives already expired (the run shows −1000 ms) and every request fails. Compare against a monotonic clock, <code>performance.now()</code>, inside the process. The header is untrusted input, so validate it and cap it. gRPC has this built in as deadlines (<a href="../../06-NodeJS/lessons/38-graphql-grpc.html">lesson 04 · 38</a>). With a single hop you don't need any of this: one <code>withTimeout</code> is enough.</p>
+  </section>
+
+<pre data-file="src/deadline-chain.ts"><code class="language-typescript">import { AsyncLocalStorage } from "node:async_hooks";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+
+const HEADER = "x-request-deadline";
+const MARGIN_MS = 15, FIXED_TIMEOUT_MS = 500, MAX_BUDGET_MS = 30_000, OWN_WORK_MS = 30, SLOW_DB_MS = 900;
+type Mode = "fixed" | "budget";
+
+class DeadlineExceeded extends Error { override name = "DeadlineExceeded"; }
+
+// كل request ليه deadline في الـ ALS، فمحدش محتاج يعدّيه كـ parameter
+const als = new AsyncLocalStorage&lt;{ deadlineAt: number }&gt;();
+const remainingMs = () =&gt; { const s = als.getStore(); return s ? s.deadlineAt - performance.now() : Infinity; };
+
+function readBudget(req: IncomingMessage): number {
+  const raw = req.headers[HEADER];
+  if (typeof raw !== "string") return Infinity;
+  const ms = Number(raw);
+  // ده input جاي من بره: لازم يتفحص ويتقص، مش يتصدق
+  return Number.isFinite(ms) &amp;&amp; ms &gt;= 0 ? Math.min(ms, MAX_BUDGET_MS) : 0;
+}
+
+async function callNext(url: string, mode: Mode): Promise&lt;Response&gt; {
+  // الـ floor إجباري: الـ AbortSignal.timeout بيرفض أي رقم مش صحيح
+  const limit = mode === "fixed" ? FIXED_TIMEOUT_MS : Math.floor(remainingMs() - MARGIN_MS);
+  if (limit &lt;= 0) throw new DeadlineExceeded(`no budget left for ${url}`);
+  const headers: Record&lt;string, string&gt; = mode === "budget" ? { [HEADER]: String(limit) } : {};
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(limit) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res;
+}
+
+type Handler = (req: IncomingMessage, res: ServerResponse) =&gt; Promise&lt;void&gt;;
+const service = (handler: Handler): Server =&gt;
+  createServer((req, res) =&gt; {
+    als.run({ deadlineAt: performance.now() + readBudget(req) }, async () =&gt; {
+      try {
+        await handler(req, res);
+      } catch {
+        res.statusCode = 504;
+        res.end("gateway timeout");
+      }
+    });
+  });
+const listen = (s: Server) =&gt; new Promise&lt;string&gt;((r) =&gt; s.listen(0, "127.0.0.1", () =&gt; r(`http://127.0.0.1:${(s.address() as AddressInfo).port}/`)));
+
+async function run(mode: Mode, slaMs: number) {
+  const counts = { b: 0, c: 0, cFinished: 0 };
+  const c = service(async (_req, res) =&gt; {
+    counts.c++;
+    const left = remainingMs();
+    // الـ C بيوقف لما الميزانية تخلص، بدل ما يكمل شغل محدش مستنيه
+    await sleep(SLOW_DB_MS, undefined, Number.isFinite(left) ? { signal: AbortSignal.timeout(Math.max(0, Math.floor(left))) } : {});
+    counts.cFinished++;
+    res.end("price");
+  });
+  const cUrl = await listen(c);
+  const b = service(async (_req, res) =&gt; {
+    counts.b++;
+    await sleep(OWN_WORK_MS);
+    await callNext(cUrl, mode);
+    res.end("ok");
+  });
+  const bUrl = await listen(b);
+  const a = service(async (_req, res) =&gt; {
+    await sleep(OWN_WORK_MS);
+    // الـ A بيعيد محاولة واحدة، وده الشائع في الـ services
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await callNext(bUrl, mode);
+        break;
+      } catch (error) {
+        if (attempt === 2 || error instanceof DeadlineExceeded) throw error;
+      }
+    }
+    res.end("ok");
+  });
+  const aUrl = await listen(a);
+
+  const t0 = performance.now();
+  const response = await fetch(aUrl, mode === "budget" ? { headers: { [HEADER]: String(slaMs) } } : {});
+  const took = Math.round(performance.now() - t0);
+  await sleep(SLOW_DB_MS + 200);
+  for (const s of [a, b, c]) s.closeAllConnections(), s.close();
+  console.log(`${mode.padEnd(7)} SLA ${String(slaMs).padStart(3)} ms | caller waited ≈${String(Math.round(took / 10) * 10).padStart(4)} ms | status ${response.status} | calls to B: ${counts.b} | calls to C: ${counts.c} | C finished useless work: ${counts.cFinished}`);
+}
+
+await run("fixed", 200);
+await run("budget", 200);
+await run("budget", 20);
+
+// الفخ: وقت مطلق بين جهازين ساعتهم مختلفة
+const budgetMs = 2000, senderNow = 1_000_000, receiverNow = senderNow + 3000;
+const absoluteHeader = senderNow + budgetMs;
+console.log(`absolute deadline, receiver clock 3000 ms ahead: remaining = ${absoluteHeader - receiverNow} ms`);
+console.log(`remaining-ms header, same skew: remaining = ${budgetMs} ms`);</code></pre>
+
+<pre><code class="language-plaintext">fixed   SLA 200 ms | caller waited ≈1090 ms | status 504 | calls to B: 2 | calls to C: 2 | C finished useless work: 2
+budget  SLA 200 ms | caller waited ≈ 200 ms | status 504 | calls to B: 2 | calls to C: 1 | C finished useless work: 0
+budget  SLA  20 ms | caller waited ≈  50 ms | status 504 | calls to B: 0 | calls to C: 0 | C finished useless work: 0
+absolute deadline, receiver clock 3000 ms ahead: remaining = -1000 ms
+remaining-ms header, same skew: remaining = 2000 ms</code></pre>
+  <div class="ar-note">تلات services حقيقية على port 0، والأوقات تقريبية على جهاز عليه ضغط. <code>fixed</code>: اللي بينادي استنى ≈1090 ms مع إن الـ SLA بتاعه 200، والـ C خلّص شغل محدش مستنيه مرتين. <code>budget</code> بـ 200: رجع عند ≈200 ms، والـ B اتنادى مرتين والـ C مرة، ومفيش شغل ضايع. <code>budget</code> بـ 20: رجع عند ≈50 ms من غير أي call لتحت. وآخر سطرين: الوقت المطلق مع ساعة متقدمة 3 ثواني طلع −1000 ms، والـ header بالـ ms المتبقية طلع 2000 ms صح.</div>
+
+<pre class="diagram">
+  caller: budget 200 ms
+     | x-request-deadline: 200
+     v
+  A  works 30 ms   remaining ~170   next hop gets ~155 (remaining - 15)
+     | x-request-deadline: 155
+     v
+  B  works 30 ms   remaining ~125   next hop gets ~110
+     | x-request-deadline: 110
+     v
+  C  stops when ~110 ms is up, instead of finishing 900 ms of work
+</pre>
+  <div class="ar-note">الميزانية بتصغر مع كل hop: اللي بينادي بيبعت 200، والـ A بيشتغل 30 ms فيفضل له حوالي 170 ويدّي الـ B حوالي 155 بعد طرح الـ margin، والـ B يدّي الـ C حوالي 110. والـ C بيقف لما الوقت ده يخلص بدل ما يكمل شغل 900 ms.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ timeouts بتاعة كل hop مبتجمعش لـ SLA. افترض إن اللي بينادي معاه 2 ثانية، وكل service من التلاتة بتستخدم 5 ثواني ومعاها retry واحد. التجربة فوق مصغّرة 10 مرات (SLA بـ 200 ms و fixed timeout بـ 500 ms) على تلات services حقيقية على port 0، والأبطأ بياخد 900 ms. في صف <code>fixed</code> اللي بينادي استنى ≈1090 ms، أكتر من 5 أضعاف الـ SLA، والـ <code>C</code> خلّص شغلتين محدش مستنيهم.</p>
+    <p>الـ <b>deadline</b> بيحل ده لأنه بيمشي مع الـ request. اللي بينادي بيحط budget في <code>x-request-deadline</code>. كل service بتقراه في <code>AsyncLocalStorage</code>، فمفيش function محتاجة parameter، وكل call طالع بياخد <code>remaining - margin</code>. في صف <code>budget</code> اللي بينادي خد رده عند ≈200 ms، والـ <code>C</code> وقف لما الميزانية خلصت، والـ retry بتاع الـ A حصل برضه: استخدم اللي فاضل، ووصل الـ B، والـ B لقى إن مفيش وقت للـ C ففشل بدري من غير ما يناديه. ومع budget بـ 20 ms مفيش أي call اتعمل لتحت. والـ 30 ms شغل بتاع الـ A هو سبب إن الصف ده أخد ≈50 ms: الشغل اللي بدأته لازم يخلص أو إنت اللي تلغيه.</p>
+    <p>ابعت <b>الـ ms المتبقية، مش وقت مطلق</b>. لو ساعة اللي بيستقبل متقدمة 3 ثواني، الـ deadline المطلق بيوصل منتهي أصلًا (الـ run طلّع −1000 ms) وكل الـ requests بتفشل. جوّه الـ process قارن بساعة monotonic، <code>performance.now()</code>. والـ header ده input مش موثوق، فلازم يتفحص ويتقص. والـ gRPC عنده ده جاهز باسم deadlines (<a href="../../06-NodeJS/lessons/38-graphql-grpc.html">درس 04 · 38</a>). ولو hop واحد بس مش محتاج ده كله: <code>withTimeout</code> واحد كفاية. والفخ اللي وقعت فيه وأنا بكتب الكود في <a href="#mistakes">الغلطات</a>: <code>AbortSignal.timeout</code> بيرفض الأرقام العشرية.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      صفحة checkout بتنادي orders، والـ orders بتنادي pricing والـ pricing بتنادي الـ DB. الـ gateway بيبعت <code>x-request-deadline: 1800</code>، وكل service بتعمل middleware يحطها في الـ ALS، والـ HTTP client الداخلي بيقرا منها. أي query تانية بعد ما الوقت خلص بترجع 504 على طول بدل ما تحمّل الـ DB بشغل محدش مستنيه.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks at scale</b>
+    Every hop has to propagate the header, or the chain silently falls back to no budget. Put it in the shared HTTP client and the shared middleware, not in each handler, and add a metric for requests that arrive with no deadline.
+    <div class="ar-note"><b>اللي بيقع على scale:</b> كل hop لازم يوصّل الـ header، وإلا الـ chain بترجع من غير budget في صمت. حطها في الـ HTTP client المشترك والـ middleware المشترك، مش في كل handler، وزوّد metric للـ requests اللي بتوصل من غير deadline.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Fallback as a decorator <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — الـ Fallback كـ decorator</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><code>withFallback(fn, fallback, { when, onFallback })</code> returns <code>{ data, degraded: true, source: 'stale-cache' }</code> instead of throwing. The marker matters: the UI can say "showing recent picks", a metric can count it, and a test can assert it. In the real run against a private Redis, the recommendations stand-in answered, was killed, and the next call returned the same data as <code>stale-cache</code>. An unknown user got <code>popular</code>, and with Redis gone as well the chain still returned <code>popular</code>. <code>when</code> keeps real business errors from being hidden, so a declined card still throws.</p>
+    <p>For comparison, cockatiel's <code>fallback(handleAll, () =&gt; POPULAR)</code> returned the plain value, which is fine when you don't need the marker. <a href="../../12-System-Design/lessons/24-circuit-breaker-bulkhead-shedding.html">Section 12 · 2.5</a> has the system view.</p>
+    <p><b>When not to:</b> a fallback must never invent a fact someone will act on. A payment fallback that says "paid" is a lie, and the same goes for balances and permissions: a stale "allowed" is a security bug. For those, fail clearly, or accept the work as pending.</p>
+    <p><b>Two traps.</b> A fallback that queries the database runs exactly when the service is failing, so every failed request becomes a query: in the run, 200 failures made 200 queries at a peak concurrency of 200 (the database is a counting stand-in there). A single-flight plus a short in-memory cache made it 1. And a fallback nobody has exercised won't work on the day of the outage, so test it, emit a metric from <code>onFallback</code>, and kill the dependency on purpose in staging.</p>
+  </section>
+
+<pre data-file="src/with-fallback.ts"><code class="language-typescript">export type Outcome&lt;T&gt; = { data: T; degraded: false } | { data: T; degraded: true; source: string };
+
+type FallbackResult&lt;T&gt; = { data: T; source: string };
+
+export function withFallback&lt;A extends unknown[], T&gt;(
+  fn: (...args: A) =&gt; Promise&lt;T&gt;,
+  fallback: (error: unknown, ...args: A) =&gt; FallbackResult&lt;T&gt; | Promise&lt;FallbackResult&lt;T&gt;&gt;,
+  options: {
+    when?: (error: unknown) =&gt; boolean;
+    onFallback?: (info: { source: string; error: unknown }) =&gt; void;
+  } = {},
+) {
+  const { when = () =&gt; true, onFallback } = options;
+  return async (...args: A): Promise&lt;Outcome&lt;T&gt;&gt; =&gt; {
+    try {
+      return { data: await fn(...args), degraded: false };
+    } catch (error) {
+      if (!when(error)) throw error;
+      const { data, source } = await fallback(error, ...args);
+      onFallback?.({ source, error });
+      return { data, degraded: true, source };
+    }
+  };
+}</code></pre>
+
+<pre data-file="src/with-fallback.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { withFallback } from "./with-fallback.ts";
+
+const down = async (): Promise&lt;string[]&gt; =&gt; { throw new Error("connect ECONNREFUSED"); };
+
+test("healthy call is not degraded and the fallback does not run", async () =&gt; {
+  let ran = 0;
+  const get = withFallback(async () =&gt; ["sku-1"], () =&gt; { ran++; return { data: [], source: "default" }; });
+  assert.deepEqual(await get(), { data: ["sku-1"], degraded: false });
+  assert.equal(ran, 0);
+});
+test("failure returns the fallback, marked degraded, and increments the metric", async () =&gt; {
+  const metric: Record&lt;string, number&gt; = {};
+  const get = withFallback(down, () =&gt; ({ data: ["popular-1"], source: "popular" }), {
+    onFallback: ({ source }) =&gt; { metric[source] = (metric[source] ?? 0) + 1; },
+  });
+  assert.deepEqual(await get(), { data: ["popular-1"], degraded: true, source: "popular" });
+  assert.deepEqual(metric, { popular: 1 });
+});
+test("when() false rethrows: a declined card is not an outage", async () =&gt; {
+  class CardDeclined extends Error {}
+  const charge = withFallback(async () =&gt; { throw new CardDeclined("declined"); }, () =&gt; ({ data: "unused", source: "x" }), {
+    when: (e) =&gt; !(e instanceof CardDeclined),
+  });
+  await assert.rejects(charge(), CardDeclined);
+});</code></pre>
+
+<pre data-file="src/fallback-run.ts"><code class="language-typescript">import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { fallback as policyFallback, handleAll } from "cockatiel";
+import { Redis } from "ioredis";
+import { withFallback } from "./with-fallback.ts";
+
+const rawPort = readFileSync("redis.port", "utf8").trim();
+const port = Number(rawPort);
+// فحص أمان قبل أي connection: الـ port الفاضي معناه الـ service الحقيقية بتاعتك
+if (!/^\d+$/.test(rawPort) || port &lt; 1024 || port &gt; 65535 || [27017, 5432, 6379].includes(port)) throw new Error("refusing port " + rawPort);
+const redis = new Redis({ host: "127.0.0.1", port, maxRetriesPerRequest: 0, enableOfflineQueue: false, lazyConnect: true });
+await redis.connect();
+
+// الـ service دي stand-in للـ recommendations، على port 0
+type Recs = string[];
+const service = createServer((req, res) =&gt; {
+  res.setHeader("content-type", "application/json");
+  res.end(JSON.stringify(["sku-" + req.url!.slice(1), "sku-9"]));
+});
+await new Promise&lt;void&gt;((r) =&gt; service.listen(0, "127.0.0.1", r));
+const base = `http://127.0.0.1:${(service.address() as AddressInfo).port}`;
+
+const metric: Record&lt;string, number&gt; = {};
+const POPULAR: Recs = ["popular-1", "popular-2"];
+
+async function freshRecs(userId: string): Promise&lt;Recs&gt; {
+  const res = await fetch(`${base}/${userId}`, { signal: AbortSignal.timeout(300) });
+  const recs = (await res.json()) as Recs;
+  // نكتب مع كل نجاح، بـ TTL أطول بكتير من عمر الـ freshness
+  await redis.set(`recs:${userId}`, JSON.stringify({ recs, at: Date.now() }), "EX", 86_400);
+  return recs;
+}
+
+const getRecs = withFallback(
+  freshRecs,
+  async (_error, userId) =&gt; {
+    const cached = await redis.get(`recs:${userId}`).catch(() =&gt; null);
+    if (cached) return { data: (JSON.parse(cached) as { recs: Recs }).recs, source: "stale-cache" };
+    return { data: POPULAR, source: "popular" };
+  },
+  { onFallback: ({ source }) =&gt; { metric[source] = (metric[source] ?? 0) + 1; } },
+);
+
+console.log("service up:          ", await getRecs("user-7"));
+service.closeAllConnections();
+await new Promise((r) =&gt; service.close(r));
+console.log("service killed:      ", await getRecs("user-7"));
+console.log("killed, unknown user:", await getRecs("user-99"));
+redis.disconnect();
+await new Promise((r) =&gt; setTimeout(r, 50));
+console.log("redis gone too:      ", await getRecs("user-7"));
+console.log("metric:              ", metric);
+
+const viaCockatiel = await policyFallback(handleAll, () =&gt; POPULAR).execute(async () =&gt; { throw new Error("down"); });
+console.log("cockatiel fallback:  ", viaCockatiel);</code></pre>
+
+<pre><code class="language-plaintext">service up:           { data: [ 'sku-user-7', 'sku-9' ], degraded: false }
+service killed:       {
+  data: [ 'sku-user-7', 'sku-9' ],
+  degraded: true,
+  source: 'stale-cache'
+}
+killed, unknown user: {
+  data: [ 'popular-1', 'popular-2' ],
+  degraded: true,
+  source: 'popular'
+}
+redis gone too:       {
+  data: [ 'popular-1', 'popular-2' ],
+  degraded: true,
+  source: 'popular'
+}
+metric:               { 'stale-cache': 1, popular: 2 }
+cockatiel fallback:   [ 'popular-1', 'popular-2' ]</code></pre>
+  <div class="ar-note">Redis خاص على port عشوائي، والـ service هنا stand-in. والـ service شغالة: داتا طازة و<code>degraded: false</code>. بعد ما وقفناها: نفس الداتا من Redis و<code>source: 'stale-cache'</code>. مستخدم مش معروف: <code>popular</code>. ولما Redis وقع كمان: برضه <code>popular</code>. والـ metric عدّ كل واحدة. وآخر سطر: الـ <code>fallback</code> بتاع cockatiel رجّع القيمة من غير أي علامة إنها degraded.</div>
+
+<pre data-file="src/fallback-herd.ts"><code class="language-typescript">import { withFallback } from "./with-fallback.ts";
+
+// الـ DB هنا stand-in بيعد الـ queries والـ concurrency، مش Postgres حقيقي
+function fakeDb() {
+  let queries = 0, inFlight = 0, peak = 0;
+  return {
+    async popular(): Promise&lt;string[]&gt; {
+      queries++;
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((r) =&gt; setTimeout(r, 20));
+      inFlight--;
+      return ["popular-1"];
+    },
+    stats: () =&gt; ({ queries, peak }),
+  };
+}
+const serviceDown = async (): Promise&lt;string[]&gt; =&gt; { throw new Error("recommendations down"); };
+
+// ❌ الـ fallback بيروح الـ DB مع كل request فاشل
+async function naive() {
+  const db = fakeDb();
+  const get = withFallback(serviceDown, async () =&gt; ({ data: await db.popular(), source: "popular-db" }));
+  await Promise.all(Array.from({ length: 200 }, () =&gt; get()));
+  return db.stats();
+}
+
+// ✅ في أي لحظة فيه query واحدة شغالة، ونتيجتها بتتخزن 30 ثانية في الـ memory
+function singleFlight&lt;T&gt;(load: () =&gt; Promise&lt;T&gt;, ttlMs: number) {
+  let value: { data: T; at: number } | undefined;
+  let inFlight: Promise&lt;T&gt; | undefined;
+  return async (): Promise&lt;T&gt; =&gt; {
+    if (value &amp;&amp; performance.now() - value.at &lt; ttlMs) return value.data;
+    inFlight ??= load()
+      .then((data) =&gt; { value = { data, at: performance.now() }; return data; })
+      .finally(() =&gt; { inFlight = undefined; });
+    return inFlight;
+  };
+}
+
+async function guarded() {
+  const db = fakeDb();
+  const popular = singleFlight(() =&gt; db.popular(), 30_000);
+  const get = withFallback(serviceDown, async () =&gt; ({ data: await popular(), source: "popular-db" }));
+  await Promise.all(Array.from({ length: 200 }, () =&gt; get()));
+  await get();
+  return db.stats();
+}
+
+console.log("200 failing requests, naive fallback:  ", await naive());
+console.log("200 failing requests, single-flight:   ", await guarded());</code></pre>
+
+<pre><code class="language-plaintext">200 failing requests, naive fallback:   { queries: 200, peak: 200 }
+200 failing requests, single-flight:    { queries: 1, peak: 1 }</code></pre>
+  <div class="ar-note">الـ DB هنا stand-in بيعد بس. الـ fallback الساذج: 200 request فاشل عملوا 200 query و 200 في نفس الوقت. مع الـ single-flight والـ cache القصير: query واحدة.</div>
+
+<pre class="diagram">
+  getRecs(user)
+     |
+     v
+  recommendations service --ok--&gt; { data, degraded: false }
+     | fails
+     v
+  Redis stale value -------ok--&gt; { data, degraded: true, source: 'stale-cache' }
+     | miss or Redis down
+     v
+  popular list (in memory) ----&gt; { data, degraded: true, source: 'popular' }
+
+  Each step down must be cheaper and less likely to fail.
+</pre>
+  <div class="ar-note">سلسلة الـ fallback من فوق لتحت: الـ service الأصلية، ولو فشلت القيمة القديمة من Redis، ولو مفيش أو Redis واقع القايمة الثابتة اللي في الـ memory. وكل خطوة لتحت لازم تبقى أرخص وأقل عرضة للفشل من اللي فوقها.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <code>withFallback(fn, fallback, { when, onFallback })</code> بيرجّع <code>{ data, degraded: true, source: 'stale-cache' }</code> بدل ما يرمي error. العلامة دي مهمة: الـ UI يقدر يقول "بنعرض اختيارات حديثة"، والـ metric يعدّها، والـ test يتأكد منها. في الـ run الحقيقي على Redis خاص، الـ stand-in بتاع الـ recommendations رد، واتقفل، والـ call اللي بعدها رجّع نفس الداتا كـ <code>stale-cache</code>. والمستخدم غير المعروف خد <code>popular</code>، ولما Redis وقع كمان السلسلة لسه رجّعت <code>popular</code>. والـ <code>when</code> بيمنع إخفاء أخطاء البيزنس الحقيقية، فالكارت المرفوض بيرمي error عادي.</p>
+    <p>للمقارنة، <code>fallback(handleAll, () =&gt; POPULAR)</code> بتاع cockatiel رجّع القيمة عادية، ومفيش مشكلة لو مش محتاج العلامة. و<a href="../../12-System-Design/lessons/24-circuit-breaker-bulkhead-shedding.html">القسم 12 · 2.5</a> فيه الصورة على مستوى الـ system.</p>
+    <p><b>إمتى لأ:</b> الـ fallback ممنوع يخترع حقيقة حد هيتصرف على أساسها. الـ fallback بتاع payment اللي بيقول "paid" كدبة، ونفس الكلام في الـ balances والـ permissions: "allowed" قديمة دي security bug. في الحالات دي افشل بوضوح، أو اقبل الشغل كـ pending.</p>
+    <p><b>فخين.</b> الـ fallback اللي بيعمل query على الـ database بيشتغل بالظبط لما الـ service بتفشل، فكل request فاشل بيبقى query: في الـ run، 200 فشل عملوا 200 query بـ concurrency وصلت 200 (الـ database هناك stand-in بيعد). الـ single-flight ومعاه cache قصير في الـ memory خلّاها 1. والـ fallback اللي محدش جرّبه مش هيشتغل يوم الـ outage، فاعمله test، وطلّع metric من <code>onFallback</code>، واقفل الـ dependency بالقصد في الـ staging.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الصفحة الرئيسية بتنادي recommendations. لو وقعت الصفحة كلها 500 يبقى dependency ثانوية وقّعت الأساسية. بـ <code>withFallback</code> بترجع آخر نسخة من Redis وبعدها top sellers، والـ <code>degraded</code> بيتحسب في Grafana. والـ checkout والرصيد مفيهمش fallback: رسالة واضحة وحالة pending، وخلاص.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "The recommendations service is down. What should the page do, and what about the payments service?" → Recommendations can degrade: serve a stale value marked <code>degraded</code>, then a popular list, and count it. Payments can't: a fallback would invent a fact, so fail clearly or accept the order as pending. The test is whether someone acts on the answer as if it were true.
+    <div class="ar-note">"الـ recommendations service واقعة. الصفحة تعمل إيه، وإيه الموقف مع الـ payments service؟" ← الـ recommendations ينفع تتدهور: ترجّع قيمة قديمة متعلّمة <code>degraded</code>، وبعدها قايمة popular، وتعدّها. الـ payments لأ: الـ fallback هيخترع حقيقة، فافشل بوضوح أو اقبل الـ order كـ pending. والمعيار: هل حد هيتصرف على الإجابة كأنها حقيقية؟</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Retrying everything</b>
+<pre><code class="language-typescript">// الـ POST ده ممكن يخصم مرتين
+const charge = withRetry(createCharge, {
+  maxAttempts: 3, baseMs: 100, maxMs: 1000,
+  retryable: () =&gt; true,
+});</code></pre></div>
+    <div class="good"><b>✅ A predicate and a key</b>
+<pre><code class="language-typescript">// بنعيد الأخطاء المؤقتة بس، وبوجود key
+const req = { method: "POST", idempotencyKey };
+const charge = withRetry(createCharge, {
+  maxAttempts: 3, baseMs: 100, maxMs: 1000,
+  retryable: (e) =&gt; safeToRepeat(req) &amp;&amp; isTransient(e),
+});</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>retryable: () =&gt; true</code> بيعيد الـ 400 والـ validation، وأخطر من كده بيعيد <code>POST</code> ممكن يكون نجح والـ response ضاع. ✅ الـ <code>isTransient</code> بيحدد الأخطاء المؤقتة، و<code>safeToRepeat</code> بيتأكد إن فيه idempotency key. والـ tests فوق بتأكد إن النسخة من غير key محاولة واحدة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A float into <code>AbortSignal.timeout</code></b>
+<pre><code class="language-typescript">// الرقم جاي من طرح performance.now
+const limit = deadlineAt - performance.now();
+fetch(url, { signal: AbortSignal.timeout(limit) });
+// ✗ ERR_OUT_OF_RANGE: The value of "delay" is out of range. It must be an integer. Received 155.3</code></pre></div>
+    <div class="good"><b>✅ Floor it and guard it</b>
+<pre><code class="language-typescript">// لازم عدد صحيح وموجب قبل ما يتبعت
+const limit = Math.floor(deadlineAt - performance.now());
+if (limit &lt;= 0) throw new DeadlineExceeded("no budget");
+fetch(url, { signal: AbortSignal.timeout(limit) });</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>AbortSignal.timeout</code> بياخد عدد صحيح بس، و<code>performance.now()</code> بيرجّع كسور، فبيرمي <code>ERR_OUT_OF_RANGE</code>. وقعت فيها فعلًا في الـ chain بتاعة الجزء 4: الـ catch حوّلها لـ 504 في 50 ms ومفيش أي call اتعمل، والكود شكله سليم. الرقم السالب بيرمي نفس الـ error. ✅ <code>Math.floor</code> وفحص قبلها، وطلّع الأخطاء في الـ log عشان متتخبيش ورا 504.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A client-side limit only</b>
+<pre><code class="language-typescript">// العميل بيمشي والـ query لسه شغالة على السيرفر
+const client = new pg.Client({ query_timeout: 2000 });</code></pre></div>
+    <div class="good"><b>✅ A server-side limit too</b>
+<pre><code class="language-typescript">// السيرفر هو اللي بيوقف الـ query ويحرر الـ connection
+const client = new pg.Client({ statement_timeout: 2000, query_timeout: 2500 });</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>query_timeout</code> بيرجّع للعميل بس، والـ <code>pg_stat_activity</code> لسه بيعرض الـ query <code>active</code>، فالـ connection محجوزة. ✅ الـ <code>statement_timeout</code> بيوقفها في Postgres نفسه. وخلّي الـ <code>query_timeout</code> أكبر منه شوية كخط دفاع تاني لو الشبكة نفسها وقعت.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A fallback that invents a payment</b>
+<pre><code class="language-typescript">// لما الـ gateway يقع بنقول للعميل إنه دفع
+const pay = withFallback(charge, () =&gt; ({
+  data: { status: "paid" },
+  source: "default",
+}));</code></pre></div>
+    <div class="good"><b>✅ Honest pending state</b>
+<pre><code class="language-typescript">// بنقبل الطلب كـ pending، والدفع بيحصل من الـ queue
+const pay = withFallback(charge, async (_error, order) =&gt; ({
+  data: await enqueuePayment(order),
+  source: "payment-queue",
+}), { when: (e) =&gt; isTransient(e) });</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ العميل هيتقال له "اتدفع" والفلوس متحركتش، والطلب هيتشحن. ✅ الـ <code>enqueuePayment</code> بترجع حالة <code>pending</code> صريحة والدفع بيتعمل بعدين، و<code>when</code> بيمنع إن كارت مرفوض يدخل الـ queue أصلًا. ولو مفيش queue، افشل برسالة واضحة.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. A total time cap <span class="lvl lvl-1">🟢 easy</span></b>
+    <code>maxAttempts</code> limits tries, not time. Without changing <code>withRetry</code>, make a retry stop once 1000 ms have passed in total.
+    <div class="ar-note"><code>maxAttempts</code> بيحدد المحاولات مش الوقت. من غير ما تغيّر <code>withRetry</code>، خلّي الـ retry يقف لما يعدّي 1000 ms في المجموع.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/exercises.test.ts"><code class="language-typescript">// حل التمرين 1: سقف للوقت الكلي، بيتبني من الـ predicate
+function underTotalBudget(maxElapsedMs: number, now: () =&gt; number) {
+  const startedAt = now();
+  return (error: unknown) =&gt; isTransient(error) &amp;&amp; now() - startedAt &lt; maxElapsedMs;
+}
+test("exercise 1: stops retrying once the total budget is spent", async () =&gt; {
+  let clock = 0, calls = 0;
+  const run = withRetry(async () =&gt; { calls++; clock += 400; throw new HttpError(503); }, {
+    maxAttempts: 10, baseMs: 1, maxMs: 1, sleep: async () =&gt; {}, retryable: underTotalBudget(1000, () =&gt; clock),
+  });
+  await assert.rejects(run());
+  assert.equal(calls, 3);
+});</code></pre>
+      <div class="ar-note">الشرط بيتحط في الـ <code>retryable</code>: مؤقت والوقت لسه فاضل. والـ test بساعة وهمية، كل call بياخد 400، فبيعمل 3 calls ويقف.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. A timeout per attempt <span class="lvl lvl-2">🟡 medium</span></b>
+    Combine <code>withRetry</code> and <code>withTimeout</code> so each attempt has its own 20 ms limit, and a hanging call is tried exactly 3 times.
+    <div class="ar-note">اجمع <code>withRetry</code> و<code>withTimeout</code> بحيث كل محاولة ليها حد 20 ms لوحدها، والـ call المعلّق يتجرب 3 مرات بالظبط.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/exercises.test.ts"><code class="language-typescript">// حل التمرين 2: timeout لكل محاولة جوّه الـ retry
+test("exercise 2: a timeout per attempt, inside the retry", async () =&gt; {
+  let calls = 0;
+  const hang = (signal: AbortSignal) =&gt; new Promise&lt;string&gt;((_, reject) =&gt; {
+    calls++;
+    // الـ timer ده بيمثّل الـ socket: من غيره الـ event loop بيفضى والـ test بيتلغي
+    const socket = setTimeout(() =&gt; reject(new Error("never")), 5000);
+    signal.addEventListener("abort", () =&gt; { clearTimeout(socket); reject(signal.reason); }, { once: true });
+  });
+  const run = withRetry(() =&gt; withTimeout(hang, 20), {
+    maxAttempts: 3, baseMs: 1, maxMs: 1, sleep: async () =&gt; {},
+    retryable: (e) =&gt; e instanceof TimeoutError,
+  });
+  await assert.rejects(run(), TimeoutError);
+  assert.equal(calls, 3);
+});</code></pre>
+      <div class="ar-note">الـ timeout جوّه الـ retry، فكل محاولة ليها ميعادها. والـ <code>setTimeout</code> داخل <code>hang</code> بيمثّل الـ socket: من غيره الـ event loop بيفضى لأن timer الـ <code>AbortSignal.timeout</code> معمول له unref، والـ test بيتلغي.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. Parse <code>Retry-After</code> <span class="lvl lvl-2">🟡 medium</span></b>
+    The header is either seconds or an HTTP date. Write <code>parseRetryAfter(value, now)</code> that returns milliseconds or <code>undefined</code>, and never a negative number.
+    <div class="ar-note">الـ header يا إما ثواني يا إما تاريخ HTTP. اكتب <code>parseRetryAfter(value, now)</code> يرجّع milliseconds أو <code>undefined</code>، ومن غير رقم سالب أبدًا.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/exercises.test.ts"><code class="language-typescript">// حل التمرين 3: الـ Retry-After يا إما ثواني يا إما تاريخ
+export function parseRetryAfter(value: string | null, now = Date.now()): number | undefined {
+  if (value === null) return undefined;
+  if (/^\d+$/.test(value)) return Number(value) * 1000;
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - now);
+}
+test("exercise 3: Retry-After as seconds or as an HTTP date", () =&gt; {
+  const now = Date.parse("Mon, 09 Nov 2026 10:00:00 GMT");
+  assert.equal(parseRetryAfter("120", now), 120_000);
+  assert.equal(parseRetryAfter("Mon, 09 Nov 2026 10:00:30 GMT", now), 30_000);
+  assert.equal(parseRetryAfter("Mon, 09 Nov 2026 09:59:00 GMT", now), 0);
+  assert.equal(parseRetryAfter("soon", now), undefined);
+  assert.equal(parseRetryAfter(null, now), undefined);
+});</code></pre>
+      <div class="ar-note">لو أرقام بس يبقى ثواني، غير كده نجرب <code>Date.parse</code>، والتاريخ اللي فات بيرجع 0، وأي نص تاني <code>undefined</code>. الشكلين في <a href="https://www.rfc-editor.org/rfc/rfc9110.html#field.retry-after">RFC 9110</a>.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    In your side project, wrap one outbound call with a timeout, a retry at one layer only, and a <code>degraded</code> fallback if the feature can degrade. Add a metric for retries and one for fallbacks, then stop the dependency and watch both. Add <code>statement_timeout</code> to your Postgres pool.
+    <div class="ar-note">في مشروعك الجانبي، لف call خارجي بـ timeout، و retry في layer واحد بس، و fallback بـ <code>degraded</code> لو الـ feature ينفع يتدهور. زوّد metric للـ retries وواحد للـ fallbacks، وبعدين وقّف الـ dependency وراقبهم. وضيف <code>statement_timeout</code> للـ pool بتاع Postgres.</div>
+    <details><summary>Hint · تلميح</summary>
+      Order them as <code>withFallback(withRetry(() =&gt; withTimeout(fn, ms), opts), fallback)</code>. <a href="./23-circuit-breaker-bulkhead-composition.html">The next lesson</a> covers why order changes call counts.
+      <div class="ar-note">رتبهم كده: <code>withFallback(withRetry(() =&gt; withTimeout(fn, ms), opts), fallback)</code>. و<a href="./23-circuit-breaker-bulkhead-composition.html">الدرس الجاي</a> بيشرح ليه الترتيب بيغيّر عدد الـ calls.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li><code>withRetry</code>: inject <code>sleep</code> and <code>random</code>; tests assert exact delays in about 1 ms.</li>
+    <li>Retry only transient errors. No 4xx apart from 408/425/429, no POST without an idempotency key.</li>
+    <li><code>Retry-After</code> beats a shorter backoff. Longer than <code>maxMs</code>: fail now.</li>
+    <li>Full jitter by default. Model: post-recovery peak 1000 → about 105.</li>
+    <li>Retry budget caps total load: ×3.00 → ×1.01 in a full outage.</li>
+    <li>Layers multiply: 3 × 3 × 3 = 27 calls. Retry at one layer.</li>
+    <li><code>Promise.race</code> doesn't cancel. Pass an <code>AbortSignal</code> into the I/O.</li>
+    <li><code>AbortSignal.timeout</code> is unref'd and needs a non-negative integer.</li>
+    <li>A client timeout doesn't stop Postgres. <code>statement_timeout</code> or <code>pg_cancel_backend</code> does.</li>
+    <li>Propagate remaining ms in a header and ALS, minus a margin; never an absolute time.</li>
+    <li>Fallbacks return <code>degraded</code> and a <code>source</code>, get a test and a metric, and must be cheaper than what they replace.</li>
+    <li>Never fall back on payments, balances or permissions.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ <code>withRetry</code>: احقن <code>sleep</code> و<code>random</code>، والـ tests تتأكد من الـ delays بالظبط في حوالي 1 ms.</li>
+      <li>الـ retry للأخطاء المؤقتة بس. مفيش 4xx ماعدا 408/425/429، ومفيش POST من غير idempotency key.</li>
+      <li>الـ <code>Retry-After</code> بيغلب الـ backoff الأقصر. ولو أطول من <code>maxMs</code>: افشل دلوقتي.</li>
+      <li>الـ full jitter هو الـ default. في النموذج: الذروة بعد الـ recovery من 1000 لحوالي 105.</li>
+      <li>الـ retry budget بيحدد الحمل الكلي: من ×3.00 لـ ×1.01 في outage كامل.</li>
+      <li>الـ layers بتضرب في بعض: 3 × 3 × 3 = 27 call. اعمل retry في layer واحد.</li>
+      <li>الـ <code>Promise.race</code> مبيلغيش. مرّر <code>AbortSignal</code> للـ I/O.</li>
+      <li>الـ <code>AbortSignal.timeout</code> معمول له unref ومحتاج عدد صحيح مش سالب.</li>
+      <li>الـ timeout من ناحية العميل مبيوقفش Postgres. الـ <code>statement_timeout</code> أو <code>pg_cancel_backend</code> هما اللي بيوقفوه.</li>
+      <li>ابعت الـ ms المتبقية في header و ALS مطروح منها margin، ومتبعتش وقت مطلق أبدًا.</li>
+      <li>الـ fallback بيرجّع <code>degraded</code> و<code>source</code>، وله test و metric، ولازم يبقى أرخص من اللي بيبدّله.</li>
+      <li>متعملش fallback أبدًا للـ payments والـ balances والـ permissions.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 10 · 3.2 — <b>Retry مع exponential backoff + jitter</b>: تكتبه كـ decorator/wrapper بـ options</label>
+    <label><input type="checkbox" data-key="r2"> 10 · 3.2 — <b>Timeout</b> كـ pattern: <code>AbortSignal.timeout</code>، <code>Promise.race</code> مع cleanup، timeout budgets عبر الـ chain</label>
+    <label><input type="checkbox" data-key="r3"> 10 · 3.2 — <b>Fallback / Graceful degradation</b>: cached value، default، degraded response — كـ decorator</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/">AWS Architecture Blog — Exponential Backoff and Jitter</a></li>
+    <li><a href="https://sre.google/sre-book/addressing-cascading-failures/">Google SRE Book — Addressing Cascading Failures</a></li>
+    <li><a href="https://nodejs.org/api/globals.html">Node.js docs — AbortSignal</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/runtime-config-client.html">PostgreSQL docs — statement_timeout</a></li>
+    <li><a href="https://www.rfc-editor.org/rfc/rfc9110.html">RFC 9110 — HTTP Semantics (Retry-After)</a></li>
+    <li><a href="https://grpc.io/docs/guides/deadlines/">gRPC — Deadlines</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./21-react-patterns.html"><small>← Previous</small>21 · React Patterns</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./23-circuit-breaker-bulkhead-composition.html"><small>Next →</small>23 · Breaker &amp; Bulkhead</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

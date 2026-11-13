@@ -1,0 +1,1559 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Anti-Patterns: Catching Them in Code Review — 10 Design Patterns</title>
+<meta name="section" content="10-Design-Patterns">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">10 · Design Patterns</a></span>
+    <span>·</span>
+    <span>Lesson 30 / 35</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Anti-Patterns: Catching Them in Code Review</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 30 of 35 — Design Patterns</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Node 22 · TypeScript 7</span>
+      <span class="chip">ESLint 10 · knip 6 · jscpd 5 · madge 8</span>
+      <span class="chip">Prereq: 01 What Patterns Are, 16 Domain Model</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>10 · 2.8 — <b>God object / God module</b> (الـ <code>utils.ts</code> بـ 2000 سطر، الـ <code>UserService</code> بيعمل كل حاجة)</li>
+        <li>10 · 2.8 — <b>Anemic domain model</b> (objects من غير behavior — كل الـ logic في services) — <b>ومتى مش مشكلة</b> (CRUD apps)</li>
+        <li>10 · 2.8 — <b>Spaghetti code</b>، <b>lava flow</b> (كود محدش عارف بيعمل إيه ومحدش بيجرؤ يمسحه)</li>
+        <li>10 · 2.8 — <b>Golden hammer</b> (microservices لكل حاجة، Redux لكل state، Kafka لكل queue)</li>
+        <li>10 · 2.8 — <b>Premature abstraction</b> / speculative generality (interface بـ implementation واحدة "عشان ممكن نحتاج")</li>
+        <li>10 · 2.8 — <b>Copy-paste programming</b>، <b>magic numbers/strings</b>، <b>boolean parameters</b> (<code>save(user, true, false)</code>)</li>
+        <li>10 · 2.8 — <b>Callback hell</b> → promise hell (<code>.then</code> chains متداخلة) → <code>await</code> في loop غلط</li>
+        <li>10 · 2.8 — <b>Singleton abuse</b> و global mutable state</li>
+        <li>10 · 2.8 — <b>Leaky abstraction</b> (الـ repository بيرجع Prisma types للـ domain)</li>
+        <li>10 · 2.8 — <b>Distributed monolith</b> (تفاصيله في Architecture)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — God object and god module</a></li>
+      <li><a href="#p2">Part 2 — Anemic domain model</a></li>
+      <li><a href="#p3">Part 3 — Spaghetti code and lava flow</a></li>
+      <li><a href="#p4">Part 4 — Golden hammer and distributed monolith</a></li>
+      <li><a href="#p5">Part 5 — Premature abstraction</a></li>
+      <li><a href="#p6">Part 6 — Copy-paste, magic values, boolean params</a></li>
+      <li><a href="#p7">Part 7 — Async hell, singleton abuse, leaky abstraction</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Most of what a senior does in code review is catching an anti-pattern before it costs a quarter of refactoring, and saying so in one sentence the author can act on. This lesson finds ten of them with real tools on a generated sample codebase (ESLint 10, madge, knip, jscpd, the TS compiler API), shows when each one is <em>not</em> a problem, and ends with a 10-item checklist with the comment to write for each. The README's artifact for this section is exactly that list.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>معظم شغل السنيور في الـ code review هو إنه يمسك anti-pattern قبل ما يكلّف ربع سنة refactoring، ويقوله في جملة واحدة الـ author يقدر يتصرف عليها. الدرس ده بيلاقي عشرة منهم بأدوات حقيقية على sample كود متولّد (ESLint 10 و madge و knip و jscpd و TS compiler API)، وبيوضح إمتى كل واحد فيهم <em>مش</em> مشكلة، وبيخلص بـ checklist من 10 بنود مع الـ comment اللي تكتبه لكل واحد. والـ artifact المطلوب في الـ README للقسم ده هو بالظبط القايمة دي.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — God object and god module <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الـ God object والـ God module</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A <b>god object</b> knows and does too much: one class that owns many unrelated reasons to change. A <b>god module</b> is the same thing as a file: <code>utils.ts</code>, where everything without a home ends up. The sample's <code>UserService</code> (generated) mixes auth, profile, billing, notifications, admin and reports, with 11 constructor dependencies.</p>
+    <p>Find them with numbers rather than taste. ESLint gives you size and shape: <code>max-lines</code>, <code>max-lines-per-function</code>, <code>complexity</code>, <code>max-params</code>. <b>madge</b> gives you position in the graph: <em>fan-in</em> (how many modules import this one) and <em>fan-out</em> (how many it imports). High fan-in on a file that also changes often is the expensive combination, because every change risks everything that imports it. Churn comes from <code>git log</code>, which you'll run on your own repo in exercise 1.</p>
+    <p><b>What they cost:</b> every feature touches the same file, so merge conflicts become routine; and any test of one method needs 11 fakes for the constructor. The fix is decomposition by concern, covered step by step in <a href="./32-refactoring-toward-patterns-2.html">Refactoring II</a>. <b>When a big file is fine:</b> generated code, or a flat table of data. The 900-row <code>vat-rates.ts</code> below is exempt on purpose.</p>
+  </section>
+
+<pre data-file="sample/src/users/user-service.ts (first 48 of 739 lines)"><code class="language-typescript">// ده sample متولّد: شكل الـ god class المعتاد
+type Dep = Record&lt;string, (...args: any[]) =&gt; any&gt;;
+export class UserService {
+  private readonly db: Dep;
+  private readonly cache: Dep;
+  private readonly mailer: Dep;
+  private readonly sms: Dep;
+  private readonly stripe: Dep;
+  private readonly s3: Dep;
+  private readonly queue: Dep;
+  private readonly logger: Dep;
+  private readonly metrics: Dep;
+  private readonly flags: Dep;
+  private readonly pdf: Dep;
+  constructor(db: Dep, cache: Dep, mailer: Dep, sms: Dep, stripe: Dep, s3: Dep, queue: Dep, logger: Dep, metrics: Dep, flags: Dep, pdf: Dep) {
+    this.db = db;
+    this.cache = cache;
+    this.mailer = mailer;
+    this.sms = sms;
+    this.stripe = stripe;
+    this.s3 = s3;
+    this.queue = queue;
+    this.logger = logger;
+    this.metrics = metrics;
+    this.flags = flags;
+    this.pdf = pdf;
+  }
+
+  async login(userId: string, input: string): Promise&lt;string&gt; {
+    const user = await this.db.findUser(userId);
+    if (!user) throw new Error("user not found");
+    if (!input || input.length &gt; 2048) throw new Error("bad input for login");
+    if (await this.flags.isDisabled("login")) return "disabled";
+    const cached = await this.cache.get(userId + ":login");
+    if (cached) return cached;
+    const result = await this.cache.run("login", user.id, input);
+    await this.db.saveAudit(userId, "login", result);
+    await this.cache.set(userId + ":login", result);
+    this.metrics.increment("user.login");
+    this.logger.info("user.login", { userId });
+    if (user.plan === "enterprise") {
+      await this.queue.add("login.enterprise", { userId });
+    }
+    return result;
+  }
+
+  async logout(userId: string, input: string): Promise&lt;string&gt; {
+    const user = await this.db.findUser(userId);</code></pre>
+<pre data-file="eslint.config.js"><code class="language-javascript">import tseslint from "typescript-eslint";
+
+// القواعد دي كلها core في ESLint 10، والـ parser بس هو اللي من typescript-eslint
+export default [
+  {
+    files: ["src/**/*.ts"],
+    languageOptions: { parser: tseslint.parser },
+    rules: {
+      "max-lines": ["warn", { max: 400, skipBlankLines: true, skipComments: true }],
+      "max-lines-per-function": ["warn", { max: 80, skipBlankLines: true, skipComments: true }],
+      complexity: ["warn", 10],
+      "max-depth": ["warn", 4],
+      "max-params": ["warn", 4],
+      "no-await-in-loop": "warn",
+    },
+  },
+  // ملف data متولّد مش مشكلة لو كبير، فبنطفي القاعدة ليه بس
+  { files: ["src/data/**/*.ts"], rules: { "max-lines": "off" } },
+];</code></pre>
+<pre><code class="language-bash">eslint --rule 'no-await-in-loop: off' src/users/user-service.ts src/utils.ts src/data/vat-rates.ts
+madge --json --extensions ts --ts-config tsconfig.json src/index.ts | node fan.mjs</code></pre>
+<pre><code class="language-plaintext">
+src/users/user-service.ts
+   15:3  warning  Constructor has too many parameters (11). Maximum allowed is 4              max-params
+  425:1  warning  File has too many lines (708). Maximum allowed is 400                       max-lines
+  551:3  warning  Async method 'importUsers' has too many lines (188). Maximum allowed is 80  max-lines-per-function
+  551:3  warning  Async method 'importUsers' has a complexity of 54. Maximum allowed is 10    complexity
+
+✖ 4 problems (0 errors, 4 warnings)</code></pre>
+<pre><code class="language-plaintext">module                         fan-in fan-out
+utils.ts                           12       0
+billing/payments.ts                 1       1
+billing/subscriptions.ts            1       1
+catalog/products.ts                 1       1
+catalog/search.ts                   1       1
+(17 modules)</code></pre>
+  <div class="ar-note">الـ ESLint مسك الـ <code>UserService</code>: الـ constructor فيه 11 parameter، والملف 708 سطر، و <code>importUsers</code> لوحدها 188 سطر و complexity 54. ومفيش كلام عن <code>vat-rates.ts</code> لأننا طفينا القاعدة ليه بالـ config. وجدول madge: <code>utils.ts</code> عنده fan-in 12، يعني أي تغيير فيه ممكن يكسر 12 module. (الـ <code>no-await-in-loop</code> متطفي في الـ run ده بس عشان ميغطيش على الباقي.)</div>
+
+<pre class="diagram">
+  orders/*    --+
+  billing/*   --+
+  catalog/*   --+-->  utils.ts   fan-in 12, 45 exports, 21 unused
+  tenants/*   --+
+  support/*   --+     one edit here can break all 12 importers
+  reports/*   --+
+</pre>
+  <div class="ar-note">الـ modules كلها بتعمل import لنفس الملف: <code>utils.ts</code> بـ fan-in 12 و 45 export منهم 21 مش مستخدمين. أي تعديل فيه ممكن يكسر الـ 12 اللي بيعتمدوا عليه.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الرسمة دي فوق هي شكل الـ god module: كل الـ modules بتشاور على ملف واحد، فأي تعديل فيه بيوصل لـ 12 ملف.</p>
+    <p>الـ <b>god object</b> بيعرف ويعمل كتير أوي: class واحدة ليها أسباب كتير مش مرتبطة تتغير. والـ <b>god module</b> نفس الفكرة في ملف: <code>utils.ts</code> اللي كل حاجة ملهاش مكان بتنتهي فيه. الـ <code>UserService</code> في الـ sample (متولّد) خالط الـ auth والـ profile والـ billing والـ notifications والـ admin والـ reports، وعنده 11 dependency في الـ constructor.</p>
+    <p>لاقيهم بالأرقام مش بالذوق. ESLint بيديك الحجم والشكل: <code>max-lines</code> و <code>max-lines-per-function</code> و <code>complexity</code> و <code>max-params</code>. و <b>madge</b> بيديك الموقع في الـ graph: <em>fan-in</em> (كام module بيعمل import للملف ده) و <em>fan-out</em> (الملف ده بيعمل import لكام واحد). الـ fan-in العالي على ملف بيتغير كتير هو التركيبة الغالية، لأن كل تغيير بيهدد كل اللي بيعتمد عليه. والـ churn بييجي من <code>git log</code>، وهتشغله على الـ repo بتاعك في تمرين 1.</p>
+    <p><b>التكلفة:</b> كل feature بتلمس نفس الملف فالـ merge conflicts بتبقى روتين، وأي test لـ method واحدة محتاج 11 fake للـ constructor. والحل تقسيم بالـ concern، وده متشرح خطوة خطوة في <a href="./32-refactoring-toward-patterns-2.html">Refactoring II</a>. <b>إمتى الملف الكبير مش مشكلة:</b> الكود المتولّد أو جدول data مسطح. الـ <code>vat-rates.ts</code> اللي فيه 900 صف مستثنى بقصد.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      شغّل madge على الـ API بتاعك مرة في الـ quarter وبص على أعلى 5 fan-in. لو <code>utils.ts</code> فوق وبيتغير كل أسبوع، يبقى ده أولوية. والـ comment في الـ review: "الملف ده بيتغير لتلات أسباب مختلفة (auth و billing و reports)؛ ممكن نفصل الـ billing في PR لوحده؟" مش "الملف طويل".
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>Tooling reality (November 2026)</b>
+    The ESLint rules here are core rules, but parsing TypeScript needs <code>typescript-eslint</code>, whose 8.72 release peers on <code>typescript &lt;6.1</code>. These runs used TS 6.0.3 for linting; on a TS 7 project, keep TS 6 as a dev dependency for tools until they catch up, and compile with TS 7.
+    <div class="ar-note">قواعد ESLint هنا core، بس قراءة TypeScript محتاجة <code>typescript-eslint</code>، والإصدار 8.72 منها بيطلب <code>typescript &lt;6.1</code>. الـ runs دي استخدمت TS 6.0.3 في الـ lint؛ ولو مشروعك على TS 7، خلّي TS 6 كـ dev dependency للأدوات لحد ما تلحق، واعمل الـ compile بـ TS 7.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Anemic domain model <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ Anemic domain model</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>An anemic model is objects that hold data and no behaviour, with every rule in services. Fowler's complaint in <a href="https://martinfowler.com/bliki/AnemicDomainModel.html">AnemicDomainModel</a> is that it costs you the data-and-behaviour pairing OO exists for, while you still pay for the object mapping. <b>The README's point matters more:</b> in a CRUD app with no real rules, an anemic model is fine, and a rich one is ceremony (<a href="./16-service-layer-domain-model-dto.html#p2">Domain Model</a> shows the rich version).</p>
+    <p><b>The sign that it's a real problem</b> isn't "this class has no methods". It's the same rule appearing in several services, written at different times, and drifting. The test below feeds the same orders to all three services: they disagree on three of the four, and the 30-day boundary is off by one between refunds and reporting.</p>
+  </section>
+
+<pre data-file="src/anemic/orders.ts"><code class="language-typescript">export type OrderDto = { id: string; status: "placed" | "paid" | "shipped"; paidAt: number | null; totalCents: number };
+
+export const DAY_MS = 86_400_000;
+export const NOW = Date.UTC(2026, 10, 9);
+
+// الـ 3 services دي نفس القاعدة، بس كل واحدة اتكتبت في وقت مختلف
+export const RefundService = {
+  canRefund: (o: OrderDto) =&gt; o.status === "paid" &amp;&amp; o.paidAt !== null &amp;&amp; NOW - o.paidAt &lt; 30 * DAY_MS,
+};
+export const ReportService = {
+  isRefundable: (o: OrderDto) =&gt; o.status === "paid" &amp;&amp; o.paidAt !== null &amp;&amp; NOW - o.paidAt &lt;= 30 * DAY_MS,
+};
+export const AdminService = {
+  showRefundButton: (o: OrderDto) =&gt; o.status !== "shipped" &amp;&amp; (o.paidAt === null || NOW - o.paidAt &lt; 14 * DAY_MS),
+};</code></pre>
+<pre data-file="src/anemic/drift.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { AdminService, DAY_MS, NOW, RefundService, ReportService, type OrderDto } from "./orders.ts";
+
+const orders: OrderDto[] = [
+  { id: "paid-today", status: "paid", paidAt: NOW, totalCents: 1000 },
+  { id: "paid-20-days", status: "paid", paidAt: NOW - 20 * DAY_MS, totalCents: 1000 },
+  { id: "paid-exactly-30", status: "paid", paidAt: NOW - 30 * DAY_MS, totalCents: 1000 },
+  { id: "placed", status: "placed", paidAt: null, totalCents: 1000 },
+];
+
+const rules = {
+  refund: RefundService.canRefund,
+  report: ReportService.isRefundable,
+  admin: AdminService.showRefundButton,
+};
+
+for (const order of orders) {
+  test(`3 services agree on ${order.id}`, () =&gt; {
+    const answers = Object.entries(rules).map(([k, rule]) =&gt; `${k}=${rule(order)}`);
+    console.log(order.id.padEnd(18), answers.join(" "));
+    assert.equal(new Set(answers.map((a) =&gt; a.split("=")[1])).size, 1, "rules disagree");
+  });
+}</code></pre>
+<pre><code class="language-plaintext">paid-today         refund=true report=true admin=true
+paid-20-days       refund=true report=true admin=false
+paid-exactly-30    refund=false report=true admin=false
+placed             refund=false report=false admin=true
+✔ 3 services agree on paid-today (0.9819ms)
+✖ 3 services agree on paid-20-days (0.6691ms)
+✖ 3 services agree on paid-exactly-30 (0.2148ms)
+✖ 3 services agree on placed (0.2036ms)
+ℹ tests 4
+ℹ pass 1
+ℹ fail 3</code></pre>
+  <div class="ar-note">كل سطر طلب واحد وإجابة كل service عليه. <code>paid-exactly-30</code>: الـ refund بيقول لأ والـ report بيقول آه (فرق <code>&lt;</code> و <code>&lt;=</code>). <code>paid-20-days</code>: الـ admin شايف إن زرار الـ refund ميظهرش. <code>placed</code>: الـ admin بيظهر الزرار لطلب لسه ماتدفعش. الـ test فشل في 3 من 4 لأن القاعدة اتفرقت.</div>
+
+<pre data-file="src/anemic/order.rich.ts"><code class="language-typescript">export const DAY_MS = 86_400_000;
+
+// ✅ القاعدة بقت في مكان واحد، وأي service بيسأل الـ Order نفسه
+export class Order {
+  readonly id: string;
+  readonly status: "placed" | "paid" | "shipped";
+  readonly paidAt: number | null;
+  readonly totalCents: number;
+  static readonly REFUND_WINDOW_MS = 30 * DAY_MS;
+
+  constructor(id: string, status: Order["status"], paidAt: number | null, totalCents: number) {
+    this.id = id;
+    this.status = status;
+    this.paidAt = paidAt;
+    this.totalCents = totalCents;
+  }
+
+  canRefund(now: number): boolean {
+    return this.status === "paid" &amp;&amp; this.paidAt !== null &amp;&amp; now - this.paidAt &lt; Order.REFUND_WINDOW_MS;
+  }
+}</code></pre>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ anemic model هو objects شايلة data ومفيهاش behavior، وكل القواعد في الـ services. وشكوى Fowler في <a href="https://martinfowler.com/bliki/AnemicDomainModel.html">AnemicDomainModel</a> إنك بتخسر الربط بين الـ data والـ behavior اللي الـ OO معمول عشانه، وفي نفس الوقت لسه بتدفع تمن الـ object mapping. <b>بس نقطة الـ README أهم:</b> في CRUD app مفيهوش قواعد حقيقية، الـ anemic model تمام، والـ rich model هيبقى زيادة شغل (<a href="./16-service-layer-domain-model-dto.html#p2">درس الـ Domain Model</a> بيوري النسخة الغنية).</p>
+    <p><b>العلامة إنها مشكلة بجد</b> مش "الكلاس ده مفيهوش methods". العلامة إن نفس القاعدة بتظهر في كذا service، اتكتبت في أوقات مختلفة، وبدأت تختلف. الـ test فوق بيدي نفس الـ orders للـ 3 services: مختلفين في 3 من 4، وحد الـ 30 يوم مختلف بيوم بين الـ refunds والـ reports.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      comment لو الـ app CRUD فعلًا: "الـ anemic هنا مناسب، مفيش قواعد غير الـ validation، سيبه." comment لو القاعدة متكررة: "قاعدة الـ refund دي موجودة كمان في <code>ReportService</code> و <code>AdminService</code> وبتختلف عن دي؛ ننقلها لـ <code>Order.canRefund()</code> ونخلي الاتنين ينادوها؟"
+    </div>
+  </section>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Spaghetti code and lava flow <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ Spaghetti code والـ lava flow</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Spaghetti</b> is control flow you can't follow: nested conditions where each new rule goes inside the previous one. ESLint's <code>complexity</code> and <code>max-depth</code> put numbers on it. The honest detail: at a threshold of 10, <code>complexity</code> wouldn't flag this function (it scores 9). <code>max-depth</code> does, because nesting is what makes it hard to read. Complexity alone misses the shape. The rewrite below uses guard clauses and one function per country, and the same table of cases passes on both versions.</p>
+  </section>
+
+<pre data-file="src/spaghetti/shipping-fee.ts"><code class="language-typescript">export type Parcel = { country: string; city: string; weightKg: number; totalCents: number; express: boolean };
+
+// ❌ كل شرط جديد بيدخل جوه اللي قبله
+export function shippingFee(p: Parcel): number {
+  let fee = 0;
+  if (p.weightKg &gt; 0) {
+    if (p.country === "EG") {
+      if (p.express) {
+        if (p.totalCents &lt; 50000) {
+          if (p.city === "cairo") {
+            fee = 6000;
+          } else {
+            fee = 9000;
+          }
+        } else {
+          fee = 3000;
+        }
+      } else {
+        if (p.totalCents &lt; 50000) {
+          fee = 2500;
+        } else {
+          fee = 0;
+        }
+      }
+    } else {
+      if (p.country === "SA") {
+        if (p.express) {
+          fee = 15000;
+        } else {
+          fee = 8000;
+        }
+      } else {
+        throw new Error("unsupported country");
+      }
+    }
+  } else {
+    throw new Error("bad weight");
+  }
+  return fee;
+}</code></pre>
+<pre data-file="src/spaghetti/shipping-fee.fixed.ts"><code class="language-typescript">import type { Parcel } from "./shipping-fee.ts";
+
+const FREE_ABOVE_CENTS = 50000;
+
+// ✅ الحالات الغلط تخرج بدري، وكل بلد في function لوحدها
+function egyptFee(p: Parcel): number {
+  const large = p.totalCents &gt;= FREE_ABOVE_CENTS;
+  if (!p.express) return large ? 0 : 2500;
+  if (large) return 3000;
+  return p.city === "cairo" ? 6000 : 9000;
+}
+
+const saudiFee = (p: Parcel): number =&gt; (p.express ? 15000 : 8000);
+
+export function shippingFee(p: Parcel): number {
+  if (p.weightKg &lt;= 0) throw new Error("bad weight");
+  if (p.country === "EG") return egyptFee(p);
+  if (p.country === "SA") return saudiFee(p);
+  throw new Error("unsupported country");
+}</code></pre>
+<pre><code class="language-bash">eslint --rule 'complexity: ["warn", 1]' src/spaghetti/shipping-fee.ts src/spaghetti/shipping-fee.fixed.ts
+node --test src/spaghetti/shipping-fee.test.ts</code></pre>
+<pre><code class="language-plaintext">
+src/spaghetti/shipping-fee.fixed.ts
+   6:1   warning  Function 'egyptFee' has a complexity of 5. Maximum allowed is 1     complexity
+  13:38  warning  Arrow function has a complexity of 2. Maximum allowed is 1          complexity
+  15:8   warning  Function 'shippingFee' has a complexity of 4. Maximum allowed is 1  complexity
+
+src/spaghetti/shipping-fee.ts
+   4:8   warning  Function 'shippingFee' has a complexity of 9. Maximum allowed is 1  complexity
+  10:11  warning  Blocks are nested too deeply (5). Maximum allowed is 4              max-depth
+
+✖ 5 problems (0 errors, 5 warnings)</code></pre>
+<pre><code class="language-plaintext">✔ before: table of fees (0.5989ms)
+✔ before: bad input throws (0.3327ms)
+✔ after: table of fees (0.1455ms)
+✔ after: bad input throws (0.0692ms)
+ℹ tests 4
+ℹ pass 4
+ℹ fail 0</code></pre>
+  <div class="ar-note">الـ <code>complexity: 1</code> بيخلي ESLint يطبع رقم كل function. النسخة القديمة: 9 وعمق تداخل 5. الجديدة: <code>egyptFee</code> 5، و <code>saudiFee</code> 2، و <code>shippingFee</code> 4، ومفيش تحذير عمق. والـ tests الأربعة عدّوا على النسختين، يعني السلوك ماتغيرش.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>Spaghetti</b> هو control flow متعرفش تمشي وراه: شروط متداخلة وكل قاعدة جديدة بتدخل جوه اللي قبلها. قواعد <code>complexity</code> و <code>max-depth</code> في ESLint بتحط أرقام عليه. والتفصيلة الأمينة: عند حد 10 الـ <code>complexity</code> مش هيمسك الـ function دي (نتيجتها 9). <code>max-depth</code> هو اللي مسكها، لأن التداخل هو اللي بيخلي قرايتها صعبة. يعني الـ complexity لوحدها بتفوّت الشكل. والنسخة الجديدة بتستخدم guard clauses و function لكل بلد، ونفس جدول الـ cases عدّى على النسختين.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو شفت في الـ review <code>if</code> جوه <code>if</code> تلات مرات، اكتب: "ممكن نطلّع الحالات الغلط بدري بـ guard clauses؟ الـ <code>max-depth</code> هنا 5". وحط <code>max-depth: 4</code> و <code>complexity: 15</code> في الـ CI كتحذير من أول يوم، ولو الكود قديم ابدأ بـ warnings مش errors.
+    </div>
+  </section>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Lava flow</b> is code nobody dares delete: it solidified, nobody knows what it does, and everyone routes around it. <b>knip</b> finds the static part: unused files, exports and dependencies. On the sample it reports the legacy folder, two dead dependencies, and 21 of the 45 exports in <code>utils.ts</code>.</p>
+    <p><b>Static tools can't see dynamic use.</b> <code>load-exporter.ts</code> builds a path at runtime, so knip reports <code>exporters/csv.ts</code> as unused while production loads it. Delete that and CSV export dies in production. Tell the tool about the entry instead, then re-run. And for code you can't prove is dead: <b>log before delete</b> for one full release, watch the metric, remove the flag, then delete with tests in place. Never in the same PR as a feature.</p>
+  </section>
+
+<pre data-file="knip.json"><code class="language-json">{
+  "entry": ["src/index.ts"],
+  "project": ["src/**/*.ts"],
+  "ignore": ["src/anemic/**", "src/async/**", "src/flags/**", "src/magic/**", "src/premature/**", "src/singleton/**", "src/spaghetti/**", "src/billing/credit-note.ts", "src/billing/invoice.ts", "src/billing/quote.ts", "src/billing/tax-fix.test.ts", "src/legacy/track.ts"]
+}</code></pre>
+<pre><code class="language-plaintext">Unused files (4)
+src/export/exporters/csv.ts     
+src/export/exporters/xml.ts     
+src/legacy/old-invoice-export.ts
+src/legacy/pdf-v1.ts            
+Unused dependencies (2)
+lodash    package.json:7:6
+left-pad  package.json:8:6
+Unused exports (21)
+formatDateIso   function  src/utils.ts:18:17 
+isWeekend       function  src/utils.ts:42:17 
+capitalize      function  src/utils.ts:66:17</code></pre>
+  <div class="ar-note">الـ <code>knip.json</code> بيحصر الفحص في جزء الـ app من الـ sample (الفولدرات التانية أمثلة تانية في الدرس ده). الناتج: 4 ملفات "مش مستخدمة" (منهم الاتنين exporters اللي بيتحملوا dynamic)، واتنين dependencies ميتين، و 21 export مش مستخدم (المعروض أول 3 بس). المشكلة: <code>csv.ts</code> و <code>xml.ts</code> مش ميتين، الأداة بس مش قادرة تشوف الـ <code>import()</code> الديناميكي.</div>
+<pre data-file="src/export/load-exporter.ts"><code class="language-typescript">export async function loadExporter(format: string): Promise&lt;{ run(rows: string[]): string }&gt; {
+  return import(`./exporters/${format}.ts`);
+}</code></pre>
+<pre data-file="knip.fixed.json"><code class="language-json">{
+  "entry": ["src/index.ts", "src/export/exporters/*.ts"],
+  "project": ["src/**/*.ts"],
+  "ignore": ["src/anemic/**", "src/async/**", "src/flags/**", "src/magic/**", "src/premature/**", "src/singleton/**", "src/spaghetti/**", "src/billing/credit-note.ts", "src/billing/invoice.ts", "src/billing/quote.ts", "src/billing/tax-fix.test.ts", "src/legacy/track.ts"]
+}</code></pre>
+<pre><code class="language-plaintext">Unused files (2)
+src/legacy/old-invoice-export.ts
+src/legacy/pdf-v1.ts            
+Unused dependencies (2)
+lodash    package.json:7:6
+left-pad  package.json:8:6
+Unused exports (21)
+formatDateIso   function  src/utils.ts:18:17 
+isWeekend       function  src/utils.ts:42:17 
+capitalize      function  src/utils.ts:66:17 
+uniqueBy        function  src/utils.ts:90:17 
+retry           function  src/utils.ts:114:17
+maskCard        function  src/utils.ts:138:17
+normalizePhone  function  src/utils.ts:162:17
+buildUrl        function  src/utils.ts:186:17
+fromCsvRow      function  src/utils.ts:210:17
+pickFields      function  src/utils.ts:234:17
+isEmptyObject   function  src/utils.ts:258:17
+roundCents      function  src/utils.ts:282:17
+vatFor          function  src/utils.ts:290:17
+currencySymbol  function  src/utils.ts:298:17
+countryName     function  src/utils.ts:306:17
+timezoneOf      function  src/utils.ts:314:17
+localeOf        function  src/utils.ts:322:17
+randomToken     function  src/utils.ts:330:17
+shortId         function  src/utils.ts:338:17
+legacyHash      function  src/utils.ts:346:17
+oldTaxRound     function  src/utils.ts:354:17</code></pre>
+  <div class="ar-note">بعد ما ضفنا <code>src/export/exporters/*.ts</code> كـ entry، الملفين دول اختفوا من القايمة، وفضل الميتين فعلًا: الـ legacy والـ dependencies.</div>
+<pre data-file="src/legacy/track.ts"><code class="language-typescript">const uses = new Map&lt;string, number&gt;();
+
+// ده بنحطه قبل المسح بـ release كامل، ونشوف الرقم في الـ logs والـ metrics
+export function trackLegacyUse(name: string): void {
+  uses.set(name, (uses.get(name) ?? 0) + 1);
+  console.warn(JSON.stringify({ event: "legacy.used", name, count: uses.get(name) }));
+}
+
+function exportInvoicesV1(rows: string[]): string {
+  trackLegacyUse("exportInvoicesV1");
+  return rows.join(";");
+}
+
+exportInvoicesV1(["inv_1"]);
+exportInvoicesV1(["inv_2"]);</code></pre>
+<pre><code class="language-plaintext">{"event":"legacy.used","name":"exportInvoicesV1","count":1}
+{"event":"legacy.used","name":"exportInvoicesV1","count":2}</code></pre>
+  <div class="ar-note">الـ <code>trackLegacyUse</code> بيتحط قبل المسح بـ release كامل. لو الـ counter فضل صفر طول الـ release، تمسح وإنت مطمن.</div>
+
+<pre class="diagram">
+  knip lists it --> dynamic use? --yes--> add to "entry", keep it
+                         |
+                         no
+                         v
+  add a usage metric --> wait one full release --> count is 0?
+                                                     |no: find the caller, keep it
+                                                     |yes
+                                                     v
+                                     delete in its own PR, tests green
+</pre>
+  <div class="ar-note">خطوات المسح الآمن: knip قال إنه مش مستخدم؟ اسأل الأول: فيه استخدام ديناميكي؟ لو آه ضيفه كـ entry وسيبه. لو لأ، حط metric للاستخدام واستنى release كامل. لو الـ counter مش صفر دوّر على اللي بيناديه وسيبه. لو صفر امسح في PR لوحده والـ tests خضرا.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>Lava flow</b> هو كود محدش بيجرؤ يمسحه: اتجمد، ومحدش عارف بيعمل إيه، والكل بيلف حواليه. و <b>knip</b> بيلاقي الجزء الـ static: ملفات و exports و dependencies مش مستخدمة. على الـ sample طلّع فولدر الـ legacy واتنين dependencies ميتين و 21 من الـ 45 export في <code>utils.ts</code>.</p>
+    <p><b>الأدوات الـ static مش بتشوف الاستخدام الديناميكي.</b> الـ <code>load-exporter.ts</code> بيبني المسار وقت التشغيل، فـ knip بيقول إن <code>exporters/csv.ts</code> مش مستخدم مع إن production بيحمله. لو مسحته، الـ CSV export يموت في production. قول للأداة على الـ entry بدل كده واعمل run تاني. وللكود اللي متقدرش تثبت إنه ميت: <b>سجّل قبل المسح</b> لمدة release كامل، وراقب الـ metric، وبعدين شيل الـ flag، وامسح والـ tests موجودة. ومش في نفس الـ PR مع feature أبدًا.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      على الـ repo بتاعك: <code>npx knip</code> بيطلّعلك قايمة، وأول يوم هيبقى فيها كتير. مسك كل حاجة بيتحمل بالاسم من config أو <code>import()</code> الأول (handlers و jobs و migrations) وضيفهم كـ <code>entry</code>، وبعدين امسح اللي فاضل بـ PRs صغيرة، كل واحد فيها مكتوب: "اتأكدنا إزاي إنه ميت".
+    </div>
+  </section>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Golden hammer and distributed monolith <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ Golden hammer والـ Distributed monolith</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A <b>golden hammer</b> is a familiar tool applied without checking the problem: Kafka for 10 messages a day, Redux for every piece of state including server cache (TanStack Query handles that), microservices for 3 developers. The review question is one sentence: <em>what problem do we have today that the simpler option can't solve?</em> The calculator below prints need against operating cost. The dollar and hour figures are <strong>assumptions</strong> to replace with your own; the point is the order of magnitude and where it flips.</p>
+  </section>
+
+<pre data-file="src/need-vs-cost.ts"><code class="language-typescript">// الأرقام دي افتراضات تقريبية للمقارنة، حط أرقام شغلك مكانها
+type Option = { name: string; maxPerDay: number; opsHoursPerMonth: number; usdPerMonth: number };
+
+const queues: Option[] = [
+  { name: "Postgres table + poller", maxPerDay: 5_000_000, opsHoursPerMonth: 1, usdPerMonth: 0 },
+  { name: "Redis/BullMQ", maxPerDay: 50_000_000, opsHoursPerMonth: 3, usdPerMonth: 50 },
+  { name: "Kafka (3 brokers)", maxPerDay: 5_000_000_000, opsHoursPerMonth: 30, usdPerMonth: 900 },
+];
+
+const scenarios = [
+  { need: "order emails", messagesPerDay: 10 },
+  { need: "webhook retries", messagesPerDay: 40_000 },
+  { need: "clickstream events", messagesPerDay: 900_000_000 },
+];
+
+const hourlyUsd = 40;
+for (const { need, messagesPerDay } of scenarios) {
+  console.log(`\n${need}: ${messagesPerDay.toLocaleString("en-US")} messages/day`);
+  const fits = queues
+    .filter((q) =&gt; q.maxPerDay &gt;= messagesPerDay)
+    .map((q) =&gt; ({ ...q, monthly: q.usdPerMonth + q.opsHoursPerMonth * hourlyUsd }))
+    .sort((a, b) =&gt; a.monthly - b.monthly);
+  fits.forEach((q, i) =&gt; console.log(`  ${i === 0 ? "&gt;" : " "} ${q.name.padEnd(24)} $${q.monthly}/month`));
+}</code></pre>
+<pre><code class="language-plaintext">
+order emails: 10 messages/day
+  &gt; Postgres table + poller  $40/month
+    Redis/BullMQ             $170/month
+    Kafka (3 brokers)        $2100/month
+
+webhook retries: 40,000 messages/day
+  &gt; Postgres table + poller  $40/month
+    Redis/BullMQ             $170/month
+    Kafka (3 brokers)        $2100/month
+
+clickstream events: 900,000,000 messages/day
+  &gt; Kafka (3 brokers)        $2100/month</code></pre>
+<pre data-file="src/team-cost.ts"><code class="language-typescript">// تكلفة الـ architecture على team صغير: الوقت اللي بيروح في الـ ops بدل الـ features
+const hoursPerDevPerMonth = 160;
+const devs = 3;
+
+const options = [
+  { name: "modular monolith", deployUnits: 1, opsHoursPerMonth: 8 },
+  { name: "6 microservices", deployUnits: 6, opsHoursPerMonth: 70 },
+];
+
+for (const o of options) {
+  const share = (o.opsHoursPerMonth / (devs * hoursPerDevPerMonth)) * 100;
+  console.log(`${o.name.padEnd(18)} deploy units: ${o.deployUnits}  ops ≈ ${o.opsHoursPerMonth} h/month  = ${share.toFixed(1)}% of ${devs} devs' time`);
+}</code></pre>
+<pre><code class="language-plaintext">modular monolith   deploy units: 1  ops ≈ 8 h/month  = 1.7% of 3 devs' time
+6 microservices    deploy units: 6  ops ≈ 70 h/month  = 14.6% of 3 devs' time</code></pre>
+  <div class="ar-note">لكل مشكلة، الخيارات اللي تقدر تستحمل الحمل مترتبة بالتكلفة الشهرية، والـ <code>&gt;</code> على الأرخص. لـ 10 رسايل في اليوم و 40 ألف، جدول Postgres كفاية، و Kafka أغلى بكتير. بس عند 900 مليون رسالة في اليوم Kafka لوحدها اللي بتستحمل. والجدول التاني: 3 مطورين بيدفعوا حوالي 15% من وقتهم في ops الـ 6 microservices مقابل حوالي 2% للـ modular monolith.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>golden hammer</b> هو tool مألوفة بتتطبق من غير ما تبص على المشكلة: Kafka لـ 10 رسايل في اليوم، و Redux لكل state حتى الـ server cache (TanStack Query بيعمل ده)، و microservices لـ 3 مطورين. سؤال الـ review جملة واحدة: <em>إيه المشكلة اللي عندنا النهارده والحل الأبسط مش قادر عليها؟</em> الـ calculator فوق بيطبع الاحتياج قصاد تكلفة التشغيل. الأرقام بالدولار والساعات <strong>افتراضات</strong> حط مكانها أرقامك؛ المهم الـ order of magnitude وعند أنهي نقطة القرار بيتقلب.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما حد يقترح Kafka في RFC، اسأله: كام message في اليوم، وكام واحد في الـ team هيصحى بالليل عشانه؟ لو الرقم 40 ألف في اليوم، <a href="./27-outbox-as-code.html">جدول outbox</a> أو BullMQ كفاية، والفرق عشرات الآلاف من الدولارات في السنة ووقت team كامل.
+    </div>
+  </section>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p>A <b>distributed monolith</b> has all the costs of microservices and none of the benefits. Its signs: services that must <em>deploy together</em>, a <em>shared database</em>, <em>synchronous call chains</em> where one failure fails the request, and a <em>shared domain library</em> that couples everyone's release. The arithmetic is unforgiving: five services at 99.9% in a sync chain give 0.999<sup>5</sup> ≈ 99.5%, about 44 hours of downtime a year instead of about 9. The full treatment, with a detector, is in <a href="../../11-Software-Architecture/lessons/30-monolith-to-services.html#p7">section 11 · 3.3</a>.</p>
+  </section>
+
+<pre data-file="src/availability.ts"><code class="language-typescript">// الـ availability المتسلسلة: لازم كل service يبقى شغال عشان الـ request ينجح
+const single = 0.999;
+const HOURS_PER_YEAR = 365 * 24;
+
+for (const services of [1, 3, 5, 10]) {
+  const availability = single ** services;
+  const downtimeHours = (1 - availability) * HOURS_PER_YEAR;
+  console.log(`${String(services).padStart(2)} sync service(s): ${(availability * 100).toFixed(2)}%  ≈ ${downtimeHours.toFixed(1)} hours down/year`);
+}</code></pre>
+<pre><code class="language-plaintext"> 1 sync service(s): 99.90%  ≈ 8.8 hours down/year
+ 3 sync service(s): 99.70%  ≈ 26.3 hours down/year
+ 5 sync service(s): 99.50%  ≈ 43.7 hours down/year
+10 sync service(s): 99.00%  ≈ 87.2 hours down/year</code></pre>
+  <div class="ar-note">كل سطر: عدد الـ services اللي الـ request لازم يعدّي عليهم بالتسلسل، والـ availability الناتجة، والـ downtime في السنة. خدمة واحدة 8.8 ساعة، وخمسة 43.7 ساعة. المعادلة هي ضرب الاحتمالات، فكل hop متزامن بيقلل المجموع.</div>
+
+<pre class="diagram">
+  client --> orders --> payments --> tax --> email --> ledger
+              99.9%      99.9%      99.9%   99.9%    99.9%
+  request succeeds only if all 5 are up:  99.9%^5 = 99.5%
+
+  deploy together?  shared DB?  sync chain?  shared domain lib?
+       one "yes" is a warning; three or more is a distributed monolith
+</pre>
+  <div class="ar-note">الـ request لازم يعدّي على الخمس services كلهم، فالـ availability بتاعتها بتتضرب في بعض لحد ما تبقى 99.5%. وتحت أربع أسئلة: ننشر مع بعض؟ DB مشتركة؟ سلسلة sync؟ domain library مشتركة؟ لو إجابة واحدة آه يبقى تحذير، ولو تلاتة أو أكتر يبقى ده distributed monolith.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>distributed monolith</b> فيه كل تكاليف الـ microservices ومفيش ولا فايدة منها. علاماته: services لازم <em>تتنشر مع بعض</em>، و<em>DB مشتركة</em>، و<em>سلاسل نداءات متزامنة</em> لو واحد وقع الـ request كله بيقع، و<em>domain library مشتركة</em> بتربط release كل الناس. والحساب مفيهوش رحمة: خمسة services على 99.9% في سلسلة sync بيدوا 0.999<sup>5</sup> ≈ 99.5%، يعني حوالي 44 ساعة downtime في السنة بدل حوالي 9. والشرح الكامل، ومعاه detector، في <a href="../../11-Software-Architecture/lessons/30-monolith-to-services.html#p7">قسم 11 · 3.3</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في incident review: "عشان نطلّع تعديل بسيط في الـ orders لازم ننشر 4 services مع بعض"، دي العلامة. الـ comment: "لو الخدمتين دول دايمًا بيتنشروا مع بعض، إيه المكسب من فصلهم؟ ممكن نرجّعهم module واحد في نفس الـ deploy؟"
+    </div>
+  </section>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Premature abstraction <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ Premature abstraction</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Premature abstraction</b> (speculative generality) is structure for a future that hasn't arrived: an interface with one implementation "because we might need it". The audit below uses the TS compiler API to count implementers per interface on the sample: 4 of 6 have exactly one. The script needs the JS compiler API, so it uses TS 6.0.3: the TS 7.0.2 package has no <code>lib/typescript.js</code>, only the native <code>tsc</code> wrapper. A tool can count; deciding is your job, because some single-implementation interfaces earn their place:</p>
+    <ul>
+      <li><b>A vendor boundary</b>: <code>IPaymentGateway</code> around Stripe, so the SDK doesn't spread (<a href="./07-adapter-facade-gateway.html">Gateway</a>).</li>
+      <li><b>A seam for a fake</b>: the same gateway has a <code>FakeGateway</code> in tests. The audit counts it, which is why it shows 2.</li>
+    </ul>
+    <p>The other four (<code>ICacheKeyBuilder</code>, <code>IInvoiceFormatter</code>, ...) are pure ceremony. The Rule of Three (<a href="./01-what-patterns-are.html#p4">when a pattern does harm</a>): wait for the third real variation before abstracting.</p>
+    <p><b>Sandi Metz's point</b> is about the failure mode: <em>"duplication is far cheaper than the wrong abstraction"</em>. Once a shared function exists, each new caller adds a flag instead of questioning the abstraction. Below, <code>formatLine</code> has grown to four booleans for four callers. The fix is her recipe: inline it back into the callers, then let the real commonality (<code>money</code>) re-emerge.</p>
+  </section>
+
+<pre data-file="audit-interfaces.mjs"><code class="language-javascript">// بيقرا الـ sample بالـ compiler API بتاع TS 6 ويعد مين بيعمل implements لكل interface
+import path from "node:path";
+import ts from "typescript";
+
+const sample = path.resolve(import.meta.dirname, "sample");
+const config = ts.readConfigFile(path.join(sample, "tsconfig.json"), ts.sys.readFile);
+const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, sample);
+const program = ts.createProgram(parsed.fileNames, parsed.options);
+
+const declared = new Set();
+const implementers = new Map();
+
+for (const file of program.getSourceFiles()) {
+  if (file.isDeclarationFile) continue;
+  ts.forEachChild(file, function visit(node) {
+    if (ts.isInterfaceDeclaration(node)) declared.add(node.name.text);
+    if (ts.isClassDeclaration(node)) {
+      for (const clause of node.heritageClauses ?? []) {
+        if (clause.token !== ts.SyntaxKind.ImplementsKeyword) continue;
+        for (const type of clause.types) {
+          const name = type.expression.getText(file);
+          const list = implementers.get(name) ?? [];
+          list.push(node.name?.text ?? "(anonymous)");
+          implementers.set(name, list);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  });
+}
+
+const rows = [...declared].map((name) =&gt; ({ name, impls: implementers.get(name) ?? [] }));
+rows.sort((a, b) =&gt; a.impls.length - b.impls.length || a.name.localeCompare(b.name));
+for (const { name, impls } of rows) console.log(String(impls.length).padStart(2), name.padEnd(20), impls.join(", "));
+const one = rows.filter((r) =&gt; r.impls.length === 1).length;
+console.log(`\n${rows.length} interfaces, ${one} with exactly one implementer (TS ${ts.version})`);</code></pre>
+<pre><code class="language-plaintext"> 1 IAuditLogger         AuditLoggerImpl
+ 1 ICacheKeyBuilder     CacheKeyBuilderImpl
+ 1 IInvoiceFormatter    InvoiceFormatterImpl
+ 1 IUserRepository      PgUserRepository
+ 2 INotifier            EmailNotifier, SmsNotifier
+ 2 IPaymentGateway      FakeGateway, StripeGateway
+
+6 interfaces, 4 with exactly one implementer (TS 6.0.3)</code></pre>
+  <div class="ar-note">كل سطر: عدد الـ implementers واسم الـ interface وأسماء الـ classes. 4 من 6 ليهم implementer واحد. <code>IPaymentGateway</code> ليه اتنين لأن الـ fake اتحسب، و <code>INotifier</code> ليه اتنين حقيقيين.</div>
+
+<pre data-file="src/premature/shared-line.ts"><code class="language-typescript">// ❌ فاتورة وعرض سعر و credit note وتصدير اتجمعوا في function واحدة، وكل واحد زوّد flag
+export function formatLine(
+  name: string,
+  cents: number,
+  isCredit: boolean,
+  isQuote: boolean,
+  isExport: boolean,
+  arabicDigits: boolean,
+): string {
+  const sign = isCredit ? "-" : "";
+  const amount = isExport ? String(cents) : (cents / 100).toFixed(2);
+  const prefix = isQuote ? "Estimate: " : isCredit ? "Credit: " : "";
+  const line = `${prefix}${name} ${sign}${amount}`;
+  return arabicDigits ? line.replace(/\d/g, (d) =&gt; "٠١٢٣٤٥٦٧٨٩"[Number(d)]) : line;
+}
+
+// الـ 4 callers دول كل واحد بيدي تركيبة مختلفة من الـ flags
+export const invoiceLine = (n: string, c: number) =&gt; formatLine(n, c, false, false, false, false);
+export const creditLine = (n: string, c: number) =&gt; formatLine(n, c, true, false, false, false);
+export const quoteLine = (n: string, c: number) =&gt; formatLine(n, c, false, true, false, false);
+export const exportLine = (n: string, c: number) =&gt; formatLine(n, c, false, false, true, false);</code></pre>
+<pre data-file="src/premature/lines.fixed.ts"><code class="language-typescript">const money = (cents: number) =&gt; (cents / 100).toFixed(2);
+
+// ✅ رجعنا الفكرة: كل caller بقى function بسيطة، والتكرار القليل أرخص من الـ flags
+export const invoiceLine = (name: string, cents: number) =&gt; `${name} ${money(cents)}`;
+export const creditLine = (name: string, cents: number) =&gt; `Credit: ${name} -${money(cents)}`;
+export const quoteLine = (name: string, cents: number) =&gt; `Estimate: ${name} ${money(cents)}`;
+export const exportLine = (name: string, cents: number) =&gt; `${name} ${cents}`;</code></pre>
+<pre><code class="language-plaintext">✔ flags: every caller keeps its output (0.6905ms)
+✔ inlined: every caller keeps its output (0.1575ms)
+ℹ tests 2
+ℹ pass 2
+ℹ fail 0</code></pre>
+  <div class="ar-note">نفس الـ test عدّى على النسختين: النسخة بالـ flags، والنسخة اللي كل caller فيها function بسيطة. يعني شلنا 4 booleans من غير ما نغيّر أي output.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>Premature abstraction</b> هو هيكل لمستقبل لسه ماجاش: interface بـ implementation واحدة "عشان ممكن نحتاج". الـ audit فوق بيستخدم الـ TS compiler API يعد الـ implementers لكل interface في الـ sample: 4 من 6 ليهم واحد بس. والـ script محتاج الـ JS compiler API، فبيستخدم TS 6.0.3: الـ package بتاع TS 7.0.2 مفيهوش <code>lib/typescript.js</code>، فيه wrapper للـ <code>tsc</code> الـ native بس. الـ tool بتعد، والقرار شغلك، لأن فيه حالات الـ implementation الواحدة فيها ليها معنى:</p>
+    <ul>
+      <li><b>حدود vendor</b>: <code>IPaymentGateway</code> حوالين Stripe عشان الـ SDK ميتفرشش في الكود (<a href="./07-adapter-facade-gateway.html">الـ Gateway</a>).</li>
+      <li><b>seam للـ fake</b>: نفس الـ gateway ليه <code>FakeGateway</code> في الـ tests، والـ audit عده، وعشان كده ظاهر 2.</li>
+    </ul>
+    <p>الأربعة الباقيين (<code>ICacheKeyBuilder</code> و <code>IInvoiceFormatter</code> وغيرهم) مجرد شكليات. وقاعدة التلاتة (<a href="./01-what-patterns-are.html#p4">إمتى الـ pattern بيضر</a>): استنى تالت حالة حقيقية قبل ما تعمل abstraction.</p>
+    <p><b>نقطة Sandi Metz</b> عن طريقة الفشل: <em>"duplication is far cheaper than the wrong abstraction"</em>، يعني التكرار أرخص بكتير من الـ abstraction الغلط. لما function مشتركة تتعمل، كل caller جديد بيزود flag بدل ما يسأل هل الـ abstraction صح أصلًا. فوق <code>formatLine</code> كبرت لحد 4 booleans لـ 4 callers. والحل وصفتها: ارجع انسخها جوه الـ callers، وسيب اللي مشترك فعلًا (<code>money</code>) يظهر لوحده.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو في الـ review لقيت <code>IOrderService</code> و <code>OrderServiceImpl</code>، اسأل: مين الـ implementer التاني؟ ولو function مشتركة بدأت تاخد <code>isQuote</code> و <code>isCredit</code>، دي علامة إن كل caller عايز حاجة مختلفة: اقترح تفصلهم.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question (exit test Q8): "A colleague added an interface with one implementation 'because we might need it'. What do you say?"</b>
+    Ask what it buys today. If it's a boundary to a vendor or a seam for a fake in tests, keep it and say why. If not, it's speculative: it costs an extra file and a level of indirection on every jump-to-definition, and when the second implementation does appear, its real shape is unknown, so the interface will probably be wrong anyway. TypeScript's structural typing also means you can extract the interface later in one step without changing the class. So: inline it now, add it when the second real need arrives.
+    <div class="ar-note">السؤال (سؤال 8 في اختبار الخروج): "الزميل عمل interface بـ implementation واحدة 'عشان ممكن نحتاج'. هتقول إيه؟" الإجابة: اسأل بيدّينا إيه النهارده. لو هو حدود مع vendor أو seam لـ fake في الـ tests، سيبه وقول ليه. لو لأ، يبقى تخمين: بيكلّف ملف زيادة وطبقة زيادة في كل jump-to-definition، ولما الـ implementation التانية تيجي شكلها الحقيقي مش معروف، فالـ interface غالبًا هتطلع غلط أصلًا. والـ structural typing في TypeScript معناه إنك تقدر تطلّع الـ interface بعدين في خطوة واحدة من غير ما تغيّر الكلاس. يعني: شيله دلوقتي، وضيفه لما الاحتياج التاني الحقيقي ييجي.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Copy-paste, magic values, boolean params <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ Copy-paste والـ magic values والـ boolean params</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Copy-paste</b> is cheap until a rule changes. Below, a VAT exemption was fixed in <code>invoice.ts</code> and <code>quote.ts</code>, and <code>credit-note.ts</code> was forgotten: a real failing test, and a customer overcharged. <b>jscpd</b> finds the clones by comparing tokens: it reports the two exact copies, and the third as a partial clone, up to the line where the fix diverged.</p>
+    <p><b>Not always wrong:</b> duplicated code across <em>bounded contexts</em> can be right on purpose, because billing's "total" and shipping's "total" change for different reasons. Sharing them couples two teams' releases. The question is whether the copies must change together.</p>
+  </section>
+
+<pre data-file="src/billing/credit-note.ts"><code class="language-typescript">export type Line = { cents: number; qty: number };
+export type Tenant = { vatExempt: boolean };
+
+// ❌ النسخة التالتة محدش افتكرها، والـ fix ماوصلهاش
+export function creditNoteTotal(lines: Line[], _tenant: Tenant, discountCents: number): number {
+  let subtotal = 0;
+  for (const line of lines) {
+    subtotal += line.cents * line.qty;
+  }
+  const discounted = Math.max(subtotal - discountCents, 0);
+  const vat = Math.round(discounted * 0.14);
+  const shipping = discounted &gt; 100000 ? 0 : 2500;
+  const total = discounted + vat + shipping;
+  return total;
+}</code></pre>
+<pre data-file="src/billing/tax-fix.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { creditNoteTotal } from "./credit-note.ts";
+import { invoiceTotal } from "./invoice.ts";
+import { quoteTotal } from "./quote.ts";
+
+const lines = [{ cents: 10000, qty: 2 }];
+const eduTenant = { vatExempt: true };
+
+// الـ tenant المعفي مفيش عليه VAT، فالإجمالي ⁦20000 +⁩ شحن 2500
+for (const [name, fn] of Object.entries({ invoiceTotal, quoteTotal, creditNoteTotal })) {
+  test(`${name}: exempt tenant pays no VAT`, () =&gt; {
+    assert.equal(fn(lines, eduTenant, 0), 22500);
+  });
+}</code></pre>
+<pre><code class="language-bash">jscpd src/billing --min-lines 5 --min-tokens 30 --reporters console
+node --test src/billing/tax-fix.test.ts</code></pre>
+<pre><code class="language-plaintext">Clone found (typescript)
+ - credit-note.ts [5:55 - 11:14] (7 lines, 51 tokens)
+   invoice.ts [5:51 - 11:14]
+Clone found (typescript)
+ - invoice.ts [5:29 - 15:2] (11 lines, 98 tokens)
+   quote.ts [5:27 - 15:2]
+Found 2 clones.</code></pre>
+<pre><code class="language-plaintext">✔ invoiceTotal: exempt tenant pays no VAT (0.7043ms)
+✔ quoteTotal: exempt tenant pays no VAT (0.1354ms)
+✖ creditNoteTotal: exempt tenant pays no VAT (0.7339ms)
+ℹ tests 3
+ℹ pass 2
+ℹ fail 1
+actual: 25300,
+expected: 22500,</code></pre>
+  <div class="ar-note">الـ jscpd لقى clone كامل بين <code>invoice</code> و <code>quote</code> (11 سطر)، و clone جزئي مع <code>credit-note</code> لحد سطر الـ VAT اللي اتغيّر، يعني الأداة بتوريك فين النسخة بدأت تختلف. والـ test: النسختين المصلحين نجحوا، و <code>creditNoteTotal</code> طلّع 25300 بدل 22500، يعني الـ tenant المعفي اتحسب عليه VAT.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>Copy-paste</b> رخيص لحد ما قاعدة تتغير. فوق، الإعفاء من الـ VAT اتصلح في <code>invoice.ts</code> و <code>quote.ts</code> ونسيوا <code>credit-note.ts</code>: test حقيقي فشل، وعميل اتحسب عليه زيادة. و <b>jscpd</b> بيلاقي النسخ بمقارنة الـ tokens: طلّع النسختين المتطابقتين، والتالتة كـ clone جزئي لحد السطر اللي الـ fix بدأ يختلف فيه.</p>
+    <p><b>مش دايمًا غلط:</b> الكود المتكرر بين <em>bounded contexts</em> مختلفة ممكن يبقى صح بقصد، لأن "total" بتاع الـ billing و "total" بتاع الـ shipping بيتغيروا لأسباب مختلفة. لو شاركتهم، بتربط release بتاع team مع التاني. والسؤال: هل النسخ دي لازم تتغير مع بعض؟</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      حط <code>jscpd</code> في الـ CI بحد معقول (مثلاً <code>--threshold 5</code>)، ولما يطلع clone في الـ review اسأل السؤال ده: لو قاعدة الـ VAT اتغيرت بكرة، لازم نغيّر الـ 3 أماكن دول مع بعض؟ لو آه، استخرجها. لو لأ، سيبهم واكتب ليه.
+    </div>
+  </section>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Magic values:</b> a number or string whose meaning isn't in the code (<code>0.14</code>, <code>86400000</code>, <code>"gold"</code>). ESLint's <code>no-magic-numbers</code> catches them, and it needs tuning or it becomes noise: <code>0</code> and <code>1</code> aren't magic, and HTTP status codes are usually fine.</p>
+    <p><b>Boolean parameters:</b> <code>save(user, true, false)</code> tells the reader nothing at the call site. Two fixes: named options (<code>{ sendWelcome: true }</code>, see <a href="./03-builder-config-fluent.html#p1">config objects</a>) when it's a real setting, or two functions when each value is really a different behaviour (<code>registerUser</code>, <code>importUser</code>). <code>max-params</code> catches the long end of this.</p>
+  </section>
+
+<pre data-file="eslint.magic.config.js"><code class="language-javascript">import tseslint from "typescript-eslint";
+
+// الـ 0 والـ 1 مش magic، والـ HTTP codes كمان، فبنعلّم القاعدة تسكت عنهم
+export default [
+  {
+    files: ["src/**/*.ts"],
+    languageOptions: { parser: tseslint.parser },
+    rules: {
+      "no-magic-numbers": ["warn", { ignore: [0, 1, -1, 200, 404, 500], ignoreArrayIndexes: true, ignoreDefaultValues: true, enforceConst: true }],
+      "max-params": ["warn", 4],
+    },
+  },
+];</code></pre>
+<pre data-file="src/magic/discount.ts"><code class="language-typescript">// ❌ أرقام من غير أسماء: 0.14 ده VAT ولا كام؟ و 86400000 دي كام يوم؟
+export function discountFor(tier: string, totalCents: number, ageMs: number): number {
+  if (tier === "gold" &amp;&amp; ageMs &gt; 86400000 * 365) return Math.round(totalCents * 0.15);
+  if (totalCents &gt; 500000) return Math.round(totalCents * 0.05);
+  return 0;
+}</code></pre>
+<pre><code class="language-plaintext">
+src/magic/discount.ts
+  3:34  warning  No magic number: 86400000  no-magic-numbers
+  3:45  warning  No magic number: 365       no-magic-numbers
+  3:81  warning  No magic number: 0.15      no-magic-numbers
+  4:20  warning  No magic number: 500000    no-magic-numbers
+  4:59  warning  No magic number: 0.05      no-magic-numbers
+
+src/premature/shared-line.ts
+   2:8   warning  Function 'formatLine' has too many parameters (6). Maximum allowed is 4  max-params
+  11:54  warning  No magic number: 100                                                     no-magic-numbers
+  11:67  warning  No magic number: 2                                                       no-magic-numbers
+
+✖ 8 problems (0 errors, 8 warnings)</code></pre>
+  <div class="ar-note">القاعدة مسكت 5 أرقام مالهاش أسماء في <code>discount.ts</code>، و <code>max-params</code> مسك الـ 6 parameters في <code>formatLine</code>. وخد بالك: <code>100</code> و <code>2</code> في <code>(cents / 100).toFixed(2)</code> اتمسكوا كمان، وده الفرق بين rule متعير وrule بيزعق: لو الـ team بتشتغل بالـ cents طول الوقت، ضيف <code>100</code> للـ <code>ignore</code>.</div>
+<pre data-file="src/flags/save-user.ts"><code class="language-typescript">// ده مثال boolean parameters: مين فاهم ⁦save(user, true, false)⁩ بتعمل إيه؟
+type User = { id: string; email: string };
+
+// ❌ الـ true و false مفيهمش أي معنى عند الـ caller
+export function save(user: User, sendWelcome: boolean, skipValidation: boolean): string[] {
+  const steps: string[] = [];
+  if (!skipValidation &amp;&amp; !user.email.includes("@")) throw new Error("bad email");
+  steps.push(`saved ${user.id}`);
+  if (sendWelcome) steps.push(`welcome ${user.email}`);
+  return steps;
+}
+
+// ✅ الحل الأول: named options، الـ caller بيقول هو عايز إيه بالاسم
+export function saveUser(user: User, opts: { sendWelcome?: boolean; skipValidation?: boolean } = {}): string[] {
+  return save(user, opts.sendWelcome ?? false, opts.skipValidation ?? false);
+}
+
+// ✅ الحل التاني: two functions، لما كل flag عبارة عن سلوك مختلف فعلًا
+export const registerUser = (user: User): string[] =&gt; save(user, true, false);
+export const importUser = (user: User): string[] =&gt; save(user, false, true);
+
+const user = { id: "u1", email: "sara@acme.co" };
+console.log(save(user, true, false));
+console.log(saveUser(user, { sendWelcome: true }));
+console.log(importUser(user));</code></pre>
+<pre><code class="language-plaintext">[ 'saved u1', 'welcome sara@acme.co' ]
+[ 'saved u1', 'welcome sara@acme.co' ]
+[ 'saved u1' ]</code></pre>
+  <div class="ar-note">النتيجة واحدة في الـ 3، بس الفرق في السطر اللي بينادي: <code>saveUser(user, { sendWelcome: true })</code> بيتقرا لوحده، و <code>importUser(user)</code> بيقول المعنى في الاسم، أما <code>save(user, true, false)</code> لازم تفتح الـ function تفهم.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ Magic values:</b> رقم أو string معناه مش مكتوب في الكود (<code>0.14</code> و <code>86400000</code> و <code>"gold"</code>). القاعدة <code>no-magic-numbers</code> في ESLint بتمسكهم، بس محتاجة ضبط وإلا تبقى دوشة: <code>0</code> و <code>1</code> مش magic، والـ HTTP status codes غالبًا تمام.</p>
+    <p><b>الـ Boolean parameters:</b> <code>save(user, true, false)</code> مبيقولش حاجة للي بيقرا عند النداء. حلين: named options (<code>{ sendWelcome: true }</code>، شوف <a href="./03-builder-config-fluent.html#p1">الـ config objects</a>) لو هو setting حقيقي، أو two functions لو كل قيمة سلوك مختلف فعلًا (<code>registerUser</code> و <code>importUser</code>). و <code>max-params</code> بيمسك الحالة الأطول من ده.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ comment: "<code>0.14</code> ده الـ VAT بتاع مصر؟ سمّيه <code>EG_VAT_RATE</code> وحطه في config الضرايب، لأن لو اتغير هتلاقيه في مكان واحد." و "<code>save(user, true, false)</code>: ممكن <code>importUser(user)</code>؟ مش عارف الـ false دي معناها إيه من غير ما أفتح الملف."
+    </div>
+  </section>
+
+  <!-- ===================== PART 7 ===================== -->
+  <h2 id="p7">Part 7 — Async hell, singleton abuse, leaky abstraction <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 7 — الـ Async hell والـ Singleton abuse والـ Leaky abstraction</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Async hell</b> has three generations in the same file below: callback pyramids, then nested <code>.then</code> chains (promise hell), then the modern trap, a flat-looking <code>await</code> inside a loop. <code>no-await-in-loop</code> flags it: 100 payments at 5 ms each took about 1.5 s in series against about 13 ms in parallel (Windows stretches each 5 ms sleep to about 15 ms, so 100 of them add up to 1.5 s, not 0.5 s). <a href="../../01-JavaScript/lessons/09-async-await-patterns.html#p3">Sequential vs parallel</a> has the full treatment, including limits. The rule also fires on loops that are <em>legitimately</em> sequential, like cursor pagination, where each request needs the previous one's result: disable it on that line and write the reason in the comment.</p>
+  </section>
+
+<pre data-file="src/async/charge-all.ts"><code class="language-typescript">import { setTimeout as sleep } from "node:timers/promises";
+
+type Payment = { id: string; cents: number };
+const fetchUser = async (id: string) =&gt; ({ id, email: `${id}@acme.co` });
+const chargeCard = async (p: Payment) =&gt; `ch_${p.id}`;
+const sendReceipt = async (email: string, charge: string) =&gt; `${email}:${charge}`;
+
+// (1) المرحلة الأولى callback hell: كل خطوة بتدخل جوه اللي قبلها
+export function chargeWithCallbacks(p: Payment, done: (err: Error | null, r?: string) =&gt; void) {
+  fetchUser(p.id).then((user) =&gt; {
+    chargeCard(p).then((charge) =&gt; {
+      sendReceipt(user.email, charge).then((r) =&gt; done(null, r), done);
+    }, done);
+  }, done);
+}
+
+// (2) المرحلة التانية promise hell: نفس التداخل بس بـ then
+export const chargeWithThen = (p: Payment) =&gt;
+  fetchUser(p.id).then((user) =&gt;
+    chargeCard(p).then((charge) =&gt; sendReceipt(user.email, charge)),
+  );
+
+// (3) الحل بـ async/await: سطور مستقيمة
+export async function chargeOne(p: Payment): Promise&lt;string&gt; {
+  const user = await fetchUser(p.id);
+  const charge = await chargeCard(p);
+  return sendReceipt(user.email, charge);
+}
+
+const payments: Payment[] = Array.from({ length: 100 }, (_, i) =&gt; ({ id: `p${i}`, cents: 100 }));
+const slowCharge = async (p: Payment) =&gt; {
+  await sleep(5);
+  return chargeOne(p);
+};
+
+// (4) المشكلة الجديدة: await جوه loop، واحد ورا التاني
+export async function chargeSequential(list: Payment[]): Promise&lt;string[]&gt; {
+  const out: string[] = [];
+  for (const p of list) out.push(await slowCharge(p));
+  return out;
+}
+
+// (5) الحل هنا parallel، بس على scale لازم limit زي lesson 17
+export const chargeParallel = (list: Payment[]) =&gt; Promise.all(list.map(slowCharge));
+
+// (6) حالة شرعية: كل صفحة بتعتمد على cursor الصفحة اللي قبلها
+export async function fetchAllPages(fetchPage: (cursor: string | null) =&gt; Promise&lt;{ items: string[]; next: string | null }&gt;) {
+  const items: string[] = [];
+  let cursor: string | null = null;
+  do {
+    // eslint-disable-next-line no-await-in-loop -- pagination: each request needs the previous cursor
+    const page: { items: string[]; next: string | null } = await fetchPage(cursor);
+    items.push(...page.items);
+    cursor = page.next;
+  } while (cursor);
+  return items;
+}
+
+let t = performance.now();
+await chargeSequential(payments);
+console.log("sequential ≈", Math.round(performance.now() - t), "ms for", payments.length);
+t = performance.now();
+await chargeParallel(payments);
+console.log("parallel   ≈", Math.round(performance.now() - t), "ms for", payments.length);
+await new Promise&lt;void&gt;((resolve) =&gt; chargeWithCallbacks(payments[0], () =&gt; resolve()));
+console.log("callback, then, await: same result:", (await chargeWithThen(payments[0])) === (await chargeOne(payments[0])));</code></pre>
+<pre><code class="language-bash">eslint src/async/charge-all.ts
+node src/async/charge-all.ts</code></pre>
+<pre><code class="language-plaintext">
+src/async/charge-all.ts
+  39:34  warning  Unexpected `await` inside a loop  no-await-in-loop
+
+✖ 1 problem (0 errors, 1 warning)</code></pre>
+<pre><code class="language-plaintext">sequential ≈ 1564 ms for 100
+parallel   ≈ 13 ms for 100
+callback, then, await: same result: true</code></pre>
+  <div class="ar-note">الـ ESLint مسك سطر واحد بس: اللي جوه <code>chargeSequential</code>. الـ pagination مسكوت عليها بالـ disable مع السبب بعد <code>--</code>. والقياس (<code>≈</code>، Windows محمّل): 100 عملية 5ms واحدة ورا التانية حوالي 1.5 ثانية (الـ Windows بيمطّ كل 5ms لحوالي 15ms، فالمجموع مش 0.5 ثانية)، و parallel حوالي 13ms. وآخر سطر بيأكد إن التلات أشكال بيدوا نفس النتيجة.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>Async hell</b> ليه تلات أجيال في نفس الملف فوق: هرم الـ callbacks، وبعده <code>.then</code> متداخلة (promise hell)، وبعده الفخ الحديث: <code>await</code> جوه loop شكله مسطح وبريء. القاعدة <code>no-await-in-loop</code> بتمسكه: 100 دفعة بـ 5ms لكل واحدة خدت حوالي 1.5 ثانية بالتسلسل مقابل حوالي 13ms parallel (الـ Windows بيمطّ كل 5ms لحوالي 15ms، فالمجموع مش 0.5 ثانية). و <a href="../../01-JavaScript/lessons/09-async-await-patterns.html#p3">درس sequential ولا parallel</a> فيه الشرح الكامل مع الـ limits. والقاعدة بتشتغل كمان على loops بتسلسلها <em>شرعي</em>، زي cursor pagination اللي كل request فيها محتاج نتيجة اللي قبله: اعمل disable على السطر ده واكتب السبب في الـ comment.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو لقيت <code>for</code> و <code>await</code> في endpoint بيبعت notifications، قول: "الترتيب مهم هنا؟ لو لأ، <code>Promise.all</code> بـ limit (زي <a href="./17-async-evolution-iterators-control-flow.html">درس 17</a>)". ولو الترتيب مقصود، يبقى <code>eslint-disable</code> والسبب مكتوب، عشان اللي بعدك ميحاولش "يصلحه" ويكسر الـ pagination.
+    </div>
+  </section>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Singleton abuse and global mutable state.</b> A module-level <code>currentTenant</code> is a shared variable across every concurrent request in the process. Below, 100 concurrent requests across two tenants returned the wrong tenant's data 50 times: a data leak between customers, the worst bug this lesson shows. <a href="https://nodejs.org/api/async_context.html">AsyncLocalStorage</a> gives each request its own context across <code>await</code>: 0 wrong out of 100. A singleton is fine for a stateless thing or a connection pool (<a href="./04-modules-singletons.html">Modules &amp; Singletons</a>); the problem is mutable <em>per-request</em> state in it.</p>
+  </section>
+
+<pre data-file="src/singleton/tenant-bug.ts"><code class="language-typescript">import { AsyncLocalStorage } from "node:async_hooks";
+import { setTimeout as sleep } from "node:timers/promises";
+
+const rows: Record&lt;string, string&gt; = { t1: "invoices of tenant 1", t2: "invoices of tenant 2" };
+const query = async (tenant: string) =&gt; {
+  await sleep(1);
+  return rows[tenant];
+};
+
+// ❌ الـ singleton بتاع الـ state: متغير واحد لكل الـ requests في الـ process
+let currentTenant = "";
+
+async function handleBad(tenant: string): Promise&lt;string&gt; {
+  currentTenant = tenant;
+  await sleep(Math.random() * 5);
+  return query(currentTenant);
+}
+
+// ✅ الـ AsyncLocalStorage: كل request ليه context بتاعه حتى عبر await
+const context = new AsyncLocalStorage&lt;{ tenant: string }&gt;();
+
+async function handleGood(tenant: string): Promise&lt;string&gt; {
+  return context.run({ tenant }, async () =&gt; {
+    await sleep(Math.random() * 5);
+    return query(context.getStore()!.tenant);
+  });
+}
+
+async function simulate(handler: (t: string) =&gt; Promise&lt;string&gt;): Promise&lt;number&gt; {
+  const requests = Array.from({ length: 100 }, (_, i) =&gt; (i % 2 === 0 ? "t1" : "t2"));
+  const results = await Promise.all(requests.map(handler));
+  return results.filter((r, i) =&gt; r !== rows[requests[i]]).length;
+}
+
+console.log("module-level currentTenant, wrong tenant's data:", await simulate(handleBad), "of 100");
+console.log("AsyncLocalStorage,          wrong tenant's data:", await simulate(handleGood), "of 100");</code></pre>
+<pre><code class="language-plaintext">module-level currentTenant, wrong tenant's data: 50 of 100
+AsyncLocalStorage,          wrong tenant's data: 0 of 100</code></pre>
+  <div class="ar-note">50 من 100 رجعوا بيانات tenant تاني بسبب المتغير المشترك، و 0 من 100 مع الـ <code>AsyncLocalStorage</code>. وده مش حالة نادرة: أي <code>await</code> في النص بيخلي request تاني يغيّر المتغير. الرقم بيتغير شوية من run للتاني لأن فيه <code>Math.random</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ Singleton abuse و global mutable state.</b> الـ <code>currentTenant</code> على مستوى الـ module متغير مشترك بين كل الـ requests اللي شغالة مع بعض في الـ process. فوق، 100 request متزامن بين اتنين tenants رجعوا بيانات tenant غلط 50 مرة: تسريب بيانات بين عملا، ودي أسوأ bug في الدرس ده. و <a href="https://nodejs.org/api/async_context.html">الـ AsyncLocalStorage</a> بيدي كل request الـ context بتاعه عبر الـ <code>await</code>: صفر غلط من 100. والـ singleton تمام لحاجة stateless أو connection pool (<a href="./04-modules-singletons.html">درس الـ Modules والـ Singletons</a>)؛ المشكلة إنك تحط فيه state بيتغير <em>لكل request</em>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في SaaS فيه tenants، ابحث في الـ code عن <code>let current</code> أو <code>globalThis</code> أو أي module-level <code>let</code> فيه user أو tenant. لقيت واحد؟ ده security incident مستني. والـ comment: "الـ state ده بتاع request، ومكانه الـ <code>AsyncLocalStorage</code> أو يتعدّى كـ parameter."
+    </div>
+  </section>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Leaky abstraction.</b> A repository that returns ORM row types has leaked the database into every file that uses it. I renamed <code>customer_id</code> to <code>buyer_id</code> in the row type and counted with <code>tsc</code>: 6 errors in 6 domain files. With a mapper at the repository boundary, the same rename is 0 errors outside <code>row.ts</code>, and the mapper is the only line that changes. The row type here is hand-written; Prisma's generated types behave the same way, and Prisma itself is <strong>not run here</strong>.</p>
+  </section>
+
+<pre data-file="leaky/before/row.ts"><code class="language-typescript">// ده بديل مكتوب بالإيد لنوع الـ row اللي الـ ORM بيولّده (Prisma مش متشغل هنا)
+export type InvoiceRow = { id: string; customer_id: string; total_cents: number; created_at: Date };
+
+export const findInvoice = async (id: string): Promise&lt;InvoiceRow&gt; =&gt; ({
+  id,
+  customer_id: "c_1",
+  total_cents: 1000,
+  created_at: new Date(0),
+});</code></pre>
+<pre data-file="leaky/before/pricing.ts"><code class="language-typescript">import type { InvoiceRow } from "./row.ts";
+
+export const big = (r: InvoiceRow) =&gt; r.total_cents &gt; 100 &amp;&amp; r.customer_id !== "";</code></pre>
+<pre><code class="language-plaintext">leaky/before-renamed/audit.ts(3,51): error TS2339: Property 'customer_id' does not exist on type 'InvoiceRow'.
+leaky/before-renamed/email.ts(3,40): error TS2339: Property 'customer_id' does not exist on type 'InvoiceRow'.
+leaky/before-renamed/export.ts(3,48): error TS2339: Property 'customer_id' does not exist on type 'InvoiceRow'.
+leaky/before-renamed/pricing.ts(3,64): error TS2339: Property 'customer_id' does not exist on type 'InvoiceRow'.
+leaky/before-renamed/report.ts(3,45): error TS2339: Property 'customer_id' does not exist on type 'InvoiceRow'.
+leaky/before-renamed/search.ts(3,49): error TS2339: Property 'customer_id' does not exist on type 'InvoiceRow'.</code></pre>
+<pre data-file="leaky/after/row.ts"><code class="language-typescript">// الـ ORM type فاضل في الملف ده بس، و mapToInvoice هو الحدود
+type InvoiceRow = { id: string; customer_id: string; total_cents: number; created_at: Date };
+
+export type Invoice = { id: string; customerId: string; totalCents: number };
+
+const mapToInvoice = (row: InvoiceRow): Invoice =&gt; ({
+  id: row.id,
+  customerId: row.customer_id,
+  totalCents: row.total_cents,
+});
+
+export const findInvoice = async (id: string): Promise&lt;Invoice&gt; =&gt;
+  mapToInvoice({ id, customer_id: "c_1", total_cents: 1000, created_at: new Date(0) });</code></pre>
+  <div class="ar-note">بعد الـ rename في <code>before</code>: 6 errors في 6 ملفات domain (السطور فوق). في <code>after</code> نفس الـ rename: <code>tsc</code> صفر errors، لأن الـ <code>mapToInvoice</code> هو المكان الوحيد اللي عارف اسم الـ column. يعني الـ domain ما اتلمسش.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ Leaky abstraction.</b> الـ repository اللي بيرجع ORM row types سرّب الـ database لكل ملف بيستخدمه. غيّرت <code>customer_id</code> لـ <code>buyer_id</code> في الـ row type وعدّيت بـ <code>tsc</code>: 6 errors في 6 ملفات domain. ومع mapper عند حدود الـ repository، نفس التغيير بقى صفر errors بره <code>row.ts</code>، والـ mapper هو السطر الوحيد اللي بيتغير. الـ row type هنا مكتوب بالإيد؛ والـ types المتولدة من Prisma بتتصرف نفس الطريقة، و Prisma نفسها <strong>مش متشغلة هنا</strong>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما <code>invoice.customer_id</code> يظهر في ملف بيبعت email، يبقى الـ DB سايب في الـ domain. الـ comment: "الـ repository يرجع <code>Invoice</code> بتاعنا و <code>mapToInvoice</code> جواه، عشان لو غيّرنا عمود أو الـ ORM كله، نلمس ملف واحد." وده اللي بيخلي نقلة من Prisma لـ Drizzle مشروع أسبوع مش ربع سنة.
+    </div>
+  </section>
+
+  <h3>The review checklist · الـ checklist بتاع الـ code review</h3>
+  <table>
+    <thead><tr><th>#</th><th>Anti-pattern</th><th>How you spot it</th><th>Comment to write</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>God object / module</td><td><code>max-lines</code>, <code>max-params</code>, top of madge fan-in, high churn</td><td>"This changes for 3 different reasons. Can billing move out in its own PR?"</td></tr>
+      <tr><td>2</td><td>Anemic model</td><td>Same rule in 2+ services, and they differ</td><td>"This rule also lives in X and differs. Move it to <code>Order.canRefund()</code>?" For real CRUD: leave it</td></tr>
+      <tr><td>3</td><td>Spaghetti / lava flow</td><td><code>max-depth</code>, <code>complexity</code>, knip list</td><td>"Guard clauses would flatten this." / "Add a usage metric for a release, then delete."</td></tr>
+      <tr><td>4</td><td>Golden hammer</td><td>Tool chosen before the need is stated</td><td>"What problem do we have today that the simpler option can't solve?"</td></tr>
+      <tr><td>5</td><td>Premature abstraction</td><td>Interface with 1 implementer, no vendor or fake reason</td><td>"Who's the second implementer? If nobody yet, inline it."</td></tr>
+      <tr><td>6</td><td>Copy-paste, magic, booleans</td><td>jscpd, <code>no-magic-numbers</code>, <code>f(x, true, false)</code></td><td>"Must these copies change together?" / "Name this number." / "Options object?"</td></tr>
+      <tr><td>7</td><td>Async hell, <code>await</code> in loop</td><td><code>no-await-in-loop</code>, nested <code>.then</code></td><td>"Is this sequential on purpose? If so, write why. If not, <code>Promise.all</code> with a limit."</td></tr>
+      <tr><td>8</td><td>Singleton / global state</td><td>Module-level <code>let</code> holding per-request data</td><td>"This is per-request state in a module variable. Use <code>AsyncLocalStorage</code>."</td></tr>
+      <tr><td>9</td><td>Leaky abstraction</td><td>ORM or SDK types outside the repository</td><td>"Return our type and map at the boundary, so a column rename touches one file."</td></tr>
+      <tr><td>10</td><td>Distributed monolith</td><td>Deploy together, shared DB, sync chains, shared domain library</td><td>"If these always ship together, what do we gain by keeping them apart?"</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">
+    <p>الـ artifact بتاع القسم: كل صف anti-pattern وعلامته والـ comment بتاعه.</p>
+    <p><b>1) God object/module:</b> العلامة <code>max-lines</code> و <code>max-params</code> وأعلى fan-in و churn عالي. الـ comment: "ده بيتغير لتلات أسباب؛ ممكن الـ billing يطلع في PR لوحده؟"</p>
+    <p><b>2) Anemic model:</b> نفس القاعدة في 2+ services وبتختلف. الـ comment: "القاعدة دي في X وبتختلف، ننقلها لـ <code>Order.canRefund()</code>؟" ولو CRUD فعلًا سيبها.</p>
+    <p><b>3) Spaghetti / lava flow:</b> <code>max-depth</code> و <code>complexity</code> وقايمة knip. الـ comment: "guard clauses هتفرد ده." أو "ضيف metric للاستخدام release وبعدين امسح."</p>
+    <p><b>4) Golden hammer:</b> tool اتاختارت قبل ما المشكلة تتكتب. الـ comment: "إيه المشكلة النهارده اللي الأبسط مش قادر عليها؟"</p>
+    <p><b>5) Premature abstraction:</b> interface بـ implementer واحد من غير سبب vendor أو fake. الـ comment: "مين الـ implementer التاني؟ لو لسه مفيش، شيلها."</p>
+    <p><b>6) Copy-paste و magic و booleans:</b> jscpd و <code>no-magic-numbers</code> و <code>f(x, true, false)</code>. الـ comment: "النسخ دي لازم تتغير مع بعض؟" أو "سمّي الرقم ده." أو "options object؟"</p>
+    <p><b>7) Async hell:</b> <code>no-await-in-loop</code> و <code>.then</code> متداخلة. الـ comment: "ده sequential بقصد؟ لو آه اكتب ليه، لو لأ <code>Promise.all</code> بـ limit."</p>
+    <p><b>8) Singleton / global state:</b> <code>let</code> على مستوى الـ module فيه data بتاعة request. الـ comment: "ده state لكل request في متغير عام؛ استخدم <code>AsyncLocalStorage</code>."</p>
+    <p><b>9) Leaky abstraction:</b> ORM أو SDK types بره الـ repository. الـ comment: "رجّع النوع بتاعنا واعمل map عند الحدود، عشان الـ rename يلمس ملف واحد."</p>
+    <p><b>10) Distributed monolith:</b> نشر مع بعض و DB مشتركة وسلاسل sync و domain library مشتركة. الـ comment: "لو دول دايمًا بيطلعوا مع بعض، إيه المكسب من فصلهم؟"</p>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question: "You join a codebase with a 2,000-line utils.ts and lots of duplication. Where do you start?"</b>
+    Don't start by refactoring. Measure first: run madge for fan-in, get churn from git, jscpd for duplicates, knip for dead code. The hot spots are files with high churn <em>and</em> high fan-in; a big file nobody touches can wait. Delete what's provably dead first, as the cheapest win. Then split the hottest module by concern in small PRs with tests in place, never mixed with features. And keep the rule enforced in CI so it doesn't grow back.
+    <div class="ar-note">السؤال: "دخلت على codebase فيها <code>utils.ts</code> بـ 2000 سطر وتكرار كتير. تبدأ منين؟" الإجابة: متبدأش بـ refactoring. قيس الأول: madge للـ fan-in، و churn من git، و jscpd للتكرار، و knip للكود الميت. الأماكن الساخنة هي الملفات اللي الـ churn <em>والـ</em> fan-in بتوعها عاليين؛ الملف الكبير اللي محدش بيلمسه يستنى. امسح الميت المؤكد الأول لأنه أرخص مكسب. وبعدين قسّم أسخن module بالـ concern في PRs صغيرة والـ tests موجودة، ومش مخلوطة بـ features. وثبّت القاعدة في الـ CI عشان متكبرش تاني.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question: "How do you give review feedback on an anti-pattern without it becoming a style argument?"</b>
+    Tie it to a cost and a number, not to taste: "this rule exists in 3 services and they already disagree on the 30-day boundary", not "this is anemic". Say what it costs (a bug, a merge conflict, a release coupled to another team), propose the smallest fix, and say when it's fine to leave it. And separate blocking from non-blocking comments, so the author knows what must change.
+    <div class="ar-note">السؤال: "إزاي تدّي feedback على anti-pattern من غير ما يتحول لخناقة ذوق؟" الإجابة: اربطه بتكلفة ورقم مش بذوق: "القاعدة دي في 3 services واختلفوا فعلًا في حد الـ 30 يوم"، مش "ده anemic". قول بيكلّف إيه (bug أو merge conflict أو release مربوط بـ team تاني)، واقترح أصغر حل، وقول إمتى عادي يتساب. وافصل الـ comments اللي blocking عن اللي non-blocking، عشان الـ author يعرف إيه اللي لازم يتغير.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+  <div class="compare">
+    <div class="bad"><b>❌ Turning a size rule off everywhere</b>
+<pre><code class="language-javascript">// الـ rule اتطفت عشان ملف واحد متولّد
+{ rules: { "max-lines": "off" } }</code></pre></div>
+    <div class="good"><b>✅ Exempt only the generated folder</b>
+<pre><code class="language-javascript">// الاستثناء محدد، والـ rule لسه شغالة على الباقي
+{ files: ["src/data/**/*.ts"], rules: { "max-lines": "off" } }</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ لما ملف متولّد يكسر الـ <code>max-lines</code>، الناس بتطفي القاعدة كلها، فالـ god module الجاي يعدّي من غير حد ما يحس. ✅ استثني المسار بتاع الـ generated بس، وسيب القاعدة شغالة على الكود اللي بني آدم بيكتبه.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Deleting whatever the tool lists</b>
+<pre><code class="language-bash"># كده الـ exporters اتمسحت وهي شغالة في production
+xargs rm &lt; knip-unused-files.txt</code></pre></div>
+    <div class="good"><b>✅ Declare dynamic entries, then verify</b>
+<pre><code class="language-json">{ "entry": ["src/index.ts", "src/export/exporters/*.ts"] }</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ knip بيقول "unused" عن أي حاجة بتتحمّل بـ <code>import()</code> باسم متركّب وقت التشغيل، فلو مسحت القايمة زي ما هي، الـ CSV export بيقع في production. ✅ ضيف الـ entries الديناميكية في الـ config، وبعدين امسح اللي فاضل، ولو مش متأكد سجّل الاستخدام release كامل.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Extracting a shared function at the second copy</b>
+<pre><code class="language-typescript">// كل caller جديد بيزود flag
+formatLine(name, cents, true, false, false, false);</code></pre></div>
+    <div class="good"><b>✅ Keep it simple until the shape is known</b>
+<pre><code class="language-typescript">// الحالات المختلفة ليها functions بأسماء
+creditLine(name, cents);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ لما تستخرج function مشتركة بدري قبل ما الشكل يبان، كل caller جديد بيزود flag، و 4 booleans معناها 16 تركيبة ومحدش مختبرهم كلهم. ✅ سيب التكرار القليل لحد ما يبان اللي مشترك فعلًا، وادّي كل حالة اسم بيقول هي إيه.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A blanket <code>eslint-disable</code> with no reason</b>
+<pre><code class="language-typescript">// eslint-disable-next-line no-await-in-loop
+for (const id of ids) await charge(id);</code></pre></div>
+    <div class="good"><b>✅ Disable with the reason, or fix it</b>
+<pre><code class="language-typescript">// eslint-disable-next-line no-await-in-loop -- each page needs the previous cursor
+const page = await fetchPage(cursor);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>eslint-disable</code> من غير سبب بيقول "مش عارف ليه بس اسكت"، واللي بعدك مش هيعرف هل ده مقصود. ✅ اكتب السبب بعد <code>--</code> في نفس السطر، ولو مفيش سبب حقيقي يبقى صلّح الـ loop بـ <code>Promise.all</code>.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Churn on your own repo <span class="lvl lvl-1">🟢 easy</span></b>
+    Find your 5 most-changed files from <code>git log</code>, then check which of them also have high fan-in with madge. Those are your real hot spots.
+    <div class="ar-note">هات أكتر 5 ملفات اتغيرت عندك من <code>git log</code>، وبعدين شوف مين فيهم الـ fan-in بتاعه عالي بـ madge. دول الأماكن الساخنة الحقيقية عندك.</div>
+    <details><summary>Hint · تلميح</summary>
+      Run this in your own repo (not run here, this lesson doesn't touch git): <code>git log --since="6 months ago" --format= --name-only | sort | uniq -c | sort -rn | head -5</code>
+      <div class="ar-note">شغّل الأمر ده في الـ repo بتاعك (مش متشغل هنا، الدرس ده مبيلمسش git). الأمر بيطلّع كل الملفات اللي اتغيرت في آخر 6 شهور، ويعدهم، ويرتبهم من الأكتر للأقل.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. Name the magic numbers <span class="lvl lvl-2">🟡 medium</span></b>
+    Rewrite <code>discount.ts</code> so <code>no-magic-numbers</code> passes with only <code>0</code>, <code>1</code> and <code>-1</code> ignored. Note: <code>365 * DAY_MS</code> in a <code>const</code> is still flagged, because the rule only allows a number as the direct value of the <code>const</code>.
+    <div class="ar-note">اكتب <code>discount.ts</code> من تاني بحيث <code>no-magic-numbers</code> يعدّي مع تجاهل <code>0</code> و <code>1</code> و <code>-1</code> بس. وخد بالك: <code>365 * DAY_MS</code> جوه <code>const</code> بتتمسك برضه، لأن القاعدة بتسمح بالرقم كقيمة مباشرة للـ <code>const</code> بس.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/magic/discount.ts"><code class="language-typescript">const DAY_MS = 86_400_000;
+const LOYAL_DAYS = 365;
+const LOYAL_AGE_MS = LOYAL_DAYS * DAY_MS;
+const GOLD_RATE = 0.15;
+const BULK_MIN_CENTS = 500_000;
+const BULK_RATE = 0.05;
+
+// الأسماء بتقول الـ business rule، و ESLint بقى ساكت
+export function discountFor(tier: string, totalCents: number, ageMs: number): number {
+  if (tier === "gold" &amp;&amp; ageMs &gt; LOYAL_AGE_MS) return Math.round(totalCents * GOLD_RATE);
+  if (totalCents &gt; BULK_MIN_CENTS) return Math.round(totalCents * BULK_RATE);
+  return 0;
+}</code></pre>
+      <div class="ar-note">الملف ده عدّى ESLint بـ exit code صفر بعد ما سمّينا كل رقم، و <code>365</code> خد اسم لوحده الأول.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. Fix the VAT in one place <span class="lvl lvl-3">🔴 hard</span></b>
+    Make the three billing files share one <code>computeTotal</code>, so the failing test goes green and jscpd reports no clones. Then write one sentence explaining why these three should share code, when billing and shipping shouldn't.
+    <div class="ar-note">خلي ملفات الـ billing التلاتة يستخدموا <code>computeTotal</code> واحدة، عشان الـ test الفاشل يعدّي و jscpd يطلّع صفر clones. وبعدين اكتب جملة واحدة: ليه التلاتة دول لازم يتشاركوا الكود، بينما الـ billing والـ shipping لأ.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/billing/total.ts"><code class="language-typescript">export type Line = { cents: number; qty: number };
+export type Tenant = { vatExempt: boolean };
+
+const VAT_RATE = 0.14;
+const FREE_SHIPPING_ABOVE = 100_000;
+const SHIPPING_CENTS = 2500;
+
+// الحساب بقى في مكان واحد، فالـ fix الجاي مش ممكن ينسى نسخة
+export function computeTotal(lines: Line[], tenant: Tenant, discountCents: number): number {
+  const subtotal = lines.reduce((sum, line) =&gt; sum + line.cents * line.qty, 0);
+  const discounted = Math.max(subtotal - discountCents, 0);
+  const vat = tenant.vatExempt ? 0 : Math.round(discounted * VAT_RATE);
+  const shipping = discounted &gt; FREE_SHIPPING_ABOVE ? 0 : SHIPPING_CENTS;
+  return discounted + vat + shipping;
+}</code></pre>
+<pre data-file="src/billing/invoice.ts"><code class="language-typescript">export { computeTotal as invoiceTotal } from "./total.ts";</code></pre>
+<pre><code class="language-plaintext">✔ invoiceTotal: exempt tenant pays no VAT (0.5969ms)
+✔ quoteTotal: exempt tenant pays no VAT (0.0818ms)
+✔ creditNoteTotal: exempt tenant pays no VAT (0.0602ms)
+ℹ pass 3
+ℹ fail 0</code></pre>
+<pre><code class="language-plaintext">Found 0 clones.</code></pre>
+      <div class="ar-note">الـ test عدّى على الـ 3 و jscpd طلّع 0 clones. السبب: الفاتورة وعرض السعر و الـ credit note نفس الـ context ولازم يتغيروا مع بعض لما قاعدة الضريبة تتغير، أما الـ billing والـ shipping بيتغيروا لأسباب مختلفة.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project: run the checklist <span class="lvl lvl-3">🔴 project</span></b>
+    On your side project: run <code>npx knip</code>, <code>npx jscpd src</code> and madge. Pick the single worst finding, apply the Part 7 checklist to one real PR, and write the comment as you would for a colleague: the cost, the smallest fix, and when it's fine to leave it.
+    <div class="ar-note">في مشروعك الجانبي: شغّل <code>npx knip</code> و <code>npx jscpd src</code> و madge. اختار أسوأ نتيجة واحدة، وطبّق الـ checklist بتاع الجزء 7 على PR حقيقي، واكتب الـ comment زي ما هتكتبه لزميلك: التكلفة، وأصغر حل، وإمتى عادي يتساب.</div>
+    <details><summary>Hint · تلميح</summary>
+      Expect false positives on the first knip run: add your dynamic entries (job handlers, migrations) to its config before trusting the list.
+      <div class="ar-note">توقع نتايج غلط في أول run لـ knip: ضيف الـ entries الديناميكية (job handlers و migrations) في الـ config قبل ما تثق في القايمة.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>God object or module: find it with <code>max-lines</code>, <code>max-params</code> and madge fan-in. High churn plus high fan-in is the expensive combination. Generated code and data tables are fine.</li>
+    <li>Anemic model is fine for CRUD. The real sign: the same rule in several services, drifting apart.</li>
+    <li>Spaghetti: <code>max-depth</code> catches what <code>complexity</code> misses. Guard clauses, tests before and after.</li>
+    <li>Lava flow: knip lists it, but it can't see <code>import()</code> with a built path. Declare entries, log for a release, then delete.</li>
+    <li>Golden hammer: ask what problem we have today. Five sync services at 99.9% are ≈99.5%, about 44 hours down a year against 9.</li>
+    <li>Distributed monolith: deploy together, shared DB, sync chains, shared domain library.</li>
+    <li>Premature abstraction: count implementers, but a vendor boundary or a seam for a fake is justified. Duplication is cheaper than the wrong abstraction.</li>
+    <li>Copy-paste: jscpd finds clones, and the question is whether the copies must change together. Tune <code>no-magic-numbers</code>; replace boolean params with options or two functions.</li>
+    <li><code>await</code> in a loop is sequential: flag it, parallelise with a limit, or disable with a written reason.</li>
+    <li>Per-request state in a module variable leaks between tenants: use <code>AsyncLocalStorage</code>.</li>
+    <li>ORM types outside the repository are a leak: map at the boundary, and a rename touches one file.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ God object أو module: لاقيه بـ <code>max-lines</code> و <code>max-params</code> و fan-in من madge. الـ churn العالي مع الـ fan-in العالي هي التركيبة الغالية. والكود المتولّد وجداول الـ data عادي.</li>
+      <li>الـ Anemic model تمام للـ CRUD. والعلامة الحقيقية: نفس القاعدة في كذا service وبدأت تختلف.</li>
+      <li>الـ Spaghetti: <code>max-depth</code> بيمسك اللي <code>complexity</code> بتفوّته. استخدم guard clauses، و tests قبل وبعد.</li>
+      <li>الـ Lava flow: knip بيطلّعه، بس مش شايف <code>import()</code> بمسار متركّب. سجّل الـ entries، وراقب الاستخدام release، وبعدين امسح.</li>
+      <li>الـ Golden hammer: اسأل إيه المشكلة النهارده. خمسة services sync على 99.9% يعني ≈99.5%، حوالي 44 ساعة في السنة مقابل 9.</li>
+      <li>الـ Distributed monolith: نشر مع بعض، و DB مشتركة، وسلاسل sync، و domain library مشتركة.</li>
+      <li>الـ Premature abstraction: عد الـ implementers، بس حدود الـ vendor أو seam الـ fake ليهم مبرر. والتكرار أرخص من الـ abstraction الغلط.</li>
+      <li>الـ Copy-paste: jscpd بيلاقي النسخ، والسؤال هل لازم يتغيروا مع بعض. ظبط <code>no-magic-numbers</code>، وبدّل الـ boolean params بـ options أو two functions.</li>
+      <li>الـ <code>await</code> جوه loop معناه تسلسل: يا تصلحه بـ limit، يا تعمل disable بسبب مكتوب.</li>
+      <li>الـ state بتاع الـ request في متغير module بيسرّب بين الـ tenants: استخدم <code>AsyncLocalStorage</code>.</li>
+      <li>الـ ORM types بره الـ repository تسريب: اعمل map عند الحدود، والـ rename يبقى ملف واحد.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 10 · 2.8 — <b>God object / God module</b> (الـ <code>utils.ts</code> بـ 2000 سطر، الـ <code>UserService</code> بيعمل كل حاجة)</label>
+    <label><input type="checkbox" data-key="r2"> 10 · 2.8 — <b>Anemic domain model</b> (objects من غير behavior — كل الـ logic في services) — <b>ومتى مش مشكلة</b> (CRUD apps)</label>
+    <label><input type="checkbox" data-key="r3"> 10 · 2.8 — <b>Spaghetti code</b>، <b>lava flow</b> (كود محدش عارف بيعمل إيه ومحدش بيجرؤ يمسحه)</label>
+    <label><input type="checkbox" data-key="r4"> 10 · 2.8 — <b>Golden hammer</b> (microservices لكل حاجة، Redux لكل state، Kafka لكل queue)</label>
+    <label><input type="checkbox" data-key="r5"> 10 · 2.8 — <b>Premature abstraction</b> / speculative generality (interface بـ implementation واحدة "عشان ممكن نحتاج")</label>
+    <label><input type="checkbox" data-key="r6"> 10 · 2.8 — <b>Copy-paste programming</b>، <b>magic numbers/strings</b>، <b>boolean parameters</b> (<code>save(user, true, false)</code>)</label>
+    <label><input type="checkbox" data-key="r7"> 10 · 2.8 — <b>Callback hell</b> → promise hell (<code>.then</code> chains متداخلة) → <code>await</code> في loop غلط</label>
+    <label><input type="checkbox" data-key="r8"> 10 · 2.8 — <b>Singleton abuse</b> و global mutable state</label>
+    <label><input type="checkbox" data-key="r9"> 10 · 2.8 — <b>Leaky abstraction</b> (الـ repository بيرجع Prisma types للـ domain)</label>
+    <label><input type="checkbox" data-key="r10"> 10 · 2.8 — <b>Distributed monolith</b> (تفاصيله في Architecture)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://martinfowler.com/bliki/AnemicDomainModel.html">Martin Fowler — AnemicDomainModel</a></li>
+    <li><a href="https://sandimetz.com/blog/2016/1/20/the-wrong-abstraction">Sandi Metz — The Wrong Abstraction</a></li>
+    <li><a href="https://github.com/eslint/eslint/blob/main/docs/src/rules/complexity.md">ESLint docs — <code>complexity</code></a></li>
+    <li><a href="https://github.com/eslint/eslint/blob/main/docs/src/rules/no-await-in-loop.md">ESLint docs — <code>no-await-in-loop</code></a></li>
+    <li><a href="https://knip.dev/">knip docs</a> · <a href="https://github.com/pahen/madge">madge</a> · <a href="https://github.com/kucherenko/jscpd">jscpd</a></li>
+    <li><a href="https://nodejs.org/api/async_context.html">Node.js docs — AsyncLocalStorage</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <!-- ===== Prev / Next (use class="empty" on a span when there is no prev/next) ===== -->
+  <nav class="lesson-nav">
+    <a class="prev" href="./29-plugins-hooks-registry.html"><small>← Previous</small>29 · Plugins &amp; Hooks</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./31-refactoring-toward-patterns-1.html"><small>Next →</small>31 · Refactoring I</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

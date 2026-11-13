@@ -1,0 +1,2011 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Rate Limiter &amp; Idempotent Receiver as Code — 10 Design Patterns</title>
+<meta name="section" content="10-Design-Patterns">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">10 · Design Patterns</a></span>
+    <span>·</span>
+    <span>Lesson 24 / 35</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <header>
+    <h1>Rate Limiter &amp; Idempotent Receiver as Code</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 24 of 35 — Design Patterns</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">Node 22+ · TypeScript 7</span>
+      <span class="chip">Redis 8 · Postgres 18 · Express 5</span>
+      <span class="chip">Prereq: 23 Breaker &amp; Bulkhead</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>10 · 3.2 — Rate limiter كـ pattern: token bucket و sliding window كـ classes، in-memory ثم Redis</li>
+        <li>10 · 3.2 — Idempotent receiver: idempotency key storage + response replay — كـ middleware</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Token bucket as a class</a></li>
+      <li><a href="#p2">Part 2 — Sliding window</a></li>
+      <li><a href="#p3">Part 3 — Redis: making it atomic</a></li>
+      <li><a href="#p4">Part 4 — Idempotent receiver as middleware</a></li>
+      <li><a href="#p5">Part 5 — What still breaks</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A rate limiter decides who gets in, and an idempotent receiver makes sure the ones who get in twice only count once. Both look like ten lines until the second instance, the race, or the crash. In this lesson an in-memory limiter admitted 20 against a cap of 10, a GET-then-SET admitted 100 of 100, and a killed process moved money twice. Those are the bugs behind double charges and API abuse incidents, and they are standard senior interview material.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ rate limiter بيقرر مين يدخل، والـ idempotent receiver بيتأكد إن اللي دخل مرتين يتحسب مرة واحدة. الاتنين شكلهم عشر سطور لحد ما ييجي الـ instance التاني، أو الـ race، أو الـ crash. في الدرس ده limiter في الـ memory قبل 20 مع إن الحد 10، و GET ثم SET قبل 100 من 100، و process اتقتل حرّك فلوس مرتين. دي هي الـ bugs اللي ورا الخصم المزدوج وحوادث إساءة استخدام الـ API، وهي مادة ثابتة في interviews السنيور.</p>
+  </section>
+
+  <h2 id="p1">Part 1 — Token bucket as a class <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — الـ token bucket كـ class</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A token bucket holds up to <code>capacity</code> tokens and earns <code>refillPerSecond</code> tokens over time. A request spends tokens or is refused. That gives two separate promises: a burst of up to <code>capacity</code>, and a long-run rate of <code>refillPerSecond</code>. Refill is <b>lazy</b>: instead of a timer per key, each call computes what was earned since the last call. A million idle keys cost no CPU. The clock is injected, so tests assert exact times: a burst of 10, the 11th refused with <code>retryAfterMs: 500</code>, one token back at exactly 500 ms.</p>
+    <p>One bucket isn't a limiter; you need one per tenant or API key. A plain <code>Map</code> grows forever, and measured here 1,000,000 keys cost 163 MB of heap. Evict with an LRU: a <code>Map</code> keeps insertion order, so deleting and re-inserting on each access keeps the oldest key first, and 10,000 keys cost 2.3 MB. Eviction has a price: an evicted key comes back with a full bucket, so make <code>maxKeys</code> larger than your active key count.</p>
+    <p>The middleware returns <code>429</code> with <code>Retry-After</code>, rounded up to whole seconds so a client that obeys it doesn't return early. <b>Not when:</b> internal calls between services you own. There you don't want to refuse a known caller at a fixed rate, you want to protect the callee from concurrency, which is a <a href="./23-circuit-breaker-bulkhead-composition.html#p4">bulkhead</a>.</p>
+  </section>
+
+<pre class="diagram">
+   refill: +2 tokens per second, computed lazily on each call
+          |
+          v
+   +--------------+   tryRemove(1)   tokens &gt;= 1 : allowed
+   |  capacity 10 | ---------------&gt; tokens &lt;  1 : 429 + Retry-After
+   |  tokens: 3.5 |
+   +--------------+
+
+   burst: up to 10 at once.  long run: 2 per second.
+</pre>
+  <div class="ar-note">الـ bucket فيه لحد 10 tokens، وبيكسب 2 في الثانية، والحساب بيحصل وقت الطلب نفسه. كل طلب بيسحب token: لو موجود يعدي، ولو مش موجود يرجع 429 و Retry-After. يعني burst لحد 10 مرة واحدة، والمعدل على المدى الطويل 2 في الثانية.</div>
+
+<pre data-file="src/limits/token-bucket.ts"><code class="language-typescript">export interface Decision {
+  allowed: boolean;
+  retryAfterMs: number;
+  remaining: number;
+}
+
+export interface TokenBucketOptions {
+  capacity: number;
+  refillPerSecond: number;
+  // الساعة بتتحقن عشان الـ test يبقى على أوقات مظبوطة من غير sleep
+  now?: () =&gt; number;
+}
+
+export class TokenBucket {
+  #tokens: number;
+  #lastRefill: number;
+  #capacity: number;
+  #rate: number;
+  #now: () =&gt; number;
+
+  constructor(options: TokenBucketOptions) {
+    this.#capacity = options.capacity;
+    this.#rate = options.refillPerSecond;
+    this.#now = options.now ?? Date.now;
+    this.#tokens = options.capacity;
+    this.#lastRefill = this.#now();
+  }
+
+  tryRemove(n = 1): Decision {
+    // الـ refill بيتحسب وقت الطلب بس، فمفيش setInterval لكل key
+    const now = this.#now();
+    const earned = ((now - this.#lastRefill) / 1000) * this.#rate;
+    this.#tokens = Math.min(this.#capacity, this.#tokens + earned);
+    this.#lastRefill = now;
+
+    if (n &gt; this.#capacity) return { allowed: false, retryAfterMs: Infinity, remaining: Math.floor(this.#tokens) };
+    if (this.#tokens &gt;= n) {
+      this.#tokens -= n;
+      return { allowed: true, retryAfterMs: 0, remaining: Math.floor(this.#tokens) };
+    }
+    const retryAfterMs = Math.ceil(((n - this.#tokens) / this.#rate) * 1000);
+    return { allowed: false, retryAfterMs, remaining: Math.floor(this.#tokens) };
+  }
+}
+
+export interface KeyedOptions extends TokenBucketOptions {
+  maxKeys: number;
+}
+
+export class KeyedTokenBuckets {
+  // الـ Map بتحفظ ترتيب الإضافة، فأول key فيها هو الأقدم استخدامًا
+  #buckets = new Map&lt;string, TokenBucket&gt;();
+  #o: KeyedOptions;
+
+  constructor(options: KeyedOptions) {
+    this.#o = options;
+  }
+
+  get size(): number {
+    return this.#buckets.size;
+  }
+
+  check(key: string, n = 1): Decision {
+    let bucket = this.#buckets.get(key);
+    if (bucket) {
+      this.#buckets.delete(key);
+    } else {
+      bucket = new TokenBucket(this.#o);
+      if (this.#buckets.size &gt;= this.#o.maxKeys) {
+        this.#buckets.delete(this.#buckets.keys().next().value!);
+      }
+    }
+    this.#buckets.set(key, bucket);
+    return bucket.tryRemove(n);
+  }
+}
+</code></pre>
+<pre data-file="src/limits/token-bucket.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { KeyedTokenBuckets, TokenBucket } from "./token-bucket.ts";
+
+function clocked() {
+  let t = 0;
+  return { now: () =&gt; t, set: (ms: number) =&gt; void (t = ms) };
+}
+
+test("burst of 10, then the 11th is refused with an exact wait", () =&gt; {
+  const c = clocked();
+  const bucket = new TokenBucket({ capacity: 10, refillPerSecond: 2, now: c.now });
+  for (let i = 0; i &lt; 10; i++) assert.equal(bucket.tryRemove().allowed, true);
+  assert.deepEqual(bucket.tryRemove(), { allowed: false, retryAfterMs: 500, remaining: 0 });
+});
+
+test("half a token at 250ms is still refused, one token at 500ms passes", () =&gt; {
+  const c = clocked();
+  const bucket = new TokenBucket({ capacity: 10, refillPerSecond: 2, now: c.now });
+  for (let i = 0; i &lt; 10; i++) bucket.tryRemove();
+  c.set(250);
+  assert.deepEqual(bucket.tryRemove(), { allowed: false, retryAfterMs: 250, remaining: 0 });
+  c.set(500);
+  assert.equal(bucket.tryRemove().allowed, true);
+  assert.equal(bucket.tryRemove().allowed, false);
+});
+
+test("sustained rate is 2 per second after the burst", () =&gt; {
+  const c = clocked();
+  const bucket = new TokenBucket({ capacity: 10, refillPerSecond: 2, now: c.now });
+  for (let i = 0; i &lt; 10; i++) bucket.tryRemove();
+  let admitted = 0;
+  for (let ms = 100; ms &lt;= 10_000; ms += 100) {
+    c.set(ms);
+    if (bucket.tryRemove().allowed) admitted++;
+  }
+  assert.equal(admitted, 20);
+});
+
+test("an idle bucket never holds more than capacity", () =&gt; {
+  const c = clocked();
+  const bucket = new TokenBucket({ capacity: 10, refillPerSecond: 2, now: c.now });
+  bucket.tryRemove();
+  c.set(3_600_000);
+  assert.equal(bucket.tryRemove(10).allowed, true);
+  assert.equal(bucket.tryRemove().allowed, false);
+});
+
+test("a cost above capacity can never succeed", () =&gt; {
+  const bucket = new TokenBucket({ capacity: 10, refillPerSecond: 2, now: () =&gt; 0 });
+  assert.deepEqual(bucket.tryRemove(11), { allowed: false, retryAfterMs: Infinity, remaining: 10 });
+});
+
+test("keys are isolated and the least recently used key is evicted", () =&gt; {
+  const limiter = new KeyedTokenBuckets({ capacity: 1, refillPerSecond: 1, now: () =&gt; 0, maxKeys: 2 });
+  assert.equal(limiter.check("tenant-a").allowed, true);
+  assert.equal(limiter.check("tenant-a").allowed, false);
+  assert.equal(limiter.check("tenant-b").allowed, true);
+  limiter.check("tenant-a");
+  limiter.check("tenant-c");
+  assert.equal(limiter.size, 2);
+  // المفتاح ده اتشال، فرجع برصيد كامل: ده ثمن الـ eviction
+  assert.equal(limiter.check("tenant-b").allowed, true);
+});
+</code></pre>
+
+<pre><code class="language-plaintext">✔ burst of 10, then the 11th is refused with an exact wait (1.0485ms)
+✔ half a token at 250ms is still refused, one token at 500ms passes (0.1279ms)
+✔ sustained rate is 2 per second after the burst (0.1709ms)
+✔ an idle bucket never holds more than capacity (0.0824ms)
+✔ a cost above capacity can never succeed (0.0935ms)
+✔ keys are isolated and the least recently used key is evicted (0.1463ms)
+ℹ tests 6
+ℹ pass 6
+ℹ fail 0
+</code></pre>
+  <div class="ar-note">الـ tests الستة نجحوا بساعة محقونة: الـ burst، والانتظار المظبوط، والمعدل الثابت، والسقف بعد فترة خمول، وطلب أغلى من الـ capacity، وعزل الـ keys مع الـ LRU.</div>
+
+<pre data-file="src/limits/memory.ts"><code class="language-typescript">import { KeyedTokenBuckets, TokenBucket } from "./token-bucket.ts";
+
+const gc = (globalThis as unknown as { gc: () =&gt; void }).gc;
+const heapMb = () =&gt; {
+  gc();
+  return process.memoryUsage().heapUsed / 1e6;
+};
+const KEYS = 1_000_000;
+const options = { capacity: 10, refillPerSecond: 2 };
+
+// ❌ غلطة: Map من غير حد، وكل API key جديد بيفضل فيها للأبد
+const before = heapMb();
+const leaky = new Map&lt;string, TokenBucket&gt;();
+for (let i = 0; i &lt; KEYS; i++) {
+  const bucket = new TokenBucket(options);
+  bucket.tryRemove();
+  leaky.set(`tenant:${i}`, bucket);
+}
+const afterLeaky = heapMb();
+console.log(`unbounded Map: ${leaky.size} keys, ${(afterLeaky - before).toFixed(0)} MB`);
+leaky.clear();
+
+// ✅ الإصلاح: نفس عدد الـ keys، بس بحد أقصى و LRU
+const base = heapMb();
+const bounded = new KeyedTokenBuckets({ ...options, maxKeys: 10_000 });
+for (let i = 0; i &lt; KEYS; i++) bounded.check(`tenant:${i}`);
+console.log(`LRU maxKeys=10000: ${bounded.size} keys, ${(heapMb() - base).toFixed(1)} MB`);
+</code></pre>
+
+<pre><code class="language-bash">node --expose-gc src/limits/memory.ts
+</code></pre>
+<pre><code class="language-plaintext">unbounded Map: 1000000 keys, 163 MB
+LRU maxKeys=10000: 10000 keys, 2.3 MB
+</code></pre>
+  <div class="ar-note">مليون key من غير حد أكلوا 163 MB، وده بيكبر طول ما الـ process شغال. نفس المليون مع LRU حده 10000 فضلوا عند 2.3 MB.</div>
+
+<pre data-file="src/limits/express-limit.ts"><code class="language-typescript">import type { AddressInfo } from "node:net";
+import express, { type RequestHandler } from "express";
+import { KeyedTokenBuckets } from "./token-bucket.ts";
+
+function rateLimit(limiter: KeyedTokenBuckets, keyOf: (req: express.Request) =&gt; string): RequestHandler {
+  return (req, res, next) =&gt; {
+    const decision = limiter.check(keyOf(req));
+    res.setHeader("X-RateLimit-Remaining", String(decision.remaining));
+    if (decision.allowed) return next();
+    // الـ Retry-After بالثواني الصحيحة، ودايمًا لفوق عشان الـ client ميرجعش بدري
+    res.setHeader("Retry-After", String(Math.ceil(decision.retryAfterMs / 1000)));
+    res.status(429).json({ code: "RATE_LIMITED", retryAfterMs: decision.retryAfterMs });
+  };
+}
+
+const limiter = new KeyedTokenBuckets({ capacity: 3, refillPerSecond: 1, maxKeys: 100_000 });
+const app = express();
+app.use(rateLimit(limiter, (req) =&gt; String(req.headers["x-tenant-id"] ?? req.ip)));
+app.get("/orders", (_req, res) =&gt; {
+  res.json({ orders: [] });
+});
+
+const server = app.listen(0, "127.0.0.1");
+await new Promise((r) =&gt; server.once("listening", r));
+const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/orders`;
+
+async function hit(tenant: string) {
+  const res = await fetch(url, { headers: { "x-tenant-id": tenant } });
+  return `${tenant}:${res.status} retry-after=${res.headers.get("retry-after") ?? "-"}`;
+}
+
+for (let i = 0; i &lt; 4; i++) console.log(await hit("acme"));
+console.log(await hit("globex"));
+server.close();
+</code></pre>
+
+<pre><code class="language-plaintext">acme:200 retry-after=-
+acme:200 retry-after=-
+acme:200 retry-after=-
+acme:429 retry-after=1
+globex:200 retry-after=-
+</code></pre>
+  <div class="ar-note">الـ tenant اسمه acme خد 3 طلبات، والرابع رجع 429 ومعاه <code>Retry-After: 1</code>. والـ tenant التاني globex مش متأثر، لأن كل tenant ليه bucket لوحده. السيرفر شغال على port 0.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ token bucket فيه لحد <code>capacity</code> tokens، وبيكسب <code>refillPerSecond</code> token مع الوقت. الطلب بيصرف tokens أو بيترفض. وده بيديك وعدين منفصلين: burst لحد <code>capacity</code>، ومعدل طويل المدى <code>refillPerSecond</code>. الـ refill <b>lazy</b>: بدل timer لكل key، كل call بيحسب اللي اتكسب من آخر call. فمليون key واقف مبيكلفوش CPU. والساعة محقونة، فالـ tests بتأكد على أوقات مظبوطة: burst بـ 10، والطلب الـ 11 يترفض بـ <code>retryAfterMs: 500</code>، و token يرجع عند 500 ms بالظبط.</p>
+    <p>bucket واحد مش limiter، إنت محتاج واحد لكل tenant أو API key. <code>Map</code> عادية بتكبر للأبد، وقسنا هنا إن 1,000,000 key بياخدوا 163 MB من الـ heap. استخدم LRU: الـ <code>Map</code> بتحفظ ترتيب الإضافة، فلو عملت delete ثم set مع كل استخدام يفضل أقدم key في الأول، و 10,000 key بياخدوا 2.3 MB. والـ eviction ليها تمن: الـ key اللي اتشال بيرجع بـ bucket مليان، فخلي <code>maxKeys</code> أكبر من عدد الـ keys النشطة.</p>
+    <p>الـ middleware بيرجع <code>429</code> ومعاه <code>Retry-After</code>، مقرّب لفوق لثواني كاملة، عشان الـ client اللي بيحترمه ميرجعش بدري. <b>إمتى مش محتاجه:</b> الـ calls الداخلية بين services إنت اللي ماسكها. هناك إنت مش عايز ترفض caller معروف بمعدل ثابت، إنت عايز تحمي اللي بيستقبل من الـ concurrency، وده <a href="./23-circuit-breaker-bulkhead-composition.html#p4">bulkhead</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      API عامة بـ API keys: كل key ليه bucket مثلًا 100 burst و 10 في الثانية، عشان عميل واحد عامل loop غلط ميوقعش الباقي. ولو عندك endpoint <code>POST /reports/export</code> غالي، يخصم 5 tokens بدل واحد. والغلطة الشائعة: <code>Map</code> من غير حد، وفي يوم فيه crawler بيبدّل الـ keys الـ process تتقتل OOM.
+    </div>
+  </section>
+
+  <h2 id="p2">Part 2 — Sliding window <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — الـ sliding window</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A fixed window is the obvious counter: reset every minute. Its bug is the boundary. A limit of 100 per minute admits 100 in the last moments of one window and 100 in the first moments of the next: 200 requests in 200 ms, twice the limit, shown below. Two sliding forms fix this behind one interface.</p>
+    <p>A <b>sliding log</b> stores one timestamp per admitted request and counts those inside the window. It's exact, but memory grows with the limit, 100 numbers per key here. A <b>sliding counter</b> keeps only the previous and current window counts and estimates: <code>previous × (1 − elapsedFraction) + current</code>. It held the boundary too (101 in 200 ms) at 3 numbers per key. The cost is accuracy, because the formula assumes the previous window's traffic was evenly spread. When 100 requests all arrived at t=59.999 s, at t=119 s the exact answer is 0 more and the counter admitted 99. When they all arrived at t=0, the exact answer at t=90 s is 100 and the counter admitted 50. Cloudflare reports that across its real traffic <a href="https://blog.cloudflare.com/counting-things-a-lot-of-different-things/">0.003% of requests were wrongly allowed or limited</a>, because real traffic is spread out; the cases here are deliberately the worst ones.</p>
+    <p>Leaky bucket and the full algorithm comparison belong to <a href="../../12-System-Design/lessons/25-rate-limiting-algorithms-distributed.html">section 12 · 2.5</a>.</p>
+  </section>
+
+<pre class="diagram">
+ limit 100 per minute, fixed windows
+
+          window 1                     window 2
+ |-----------------------------|-----------------------------|
+ 0s                           60s                          120s
+                        100 reqs | 100 reqs
+                         59.9s  60.1s
+                         &lt;-- 200 in 200ms --&gt;
+</pre>
+  <div class="ar-note">حد 100 في الدقيقة بـ windows ثابتة: 100 طلب قبل نهاية الـ window الأولى بشوية، و 100 بعد بداية التانية بشوية، يعني 200 طلب في 200 ms، ضعف الحد، والعدّاد شايف كل واحدة لوحدها سليمة.</div>
+
+<pre data-file="src/limits/sliding.ts"><code class="language-typescript">export interface WindowLimiter {
+  tryAcquire(now: number): boolean;
+  // عدد الأرقام اللي الـ limiter محتفظ بيها للـ key الواحد
+  storedNumbers(): number;
+}
+
+export class FixedWindow implements WindowLimiter {
+  #limit: number;
+  #windowMs: number;
+  #windowStart = 0;
+  #count = 0;
+  constructor(limit: number, windowMs: number) {
+    this.#limit = limit;
+    this.#windowMs = windowMs;
+  }
+  tryAcquire(now: number): boolean {
+    const start = Math.floor(now / this.#windowMs) * this.#windowMs;
+    if (start !== this.#windowStart) {
+      this.#windowStart = start;
+      this.#count = 0;
+    }
+    if (this.#count &gt;= this.#limit) return false;
+    this.#count++;
+    return true;
+  }
+  storedNumbers(): number {
+    return 2;
+  }
+}
+
+export class SlidingLog implements WindowLimiter {
+  #limit: number;
+  #windowMs: number;
+  // بنخزن timestamp لكل طلب اتقبل، فالـ memory بتكبر مع الـ limit
+  #log: number[] = [];
+  constructor(limit: number, windowMs: number) {
+    this.#limit = limit;
+    this.#windowMs = windowMs;
+  }
+  tryAcquire(now: number): boolean {
+    let expired = 0;
+    while (expired &lt; this.#log.length &amp;&amp; this.#log[expired]! &lt;= now - this.#windowMs) expired++;
+    if (expired &gt; 0) this.#log.splice(0, expired);
+    if (this.#log.length &gt;= this.#limit) return false;
+    this.#log.push(now);
+    return true;
+  }
+  storedNumbers(): number {
+    return this.#log.length;
+  }
+}
+
+export class SlidingCounter implements WindowLimiter {
+  #limit: number;
+  #windowMs: number;
+  #currentStart = 0;
+  #current = 0;
+  #previous = 0;
+  constructor(limit: number, windowMs: number) {
+    this.#limit = limit;
+    this.#windowMs = windowMs;
+  }
+  tryAcquire(now: number): boolean {
+    const start = Math.floor(now / this.#windowMs) * this.#windowMs;
+    if (start !== this.#currentStart) {
+      // لو فات أكتر من window كامل، الـ previous كمان بقى صفر
+      this.#previous = start - this.#currentStart === this.#windowMs ? this.#current : 0;
+      this.#current = 0;
+      this.#currentStart = start;
+    }
+    const elapsedFraction = (now - start) / this.#windowMs;
+    const estimate = this.#previous * (1 - elapsedFraction) + this.#current;
+    if (estimate &gt;= this.#limit) return false;
+    this.#current++;
+    return true;
+  }
+  storedNumbers(): number {
+    return 3;
+  }
+}
+</code></pre>
+<pre data-file="src/limits/boundary.ts"><code class="language-typescript">import { FixedWindow, SlidingCounter, SlidingLog, type WindowLimiter } from "./sliding.ts";
+
+const LIMIT = 100;
+const WINDOW = 60_000;
+
+function burst(l: WindowLimiter, at: number, n: number): number {
+  let admitted = 0;
+  for (let i = 0; i &lt; n; i++) if (l.tryAcquire(at)) admitted++;
+  return admitted;
+}
+
+const makers = {
+  fixed: () =&gt; new FixedWindow(LIMIT, WINDOW),
+  "sliding log": () =&gt; new SlidingLog(LIMIT, WINDOW),
+  "sliding counter": () =&gt; new SlidingCounter(LIMIT, WINDOW),
+};
+
+console.log("A: boundary burst, 100 at t=59.9s and 100 at t=60.1s (limit 100/min)");
+for (const [name, make] of Object.entries(makers)) {
+  const l = make();
+  const first = burst(l, 59_900, 100);
+  const second = burst(l, 60_100, 100);
+  console.log(`  ${name.padEnd(16)} ${first} + ${second} = ${first + second} in 200ms, stored numbers: ${l.storedNumbers()}`);
+}
+
+console.log("B: where the counter is only an estimate");
+for (const [name, make] of Object.entries(makers)) {
+  const l = make();
+  // الـ 100 طلب في آخر الـ window الأولى، يعني لسه جوه آخر 60 ثانية
+  burst(l, 59_999, 100);
+  const late = burst(l, 119_000, 100);
+  console.log(`  ${name.padEnd(16)} 100 at t=59.999s, then at t=119s admitted ${late}`);
+}
+
+console.log("C: traffic early in the previous window");
+for (const [name, make] of Object.entries(makers)) {
+  const l = make();
+  burst(l, 0, 100);
+  const later = burst(l, 90_000, 100);
+  console.log(`  ${name.padEnd(16)} 100 at t=0, then at t=90s admitted ${later}`);
+}
+</code></pre>
+
+<pre><code class="language-plaintext">A: boundary burst, 100 at t=59.9s and 100 at t=60.1s (limit 100/min)
+  fixed            100 + 100 = 200 in 200ms, stored numbers: 2
+  sliding log      100 + 0 = 100 in 200ms, stored numbers: 100
+  sliding counter  100 + 1 = 101 in 200ms, stored numbers: 3
+B: where the counter is only an estimate
+  fixed            100 at t=59.999s, then at t=119s admitted 100
+  sliding log      100 at t=59.999s, then at t=119s admitted 0
+  sliding counter  100 at t=59.999s, then at t=119s admitted 99
+C: traffic early in the previous window
+  fixed            100 at t=0, then at t=90s admitted 100
+  sliding log      100 at t=0, then at t=90s admitted 100
+  sliding counter  100 at t=0, then at t=90s admitted 50
+</code></pre>
+  <div class="ar-note">في A: الـ fixed عدّى 200، والـ log عدّى 100 بالظبط، والـ counter عدّى 101، وبيخزن 3 أرقام بس. في B: كل الـ 100 لسه جوه آخر 60 ثانية، فالإجابة الصح صفر والـ log قال صفر والـ counter عدّى 99. في C: الـ 100 خرجوا من الـ window، فالـ log عدّى 100 والـ counter عدّى 50 بس. يعني الـ counter تقديري في الاتجاهين.</div>
+
+  <table>
+    <thead><tr><th></th><th>Burst</th><th>Memory per key</th><th>Accuracy</th></tr></thead>
+    <tbody>
+      <tr><td>Fixed window</td><td>2× limit around the boundary</td><td>2 numbers</td><td>wrong at the boundary</td></tr>
+      <tr><td>Token bucket</td><td>up to capacity, by design</td><td>2 numbers</td><td>exact for its own model</td></tr>
+      <tr><td>Sliding log</td><td>none beyond the limit</td><td>1 timestamp per admitted request</td><td>exact</td></tr>
+      <tr><td>Sliding counter</td><td>about the limit</td><td>3 numbers</td><td>estimate, off by up to about the limit in the worst case</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">صف بصف. الـ fixed window: burst ضعف الحد عند الحدود، رقمين في الذاكرة، وغلط عند الحدود. الـ token bucket: burst لحد الـ capacity وده مقصود، رقمين، ودقيق بالنسبة لنموذجه. الـ sliding log: مفيش burst فوق الحد، timestamp لكل طلب اتقبل، ودقيق. الـ sliding counter: حوالي الحد، 3 أرقام، وتقديري وممكن يغلط بحوالي الحد في أسوأ حالة.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ fixed window هو العدّاد البديهي: يتصفر كل دقيقة. والـ bug بتاعه عند الحدود. حد 100 في الدقيقة بيقبل 100 في آخر لحظات الـ window و 100 في أول لحظات اللي بعدها: 200 طلب في 200 ms، ضعف الحد، زي ما شوفت فوق. فيه شكلين sliding بيحلوا ده ورا interface واحدة.</p>
+    <p>الـ <b>sliding log</b> بيخزن timestamp لكل طلب اتقبل وبيعد اللي جوه الـ window. دقيق، بس الـ memory بتكبر مع الحد، 100 رقم لكل key هنا. الـ <b>sliding counter</b> بيخزن عدّاد الـ window اللي فاتت واللي دلوقتي بس وبيقدّر: <code>previous × (1 − elapsedFraction) + current</code>. ده مسك الحدود كمان (101 في 200 ms) بـ 3 أرقام لكل key. والتمن هو الدقة، لأن المعادلة بتفترض إن ترافيك الـ window اللي فاتت كان متوزع بالتساوي. لما 100 طلب جم كلهم عند t=59.999 s، الإجابة الصح عند t=119 s إن مفيش زيادة، والـ counter عدّى 99. ولما جم كلهم عند t=0، الإجابة الصح عند t=90 s إن 100 يعدوا، والـ counter عدّى 50. و Cloudflare بتقول إن على ترافيكها الحقيقي <a href="https://blog.cloudflare.com/counting-things-a-lot-of-different-things/">0.003% من الطلبات بس اتقبلت أو اترفضت غلط</a>، لأن الترافيك الحقيقي متوزع، والحالات اللي هنا مقصود إنها أسوأ حالات.</p>
+    <p>الـ leaky bucket والمقارنة الكاملة للـ algorithms مكانهم <a href="../../12-System-Design/lessons/25-rate-limiting-algorithms-distributed.html">section 12 · 2.5</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      <code>POST /login</code>: 5 محاولات في الدقيقة لكل حساب، هنا عايز دقة فـ sliding log مناسب، والعدد صغير فالـ memory مش مشكلة. أما API بـ 10,000 طلب في الدقيقة لكل tenant، الـ log هيبقى 10,000 رقم لكل tenant، فالـ sliding counter أو token bucket أحسن. والغلطة الشائعة: fixed window على endpoint حساس، فالمهاجم يوقّت الـ burst عند الحدود.
+    </div>
+  </section>
+
+  <h2 id="p3">Part 3 — Redis: making it atomic <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — Redis: نخليها atomic</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>In-memory limiters are per process, so two instances behind a load balancer admit twice the limit: 20 against a cap of 10 in the run below. Moving the counter to Redis doesn't fix it if you read and then write: with <code>GET</code> then <code>SET</code>, 100 concurrent requests all read a low number and all passed, 100 of 100 against a cap of 10. The check and the write must be one step. A Lua script through <code>EVAL</code> runs atomically on the server, and it admitted exactly 10 from two connections. <code>connectRedis()</code> here is a small local helper that connects to a private instance on a random port; in production use <code>defineCommand</code> or <code>EVALSHA</code> so the script isn't resent each time.</p>
+    <p>The token bucket and the sliding log move to Redis the same way. The bucket's script reads time from Redis <code>TIME</code>, not from the app, because app servers' clocks differ. Keys need a <code>PEXPIRE</code> so idle tenants disappear on their own, which replaces the LRU from Part 1. The sliding log is a sorted set scored by time: <code>ZREMRANGEBYSCORE</code> trims it, <code>ZCARD</code> counts it. The added latency was ≈0.10 ms p50 and ≈0.23 ms p99 over 2000 sequential calls, against a local Windows build on a loaded machine; a real network adds its own round trip.</p>
+    <p><b>When Redis is down</b> you must decide per endpoint, in advance. Use a short client timeout, because a limiter that blocks for seconds is worse than no limiter. Then choose: <b>fail open</b> for reads like <code>/products</code>, because availability beats a brief loss of limiting; <b>fail closed</b> for <code>/login</code> or a costly operation, because the limit is the security control. <code>CLIENT PAUSE</code> froze Redis for 400 ms below and both paths took about 64 ms.</p>
+    <p>In production you'd use a library. <code>rate-limiter-flexible</code> 11.2.4 runs on Redis and has an in-memory <code>insuranceLimiter</code> for when Redis fails; <code>express-rate-limit</code> 8.7.3 is the simple middleware, covered in <a href="../../06-NodeJS/lessons/26-api-security-essentials.html#p2">Node lesson 26, Part 2</a>. On Redis Cluster, every key a script touches must be declared in <code>KEYS</code> and live in one slot, so use a hash tag such as <code>{acme}</code>. A small local limiter in front of the global one absorbs floods and saves round trips. Both are covered in <a href="../../12-System-Design/lessons/25-rate-limiting-algorithms-distributed.html">section 12 · 2.5</a>, and Redis limiters at scale in <a href="../../09-Databases/lessons/36-caching-sessions-rate-limits.html">section 09 · 3.5</a>.</p>
+  </section>
+
+<pre data-file="src/limits/redis-limiters.ts"><code class="language-typescript">import type { Redis } from "ioredis";
+
+// الـ script كله بيتنفذ كخطوة واحدة، ومفيش command تاني يدخل في النص
+const CAPPED_COUNTER = `
+local used = tonumber(redis.call('GET', KEYS[1]) or '0')
+if used &gt;= tonumber(ARGV[1]) then return 0 end
+redis.call('INCR', KEYS[1])
+redis.call('PEXPIRE', KEYS[1], ARGV[2])
+return 1`;
+
+export async function atomicAdmit(redis: Redis, key: string, cap: number, windowMs: number): Promise&lt;boolean&gt; {
+  return (await redis.eval(CAPPED_COUNTER, 1, key, cap, windowMs)) === 1;
+}
+
+// الوقت من TIME بتاع Redis نفسه، عشان ساعات الـ app servers ممكن تختلف
+const TOKEN_BUCKET = `
+local capacity = tonumber(ARGV[1])
+local rate = tonumber(ARGV[2])
+local cost = tonumber(ARGV[3])
+local time = redis.call('TIME')
+local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+local state = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+local tokens = tonumber(state[1]) or capacity
+local ts = tonumber(state[2]) or now
+tokens = math.min(capacity, tokens + (now - ts) / 1000 * rate)
+local allowed, retry = 0, 0
+if tokens &gt;= cost then
+  tokens = tokens - cost
+  allowed = 1
+else
+  retry = math.ceil((cost - tokens) / rate * 1000)
+end
+redis.call('HSET', KEYS[1], 'tokens', tostring(tokens), 'ts', now)
+redis.call('PEXPIRE', KEYS[1], math.ceil(capacity / rate * 1000))
+return { allowed, retry, math.floor(tokens) }`;
+
+export interface RedisDecision {
+  allowed: boolean;
+  retryAfterMs: number;
+  remaining: number;
+}
+
+export async function tokenBucket(redis: Redis, key: string, capacity: number, perSecond: number, cost = 1): Promise&lt;RedisDecision&gt; {
+  const [allowed, retryAfterMs, remaining] = (await redis.eval(TOKEN_BUCKET, 1, key, capacity, perSecond, cost)) as [number, number, number];
+  return { allowed: allowed === 1, retryAfterMs, remaining };
+}
+
+// كل طلب member في الـ sorted set والـ score بتاعه هو الوقت
+const SLIDING_LOG = `
+local limit = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local time = redis.call('TIME')
+local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, now - window)
+local used = redis.call('ZCARD', KEYS[1])
+if used &gt;= limit then
+  local oldest = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+  return { 0, tonumber(oldest[2]) + window - now, 0 }
+end
+redis.call('ZADD', KEYS[1], now, ARGV[3])
+redis.call('PEXPIRE', KEYS[1], window)
+return { 1, 0, limit - used - 1 }`;
+
+export async function slidingLog(redis: Redis, key: string, limit: number, windowMs: number, requestId: string): Promise&lt;RedisDecision&gt; {
+  const [allowed, retryAfterMs, remaining] = (await redis.eval(SLIDING_LOG, 1, key, limit, windowMs, requestId)) as [number, number, number];
+  return { allowed: allowed === 1, retryAfterMs, remaining };
+}
+</code></pre>
+<pre data-file="src/limits/redis-race.ts"><code class="language-typescript">import { randomUUID } from "node:crypto";
+import { connectRedis } from "./lab.ts";
+import { atomicAdmit, slidingLog, tokenBucket } from "./redis-limiters.ts";
+import { KeyedTokenBuckets } from "./token-bucket.ts";
+
+const count = (flags: boolean[]) =&gt; flags.filter(Boolean).length;
+const CAP = 10;
+
+// (1) نسختين من الـ API، كل واحدة عندها limiter في الـ memory بتاعتها
+const instances = [1, 2].map(() =&gt; new KeyedTokenBuckets({ capacity: CAP, refillPerSecond: 0.0001, maxKeys: 100 }));
+let inMemory = 0;
+for (let i = 0; i &lt; 100; i++) {
+  if (instances[i % 2]!.check("tenant:acme").allowed) inMemory++;
+}
+console.log(`two in-memory limiters, cap ${CAP}: admitted ${inMemory}`);
+
+const redis = connectRedis();
+const other = connectRedis();
+await redis.flushdb();
+
+// ❌ غلطة: القراءة والكتابة في خطوتين، وبينهم طلبات تانية بتقرا نفس الرقم
+async function racyAdmit(key: string): Promise&lt;boolean&gt; {
+  const used = Number((await redis.get(key)) ?? 0);
+  if (used &gt;= CAP) return false;
+  await redis.set(key, used + 1, "PX", 60_000);
+  return true;
+}
+const racy = await Promise.all(Array.from({ length: 100 }, () =&gt; racyAdmit("racy:acme")));
+console.log(`GET then SET, cap ${CAP}: admitted ${count(racy)} of 100`);
+
+// ✅ الإصلاح: الـ check والـ increment جوه script واحد
+const atomic = await Promise.all(
+  Array.from({ length: 100 }, (_, i) =&gt; atomicAdmit(i % 2 ? redis : other, "lua:acme", CAP, 60_000)),
+);
+console.log(`Lua EVAL from two connections, cap ${CAP}: admitted ${count(atomic)} of 100`);
+
+const bucket = await Promise.all(Array.from({ length: 30 }, () =&gt; tokenBucket(redis, "tb:acme", CAP, 2)));
+const refused = bucket.find((d) =&gt; !d.allowed)!;
+console.log(`token bucket on Redis, capacity ${CAP}: admitted ${count(bucket.map((d) =&gt; d.allowed))} of 30, first refusal retryAfterMs=${refused.retryAfterMs}`);
+
+const log = await Promise.all(Array.from({ length: 30 }, () =&gt; slidingLog(redis, "log:acme", CAP, 60_000, randomUUID())));
+console.log(`sliding log on Redis, limit ${CAP}: admitted ${count(log.map((d) =&gt; d.allowed))} of 30, ZCARD=${await redis.zcard("log:acme")}, TTL ms=${await redis.pttl("log:acme")}`);
+
+// قياس: كام millisecond بيزود الـ limiter على كل طلب
+const samples: number[] = [];
+for (let i = 0; i &lt; 2000; i++) {
+  const t0 = performance.now();
+  await tokenBucket(redis, "latency:acme", 1_000_000, 1000);
+  samples.push(performance.now() - t0);
+}
+samples.sort((a, b) =&gt; a - b);
+const at = (p: number) =&gt; samples[Math.floor(samples.length * p)]!.toFixed(2);
+console.log(`added latency over 2000 sequential EVALs: p50=${at(0.5)}ms p99=${at(0.99)}ms`);
+
+await Promise.all([redis.quit(), other.quit()]);
+</code></pre>
+
+<pre><code class="language-plaintext">two in-memory limiters, cap 10: admitted 20
+GET then SET, cap 10: admitted 100 of 100
+Lua EVAL from two connections, cap 10: admitted 10 of 100
+token bucket on Redis, capacity 10: admitted 10 of 30, first refusal retryAfterMs=488
+sliding log on Redis, limit 10: admitted 10 of 30, ZCARD=10, TTL ms=60000
+added latency over 2000 sequential EVALs: p50=0.10ms p99=0.23ms
+</code></pre>
+  <div class="ar-note">اتنين limiter في الـ memory: 20 بدل 10. الـ GET ثم SET: كله عدّى، 100 من 100. الـ Lua: 10 بالظبط من اتصالين. الـ token bucket على Redis: 10، وأول رفض قال يستنى 488 ms. الـ sliding log: 10 والـ ZCARD بيأكد. والـ latency الزيادة ≈0.10 ms، على Redis محلي Windows والماشين عليها ضغط.</div>
+
+<pre data-file="src/limits/redis-down.ts"><code class="language-typescript">import type { Redis } from "ioredis";
+import { connectRedis } from "./lab.ts";
+import { tokenBucket } from "./redis-limiters.ts";
+
+// خلّينا الـ timeout قصير جدًا: الـ limiter مينفعش يبقى أبطأ من اللي بيحميه
+const limiterClient = connectRedis({ commandTimeout: 50, maxRetriesPerRequest: 0 });
+const admin = connectRedis();
+await limiterClient.flushdb();
+
+type Mode = "fail-open" | "fail-closed";
+
+async function admit(client: Redis, route: string, mode: Mode): Promise&lt;string&gt; {
+  const t0 = performance.now();
+  let verdict: string;
+  try {
+    const d = await tokenBucket(client, `rl:${route}`, 100, 100);
+    verdict = d.allowed ? "allowed" : "limited";
+  } catch (err) {
+    verdict = mode === "fail-open" ? `allowed (fail-open, ${(err as Error).message})` : `503 (fail-closed, ${(err as Error).message})`;
+  }
+  return `${route.padEnd(10)} ${verdict} ~${Math.round(performance.now() - t0)}ms`;
+}
+
+console.log("Redis healthy");
+console.log(" ", await admit(limiterClient, "/products", "fail-open"));
+console.log(" ", await admit(limiterClient, "/login", "fail-closed"));
+
+// الأمر CLIENT PAUSE بيخلي Redis يعلّق 400ms، زي ما يكون متجمد بجد
+await admin.client("PAUSE", 400, "ALL");
+console.log("Redis frozen for 400ms");
+console.log(" ", await admit(limiterClient, "/products", "fail-open"));
+console.log(" ", await admit(limiterClient, "/login", "fail-closed"));
+
+await new Promise((r) =&gt; setTimeout(r, 500));
+console.log("Redis back");
+console.log(" ", await admit(limiterClient, "/login", "fail-closed"));
+
+await Promise.all([limiterClient.quit(), admin.quit()]);
+</code></pre>
+
+<pre><code class="language-plaintext">Redis healthy
+  /products  allowed ~1ms
+  /login     allowed ~0ms
+Redis frozen for 400ms
+  /products  allowed (fail-open, Command timed out) ~64ms
+  /login     503 (fail-closed, Command timed out) ~64ms
+Redis back
+  /login     allowed ~0ms
+</code></pre>
+  <div class="ar-note">وهو سليم الاتنين عدّوا فورًا. لما Redis اتجمد، الـ client فشل عند حوالي 64 ms بدل ما يستنى: <code>/products</code> عدّى (fail-open)، و <code>/login</code> رجع 503 (fail-closed). وبعد الرجوع كله طبيعي.</div>
+
+<pre data-file="src/limits/libraries.ts"><code class="language-typescript">import type { AddressInfo } from "node:net";
+import express from "express";
+import { rateLimit } from "express-rate-limit";
+import { RateLimiterMemory, RateLimiterRedis, RateLimiterRes } from "rate-limiter-flexible";
+import { connectRedis } from "./lab.ts";
+
+const redis = connectRedis({ enableOfflineQueue: false, maxRetriesPerRequest: 0 });
+await new Promise((r) =&gt; redis.once("ready", r));
+await redis.del("api:acme");
+
+// الـ insurance limiter بيشتغل في الـ memory لو Redis وقع
+const limiter = new RateLimiterRedis({
+  storeClient: redis,
+  keyPrefix: "api",
+  points: 3,
+  duration: 60,
+  insuranceLimiter: new RateLimiterMemory({ points: 1, duration: 60 }),
+});
+
+for (let i = 1; i &lt;= 4; i++) {
+  const outcome = await limiter.consume("acme").then(
+    (r: RateLimiterRes) =&gt; `ok remaining=${r.remainingPoints}`,
+    (r: RateLimiterRes) =&gt; `refused msBeforeNext=${r.msBeforeNext &gt; 0 ? "&gt;0" : "0"}`,
+  );
+  console.log(`rate-limiter-flexible #${i}: ${outcome}`);
+}
+await redis.quit();
+
+const app = express();
+app.get("/orders", rateLimit({ windowMs: 60_000, limit: 2, standardHeaders: "draft-8", legacyHeaders: false }), (_q, res) =&gt; {
+  res.json({ orders: [] });
+});
+const server = app.listen(0, "127.0.0.1");
+await new Promise((r) =&gt; server.once("listening", r));
+const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/orders`;
+for (let i = 1; i &lt;= 3; i++) {
+  const res = await fetch(url);
+  console.log(`express-rate-limit #${i}: ${res.status} ratelimit: ${res.headers.get("ratelimit")?.replace(/"[^"]+";/, '"…";')}`);
+}
+server.close();
+</code></pre>
+
+<pre><code class="language-plaintext">rate-limiter-flexible #1: ok remaining=2
+rate-limiter-flexible #2: ok remaining=1
+rate-limiter-flexible #3: ok remaining=0
+rate-limiter-flexible #4: refused msBeforeNext=&gt;0
+express-rate-limit #1: 200 ratelimit: "…"; r=1; t=60
+express-rate-limit #2: 200 ratelimit: "…"; r=0; t=60
+express-rate-limit #3: 429 ratelimit: "…"; r=0; t=60
+</code></pre>
+  <div class="ar-note">الـ <code>rate-limiter-flexible</code> عدّى 3 ورفض الرابع. والـ <code>express-rate-limit</code> بالـ header القياسي <code>ratelimit</code> (بدون اسم الـ policy هنا) بيقول <code>r</code> الباقي و<code>t</code> الثواني. والـ 429 جه في الطلب التالت.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ limiters اللي في الـ memory لكل process، فاتنين instances ورا load balancer بيقبلوا ضعف الحد: 20 مكان 10 في الـ run فوق. ونقل العدّاد لـ Redis مش بيحل لو قريت وبعدين كتبت: بـ <code>GET</code> ثم <code>SET</code>، 100 طلب متزامن كلهم قروا رقم صغير وكلهم عدّوا، 100 من 100 مع إن الحد 10. الـ check والكتابة لازم يبقوا خطوة واحدة. Lua script عن طريق <code>EVAL</code> بيتنفذ atomic على السيرفر، وعدّى 10 بالظبط من اتصالين. و <code>connectRedis()</code> هنا helper صغير محلي بيوصل لـ instance خاص على port عشوائي، وفي production استخدم <code>defineCommand</code> أو <code>EVALSHA</code> عشان الـ script ميتبعتش كل مرة.</p>
+    <p>الـ token bucket والـ sliding log بينتقلوا لـ Redis بنفس الطريقة. الـ script بتاع الـ bucket بياخد الوقت من <code>TIME</code> بتاع Redis مش من الـ app، لأن ساعات الـ app servers بتختلف. والـ keys محتاجة <code>PEXPIRE</code> عشان الـ tenants الواقفين يختفوا لوحدهم، وده بديل الـ LRU من Part 1. والـ sliding log هو sorted set والـ score بتاعه الوقت: <code>ZREMRANGEBYSCORE</code> بينضف و <code>ZCARD</code> بيعد. والـ latency الزيادة كانت ≈0.10 ms p50 و ≈0.23 ms p99 على 2000 call ورا بعض، قصاد Windows build محلي على ماشين عليها ضغط، والـ network الحقيقي بيزود round trip بتاعه.</p>
+    <p><b>لما Redis يقع</b> لازم تقرر لكل endpoint ومن بدري. استخدم client timeout قصير، لأن limiter بيعلّق ثواني أوحش من مفيش limiter. وبعدين اختار: <b>fail open</b> للقراءات زي <code>/products</code>، لأن الـ availability أهم من شوية وقت من غير حد. <b>fail closed</b> لـ <code>/login</code> أو عملية غالية، لأن الحد نفسه هو الـ security control. و <code>CLIENT PAUSE</code> جمّد Redis لمدة 400 ms فوق والمسارين خدوا حوالي 64 ms.</p>
+    <p>في production هتستخدم library. <code>rate-limiter-flexible</code> 11.2.4 شغال على Redis وعنده <code>insuranceLimiter</code> في الـ memory لما Redis يقع. و <code>express-rate-limit</code> 8.7.3 هو الـ middleware البسيط، واتشرح في <a href="../../06-NodeJS/lessons/26-api-security-essentials.html#p2">درس Node 26، Part 2</a>. وعلى Redis Cluster، كل key الـ script بيلمسه لازم يبقى في <code>KEYS</code> وفي slot واحد، فاستخدم hash tag زي <code>{acme}</code>. و limiter صغير محلي قدام الـ global بيمتص الفيضانات وبيوفر round trips. الاتنين في <a href="../../12-System-Design/lessons/25-rate-limiting-algorithms-distributed.html">section 12 · 2.5</a>، و Redis limiters على scale في <a href="../../09-Databases/lessons/36-caching-sessions-rate-limits.html">section 09 · 3.5</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      خدمة ورا 4 instances: limiter في الـ memory معناه إن الحد الحقيقي 4 أضعاف اللي كتبته، و <code>GET</code> ثم <code>INCR</code> بيكسر الحد وقت الضغط بالظبط. Lua مع <code>commandTimeout</code> قصير، و <code>/login</code> fail closed بينما <code>/products</code> fail open. والغلطة الشائعة: تعتمد على <code>Date.now()</code> جوه الـ app وتكتب الوقت في Redis، فساعة instance متأخرة تدي tokens ببلاش.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: fail open or fail closed</b>
+    Fail open keeps the product working while the limiter is blind, so a flood during a Redis outage goes straight to your service. Fail closed protects the service but turns a Redis problem into a full outage of that endpoint. Decide per endpoint, write it down, and alert on the failure path.
+    <div class="ar-note">الـ fail open بيخلي المنتج شغال والـ limiter مش شايف حاجة، فأي flood وقت وقوع Redis بيوصل للـ service مباشرة. الـ fail closed بيحمي الـ service، بس بيحوّل مشكلة Redis لوقوع كامل للـ endpoint ده. قرر لكل endpoint، واكتب القرار، وحط alert على مسار الفشل.</div>
+  </div>
+
+  <h2 id="p4">Part 4 — Idempotent receiver as middleware <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ idempotent receiver كـ middleware</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The API design and a first race test are in <a href="../../06-NodeJS/lessons/14-rest-api-design.html#p6">Node lesson 14, Part 6</a>. The new thing here is a reusable <code>idempotent({ store, ttlMs, leaseMs, scope, fingerprint })</code> for Express over a storage interface, with a Postgres store and a Redis store behind the same three methods: <code>claim</code>, <code>complete</code>, <code>release</code>. A key is in one of three states: <b>absent</b> (claim it, run the handler), <b>in_progress</b> (another request owns it), or <b>completed</b> (replay the stored status, body and chosen headers without running the handler).</p>
+    <p>The key is scoped by tenant, method and the actual path. Using the route template would let <code>/orders/1/pay</code> and <code>/orders/2/pay</code> share a key. The fingerprint is a hash of the body and detects a reused key with a different payload. <code>claim</code> must be atomic: on Postgres, a single <code>INSERT ... ON CONFLICT DO UPDATE ... WHERE</code> decides the winner; on Redis, a Lua script does. The response is saved before it's sent, so a crash after saving still replays correctly. A 5xx releases the key so a retry can run, which assumes the handler is safe to retry. Stripe's v1 API makes the opposite choice and replays the saved response, including 500 errors, so choose on purpose.</p>
+    <p><b>Status codes</b> come from <code>draft-ietf-httpapi-idempotency-key-header-08</code>, dated 22 October 2026 and expiring 25 April 2027. It's an active Internet-Draft, not an RFC. In its words: a missing header on an operation that requires it "SHOULD reply with an HTTP 400"; "an attempt to reuse an idempotency key with a different request payload" "SHOULD reply with an HTTP 422"; and a request retried "while the original request is still being processed" "SHOULD reply with an HTTP 409". It also defines the header as a Structured Field String, so the value is quoted, <code>Idempotency-Key: "8e03978e-..."</code>; the middleware accepts quoted and unquoted. The draft wants the 400 and 422 bodies to link to your documentation, which a production version should add as the problem's <code>type</code>.</p>
+    <p>The real test: 20 parallel requests with one key make exactly one charge on each store. On Postgres, 11 got 409 and 8 got a replay, because the pool was still opening connections and some arrived after the first had finished; on Redis, all 19 others got 409. Both are correct, and the invariant is the same: <code>charges=1</code>. <code>startPg()</code> starts a throwaway Postgres on a random port, and <code>connectRedis()</code> reaches a private Redis.</p>
+  </section>
+
+<pre class="diagram">
+ request + Idempotency-Key
+        |
+        v
+  key = tenant + method + path + client key
+        |
+   store.claim(key, fingerprint)  (atomic)
+        |
+   +----+-----------+--------------+-----------------+
+   | claimed        | in_progress  | completed       | other fingerprint
+   v                v              v                 v
+ run handler       409           replay status,     422
+   |            + Retry-After    body, headers
+   v
+ store.complete, then send the response
+</pre>
+  <div class="ar-note">الطلب بيجي بالـ key، بنكوّن key كامل من الـ tenant والـ method والمسار وkey العميل. بعدها <code>claim</code> atomic ليها 4 نتايج: claimed نشغل الـ handler، in_progress نرجع 409 مع Retry-After، completed نعيد الرد المتخزن، وfingerprint مختلف نرجع 422. وبعد الـ handler نحفظ وبعدين نرد.</div>
+
+<pre data-file="src/idempotency/store.ts"><code class="language-typescript">export interface StoredResponse {
+  status: number;
+  headers: Record&lt;string, string&gt;;
+  // الـ body بيتخزن نص، و null معناها إنه كان أكبر من المسموح
+  body: string | null;
+}
+
+export type Claim =
+  | { kind: "claimed"; token: string }
+  | { kind: "in_progress" }
+  | { kind: "completed"; response: StoredResponse }
+  | { kind: "fingerprint_mismatch" };
+
+export interface IdempotencyStore {
+  // لازم تكون atomic: طلب واحد بس هو اللي يرجعله claimed
+  claim(key: string, fingerprint: string, leaseMs: number, ttlMs: number): Promise&lt;Claim&gt;;
+  // بترجع false لو الـ token مبقاش صاحب الـ key
+  complete(key: string, token: string, response: StoredResponse, ttlMs: number): Promise&lt;boolean&gt;;
+  release(key: string, token: string): Promise&lt;void&gt;;
+}
+</code></pre>
+<pre data-file="src/idempotency/pg-store.ts"><code class="language-typescript">import { randomUUID } from "node:crypto";
+import type { Pool } from "pg";
+import type { Claim, IdempotencyStore, StoredResponse } from "./store.ts";
+
+export const IDEMPOTENCY_DDL = `
+  CREATE TABLE IF NOT EXISTS idempotency_keys (
+    key         text PRIMARY KEY,
+    fingerprint text NOT NULL,
+    status      text NOT NULL CHECK (status IN ('in_progress', 'completed')),
+    token       uuid,
+    lease_until timestamptz,
+    response    jsonb,
+    expires_at  timestamptz NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idempotency_keys_expiry ON idempotency_keys (expires_at);
+`;
+
+// الـ INSERT بيكسب مرة واحدة، والـ UPDATE بيتنفذ بس لو الـ key خلص أو الـ lease مات
+const CLAIM_SQL = `
+  INSERT INTO idempotency_keys AS k (key, fingerprint, status, token, lease_until, expires_at)
+  VALUES ($1, $2, 'in_progress', $3, now() + $4 * interval '1 millisecond', now() + $5 * interval '1 millisecond')
+  ON CONFLICT (key) DO UPDATE
+    SET fingerprint = EXCLUDED.fingerprint, status = 'in_progress', token = EXCLUDED.token,
+        lease_until = EXCLUDED.lease_until, expires_at = EXCLUDED.expires_at, response = NULL
+    WHERE k.expires_at &lt;= now()
+       OR (k.status = 'in_progress' AND k.lease_until &lt;= now() AND k.fingerprint = EXCLUDED.fingerprint)
+  RETURNING key`;
+
+export class PgIdempotencyStore implements IdempotencyStore {
+  #pool: Pool;
+  constructor(pool: Pool) {
+    this.#pool = pool;
+  }
+
+  async claim(key: string, fingerprint: string, leaseMs: number, ttlMs: number): Promise&lt;Claim&gt; {
+    const token = randomUUID();
+    const inserted = await this.#pool.query(CLAIM_SQL, [key, fingerprint, token, leaseMs, ttlMs]);
+    if (inserted.rowCount === 1) return { kind: "claimed", token };
+
+    // استعلام منفصل: الـ snapshot بتاع الـ statement الأولاني ممكن ميشوفش الصف اللي كسب
+    const { rows } = await this.#pool.query("SELECT fingerprint, status, response FROM idempotency_keys WHERE key = $1", [key]);
+    const row = rows[0];
+    if (!row) return this.claim(key, fingerprint, leaseMs, ttlMs);
+    if (row.fingerprint !== fingerprint) return { kind: "fingerprint_mismatch" };
+    if (row.status === "completed") return { kind: "completed", response: row.response as StoredResponse };
+    return { kind: "in_progress" };
+  }
+
+  async complete(key: string, token: string, response: StoredResponse, ttlMs: number): Promise&lt;boolean&gt; {
+    const updated = await this.#pool.query(
+      `UPDATE idempotency_keys
+          SET status = 'completed', response = $3, token = NULL, lease_until = NULL,
+              expires_at = now() + $4 * interval '1 millisecond'
+        WHERE key = $1 AND token = $2 AND status = 'in_progress'`,
+      [key, token, JSON.stringify(response), ttlMs],
+    );
+    return updated.rowCount === 1;
+  }
+
+  async release(key: string, token: string): Promise&lt;void&gt; {
+    await this.#pool.query("DELETE FROM idempotency_keys WHERE key = $1 AND token = $2 AND status = 'in_progress'", [key, token]);
+  }
+}
+</code></pre>
+<pre data-file="src/idempotency/redis-store.ts"><code class="language-typescript">import { randomUUID } from "node:crypto";
+import type { Redis } from "ioredis";
+import type { Claim, IdempotencyStore, StoredResponse } from "./store.ts";
+
+// بيرجع false لو الطلب كسب الـ key، وإلا بيرجع الـ record الموجود
+const CLAIM = `
+local raw = redis.call('GET', KEYS[1])
+local time = redis.call('TIME')
+local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+if raw then
+  local rec = cjson.decode(raw)
+  local leaseDead = rec.status == 'in_progress' and rec.leaseUntil &lt;= now and rec.fingerprint == ARGV[1]
+  if not leaseDead then return raw end
+end
+local claim = { status = 'in_progress', fingerprint = ARGV[1], token = ARGV[2], leaseUntil = now + tonumber(ARGV[3]) }
+redis.call('SET', KEYS[1], cjson.encode(claim), 'PX', ARGV[4])
+return false`;
+
+const COMPLETE = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local rec = cjson.decode(raw)
+if rec.status ~= 'in_progress' or rec.token ~= ARGV[1] then return 0 end
+local done = { status = 'completed', fingerprint = rec.fingerprint, response = ARGV[2] }
+redis.call('SET', KEYS[1], cjson.encode(done), 'PX', ARGV[3])
+return 1`;
+
+const RELEASE = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local rec = cjson.decode(raw)
+if rec.status == 'in_progress' and rec.token == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0`;
+
+interface Rec {
+  status: "in_progress" | "completed";
+  fingerprint: string;
+  response?: string;
+}
+
+export class RedisIdempotencyStore implements IdempotencyStore {
+  #redis: Redis;
+  constructor(redis: Redis) {
+    this.#redis = redis;
+  }
+
+  async claim(key: string, fingerprint: string, leaseMs: number, ttlMs: number): Promise&lt;Claim&gt; {
+    const token = randomUUID();
+    const raw = (await this.#redis.eval(CLAIM, 1, key, fingerprint, token, leaseMs, ttlMs)) as string | null;
+    if (raw === null) return { kind: "claimed", token };
+    const rec = JSON.parse(raw) as Rec;
+    if (rec.fingerprint !== fingerprint) return { kind: "fingerprint_mismatch" };
+    if (rec.status === "completed") return { kind: "completed", response: JSON.parse(rec.response!) as StoredResponse };
+    return { kind: "in_progress" };
+  }
+
+  async complete(key: string, token: string, response: StoredResponse, ttlMs: number): Promise&lt;boolean&gt; {
+    return (await this.#redis.eval(COMPLETE, 1, key, token, JSON.stringify(response), ttlMs)) === 1;
+  }
+
+  async release(key: string, token: string): Promise&lt;void&gt; {
+    await this.#redis.eval(RELEASE, 1, key, token);
+  }
+}
+</code></pre>
+<pre data-file="src/idempotency/middleware.ts"><code class="language-typescript">import { createHash } from "node:crypto";
+import type { Request, RequestHandler, Response } from "express";
+import type { Claim, IdempotencyStore, StoredResponse } from "./store.ts";
+
+export interface IdempotentOptions {
+  store: IdempotencyStore;
+  ttlMs: number;
+  leaseMs: number;
+  // الـ tenant أو الـ user، عشان key عميل ميصطدمش بـ key عميل تاني
+  scope: (req: Request) =&gt; string;
+  fingerprint?: (req: Request) =&gt; string;
+  replayHeaders?: string[];
+  maxBodyBytes?: number;
+  onStoreError?: "closed" | "open";
+}
+
+const problem = (res: Response, status: number, title: string) =&gt;
+  res.status(status).type("application/problem+json").send(JSON.stringify({ title, status }));
+
+// الـ draft بيعرّف القيمة كـ Structured String يعني بين علامتين تنصيص، وبنقبل الاتنين
+function parseKey(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const value = raw.trim().replace(/^"(.*)"$/, "$1");
+  return /^[\x21-\x7e]{1,255}$/.test(value) ? value : null;
+}
+
+const defaultFingerprint = (req: Request) =&gt; createHash("sha256").update(JSON.stringify(req.body ?? null)).digest("hex");
+
+export function idempotent(options: IdempotentOptions): RequestHandler {
+  const { store, ttlMs, leaseMs, scope, replayHeaders = [], maxBodyBytes = 64 * 1024, onStoreError = "closed" } = options;
+  const fingerprint = options.fingerprint ?? defaultFingerprint;
+
+  return async (req, res, next) =&gt; {
+    const clientKey = parseKey(req.get("Idempotency-Key"));
+    if (!clientKey) return void problem(res, 400, "Idempotency-Key is missing");
+
+    // المسار الفعلي مش الـ template، وإلا ⁦/orders/1⁩ و ⁦/orders/2⁩ هيبقوا نفس الـ key
+    const key = [scope(req), req.method, req.baseUrl + req.path, clientKey].join(" ");
+
+    let claim: Claim;
+    try {
+      claim = await store.claim(key, fingerprint(req), leaseMs, ttlMs);
+    } catch {
+      if (onStoreError === "open") return next();
+      res.setHeader("Retry-After", "1");
+      return void problem(res, 503, "Idempotency store unavailable");
+    }
+
+    if (claim.kind === "fingerprint_mismatch") return void problem(res, 422, "Idempotency-Key is already used");
+    if (claim.kind === "in_progress") {
+      res.setHeader("Retry-After", "1");
+      return void problem(res, 409, "A request is outstanding for this Idempotency-Key");
+    }
+    if (claim.kind === "completed") {
+      const { status, headers, body } = claim.response;
+      res.status(status).set(headers).set("Idempotent-Replayed", "true");
+      if (body === null) return void res.set("Idempotent-Body-Omitted", "true").end();
+      return void res.type("application/json").send(body);
+    }
+
+    const { token } = claim;
+    let settled = false;
+    const sendJson = res.json.bind(res);
+
+    res.json = (payload: unknown) =&gt; {
+      settled = true;
+      const respond = () =&gt; void sendJson(payload);
+      // الـ 5xx معناها إن النتيجة مش نهائية، فالـ key بيتساب والـ retry يشتغل
+      if (res.statusCode &gt;= 500) {
+        void store.release(key, token).catch(() =&gt; undefined).finally(respond);
+        return res;
+      }
+      const text = JSON.stringify(payload);
+      const headers: Record&lt;string, string&gt; = {};
+      for (const name of replayHeaders) {
+        const value = res.getHeader(name);
+        if (value !== undefined) headers[name] = String(value);
+      }
+      const response: StoredResponse = {
+        status: res.statusCode,
+        headers,
+        body: Buffer.byteLength(text) &gt; maxBodyBytes ? null : text,
+      };
+      // نحفظ قبل ما نرد، ولو الحفظ فشل الـ charge حصل فعلًا فبنرد برضه
+      void store.complete(key, token, response, ttlMs).catch(() =&gt; false).finally(respond);
+      return res;
+    };
+
+    // لو الـ handler رد من غير res.json (stream مثلًا) مفيش حاجة تتخزن
+    res.once("close", () =&gt; {
+      if (!settled) void store.release(key, token).catch(() =&gt; undefined);
+    });
+    next();
+  };
+}
+</code></pre>
+<pre data-file="src/idempotency/parallel.ts"><code class="language-typescript">import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+import express from "express";
+import pg from "pg";
+import { startPg } from "../pg-throwaway.mjs";
+import { connectRedis, privatePort } from "./lab.ts";
+import { idempotent } from "./middleware.ts";
+import { IDEMPOTENCY_DDL, PgIdempotencyStore } from "./pg-store.ts";
+import { RedisIdempotencyStore } from "./redis-store.ts";
+import type { IdempotencyStore } from "./store.ts";
+
+async function suite(label: string, store: IdempotencyStore) {
+  let charges = 0;
+  const app = express();
+  app.use(express.json());
+  app.post(
+    "/payments",
+    idempotent({
+      store,
+      ttlMs: 60_000,
+      leaseMs: 30_000,
+      scope: (req) =&gt; String(req.headers["x-tenant-id"]),
+      replayHeaders: ["X-Charge-Id"],
+    }),
+    async (req, res) =&gt; {
+      // الـ charge بياخد وقت، فالطلبات التانية بتوصل وهو لسه شغال
+      const id = `ch_${++charges}`;
+      await sleep(50);
+      res.setHeader("X-Charge-Id", id);
+      res.status(201).json({ chargeId: id, amount: req.body.amount });
+    },
+  );
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((r) =&gt; server.once("listening", r));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/payments`;
+
+  const post = (key: string | null, amount: number, tenant = "acme") =&gt;
+    fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-tenant-id": tenant,
+        ...(key ? { "idempotency-key": key } : {}),
+      },
+      body: JSON.stringify({ amount }),
+    });
+
+  const key = `"${label}-key-1"`;
+  const parallel = await Promise.all(Array.from({ length: 20 }, () =&gt; post(key, 500)));
+  const tally: Record&lt;string, number&gt; = {};
+  for (const r of parallel) {
+    const kind = r.headers.has("idempotent-replayed") ? `${r.status} replayed` : String(r.status);
+    tally[kind] = (tally[kind] ?? 0) + 1;
+  }
+  console.log(`[${label}] 20 parallel, one key: charges=${charges} statuses=${JSON.stringify(tally)}`);
+
+  const replay = await post(key, 500);
+  console.log(`[${label}] replay: ${replay.status} body=${await replay.text()} x-charge-id=${replay.headers.get("x-charge-id")} replayed=${replay.headers.get("idempotent-replayed")} charges=${charges}`);
+
+  const reused = await post(key, 999);
+  console.log(`[${label}] same key, other body: ${reused.status} ${await reused.text()}`);
+
+  const missing = await post(null, 500);
+  console.log(`[${label}] no key: ${missing.status} ${await missing.text()}`);
+
+  const otherTenant = await post(key, 500, "globex");
+  console.log(`[${label}] same key, other tenant: ${otherTenant.status} charges=${charges}`);
+
+  server.close();
+  server.closeAllConnections();
+}
+
+const db = await startPg();
+const pool = new pg.Pool({ host: "127.0.0.1", port: privatePort(db.port), user: "app", database: "postgres", max: 25 });
+await pool.query(IDEMPOTENCY_DDL);
+await suite("pg", new PgIdempotencyStore(pool));
+await pool.end();
+await db.stop();
+
+const redis = connectRedis();
+await redis.flushdb();
+await suite("redis", new RedisIdempotencyStore(redis));
+await redis.quit();
+</code></pre>
+
+<pre><code class="language-plaintext">[pg] 20 parallel, one key: charges=1 statuses={"201":1,"409":11,"201 replayed":8}
+[pg] replay: 201 body={"chargeId":"ch_1","amount":500} x-charge-id=ch_1 replayed=true charges=1
+[pg] same key, other body: 422 {"title":"Idempotency-Key is already used","status":422}
+[pg] no key: 400 {"title":"Idempotency-Key is missing","status":400}
+[pg] same key, other tenant: 201 charges=2
+[redis] 20 parallel, one key: charges=1 statuses={"201":1,"409":19}
+[redis] replay: 201 body={"chargeId":"ch_1","amount":500} x-charge-id=ch_1 replayed=true charges=1
+[redis] same key, other body: 422 {"title":"Idempotency-Key is already used","status":422}
+[redis] no key: 400 {"title":"Idempotency-Key is missing","status":400}
+[redis] same key, other tenant: 201 charges=2
+</code></pre>
+  <div class="ar-note">على الـ store الاتنين: 20 طلب متوازي بـ key واحد عملوا charge واحد بالظبط (<code>charges=1</code>). على Postgres فيه 11 رجعوا 409 و 8 خدوا replay، لأن بعضهم وصل بعد ما الأول خلص، وعلى Redis التسعتاشر 409. والـ replay رجّع نفس الـ body والـ header مع <code>replayed=true</code>. نفس الـ key بـ body مختلف 422، ومن غير key 400، و tenant تاني بنفس الـ key بيتحسب charge جديد (2).</div>
+
+  <table>
+    <thead><tr><th>Stored state</th><th>Incoming request</th><th>Answer</th></tr></thead>
+    <tbody>
+      <tr><td>header missing</td><td>any</td><td>400</td></tr>
+      <tr><td>absent</td><td>any</td><td>claim, run the handler</td></tr>
+      <tr><td>in_progress, lease alive</td><td>same fingerprint</td><td>409 + Retry-After</td></tr>
+      <tr><td>in_progress, lease expired</td><td>same fingerprint</td><td>take over, run the handler</td></tr>
+      <tr><td>completed</td><td>same fingerprint</td><td>replay status, body, chosen headers</td></tr>
+      <tr><td>any existing</td><td>different fingerprint</td><td>422</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">صف بصف: من غير header يبقى 400. لو الـ key مش موجود، claim ونشغل الـ handler. لو in_progress والـ lease عايش ونفس الـ fingerprint، 409 مع Retry-After. لو in_progress والـ lease مات ونفس الـ fingerprint، ناخد الملكية ونشغل الـ handler. لو completed ونفس الـ fingerprint، نعيد الـ status والـ body والـ headers المختارة. وأي key موجود بـ fingerprint مختلف، 422.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>تصميم الـ API وأول race test موجودين في <a href="../../06-NodeJS/lessons/14-rest-api-design.html#p6">درس Node 14، Part 6</a>. الجديد هنا <code>idempotent({ store, ttlMs, leaseMs, scope, fingerprint })</code> قابل لإعادة الاستخدام في Express فوق storage interface، و store لـ Postgres و store لـ Redis ورا نفس التلات methods: <code>claim</code> و<code>complete</code> و<code>release</code>. الـ key بيبقى في حالة من تلاتة: <b>absent</b> (خده وشغل الـ handler)، أو <b>in_progress</b> (طلب تاني ماسكه)، أو <b>completed</b> (ارجّع الـ status والـ body والـ headers المختارة من غير ما تشغل الـ handler).</p>
+    <p>الـ key محدد بالـ tenant والـ method والمسار الفعلي. لو استخدمت الـ route template، <code>/orders/1/pay</code> و <code>/orders/2/pay</code> هيتشاركوا key. والـ fingerprint هو hash للـ body وبيكتشف key اتعاد استخدامه بـ payload مختلف. و <code>claim</code> لازم تبقى atomic: على Postgres، <code>INSERT ... ON CONFLICT DO UPDATE ... WHERE</code> واحد بيقرر مين كسب، وعلى Redis الـ Lua script بيعمل ده. والرد بيتحفظ قبل ما يتبعت، فلو الـ process وقع بعد الحفظ الـ replay يبقى صح. والـ 5xx بيسيب الـ key عشان الـ retry يشتغل، وده بيفترض إن الـ handler آمن للإعادة. و Stripe v1 عامل العكس وبيرجّع الرد المتخزن حتى لو 500، فاختار وإنت فاهم.</p>
+    <p><b>الـ status codes</b> جاية من <code>draft-ietf-httpapi-idempotency-key-header-08</code>، بتاريخ 22 أكتوبر 2026 وبتنتهي 25 أبريل 2027. ده Internet-Draft نشط ومش RFC. بنصه: الـ header لو مش موجود في عملية محتاجاه "SHOULD reply with an HTTP 400"، و"an attempt to reuse an idempotency key with a different request payload" "SHOULD reply with an HTTP 422"، وطلب اتعاد "while the original request is still being processed" "SHOULD reply with an HTTP 409". وكمان بيعرّف الـ header كـ Structured Field String، فالقيمة بين علامتين تنصيص <code>Idempotency-Key: "8e03978e-..."</code>، والـ middleware بيقبل الشكلين. والـ draft عايز body الـ 400 والـ 422 يربطوا بالـ documentation بتاعتك، وفي production ضيفها كـ <code>type</code> في الـ problem.</p>
+    <p>الـ test الحقيقي: 20 طلب متوازي بـ key واحد بيعملوا charge واحد بالظبط على كل store. على Postgres، 11 خدوا 409 و 8 خدوا replay، لأن الـ pool كان لسه بيفتح connections وبعضهم وصل بعد ما الأول خلص، وعلى Redis التسعتاشر التانيين خدوا 409. الاتنين صح، والثابت واحد: <code>charges=1</code>. و <code>startPg()</code> بيشغل Postgres مؤقت على port عشوائي، و <code>connectRedis()</code> بيوصل لـ Redis خاص.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      <code>POST /payments</code> و <code>POST /orders</code> بيتحطلهم <code>idempotent(...)</code> كـ middleware على الـ route بدل ما كل handler يكتب نفس المنطق. والـ mobile app بتعمل UUID لكل نية دفع، مش لكل محاولة، فزرار "ادفع" لو اتداس مرتين أو الشبكة قطعت، العميل يتخصم مرة واحدة. والغلطة الشائعة: تستخدم الـ route template في الـ key فـ orders مختلفة تتشارك نفس الـ key.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "20 identical POSTs arrive at once with the same Idempotency-Key. How do you guarantee one charge?" → One atomic claim: a unique constraint with <code>INSERT ... ON CONFLICT</code>, or a Lua script. Exactly one request wins and runs the handler. The rest get 409 while it runs, or a replay of the stored response after it finishes. Saving a check first with <code>SELECT</code> and then inserting is the race.
+    <div class="ar-note">"20 POST زي بعض جم مع بعض بنفس الـ Idempotency-Key. إزاي تضمن charge واحد؟" ← claim واحدة atomic: unique constraint مع <code>INSERT ... ON CONFLICT</code>، أو Lua script. طلب واحد بس بيكسب ويشغل الـ handler. الباقي بياخد 409 وهو شغال، أو replay للرد المتخزن بعد ما يخلص. وعمل <code>SELECT</code> الأول وبعدين insert هو نفسه الـ race.</div>
+  </div>
+
+  <h2 id="p5">Part 5 — What still breaks <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — إيه اللي لسه بيكسر</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>The crash between two systems.</b> In the real run below, the handler charges the provider and then the process is killed before the response is saved. The key stays <code>in_progress</code>, so an immediate retry gets 409. Once the lease expires the retry takes over and runs the handler again, and the provider charged twice. No local transaction can close that gap, because the money and your row live in two systems. The fix is to pass your key to the provider, so it deduplicates on its side: same run, one charge, and the retry returns <code>ch_1</code>. For work that doesn't have to happen inline, the other fix is an <a href="./27-outbox-as-code.html">outbox</a>.</p>
+    <p><b>Stuck <code>in_progress</code>.</b> A claim without an expiry would block that key forever after a crash, so a claim is a <b>lease</b>. Lease expiry introduces its own bug: a slow worker wakes up after someone else took over and writes its answer on top. The token fences that: <code>complete</code> only succeeds for the current token, and the test shows the late worker's write refused on both stores. Set the lease above the handler's worst-case time, including your timeouts from <a href="./23-circuit-breaker-bulkhead-composition.html#p5">lesson 23</a>.</p>
+    <p><b>Three limits of the middleware.</b> A body too large to store: <code>maxBodyBytes</code> keeps the status and <code>Location</code> and omits the body, so the client fetches the resource. A streamed response: the middleware only sees <code>res.json</code>, so on <code>res.end</code> nothing is stored, the key is released and the retry ran the handler again (<code>charges=2</code>); either buffer such a route or don't put this middleware on it. A TTL shorter than the client's retry horizon: with a 100 ms TTL and a retry after 200 ms, the key was gone and the charge ran again. Match the TTL to how long clients really retry and publish it, as the draft asks. Stripe's docs say keys can be removed once they are at least 24 hours old.</p>
+    <p><b>Store down: fail closed for payments.</b> If you can't record the key, you can't promise once. The middleware answers 503 with <code>Retry-After</code> and the handler doesn't run (<code>charges=0</code>). A newsletter signup can fail open. The message-consumer sibling of this pattern is in <a href="./26-message-endpoints-correlation-events.html#p3">lesson 26, Part 3</a>; system-level design is <a href="../../11-Software-Architecture/lessons/23-caching-concurrency-idempotency.html">section 11 · 3.5</a> and depth on keys is <a href="../../12-System-Design/lessons/30-idempotency-keys-in-depth.html">section 12 · 2.6</a>.</p>
+  </section>
+
+<pre class="diagram">
+ client          app process            idempotency store     provider
+   |--- POST -------&gt;|                         |                 |
+   |                 |-- claim ---------------&gt;| in_progress     |
+   |                 |-- charge --------------------------------&gt;| money moved
+   |                 X  killed here            |                 |
+   |&lt;- conn reset ---|                         |                 |
+   |--- retry ------&gt;|-- claim ---------------&gt;| lease alive: 409
+   |      ... lease expires ...                |                 |
+   |--- retry ------&gt;|-- claim ---------------&gt;| taken over      |
+   |                 |-- charge --------------------------------&gt;| again, unless
+   |                 |                         |                 | it got the key
+</pre>
+  <div class="ar-note">الـ client بعت، الـ app خد الـ key وحاسب الـ provider والفلوس اتحركت، وبعدين الـ process اتقتل قبل الحفظ. الـ retry الأولاني بياخد 409 لأن الـ lease لسه عايش. بعد ما الـ lease يخلص، الـ retry بياخد الملكية ويحاسب تاني، إلا لو الـ provider وصله نفس الـ key فبيرفض التكرار عنده.</div>
+
+<pre data-file="src/idempotency/crash-app.ts"><code class="language-typescript">import type { AddressInfo } from "node:net";
+import express from "express";
+import pg from "pg";
+import { privatePort } from "./lab.ts";
+import { idempotent } from "./middleware.ts";
+import { PgIdempotencyStore } from "./pg-store.ts";
+
+const { DB_PORT, PROVIDER_URL, CRASH, SEND_KEY, LEASE_MS } = process.env;
+const pool = new pg.Pool({ host: "127.0.0.1", port: privatePort(DB_PORT), user: "app", database: "postgres" });
+
+const app = express();
+app.use(express.json());
+app.post(
+  "/payments",
+  idempotent({
+    store: new PgIdempotencyStore(pool),
+    ttlMs: 60_000,
+    leaseMs: Number(LEASE_MS),
+    scope: () =&gt; "acme",
+  }),
+  async (req, res) =&gt; {
+    const headers: Record&lt;string, string&gt; = { "content-type": "application/json" };
+    // الإصلاح: نفس الـ key بيتبعت للـ provider، فهو اللي يمنع التكرار عنده
+    if (SEND_KEY) headers["idempotency-key"] = String(req.get("Idempotency-Key"));
+    const provider = await fetch(String(PROVIDER_URL), { method: "POST", headers, body: JSON.stringify(req.body) });
+    const charge = (await provider.json()) as { id: string };
+
+    // هنا الـ process بيموت: الفلوس اتسحبت والـ response لسه ماتحفظش
+    if (CRASH) process.kill(process.pid, "SIGKILL");
+
+    res.status(201).json({ chargeId: charge.id });
+  },
+);
+
+const server = app.listen(0, "127.0.0.1", () =&gt; {
+  console.log(`PORT=${(server.address() as AddressInfo).port}`);
+});
+</code></pre>
+<pre data-file="src/idempotency/crash.ts"><code class="language-typescript">import { type ChildProcess, spawn } from "node:child_process";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { dirname, join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import pg from "pg";
+import { startPg } from "../pg-throwaway.mjs";
+import { privatePort } from "./lab.ts";
+import { IDEMPOTENCY_DDL } from "./pg-store.ts";
+
+const LEASE_MS = 600;
+const app = join(dirname(fileURLToPath(import.meta.url)), "p5-crash-app.ts");
+const db = await startPg();
+const dbPort = privatePort(db.port);
+
+function bootApp(env: Record&lt;string, string&gt;): Promise&lt;{ child: ChildProcess; url: string }&gt; {
+  const child = spawn(process.execPath, [app], { env: { ...process.env, DB_PORT: String(dbPort), LEASE_MS: String(LEASE_MS), ...env }, stdio: ["ignore", "pipe", "inherit"] });
+  return new Promise((resolve) =&gt; {
+    child.stdout!.on("data", (d: Buffer) =&gt; {
+      const m = /PORT=(\d+)/.exec(String(d));
+      if (m) resolve({ child, url: `http://127.0.0.1:${m[1]}/payments` });
+    });
+  });
+}
+
+async function scenario(label: string, sendKey: boolean) {
+  const pool = new pg.Pool({ host: "127.0.0.1", port: dbPort, user: "app", database: "postgres" });
+  await pool.query(IDEMPOTENCY_DDL);
+  await pool.query("TRUNCATE idempotency_keys");
+
+  // بديل محلي لـ provider، بيمنع التكرار بس لو وصله key
+  const seen = new Map&lt;string, string&gt;();
+  let moneyMoved = 0;
+  const provider = createServer((req, res) =&gt; {
+    const key = req.headers["idempotency-key"] as string | undefined;
+    let id = key ? seen.get(key) : undefined;
+    if (!id) {
+      id = `ch_${++moneyMoved}`;
+      if (key) seen.set(key, id);
+    }
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ id }));
+  });
+  await new Promise&lt;void&gt;((r) =&gt; provider.listen(0, "127.0.0.1", r));
+  const env = {
+    PROVIDER_URL: `http://127.0.0.1:${(provider.address() as AddressInfo).port}/charges`,
+    ...(sendKey ? { SEND_KEY: "1" } : {}),
+  };
+
+  const send = (url: string) =&gt;
+    fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "order-42" },
+      body: JSON.stringify({ amount: 500 }),
+    }).then(
+      async (r) =&gt; `${r.status} ${await r.text()}`,
+      (e: Error) =&gt; `connection lost (${(e.cause as { code?: string })?.code ?? e.message})`,
+    );
+
+  console.log(`--- ${label}`);
+  const crashing = await bootApp({ ...env, CRASH: "1" });
+  console.log("1st try, process killed mid-way:", await send(crashing.url), `| money moved: ${moneyMoved}`);
+
+  const healthy = await bootApp(env);
+  console.log("retry at once, lease still alive:", await send(healthy.url));
+  await sleep(LEASE_MS + 100);
+  console.log("retry after the lease expired   :", await send(healthy.url), `| money moved: ${moneyMoved}`);
+
+  healthy.child.kill();
+  provider.close();
+  provider.closeAllConnections();
+  await pool.end();
+}
+
+await scenario("provider gets no key", false);
+await scenario("provider gets the same key", true);
+await db.stop();
+</code></pre>
+
+<pre><code class="language-plaintext">--- provider gets no key
+1st try, process killed mid-way: connection lost (ECONNRESET) | money moved: 1
+retry at once, lease still alive: 409 {"title":"A request is outstanding for this Idempotency-Key","status":409}
+retry after the lease expired   : 201 {"chargeId":"ch_2"} | money moved: 2
+--- provider gets the same key
+1st try, process killed mid-way: connection lost (ECONNRESET) | money moved: 1
+retry at once, lease still alive: 409 {"title":"A request is outstanding for this Idempotency-Key","status":409}
+retry after the lease expired   : 201 {"chargeId":"ch_1"} | money moved: 1
+</code></pre>
+  <div class="ar-note">الـ process بيتقتل بجد بـ SIGKILL بعد الـ charge. من غير key للـ provider: الـ retry بعد الـ lease عمل <code>ch_2</code> والفلوس اتحركت مرتين. مع نفس الـ key: الـ retry رجع <code>ch_1</code> والفلوس اتحركت مرة واحدة.</div>
+
+<pre data-file="src/idempotency/lease.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { setTimeout as sleep } from "node:timers/promises";
+import pg from "pg";
+import { startPg } from "../pg-throwaway.mjs";
+import { connectRedis, privatePort } from "./lab.ts";
+import { IDEMPOTENCY_DDL, PgIdempotencyStore } from "./pg-store.ts";
+import { RedisIdempotencyStore } from "./redis-store.ts";
+import type { IdempotencyStore, StoredResponse } from "./store.ts";
+
+const reply = (who: string): StoredResponse =&gt; ({ status: 201, headers: {}, body: JSON.stringify({ who }) });
+
+async function leaseSuite(label: string, store: IdempotencyStore) {
+  const a = await store.claim("k1", "fp", 80, 60_000);
+  assert.equal(a.kind, "claimed");
+  assert.equal((await store.claim("k1", "fp", 80, 60_000)).kind, "in_progress");
+
+  // الـ worker الأول علّق والـ lease خلص، فالتاني ياخد الـ key
+  await sleep(120);
+  const b = await store.claim("k1", "fp", 5000, 60_000);
+  assert.equal(b.kind, "claimed");
+
+  // الأول صحي متأخر: الـ token بتاعه مبقاش صالح فكتابته بتترفض
+  const lateWrite = await store.complete("k1", (a as { token: string }).token, reply("A"), 60_000);
+  const ownerWrite = await store.complete("k1", (b as { token: string }).token, reply("B"), 60_000);
+  const final = await store.claim("k1", "fp", 80, 60_000);
+  assert.equal(final.kind, "completed");
+  console.log(`[${label}] late worker write=${lateWrite}, new owner write=${ownerWrite}, stored=${(final as { response: StoredResponse }).response.body}`);
+}
+
+const db = await startPg();
+const pool = new pg.Pool({ host: "127.0.0.1", port: privatePort(db.port), user: "app", database: "postgres" });
+await pool.query(IDEMPOTENCY_DDL);
+await leaseSuite("pg", new PgIdempotencyStore(pool));
+await pool.end();
+await db.stop();
+
+const redis = connectRedis();
+await redis.flushdb();
+await leaseSuite("redis", new RedisIdempotencyStore(redis));
+await redis.quit();
+</code></pre>
+
+<pre><code class="language-plaintext">[pg] late worker write=false, new owner write=true, stored={"who":"B"}
+[redis] late worker write=false, new owner write=true, stored={"who":"B"}
+</code></pre>
+  <div class="ar-note">على الـ store الاتنين: الـ worker اللي صحي متأخر كتابته اترفضت (<code>false</code>)، وصاحب الـ key الجديد نجح، واللي اتخزن رد B.</div>
+
+<pre data-file="src/idempotency/edges.ts"><code class="language-typescript">import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+import express from "express";
+import { connectRedis } from "./lab.ts";
+import { idempotent, type IdempotentOptions } from "./middleware.ts";
+import { RedisIdempotencyStore } from "./redis-store.ts";
+import type { IdempotencyStore } from "./store.ts";
+
+const redis = connectRedis();
+await redis.flushdb();
+const store = new RedisIdempotencyStore(redis);
+const base = { store, ttlMs: 60_000, leaseMs: 30_000, scope: () =&gt; "acme" };
+
+let charges = 0;
+const brokenStore: IdempotencyStore = {
+  claim: () =&gt; Promise.reject(new Error("store down")),
+  complete: () =&gt; Promise.reject(new Error("store down")),
+  release: () =&gt; Promise.reject(new Error("store down")),
+};
+
+const app = express();
+app.use(express.json());
+const route = (path: string, o: Partial&lt;IdempotentOptions&gt;, reply: (res: express.Response) =&gt; void) =&gt;
+  app.post(path, idempotent({ ...base, ...o }), (_req, res) =&gt; {
+    charges++;
+    reply(res);
+  });
+
+route("/short-ttl", { ttlMs: 100 }, (res) =&gt; void res.status(201).json({ ok: true }));
+route("/streamed", {}, (res) =&gt; {
+  res.status(200).write("part-1,");
+  res.end("part-2");
+});
+route("/big", { maxBodyBytes: 1024, replayHeaders: ["Location"] }, (res) =&gt; {
+  res.setHeader("Location", "/reports/77");
+  res.status(201).json({ rows: "x".repeat(5000) });
+});
+route("/charge", { store: brokenStore }, (res) =&gt; void res.status(201).json({ ok: true }));
+route("/newsletter", { store: brokenStore, onStoreError: "open" }, (res) =&gt; void res.status(200).json({ ok: true }));
+
+const server = app.listen(0, "127.0.0.1");
+await new Promise((r) =&gt; server.once("listening", r));
+const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+async function post(path: string, key: string) {
+  const res = await fetch(origin + path, {
+    method: "POST",
+    headers: { "content-type": "application/json", "idempotency-key": key },
+    body: "{}",
+  });
+  const text = await res.text();
+  return { status: res.status, size: text.length, replayed: res.headers.get("idempotent-replayed"), omitted: res.headers.get("idempotent-body-omitted"), location: res.headers.get("location"), retryAfter: res.headers.get("retry-after") };
+}
+
+charges = 0;
+await post("/short-ttl", "ttl-1");
+await sleep(200);
+const afterTtl = await post("/short-ttl", "ttl-1");
+console.log(`TTL 100ms, retry after 200ms: status=${afterTtl.status} replayed=${afterTtl.replayed} charges=${charges}`);
+
+charges = 0;
+await post("/streamed", "stream-1");
+await sleep(30);
+const streamed = await post("/streamed", "stream-1");
+console.log(`streamed response, retry: status=${streamed.status} replayed=${streamed.replayed} charges=${charges}`);
+
+charges = 0;
+const big = await post("/big", "big-1");
+const bigAgain = await post("/big", "big-1");
+console.log(`5 KB body, limit 1 KB: first size=${big.size}; replay status=${bigAgain.status} size=${bigAgain.size} omitted=${bigAgain.omitted} location=${bigAgain.location} charges=${charges}`);
+
+charges = 0;
+const closed = await post("/charge", "down-1");
+console.log(`store down, /charge fail closed: status=${closed.status} retry-after=${closed.retryAfter} charges=${charges}`);
+const open = await post("/newsletter", "down-2");
+console.log(`store down, /newsletter fail open: status=${open.status} charges=${charges}`);
+
+server.close();
+server.closeAllConnections();
+await redis.quit();
+</code></pre>
+
+<pre><code class="language-plaintext">TTL 100ms, retry after 200ms: status=201 replayed=null charges=2
+streamed response, retry: status=200 replayed=null charges=2
+5 KB body, limit 1 KB: first size=5011; replay status=201 size=0 omitted=true location=/reports/77 charges=1
+store down, /charge fail closed: status=503 retry-after=1 charges=0
+store down, /newsletter fail open: status=200 charges=1
+</code></pre>
+  <div class="ar-note">الـ TTL القصير: الـ key اختفى فاتحاسب مرتين. الـ stream: مفيش حاجة اتخزنت فالـ handler اشتغل تاني. الـ body الكبير: الـ replay بالـ status والـ Location من غير body. الـ store واقع: <code>/charge</code> رجع 503 وصفر charges، و <code>/newsletter</code> كمّل عادي.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ crash بين نظامين.</b> في الـ run الحقيقي فوق، الـ handler بيحاسب الـ provider وبعدين الـ process بيتقتل قبل ما الرد يتحفظ. الـ key بيفضل <code>in_progress</code>، فالـ retry الفوري بياخد 409. ولما الـ lease يخلص، الـ retry بياخد الملكية ويشغل الـ handler تاني، والـ provider بيحاسب مرتين. مفيش local transaction تقدر تقفل الفجوة دي، لأن الفلوس والصف بتاعك في نظامين مختلفين. الحل إنك تبعت الـ key بتاعك للـ provider فهو يمنع التكرار عنده: نفس الـ run، charge واحد، والـ retry بيرجع <code>ch_1</code>. وللشغل اللي مش لازم يحصل inline، الحل التاني <a href="./27-outbox-as-code.html">outbox</a>.</p>
+    <p><b>الـ <code>in_progress</code> اللي بيعلّق.</b> claim من غير انتهاء كانت هتقفل الـ key للأبد بعد crash، فالـ claim بيبقى <b>lease</b>. وانتهاء الـ lease ليه bug بتاعه: worker بطيء بيصحى بعد ما حد تاني خد الملكية ويكتب رده فوقه. الـ token بيمنع ده: <code>complete</code> بتنجح للـ token الحالي بس، والـ test بيوري إن كتابة الـ worker المتأخر اترفضت على الـ store الاتنين. خلي الـ lease أطول من أسوأ وقت للـ handler، ومعاه الـ timeouts بتاعتك من <a href="./23-circuit-breaker-bulkhead-composition.html#p5">درس 23</a>.</p>
+    <p><b>تلات حدود للـ middleware.</b> body أكبر من إنه يتخزن: <code>maxBodyBytes</code> بيحفظ الـ status والـ <code>Location</code> ومن غير body، والـ client يجيب الـ resource بنفسه. رد streamed: الـ middleware شايف <code>res.json</code> بس، فمع <code>res.end</code> مفيش حاجة بتتخزن، والـ key بيتساب، والـ retry شغّل الـ handler تاني (<code>charges=2</code>)، فإما تعمل buffer للـ route ده أو متحطش الـ middleware عليه. وTTL أقصر من مدة الـ retry بتاعة الـ client: مع TTL بتاع 100 ms و retry بعد 200 ms، الـ key اختفى والـ charge اتكرر. خلي الـ TTL على قد ما الـ clients بيعيدوا فعلًا وانشره زي ما الـ draft طالب. و docs بتاعة Stripe بتقول إن الـ keys ممكن تتشال بعد ما يبقى عمرها 24 ساعة على الأقل.</p>
+    <p><b>الـ store واقع: fail closed للمدفوعات.</b> لو مش قادر تسجل الـ key، مش هتقدر تضمن مرة واحدة. الـ middleware بيرد 503 مع <code>Retry-After</code> والـ handler مبيشتغلش (<code>charges=0</code>). أما اشتراك newsletter ممكن fail open. والنسخة بتاعة الـ message consumers موجودة في <a href="./26-message-endpoints-correlation-events.html#p3">درس 26، Part 3</a>، والتصميم على مستوى النظام في <a href="../../11-Software-Architecture/lessons/23-caching-concurrency-idempotency.html">section 11 · 3.5</a>، والعمق في الـ keys في <a href="../../12-System-Design/lessons/30-idempotency-keys-in-depth.html">section 12 · 2.6</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في checkout: الـ handler بيبعت نفس <code>Idempotency-Key</code> لـ Stripe، والـ lease أطول من الـ total timeout بتاع الـ policy (Part 6 في درس 23). وعلى الـ reports الكبيرة بنخزن الـ <code>Location</code> بس. ولو Redis بتاع الـ store وقع، الـ <code>POST /payments</code> يرجع 503 ومتكملش. والغلطة الشائعة: تفتكر إن الـ middleware لوحده بيضمن "exactly once"، وهو من غير key للـ provider عند الـ crash بيحاسب مرتين.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Your idempotency layer is correct, yet a customer was charged twice after a deploy. How?" → The process died after the provider charged and before the response was stored. The lease expired and a retry ran the handler again. A local transaction can't span the provider. Pass the same key to the provider, so it deduplicates, and use a token so a late worker can't overwrite the new owner.
+    <div class="ar-note">"طبقة الـ idempotency عندك صح، ومع ذلك عميل اتخصم مرتين بعد deploy. إزاي؟" ← الـ process مات بعد ما الـ provider حاسب وقبل ما الرد يتحفظ. الـ lease خلص والـ retry شغّل الـ handler تاني. والـ local transaction مش بتغطي الـ provider. ابعت نفس الـ key للـ provider عشان يمنع التكرار عنده، واستخدم token عشان worker متأخر ميكتبش فوق صاحب الـ key الجديد.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Should a rate limiter fail open or fail closed when Redis is down?" → It depends on the endpoint, and it's decided in advance. Fail open on reads where availability matters most, fail closed where the limit is the protection, like login or a costly export. Either way use a short client timeout, because a limiter that hangs takes the endpoint down with it.
+    <div class="ar-note">"الـ rate limiter يعمل fail open ولا fail closed لما Redis يقع؟" ← حسب الـ endpoint، والقرار بيتاخد من بدري. fail open على القراءات اللي الـ availability فيها أهم، و fail closed لما الحد هو الحماية زي الـ login أو export غالي. وفي الحالتين استخدم client timeout قصير، لأن limiter معلّق بيوقّع الـ endpoint معاه.</div>
+  </div>
+
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Read, then write</b>
+<pre><code class="language-typescript">const used = Number((await redis.get(key)) ?? 0);
+if (used &gt;= CAP) return false;
+await redis.set(key, used + 1, "PX", 60_000);
+// تحت الضغط: 100 من 100 عدّوا مع إن الحد 10
+</code></pre>
+    </div>
+    <div class="good"><b>✅ One atomic step</b>
+<pre><code class="language-typescript">const ok = await redis.eval(CAPPED_COUNTER, 1, key, CAP, 60_000);
+// الـ check والـ increment خطوة واحدة: 10 بالظبط
+</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ بين الـ <code>GET</code> والـ <code>SET</code> طلبات تانية بتقرا نفس الرقم، فالكل بيعدي (100 من 100). ✅ الـ script بيتنفذ atomic على السيرفر، فمفيش حد يدخل في النص، وعدّى 10 بالظبط.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Limiter in process memory behind a load balancer</b>
+<pre><code class="language-typescript">const limiter = new KeyedTokenBuckets({ capacity: 10, refillPerSecond: 2, maxKeys: 100_000 });
+// كل instance عنده عداد لوحده: الحد الحقيقي بيتضرب في عدد الـ instances
+</code></pre>
+    </div>
+    <div class="good"><b>✅ Shared store for a global limit</b>
+<pre><code class="language-typescript">const decision = await tokenBucket(redis, `rl:${tenantId}`, 10, 2);
+// العدّاد واحد لكل الـ instances، والوقت من Redis نفسه
+</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ limiter في الـ memory بيبقى لكل process، فاتنين instances بيقبلوا 20 مكان 10. ✅ العدّاد في Redis بيبقى واحد للكل، والـ Lua بتاخد الوقت من <code>TIME</code> بتاع Redis. وخلي الـ limiter المحلي للحماية السريعة بس.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Key built from the route template</b>
+<pre><code class="language-typescript">const key = [tenant, req.method, req.route.path, clientKey].join(" ");
+// الـ ⁦/orders/1/pay⁩ و ⁦/orders/2/pay⁩ بقوا نفس الـ key
+</code></pre>
+    </div>
+    <div class="good"><b>✅ Key built from the actual path</b>
+<pre><code class="language-typescript">const key = [tenant, req.method, req.baseUrl + req.path, clientKey].join(" ");
+</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ route template واحد لكل الـ orders، فـ key متعاد استخدامه على order تاني بنفس الـ body يتعامل كأنه replay، ويرجع نتيجة order غلط. ✅ المسار الفعلي بيعزل كل order لوحده.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Trust the local key across a provider call</b>
+<pre><code class="language-typescript">await provider.charge({ amount });
+await store.complete(key, token, response, ttlMs);
+// لو الـ process مات بين السطرين: الـ retry بيحاسب تاني
+</code></pre>
+    </div>
+    <div class="good"><b>✅ Pass the key to the provider</b>
+<pre><code class="language-typescript">await provider.charge({ amount }, { idempotencyKey: clientKey });
+await store.complete(key, token, response, ttlMs);
+</code></pre>
+    </div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ store بتاعك مش بيغطي نظام تاني، فـ crash بين السطرين بيخلي الفلوس تتحرك مرتين. ✅ لما الـ provider ياخد نفس الـ key بيمنع التكرار عنده، والـ retry بيرجع نفس الـ charge (<code>ch_1</code>).</p>
+  </section>
+
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Weighted endpoints <span class="lvl lvl-1">🟢 easy</span></b>
+    Using <code>KeyedTokenBuckets</code>, make <code>POST /reports/export</code> cost 5 tokens and <code>GET /orders</code> cost 1, sharing one bucket per tenant. Test it with the clock.
+    <div class="ar-note">باستخدام <code>KeyedTokenBuckets</code>، خلي <code>POST /reports/export</code> يخصم 5 tokens و <code>GET /orders</code> يخصم 1، من نفس الـ bucket لكل tenant. واختبره بالساعة.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/limits/weighted.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { KeyedTokenBuckets } from "../l24/token-bucket.ts";
+
+const COST = { "GET /orders": 1, "POST /reports/export": 5 } as const;
+
+test("an export costs 5 tokens and drains the same bucket as cheap reads", () =&gt; {
+  let t = 0;
+  const limiter = new KeyedTokenBuckets({ capacity: 10, refillPerSecond: 2, now: () =&gt; t, maxKeys: 100 });
+  const hit = (route: keyof typeof COST) =&gt; limiter.check("tenant:acme", COST[route]);
+  assert.equal(hit("POST /reports/export").allowed, true);
+  assert.equal(hit("POST /reports/export").allowed, true);
+  const third = hit("POST /reports/export");
+  assert.equal(third.allowed, false);
+  assert.equal(third.retryAfterMs, 2500);
+  t += 500;
+  assert.equal(hit("GET /orders").allowed, true);
+});
+</code></pre>
+      <div class="ar-note">تصديرين خصموا الـ 10 tokens، والتالت اترفض وقال يستنى 2500 ms، وبعد 500 ms فيه token يكفي <code>GET /orders</code>. الـ test نجح.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Sliding counter on Redis <span class="lvl lvl-2">🟡 medium</span></b>
+    Implement Part 2's sliding counter as a Lua script with one key per window, then confirm that 50 concurrent calls with a limit of 10 admit exactly 10.
+    <div class="ar-note">نفّذ الـ sliding counter بتاع Part 2 كـ Lua script بـ key لكل window، وتأكد إن 50 call متزامن بحد 10 بيعدوا 10 بالظبط.</div>
+    <details><summary>Hint · تلميح</summary>
+      The window number is <code>floor(now / window)</code>, and each key can expire after two windows.
+      <div class="ar-note">رقم الـ window هو <code>floor(now / window)</code>، وكل key ممكن ينتهي بعد window مرتين.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/limits/sliding-counter-redis.ts"><code class="language-typescript">import { connectRedis } from "../l24/lab.ts";
+
+// عدّاد متحرك على Redis بـ key لكل window، والوزن بييجي من الجزء اللي فات منها
+const SLIDING_COUNTER = `
+local limit = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local time = redis.call('TIME')
+local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+local slot = math.floor(now / window)
+local currentKey = KEYS[1] .. ':' .. slot
+local previousKey = KEYS[1] .. ':' .. (slot - 1)
+local current = tonumber(redis.call('GET', currentKey) or '0')
+local previous = tonumber(redis.call('GET', previousKey) or '0')
+local elapsed = (now % window) / window
+local estimate = previous * (1 - elapsed) + current
+if estimate &gt;= limit then return 0 end
+redis.call('INCR', currentKey)
+redis.call('PEXPIRE', currentKey, window * 2)
+return 1`;
+
+const redis = connectRedis();
+await redis.flushdb();
+const results = await Promise.all(
+  Array.from({ length: 50 }, () =&gt; redis.eval(SLIDING_COUNTER, 1, "sc:acme", 10, 60_000)),
+);
+console.log("admitted", results.filter((r) =&gt; r === 1).length, "of 50");
+await redis.quit();
+</code></pre>
+<pre><code class="language-plaintext">admitted 10 of 50
+</code></pre>
+      <div class="ar-note">عدّى 10 بالظبط على Redis خاص. لاحظ إن الـ script بيركّب keys جوه الكود، وده ينفع على instance واحد بس. على Redis Cluster كل key لازم يتبعت في <code>KEYS</code> وبـ hash tag.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Clean up expired keys safely <span class="lvl lvl-3">🔴 hard</span></b>
+    The Postgres table grows forever. Write a cleanup that removes expired rows in batches of 1000 without one huge <code>DELETE</code>, and prove valid rows survive.
+    <div class="ar-note">جدول Postgres بيكبر للأبد. اكتب cleanup بيمسح الصفوف المنتهية بدفعات 1000 من غير <code>DELETE</code> واحد ضخم، وأثبت إن الصفوف السليمة فضلت.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/idempotency/cleanup.ts"><code class="language-typescript">import pg from "pg";
+import { startPg } from "../pg-throwaway.mjs";
+import { privatePort } from "../l24/lab.ts";
+import { IDEMPOTENCY_DDL } from "../l24/pg-store.ts";
+
+const db = await startPg();
+const pool = new pg.Pool({ host: "127.0.0.1", port: privatePort(db.port), user: "app", database: "postgres" });
+await pool.query(IDEMPOTENCY_DDL);
+await pool.query(`
+  INSERT INTO idempotency_keys (key, fingerprint, status, expires_at)
+  SELECT 'k' || i, 'fp', 'completed', CASE WHEN i &lt;= 2500 THEN now() - interval '1 hour' ELSE now() + interval '1 hour' END
+  FROM generate_series(1, 3000) AS i`);
+
+// دفعات صغيرة عشان محدش يمسك locks كتير ولا الـ WAL يتملي مرة واحدة
+const BATCH = `
+  DELETE FROM idempotency_keys
+  WHERE ctid IN (SELECT ctid FROM idempotency_keys WHERE expires_at &lt;= now() LIMIT 1000)`;
+
+const batches: number[] = [];
+for (;;) {
+  const { rowCount } = await pool.query(BATCH);
+  batches.push(rowCount ?? 0);
+  if (!rowCount) break;
+}
+const { rows } = await pool.query("SELECT count(*)::int AS left FROM idempotency_keys");
+console.log("deleted per batch:", batches, "rows left:", rows[0].left);
+await pool.end();
+await db.stop();
+</code></pre>
+<pre><code class="language-plaintext">deleted per batch: [ 1000, 1000, 500, 0 ] rows left: 500
+</code></pre>
+      <div class="ar-note">اتمسحوا 2500 منتهي على دفعات، و 500 سليم فضلوا. الـ index على <code>expires_at</code> هو اللي بيخلي الـ subquery سريعة.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    Add <code>idempotent(...)</code> to <code>POST /orders</code> in your side project, with the key passed to your payment provider. Add a token bucket per tenant on the public API. Then run the 20-parallel test against your real route and assert one order.
+    <div class="ar-note">ضيف <code>idempotent(...)</code> على <code>POST /orders</code> في مشروعك الجانبي، والـ key يتبعت للـ payment provider. وضيف token bucket لكل tenant على الـ API العامة. وبعدين شغّل test الـ 20 طلب المتوازيين على الـ route الحقيقي وتأكد إن فيه order واحد.</div>
+    <details><summary>Hint · تلميح</summary>
+      Generate one UUID per user intent on the client, and keep it across retries of that intent.
+      <div class="ar-note">اعمل UUID واحد لكل نية من المستخدم على الـ client، وخليه ثابت مع إعادات نفس النية.</div>
+    </details>
+  </div>
+
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Token bucket: burst up to capacity, long-run rate = refill. Lazy refill, injected clock, no timers.</li>
+    <li>Per-key maps leak: 1M keys cost 163 MB. Use LRU eviction or a TTL.</li>
+    <li>429 with <code>Retry-After</code> rounded up to whole seconds.</li>
+    <li>Fixed window allows 2× at the boundary. Sliding log is exact but memory grows; sliding counter is a 3-number estimate.</li>
+    <li>In-memory limits multiply by instance count. GET then SET races: 100 of 100 admitted. Lua <code>EVAL</code> is atomic: 10 of 100.</li>
+    <li>Use Redis <code>TIME</code> inside the script, a short client timeout, and decide fail open or closed per endpoint.</li>
+    <li>Idempotency: <code>claim</code> atomic, key scoped by tenant + method + actual path, fingerprint the body.</li>
+    <li>States: absent, in_progress (409), completed (replay). Different payload 422, missing key 400. Draft-08 is not an RFC.</li>
+    <li>Save the response before sending it; a lease with a token handles crashes and late workers.</li>
+    <li>The local store can't cover the provider: pass the same key downstream.</li>
+    <li>Watch out for huge bodies, streamed responses and a TTL shorter than client retries. Store down: fail closed for payments.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ token bucket: burst لحد الـ capacity، والمعدل الطويل = الـ refill. refill كسول، ساعة محقونة، ومفيش timers.</li>
+      <li>الـ maps لكل key بتسرّب: مليون key بياخدوا 163 MB. استخدم LRU أو TTL.</li>
+      <li>رجّع 429 مع <code>Retry-After</code> مقرّب لفوق لثواني كاملة.</li>
+      <li>الـ fixed window بيعدّي ضعف الحد عند الحدود. الـ sliding log دقيق بس الـ memory بتكبر، والـ sliding counter تقدير بـ 3 أرقام.</li>
+      <li>الحدود في الـ memory بتتضرب في عدد الـ instances. والـ GET ثم SET فيها race: 100 من 100 عدّوا. والـ Lua <code>EVAL</code> atomic: 10 من 100.</li>
+      <li>استخدم <code>TIME</code> بتاع Redis جوه الـ script، و client timeout قصير، وقرر fail open أو closed لكل endpoint.</li>
+      <li>الـ idempotency: الـ <code>claim</code> atomic، والـ key محدد بالـ tenant والـ method والمسار الفعلي، و fingerprint للـ body.</li>
+      <li>الحالات: absent، و in_progress (409)، و completed (replay). الـ payload المختلف 422، والـ key الناقص 400. والـ draft-08 مش RFC.</li>
+      <li>احفظ الرد قبل ما تبعته، والـ lease مع الـ token بيحل الـ crashes والـ workers المتأخرين.</li>
+      <li>الـ store المحلي مش بيغطي الـ provider: ابعت نفس الـ key للي بعدك.</li>
+      <li>خد بالك من الـ bodies الكبيرة، والردود الـ streamed، و TTL أقصر من إعادات الـ client. والـ store لو واقع: fail closed للمدفوعات.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 10 · 3.2 — Rate limiter كـ pattern: token bucket و sliding window كـ classes، in-memory ثم Redis</label>
+    <label><input type="checkbox" data-key="r2"> 10 · 3.2 — Idempotent receiver: idempotency key storage + response replay — كـ middleware</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.ietf.org/archive/id/draft-ietf-httpapi-idempotency-key-header-08.txt">IETF draft — The Idempotency-Key HTTP Header Field (draft-08)</a></li>
+    <li><a href="https://docs.stripe.com/api/idempotent_requests">Stripe API — Idempotent requests</a></li>
+    <li><a href="https://blog.cloudflare.com/counting-things-a-lot-of-different-things/">Cloudflare — How we built rate limiting capable of scaling to millions of domains</a></li>
+    <li><a href="https://redis.io/docs/latest/develop/programmability/eval-intro/">Redis docs — Scripting with Lua</a></li>
+    <li><a href="https://github.com/animir/node-rate-limiter-flexible">rate-limiter-flexible</a></li>
+  </ul>
+
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+    <nav class="lesson-nav">
+    <a class="prev" href="./23-circuit-breaker-bulkhead-composition.html"><small>← Previous</small>23 · Breaker &amp; Bulkhead</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./25-message-channels-routers.html"><small>Next →</small>25 · Channels &amp; Routers</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
