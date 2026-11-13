@@ -1,0 +1,1547 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Odoo in Production II: Postgres Tuning, Monitoring, Docker, What Breaks — 17 ERP &amp; Odoo</title>
+<meta name="section" content="17-ERP">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">17 · ERP &amp; Odoo</a></span>
+    <span>·</span>
+    <span>Lesson 35 / 41</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+<!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Odoo in Production II: Postgres Tuning, Monitoring, Docker, What Breaks</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 35 of 41 — ERP &amp; Odoo</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Odoo 20 · Postgres 18 · Node 22 · TypeScript 7</span>
+      <span class="chip">Prereq: 34 Production I</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>17 · 3.3 — PostgreSQL tuning لـ Odoo</li>
+        <li>17 · 3.3 — Monitoring و logs و alerts</li>
+        <li>17 · 3.3 — Docker deploy</li>
+        <li>17 · 3.3 — إيه اللي بيكسر تحت الـ load: cron locks، long transactions، serialization failures</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Postgres for Odoo</a></li>
+      <li><a href="#p2">Part 2 — Monitoring</a></li>
+      <li><a href="#p3">Part 3 — Alerts</a></li>
+      <li><a href="#p4">Part 4 — Docker deploy</a></li>
+      <li><a href="#p5">Part 5 — Cron locks and long transactions</a></li>
+      <li><a href="#p6">Part 6 — Serialization failures</a></li>
+      <li><a href="#p7">Part 7 — Load test</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>An ERP fails differently from a stateless API. Nobody is scrolling a feed: forty accountants are posting invoices on the last day of the month, a cron is reconciling bank lines, and every one of those writes touches the same few rows. In this lesson we ran real Odoo 20 against a private Postgres 18 copy and watched what actually breaks. Six orders produced 20 payment-provider calls. A 16-client load on one gap-free sequence failed 12 of 32 requests while the Odoo process used 2% of a CPU. Those two numbers are the lesson: under load, Odoo's problem is usually contention and replays, and adding servers doesn't fix either.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ ERP بيقع بطريقة غير الـ API العادي. مفيش حد بيقلّب في feed: عندك 40 محاسب بيرحّلوا فواتير آخر يوم في الشهر، وcron بيعمل reconciliation لحركات البنك، وكل الكتابات دي بتخبط في نفس الكام row. في الدرس ده شغّلنا Odoo 20 حقيقي على نسخة Postgres 18 خاصة وشفنا إيه اللي بيكسر فعلًا. 6 orders عملوا 20 مكالمة لـ payment provider. وضغط 16 client على sequence واحد من غير فجوات فشّل 12 طلب من 32، والـ process بتاع Odoo مستخدم 2% بس من CPU. الرقمين دول هما الدرس كله: تحت الضغط، مشكلة Odoo غالبًا contention و replays، وزيادة السيرفرات مش هتحل ولا واحدة فيهم.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Postgres for Odoo <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — Postgres مظبوط لـ Odoo</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Workload shape.</b> Odoo opens every cursor at <code>REPEATABLE READ</code> (real: <code>SHOW transaction_isolation</code> on an ORM cursor returned <code>repeatable read</code>), and runs many small ORM-generated queries per request. A handful of tables grow with the business: <code>mail_message</code> (every chatter entry), <code>account_move_line</code> (the ledger), <code>ir_attachment</code> (the rows; the bytes live in the filestore) and <code>stock_move</code>. The demo template only has 2,867 / 330 / 1,624 / 208 rows in those four, so we seeded 400,000 rows into a lab table to get a plan worth reading.</p>
+    <p><b>Measure first.</b> <code>pg_stat_statements</code> needs <code>shared_preload_libraries</code> and a server restart, so it has to run on a cluster you own. Run a representative workload, sort by <code>total_exec_time</code> (not mean: a 2 ms query called a million times beats a 5 s report), read the plan with <code>EXPLAIN (ANALYZE, BUFFERS)</code>, then fix it in the module with <code>models.Index</code> so that the index exists in every environment and survives a rebuild. A hand-made index is invisible to code review, and it won't exist in staging or in any freshly built database.</p>
+    <p><b>The catch.</b> <code>models.Index</code> runs a plain <code>CREATE INDEX</code> during <code>-u</code> (there is no <code>CONCURRENTLY</code> anywhere in the ORM), which blocks writes to that table while it builds. On a big table, build it first with <code>CREATE INDEX CONCURRENTLY</code> under the exact name Odoo will use, <code>&lt;table&gt;&lt;attribute name&gt;</code>. <code>apply_to_database</code> keeps an index that has no comment, and we confirmed it: the OID was unchanged after <code>-u</code>.</p>
+    <p><b>Connection maths.</b> Each Odoo process has its own pool capped at <code>db_maxconn</code> (default 64). The worst case is <code>(workers + max_cron_threads) × db_maxconn + db_maxconn_gevent</code>, plus whatever your backups and monitoring use, and it must stay below <code>max_connections</code>. Odoo also depends on session state: <code>LISTEN cron_trigger</code>, <code>listen imbus</code> and a session-level advisory lock on <code>registry_loading</code>. Those are the things PgBouncer's transaction mode breaks, so see <a href="../../09-Databases/lessons/22-pooling-pgbouncer-prepared.html">section 09 · pooling</a> before you put one in front.</p>
+  </section>
+
+<pre data-file="pgcopy/postgresql.auto.conf"><code class="language-ini"># الإضافة: لازم تتحمّل مع بداية السيرفر، فمحتاج restart
+shared_preload_libraries = 'pg_stat_statements'
+pg_stat_statements.track = 'top'
+# القياس: عشان EXPLAIN يوريك وقت القراية من الديسك
+track_io_timing = on
+log_lock_waits = on</code></pre>
+
+<pre data-file="top-queries.sql"><code class="language-sql">CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+SELECT pg_stat_statements_reset();
+-- هنا شغّل الـ workload الحقيقي، وبعدين رتّب بالوقت الكلي
+SELECT calls,
+       round(total_exec_time::numeric, 1) AS total_ms,
+       round(mean_exec_time::numeric, 3)  AS mean_ms,
+       shared_blks_hit,
+       left(query, 90)                    AS query
+FROM pg_stat_statements
+ORDER BY total_exec_time DESC
+LIMIT 5;</code></pre>
+
+<pre><code class="language-plaintext">calls  total_ms  mean_ms  shared_blks_hit  query
+150    8505.5    56.703   681900           SELECT COUNT(*) FROM "prod_lab_delivery" WHERE "prod_lab_delivery"."name" IN ($1)
+150    7772.0    51.813   690336           SELECT "prod_lab_delivery"."id" FROM "prod_lab_delivery" WHERE (... "partner_id" IN ($1) AND ... "state" IN ($2)) ORDER BY ...
+141    11.9      0.084    11280            SELECT "prod_lab_delivery"."id", "prod_lab_delivery"."name", ...</code></pre>
+  <div class="ar-note">الناتج الحقيقي بعد 150 لفّة ORM. أول query بتاخد ≈8.5 ثانية في المجموع وتاني واحدة ≈7.8. لاحظ <code>shared_blks_hit</code> حوالي 680 ألف: Postgres بيقرا الجدول كله في كل مرة. الـ query التالتة 12ms بس، فمش محتاجة شغل. الأوقات دي على Windows وجهاز عليه ضغط، فبص على النسبة مش الرقم.</div>
+
+<pre data-file="explain-before.txt"><code class="language-plaintext">Limit  (actual time=23.397..27.725 rows=20.00 loops=1)
+  Buffers: shared hit=4622
+  -&gt;  Gather Merge  (actual time=23.396..27.722 rows=20.00 loops=1)
+        Workers Launched: 2
+        -&gt;  Sort  (actual time=7.496..7.496 rows=6.67 loops=3)
+              Sort Key: scheduled_at DESC
+              Sort Method: top-N heapsort  Memory: 25kB
+              -&gt;  Parallel Seq Scan on prod_lab_delivery  (actual time=0.006..7.399 rows=133.33 loops=3)
+                    Filter: ((partner_id = 4) AND ((state)::text = 'pending'::text))
+                    Rows Removed by Filter: 133200
+Execution Time: 27.741 ms</code></pre>
+  <div class="ar-note">الخطة قبل الـ index: Parallel Seq Scan بيرمي 133,200 صف لكل worker عشان يلاقي 400 صف، وبيقرا 4,622 buffer، وبعدين Sort. الوقت ≈27.7ms لكل طلب. مقروء إزاي؟ ابدأ من أعمق سطر، وبص على <code>Rows Removed by Filter</code> و <code>Buffers</code>: دول اللي بيقولوا إن فيه شغل ضايع. شرح الـ nodes كلها في <a href="../../09-Databases/lessons/08-explain-scans-nodes.html">section 09 · EXPLAIN</a>.</div>
+
+<pre data-file="prod_lab/models/delivery.py"><code class="language-python">from odoo import fields, models
+
+
+class Delivery(models.Model):
+    _name = 'prod_lab.delivery'
+    _description = 'Outbound delivery'
+
+    name = fields.Char(required=True)
+    partner_id = fields.Many2one('res.partner', required=True)
+    state = fields.Selection(
+        [('pending', 'Pending'), ('sent', 'Sent'), ('failed', 'Failed')],
+        default='pending', required=True,
+    )
+    scheduled_at = fields.Datetime(required=True)
+    amount = fields.Float()
+
+    # الـ index: جزئي عشان الجدول فيه 5% بس pending، وبنفس ترتيب الـ ORDER BY
+    _partner_state_idx = models.Index("(partner_id, scheduled_at DESC) WHERE state = 'pending'")</code></pre>
+
+<pre data-file="explain-after.txt"><code class="language-plaintext">CREATE INDEX prod_lab_delivery_partner_state_idx ON public.prod_lab_delivery
+  USING btree (partner_id, scheduled_at DESC) WHERE ((state)::text = 'pending'::text)
+
+Limit  (actual time=0.033..0.049 rows=20.00 loops=1)
+  Buffers: shared hit=20 read=2
+  -&gt;  Index Scan using prod_lab_delivery_partner_state_idx on prod_lab_delivery  (actual time=0.032..0.047 rows=20.00 loops=1)
+        Index Cond: (partner_id = 4)
+Execution Time: 0.062 ms</code></pre>
+  <div class="ar-note">بعد <code>-u</code>: الـ index اتعمل باسم <code>&lt;table&gt;_partner_state_idx</code>. الـ buffers نزلت من 4,622 لـ 22، والوقت من ≈27.7ms لـ ≈0.06ms، ومفيش Sort خالص لأن الـ index مترتب أصلًا. على الـ workload كله: الـ query دي نزلت من 7,772ms لـ 6.7ms، و <code>COUNT</code> بقت هي اللي فوق، وده الطبيعي: تصلّح الأولى، تطلع اللي بعدها.</div>
+
+<pre data-file="src/conn-budget.ts"><code class="language-typescript">interface Deployment {
+  workers: number;
+  cronThreads: number;
+  dbMaxconn: number;
+  dbMaxconnGevent: number;
+  reservedForOps: number;
+  maxConnections: number;
+}
+
+// الحد الأقصى النظري: كل process عنده pool مستقل بسقف db_maxconn
+export function worstCase(d: Deployment): number {
+  return (d.workers + d.cronThreads) * d.dbMaxconn + d.dbMaxconnGevent + d.reservedForOps;
+}
+
+function report(name: string, d: Deployment): void {
+  const need = worstCase(d);
+  const verdict = need &lt;= d.maxConnections ? "fits" : `over by ${need - d.maxConnections}`;
+  console.log(`${name}: worst case ${need} of ${d.maxConnections} -&gt; ${verdict}`);
+}
+
+report("defaults", { workers: 8, cronThreads: 2, dbMaxconn: 64, dbMaxconnGevent: 64, reservedForOps: 10, maxConnections: 100 });
+report("sized", { workers: 8, cronThreads: 2, dbMaxconn: 12, dbMaxconnGevent: 40, reservedForOps: 10, maxConnections: 200 });</code></pre>
+<pre><code class="language-plaintext">defaults: worst case 714 of 100 -&gt; over by 614
+sized: worst case 170 of 200 -&gt; fits</code></pre>
+  <div class="ar-note">بالـ defaults (<code>db_maxconn = 64</code> لكل process) أسوأ حالة 714 connection قصاد 100 مسموحين. بعد الظبط 170 من 200. في الواقع الـ worker بيخدم طلب واحد في المرة فبيستخدم عدد قليل، وفي الـ lab الـ threaded وصلنا 15–17 connection عند 16 client، بس <code>db_maxconn</code> هو السقف الوحيد اللي بيحميك لو حصل تسريب cursors. والـ connections الفاضية مبتتقفلش غير بعد 600 ثانية وعند طلب جديد.</div>
+
+  <table>
+    <tr><th>Setting</th><th>Default (real)</th><th>Starting point, 32 GB DB host</th><th>Why, for Odoo</th></tr>
+    <tr><td><code>shared_buffers</code></td><td>128 MB</td><td>8 GB</td><td>About 25% of RAM; the OS cache does the rest</td></tr>
+    <tr><td><code>effective_cache_size</code></td><td>4 GB</td><td>24 GB</td><td>Planner hint only; makes index scans look as cheap as they are</td></tr>
+    <tr><td><code>work_mem</code></td><td>4 MB</td><td>32 MB</td><td>Per sort node, per connection; aging reports sort a lot</td></tr>
+    <tr><td><code>maintenance_work_mem</code></td><td>64 MB</td><td>1 GB</td><td>Index builds during <code>-u</code>, vacuum</td></tr>
+    <tr><td><code>random_page_cost</code></td><td>4</td><td>1.1</td><td>SSD; the default assumes spinning disks</td></tr>
+    <tr><td><code>autovacuum_vacuum_scale_factor</code></td><td>0.2</td><td>0.02 on big tables</td><td>20% of 50M rows is 10M dead rows before vacuum starts</td></tr>
+    <tr><td><code>log_min_duration_statement</code></td><td>off</td><td>500 ms</td><td>Slow queries land in the log with their text</td></tr>
+    <tr><td><code>idle_in_transaction_session_timeout</code></td><td>0</td><td>Above <code>limit_time_real_cron</code></td><td>Python work between queries looks idle to Postgres</td></tr>
+    <tr><td><code>lock_timeout</code></td><td>0</td><td>Leave at 0 globally</td><td>Odoo retries <code>55P03</code>, so a timeout becomes a whole-request replay</td></tr>
+  </table>
+  <div class="ar-note">صف صف: <code>shared_buffers</code> حوالي ربع الـ RAM. <code>effective_cache_size</code> مجرد تلميح للـ planner. <code>work_mem</code> لكل sort ولكل connection، فمتكبّرهوش عشوائي: جربنا 64kB فعمل <code>external merge Disk: 8584kB</code>، وبـ 256MB عمل <code>quicksort Memory: 27914kB</code> وكان أسرع (≈398ms مقابل ≈321ms في run، و≈765 مقابل ≈272 في run تاني، فالوقت متذبذب بس الـ spill مؤكد). <code>maintenance_work_mem</code> للـ index builds والـ vacuum. <code>random_page_cost</code> 1.1 لو SSD. الـ autovacuum: 20% من 50 مليون يعني 10 مليون dead row قبل ما يبدأ، فاظبطه لكل جدول كبير. <code>log_min_duration_statement</code> عشان الـ queries البطيئة تتسجل. <code>idle_in_transaction_session_timeout</code> لازم يبقى أكبر من <code>limit_time_real_cron</code>، لأن شغل Python بين query والتانية بيبان لـ Postgres كأنه idle. و <code>lock_timeout</code> خليه 0 على مستوى السيرفر: Odoo بيعمل retry لـ <code>55P03</code>، يعني الـ timeout هيتحول لإعادة تشغيل الطلب كله. الأرقام دي نقطة بداية، ومتجربتش على 32GB هنا.</div>
+
+<pre data-file="tune-big-tables.sql"><code class="language-sql">-- الجداول الكبيرة: خلي الـ autovacuum يشتغل بدري بدل ما يستنى 20%
+ALTER TABLE mail_message
+  SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_analyze_scale_factor = 0.01);
+ALTER TABLE account_move_line
+  SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_analyze_scale_factor = 0.01);</code></pre>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>شكل الشغل:</b> Odoo بيفتح كل cursor بـ <code>REPEATABLE READ</code> (جربناها: <code>SHOW transaction_isolation</code> طلعت <code>repeatable read</code>)، وبيبعت queries صغيرة كتير من الـ ORM في كل طلب. والجداول اللي بتكبر مع البيزنس: <code>mail_message</code> (كل chatter)، <code>account_move_line</code> (الـ ledger)، <code>ir_attachment</code> (الصفوف بس، الملفات نفسها في الـ filestore)، و <code>stock_move</code>. الـ demo فيه 2,867 و330 و1,624 و208 صف بس، فعملنا seed لـ 400 ألف صف في جدول lab عشان نشوف خطة تستاهل.</p>
+    <p><b>قيس الأول:</b> <code>pg_stat_statements</code> محتاج <code>shared_preload_libraries</code> و restart، يعني لازم cluster بتاعك. شغّل workload حقيقي، رتّب بـ <code>total_exec_time</code> مش المتوسط (query بـ 2ms متنادية مليون مرة أخطر من report بـ 5 ثواني)، اقرا الخطة بـ <code>EXPLAIN (ANALYZE, BUFFERS)</code>، وصلّح جوه الـ module بـ <code>models.Index</code> عشان يبقى موجود في كل environment. الـ index اليدوي محدش بيشوفه في الـ code review، ومش هيبقى موجود في الـ staging ولا في أي database جديدة.</p>
+    <p><b>الفخ:</b> <code>models.Index</code> بيعمل <code>CREATE INDEX</code> عادي وقت <code>-u</code> (مفيش <code>CONCURRENTLY</code> في الـ ORM كله)، وده بيقفل الكتابة على الجدول طول ما بيتبني. على جدول كبير، ابنيه الأول بـ <code>CREATE INDEX CONCURRENTLY</code> بنفس الاسم اللي Odoo هيستخدمه، <code>&lt;table&gt;&lt;اسم الـ attribute&gt;</code>. الـ <code>apply_to_database</code> بيسيب الـ index اللي مفيهوش comment، وأكدناها: الـ OID فضل زي ما هو بعد <code>-u</code>.</p>
+    <p><b>حساب الـ connections:</b> كل process عنده pool مستقل سقفه <code>db_maxconn</code> (الـ default 64). أسوأ حالة <code>(workers + max_cron_threads) × db_maxconn + db_maxconn_gevent</code>، زائد الـ backups والـ monitoring، ولازم تفضل أقل من <code>max_connections</code>. كمان Odoo بيعتمد على session: <code>LISTEN cron_trigger</code> و <code>listen imbus</code> و advisory lock على مستوى الـ session اسمه <code>registry_loading</code>. ودول بالظبط اللي الـ transaction mode بتاع PgBouncer بيكسرهم، فاقرا <a href="../../09-Databases/lessons/22-pooling-pgbouncer-prepared.html">section 09 · pooling</a> قبل ما تحطه قدامه.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عميل بيشتكي إن شاشة الفواتير بطيئة آخر الشهر. بدل ما تخمّن: فعّل <code>pg_stat_statements</code> على نسخة، رتّب بالوقت الكلي، خد أول query، <code>EXPLAIN</code>، حط <code>models.Index</code> في الـ module بتاعك، وافتح PR فيه الخطة قبل وبعد. ولو الجدول 40 مليون صف، ابني الـ index بـ <code>CONCURRENTLY</code> قبل الـ deploy بنفس الاسم. الغلطة الشائعة: تعمل <code>CREATE INDEX</code> بإيدك في production وتنسى، والـ staging يفضل بطيء ومحدش عارف ليه.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "An Odoo list view got slow. How do you find out why without guessing?" → Reproduce on a copy with <code>pg_stat_statements</code> on. Sort by total time. <code>EXPLAIN (ANALYZE, BUFFERS)</code> the top query and look at rows removed by filter and buffers read. Check the request's query count in the log for an N+1. Fix with <code>models.Index</code> or by batching the ORM access, and compare before and after.
+    <div class="ar-note">"شاشة list في Odoo بقت بطيئة. تعرف السبب إزاي من غير تخمين؟" ← كرر المشكلة على نسخة و <code>pg_stat_statements</code> شغال. رتّب بالوقت الكلي. اعمل <code>EXPLAIN (ANALYZE, BUFFERS)</code> لأول query وبص على الصفوف اللي اترمت والـ buffers. بص على query count في الـ log عشان الـ N+1. صلّح بـ <code>models.Index</code> أو بتجميع الوصول للـ ORM، وقارن قبل وبعد.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Monitoring <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — الـ monitoring والـ logs</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Health.</b> <code>/web/health</code> answers <code>{"status": "pass"}</code> without touching Postgres, so it only proves the HTTP thread is alive. Add <code>?db_server_status=1</code> and it opens a real cursor. Neither checks that your code and your schema agree: <a href="./36-odoo-upgrades-migration-porting.html">lesson 36</a> shows it answering <code>pass</code> on a half-upgraded database.</p>
+    <p><b>The access line is a free profiler.</b> In Odoo 20 the logger is <code>odoo.http.server</code>, and its format ends in three performance columns: <code>query_count</code>, <code>query_time</code>, and <code>remaining_time</code> (total minus SQL), then the cursor mode. Our N+1 endpoint logged 206 queries against 6 for the batched one. A retried request shows a huge <code>remaining_time</code> with a tiny <code>query_time</code>: those 24 seconds are <code>time.sleep</code> in the retry backoff, not CPU.</p>
+    <p><b>Log routing.</b> <code>--log-handler module:LEVEL</code> is repeatable; <code>--log-sql</code> is a shortcut for <code>odoo.sql_db:DEBUG</code>; <code>--log-config</code> takes a JSON or TOML <code>dictConfig</code> if you want structured output. <code>log_db</code> copies records at or above <code>log_db_level</code> into the <code>ir_logging</code> table (real row below). Each record opens its own cursor, so keep it at <code>warning</code>. And be careful: <code>odoo.http.server:WARNING</code> silenced 5 of 5 access lines in our run, and any exporter reading them goes blind without an error.</p>
+    <p><b>The exporter.</b> Odoo has no built-in Prometheus endpoint, so a small Node process tails the log and exposes metrics. Prometheus and Grafana themselves are <i>not run here</i>; the exporter and the numbers below are real. For how to scrape and graph it, see <a href="../../13-Testing-Security-DevOps/lessons/41-prometheus-grafana-uptime.html">section 13 · Prometheus</a>.</p>
+  </section>
+
+<pre class="diagram">
+2026-11-11 05:21:12,018 22456 INFO odoo odoo.http.server: 127.0.0.1 S/-2mRlFza -
+   [11/Nov/2026 05:21:12] "POST /prod_lab/invoice/no_gap HTTP/1.1" 500 265 35 0.085 24.028 rw
+                                                                    |   |   |    |     |    |
+                                         HTTP status ---------------+   |   |    |     |    |
+                                         response bytes ----------------+   |    |     |    |
+                                         query_count -----------------------+    |     |    |
+                                         query_time (s) in SQL ------------------+     |    |
+                                         remaining_time (s) = total - SQL -------------+    |
+                                         cursor mode (rw / ro) -----------------------------+
+</pre>
+  <div class="ar-note">تشريح سطر حقيقي من الـ run: الـ status 500، حجم الرد 265 byte، و 35 query، و 0.085 ثانية في SQL، و 24.028 ثانية "باقي الوقت"، و cursor mode قراية وكتابة. لما تلاقي remaining_time ضخم و query_time صغير على طلب فشل، ده معناه إن الوقت راح في انتظار الـ retries مش في شغل.</div>
+
+<pre><code class="language-plaintext">GET /web/health                  200  {"status": "pass"}
+GET /web/health?db_server_status=1  200  {"status": "pass", "db_server_status": true}
+
+"GET /prod_lab/report_slow HTTP/1.1" 200 32 206 0.043 0.034 rw
+"GET /prod_lab/report_fast HTTP/1.1" 200 32   6 0.010 0.033 rw
+
+ir_logging row: { type: 'server', level: 'WARNING', name: 'odoo.addons.prod_lab.controllers.main',
+                  func: 'warn', line: '79', msg: 'carrier ACME returned a bad tracking code' }
+
+silenced access lines 0 of 5   (with log_handler = :INFO,odoo.http.server:WARNING)</code></pre>
+  <div class="ar-note">ناتج حقيقي: الـ health التاني بس هو اللي لمس Postgres. نفس الـ report بـ 206 query مقابل 6، والاتنين رجّعوا نفس النتيجة بالظبط (200 صف، 148,568). الـ warning اتسجل في <code>ir_logging</code>. والسطر الأخير: لما سكّتنا logger الـ access، ولا سطر من الـ 5 طلبات اتكتب.</div>
+
+<pre data-file="src/odoo-exporter.ts"><code class="language-typescript">import { createServer } from "node:http";
+import { open, stat } from "node:fs/promises";
+import { Counter, Histogram, Registry } from "prom-client";
+
+const logPath = process.argv[2];
+if (!logPath) throw new Error("usage: node odoo-exporter.ts &lt;logfile&gt;");
+
+const registry = new Registry();
+const requests = new Counter({ name: "odoo_http_requests_total", help: "HTTP requests by route and status", labelNames: ["route", "status"], registers: [registry] });
+const duration = new Histogram({ name: "odoo_http_request_seconds", help: "query_time + remaining_time from the access line", labelNames: ["route"], buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30], registers: [registry] });
+const sqlCount = new Counter({ name: "odoo_sql_queries_total", help: "Queries reported on access lines", labelNames: ["route"], registers: [registry] });
+const sqlSeconds = new Counter({ name: "odoo_sql_seconds_total", help: "Time spent in SQL", labelNames: ["route"], registers: [registry] });
+const retries = new Counter({ name: "odoo_concurrency_retries_total", help: "retrying() replays by error code", labelNames: ["error"], registers: [registry] });
+const gaveUp = new Counter({ name: "odoo_concurrency_gave_up_total", help: "Requests that used all their tries", labelNames: ["error"], registers: [registry] });
+const memoryKills = new Counter({ name: "odoo_worker_memory_kills_total", help: "Workers recycled by a memory limit", registers: [registry] });
+const levels = new Counter({ name: "odoo_log_lines_total", help: "Log lines by level", labelNames: ["level"], registers: [registry] });
+
+// الشكل: date time pid LEVEL dbname logger: message
+const LINE = /^\S+ \S+ \d+ (\w+) \S+ (\S+): (.*)$/;
+// الآخر: status bytes query_count query_time remaining_time cursor_mode
+const ACCESS = /"(\w+) ([^ "]+) HTTP\/[\d.]+" (\d{3}) \S+ (\d+) ([\d.]+) ([\d.]+)/;
+const RETRY = /^(\w+), \d+ tries left/;
+const GAVE_UP = /^(\w+), maximum number of tries reached/;
+const MEMORY = /^(Virtual memory limit|Server memory limit)/;
+
+// ليه: لو حطيت الـ URL زي ما هو في label، كل id هيعمل time series جديدة
+export function normalizeRoute(url: string): string {
+  const [path = "/"] = url.split("?");
+  return path.replace(/\/\d+(?=\/|$)/g, "/:id").replace(/\/assets\/.*/, "/assets/*").slice(0, 80);
+}
+
+export function consume(line: string): void {
+  const m = LINE.exec(line);
+  if (!m) return;
+  const [, level = "", logger, message = ""] = m;
+  levels.inc({ level });
+  if (MEMORY.test(message)) memoryKills.inc();
+  if (logger === "odoo.http.server") {
+    const a = ACCESS.exec(message);
+    if (!a) return;
+    const route = normalizeRoute(a[2] ?? "/");
+    const queries = Number(a[4]);
+    const queryTime = Number(a[5]);
+    const otherTime = Number(a[6]);
+    requests.inc({ route, status: a[3] ?? "0" });
+    duration.observe({ route }, queryTime + otherTime);
+    sqlCount.inc({ route }, queries);
+    sqlSeconds.inc({ route }, queryTime);
+    return;
+  }
+  if (logger === "odoo.http") {
+    const r = RETRY.exec(message);
+    if (r) retries.inc({ error: r[1] ?? "unknown" });
+    const g = GAVE_UP.exec(message);
+    if (g) gaveUp.inc({ error: g[1] ?? "unknown" });
+  }
+}
+
+let offset = 0;
+let partial = "";
+async function poll(): Promise&lt;void&gt; {
+  const { size } = await stat(logPath);
+  // الـ logrotate: لو الملف صغر يبقى اتلف، نبدأ من الأول
+  if (size &lt; offset) {
+    offset = 0;
+    partial = "";
+  }
+  if (size === offset) return;
+  const file = await open(logPath, "r");
+  try {
+    const buffer = Buffer.alloc(size - offset);
+    await file.read(buffer, 0, buffer.length, offset);
+    offset = size;
+    // السطر الأخير ممكن يكون لسه بيتكتب، فبنسيبه للمرة الجاية
+    const lines = (partial + buffer.toString("utf8")).split("\n");
+    partial = lines.pop() ?? "";
+    for (const line of lines) consume(line.replace(/\r$/, ""));
+  } finally {
+    await file.close();
+  }
+}
+
+const timer = setInterval(() =&gt; void poll().catch((e) =&gt; console.error(e)), 1000);
+const server = createServer(async (req, res) =&gt; {
+  if (req.url !== "/metrics") return void res.writeHead(404).end();
+  res.setHeader("Content-Type", registry.contentType);
+  res.end(await registry.metrics());
+});
+server.listen(0, "127.0.0.1", () =&gt; {
+  const address = server.address();
+  if (address &amp;&amp; typeof address === "object") console.log(`METRICS_PORT=${address.port}`);
+});
+process.on("SIGTERM", () =&gt; { clearInterval(timer); server.close(); });</code></pre>
+
+<pre data-file="metrics.txt"><code class="language-plaintext">odoo_http_requests_total{route="/prod_lab/invoice/standard",status="200"} 160
+odoo_http_requests_total{route="/prod_lab/invoice/no_gap",status="200"} 144
+odoo_http_requests_total{route="/prod_lab/invoice/no_gap",status="500"} 17
+odoo_http_request_seconds_sum{route="/prod_lab/invoice/standard"} 47.834999999999994
+odoo_http_request_seconds_sum{route="/prod_lab/invoice/no_gap"} 467.9870000000001
+odoo_sql_seconds_total{route="/prod_lab/invoice/standard"} 2.8389999999999986
+odoo_sql_seconds_total{route="/prod_lab/invoice/no_gap"} 6.676999999999995
+odoo_concurrency_retries_total{error="SERIALIZATION_FAILURE"} 103
+odoo_concurrency_retries_total{error="LOCK_NOT_AVAILABLE"} 27
+odoo_concurrency_gave_up_total{error="SERIALIZATION_FAILURE"} 18</code></pre>
+  <div class="ar-note">دي الأرقام اللي الـ exporter طلعها من الـ log بتاع Odoo الحقيقي بعد الضغط. قارن: <code>no_gap</code> أخد ≈468 ثانية في المجموع منهم ≈6.7 بس في SQL، يعني 98% انتظار. و 130 retry، و 18 طلب خلصت محاولاتهم وفشلوا. <code>odoo_worker_memory_kills_total</code> اتجرب بسطر متركّب من نص الكود بتاع Odoo، لأن multi-worker مش بيشتغل على Windows.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ health:</b> <code>/web/health</code> بيرد <code>{"status": "pass"}</code> من غير ما يلمس Postgres، يعني بيثبت إن الـ HTTP thread عايش بس. ضيف <code>?db_server_status=1</code> هيفتح cursor حقيقي. والاتنين مش بيتأكدوا إن الكود والـ schema متفقين: <a href="./36-odoo-upgrades-migration-porting.html">الدرس 36</a> بيوريك إنه بيرد <code>pass</code> على database نص متعمل لها upgrade.</p>
+    <p><b>سطر الـ access هو profiler ببلاش:</b> في Odoo 20 الـ logger اسمه <code>odoo.http.server</code>، وآخر السطر فيه 3 أعمدة أداء: <code>query_count</code> و <code>query_time</code> و <code>remaining_time</code> (الوقت الكلي ناقص SQL)، وبعدهم الـ cursor mode. الـ endpoint اللي فيه N+1 سجّل 206 query مقابل 6 للي متجمّع. والطلب اللي عمل retry بيبان بـ <code>remaining_time</code> ضخم و <code>query_time</code> صغير: الـ 24 ثانية دي <code>time.sleep</code> بتاع الـ backoff، مش CPU.</p>
+    <p><b>توجيه الـ logs:</b> <code>--log-handler module:LEVEL</code> ينفع يتكرر، و <code>--log-sql</code> اختصار لـ <code>odoo.sql_db:DEBUG</code>، و <code>--log-config</code> بياخد ملف JSON أو TOML لـ <code>dictConfig</code> لو عايز structured output. و <code>log_db</code> بينسخ اللي مستواه <code>log_db_level</code> أو أعلى في جدول <code>ir_logging</code>. كل record بيفتح cursor لوحده، فخليه <code>warning</code>. وخد بالك: <code>odoo.http.server:WARNING</code> سكّت 5 من 5 سطور access عندنا، وأي exporter بيقراهم هيعمى من غير أي error.</p>
+    <p><b>الـ exporter:</b> Odoo مفيهوش Prometheus endpoint جاهز، فـ Node process صغير بيقرا الـ log ويطلّع metrics. Prometheus و Grafana نفسهم <i>مش متشغّلين هنا</i>، بس الـ exporter والأرقام حقيقيين. إزاي تعمل scrape ورسم في <a href="../../13-Testing-Security-DevOps/lessons/41-prometheus-grafana-uptime.html">section 13 · Prometheus</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو بتمسك Odoo عند عميل ومعندكش Enterprise ولا APM: الـ exporter ده sidecar صغير بـ Node جنب السيرفر، بيديك latency لكل route وعدد الـ queries والـ retries من غير ما تلمس كود Odoo. غلطة شائعة: تحط الـ URL كامل في label بالـ id بتاعه، فالـ time series تنفجر. عشان كده <code>normalizeRoute</code> موجودة.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: parsing logs or instrumenting code</b>
+    A log tailer needs no Odoo patch and survives upgrades as long as the format holds, but the format is not a contract: any release can add a column or rename the logger. A module exporting metrics from inside workers is exact but has to aggregate across processes. Start with the tailer, and add a test that parses one real line from each new version.
+    <div class="ar-note">قراية الـ log مش محتاجة patch في Odoo وبتعيش مع الـ upgrades طول ما الشكل ثابت، بس الشكل مش عقد: أي release ممكن يضيف عمود أو يغيّر اسم الـ logger. أما module بيطلّع metrics من جوه الـ workers فدقيق بس لازم يجمّع عبر processes كتير. ابدأ بالـ tailer، وضيف test بيعمل parse لسطر حقيقي من كل version جديدة.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Alerts <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — الـ alerts: تنبّه على إيه</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>An alert is only worth having if someone must act on it. For Odoo, split them into three families: <b>availability</b> (error-budget burn), <b>workload</b> (memory kills, cron lag, retries, mail queue) and <b>business</b> (reconciliation drift, certificate expiry, filestore disk). The last family is what separates an ERP from a web app: the site can be up while the books are wrong.</p>
+    <p>Most of the workload and business signals aren't in the log. They live in tables, so a probe reads them with SQL: <code>ir_cron.nextcall</code> and <code>failure_count</code>, <code>mail_mail.state</code>, <code>certificate_certificate.date_end</code>, and open receivables compared against your billing system's total. Prometheus rules follow; the SLO maths behind burn rate is in <a href="../../13-Testing-Security-DevOps/lessons/43-slos-burn-rate-capacity.html">section 13 · SLOs</a>.</p>
+    <p>For a 99.9% SLO the budget is 0.1%. A burn rate of 14.4 sustained for an hour consumes 2% of a 30-day budget, which is why it pages. A burn of 6 over six hours opens a ticket. The rules are <i>not run here</i> (no Prometheus on this machine): we parsed the YAML and computed the burn-rate logic in Node.</p>
+  </section>
+
+  <table>
+    <tr><th>Signal</th><th>Source</th><th>Threshold</th><th>Action</th></tr>
+    <tr><td>Worker memory kills</td><td>Log: <code>Virtual memory limit</code></td><td>&gt; 3 per hour</td><td>Ticket: find the heavy report or the leak</td></tr>
+    <tr><td>Cron lag</td><td><code>ir_cron.nextcall</code></td><td>&gt; 15 min late</td><td>Page: invoices and mail stop silently</td></tr>
+    <tr><td>Queue depth</td><td><code>mail_mail</code> outgoing; your outbox</td><td>&gt; 500 for 15 min</td><td>Ticket</td></tr>
+    <tr><td>Failed mail</td><td><code>mail_mail.state = 'exception'</code></td><td>&gt; 0 for 15 min</td><td>Ticket</td></tr>
+    <tr><td>Reconciliation value</td><td>Odoo open receivables minus billing total</td><td>&gt; 1 EGP for 30 min</td><td>Page: money disagrees</td></tr>
+    <tr><td>Certificate expiry</td><td><code>certificate_certificate.date_end</code></td><td>&lt; 30 days</td><td>Ticket: e-invoicing stops when it lapses</td></tr>
+    <tr><td>Filestore disk</td><td><code>node_filesystem_avail_bytes</code></td><td>Full within 7 days</td><td>Ticket</td></tr>
+  </table>
+  <div class="ar-note">صف صف: قتل الـ workers بسبب الـ memory لو أكتر من 3 في الساعة يبقى تذكرة تدور على report تقيل أو تسريب. تأخير الـ cron أكتر من 15 دقيقة ينادي حد، لأن الفواتير والإيميلات بتقف من غير ما حد يحس. عمق الـ queue أكتر من 500 لمدة 15 دقيقة تذكرة. الإيميل الفاشل تذكرة. فرق الفلوس بين Odoo والـ billing أكتر من جنيه لمدة 30 دقيقة ينادي حد فورًا. الشهادة لو باقي لها أقل من 30 يوم تذكرة، لأن الـ e-invoicing بيقف لما تخلص. والديسك لو هيتملي خلال 7 أيام تذكرة.</div>
+
+<pre data-file="deploy/alerts.yaml"><code class="language-yaml"># مش متشغّل هنا: Prometheus مش متاح، الملف اتعمله parse بس
+groups:
+  - name: odoo-availability
+    rules:
+      # الإنذار السريع: الـ budget بيتحرق بمعدل 14.4 في الساعة والخمس دقايق مع بعض
+      - alert: OdooErrorBudgetFastBurn
+        expr: |
+          (
+            sum(rate(odoo_http_requests_total{status=~"5.."}[1h]))
+            / sum(rate(odoo_http_requests_total[1h]))
+          ) &gt; (14.4 * 0.001)
+          and
+          (
+            sum(rate(odoo_http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(odoo_http_requests_total[5m]))
+          ) &gt; (14.4 * 0.001)
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: "Odoo is burning its 30-day error budget 14.4x too fast"
+
+      # الإنذار البطيء: تذكرة مش صحيان بالليل
+      - alert: OdooErrorBudgetSlowBurn
+        expr: |
+          (
+            sum(rate(odoo_http_requests_total{status=~"5.."}[6h]))
+            / sum(rate(odoo_http_requests_total[6h]))
+          ) &gt; (6 * 0.001)
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Odoo error budget is burning 6x too fast"
+
+  - name: odoo-workload
+    rules:
+      # الـ retries معناها تنافس على lock حتى لو المستخدم ماشافش 500
+      - alert: OdooConcurrencyRetriesHigh
+        expr: sum(rate(odoo_concurrency_retries_total[10m])) &gt; 0.5
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Transactions are replaying: look for a hot row or a long cron"
+
+      - alert: OdooConcurrencyGaveUp
+        expr: increase(odoo_concurrency_gave_up_total[10m]) &gt; 0
+        labels: { severity: page }
+        annotations:
+          summary: "A request used all 5 tries and failed"
+
+      # الـ reaper بيقتل worker: مرة عادي، بس تكرارها معناه تسريب أو report تقيل
+      - alert: OdooWorkerMemoryKills
+        expr: increase(odoo_worker_memory_kills_total[1h]) &gt; 3
+        labels: { severity: ticket }
+        annotations:
+          summary: "Workers keep hitting limit_memory_soft or limit_memory_hard"
+
+      - alert: OdooCronLag
+        expr: odoo_cron_overdue_seconds &gt; 900
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "A cron is more than 15 minutes late"
+
+      - alert: OdooMailStuck
+        expr: odoo_mail_queue{state="exception"} &gt; 0 or odoo_mail_queue{state="outgoing"} &gt; 500
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Mail is failing or piling up"
+
+  - name: odoo-business
+    rules:
+      # الإنذار الأهم: فرق فلوس بين Odoo والنظام التاني
+      - alert: LedgerReconciliationDrift
+        expr: abs(odoo_reconciliation_drift_egp) &gt; 1
+        for: 30m
+        labels: { severity: page }
+        annotations:
+          summary: "Odoo and the billing system disagree by more than 1 EGP"
+
+      - alert: EInvoiceCertificateExpiring
+        expr: (odoo_certificate_not_after_seconds - time()) &lt; 30 * 86400
+        labels: { severity: ticket }
+        annotations:
+          summary: "A signing certificate expires in less than 30 days"
+
+      # الديسك: filestore مليان معناه فشل كتابة المرفقات والفواتير
+      - alert: FilestoreDiskPredictedFull
+        expr: predict_linear(node_filesystem_avail_bytes{mountpoint="/var/lib/odoo"}[6h], 7 * 86400) &lt; 0
+        for: 1h
+        labels: { severity: ticket }
+        annotations:
+          summary: "The filestore disk will fill within 7 days"</code></pre>
+
+<pre data-file="src/odoo-probes.ts"><code class="language-typescript">import { statfs } from "node:fs/promises";
+import pg from "pg";
+
+export interface Sample {
+  metric: string;
+  labels?: Record&lt;string, string&gt;;
+  value: number;
+}
+
+// الأمان: Port فاضي معناه الـ default، وده ممكن يوصّلك لـ database حقيقية
+function guardPort(raw: string | undefined): number {
+  const n = Number(raw);
+  if (!/^\d+$/.test(String(raw)) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) {
+    throw new Error(`refusing port ${raw}`);
+  }
+  return n;
+}
+
+export async function collect(client: pg.Client, filestore: string, billingTotal: number): Promise&lt;Sample[]&gt; {
+  const samples: Sample[] = [];
+
+  // التأخير: nextcall متخزن UTC من غير timezone، فلازم نقارنه بـ UTC
+  const cron = await client.query&lt;{ overdue: string; failing: string }&gt;(`
+    SELECT coalesce(max(extract(epoch FROM (now() AT TIME ZONE 'utc') - nextcall))
+                    FILTER (WHERE nextcall &lt; (now() AT TIME ZONE 'utc')), 0)::int AS overdue,
+           count(*) FILTER (WHERE failure_count &gt; 0) AS failing
+    FROM ir_cron WHERE active`);
+  samples.push({ metric: "odoo_cron_overdue_seconds", value: Number(cron.rows[0]?.overdue) });
+  samples.push({ metric: "odoo_cron_failing", value: Number(cron.rows[0]?.failing) });
+
+  const mail = await client.query&lt;{ state: string; n: string }&gt;("SELECT state, count(*) AS n FROM mail_mail GROUP BY state");
+  for (const state of ["outgoing", "exception"]) {
+    const row = mail.rows.find((r) =&gt; r.state === state);
+    samples.push({ metric: "odoo_mail_queue", labels: { state }, value: Number(row?.n ?? 0) });
+  }
+
+  // الشهادات: أقرب واحدة هتخلص هي اللي تهمّ
+  const cert = await client.query&lt;{ not_after: string | null }&gt;(
+    "SELECT extract(epoch FROM min(date_end))::bigint AS not_after FROM certificate_certificate WHERE active AND date_end IS NOT NULL");
+  if (cert.rows[0]?.not_after) samples.push({ metric: "odoo_certificate_not_after_seconds", value: Number(cert.rows[0].not_after) });
+
+  // الفلوس: الرصيد المفتوح في Odoo قصاد الرقم اللي جاي من الـ billing
+  const open = await client.query&lt;{ residual: string }&gt;(`
+    SELECT coalesce(sum(aml.amount_residual), 0)::numeric(16, 2) AS residual
+    FROM account_move_line aml
+    JOIN account_account aa ON aa.id = aml.account_id
+    WHERE aa.account_type = 'asset_receivable' AND aml.parent_state = 'posted' AND NOT aml.reconciled`);
+  const residual = Number(open.rows[0]?.residual);
+  samples.push({ metric: "odoo_receivable_open", value: residual });
+  samples.push({ metric: "odoo_reconciliation_drift_egp", value: Number((residual - billingTotal).toFixed(2)) });
+
+  const disk = await statfs(filestore);
+  samples.push({ metric: "odoo_filestore_free_bytes", value: disk.bavail * disk.bsize });
+  return samples;
+}
+
+export function toPrometheus(samples: Sample[]): string {
+  return samples
+    .map((s) =&gt; {
+      const labels = s.labels ? `{${Object.entries(s.labels).map(([k, v]) =&gt; `${k}="${v}"`).join(",")}}` : "";
+      return `${s.metric}${labels} ${s.value}`;
+    })
+    .join("\n");
+}
+
+if (process.argv[1]?.endsWith("odoo-probes.ts")) {
+  const [port, filestore, billing] = process.argv.slice(2);
+  if (!filestore || !billing) throw new Error("usage: odoo-probes.ts &lt;port&gt; &lt;filestore&gt; &lt;billingTotal&gt;");
+  const client = new pg.Client({ host: "127.0.0.1", port: guardPort(port), user: "odoo_lab", database: "odoo" });
+  await client.connect();
+  try {
+    console.log(toPrometheus(await collect(client, filestore, Number(billing))));
+  } finally {
+    await client.end();
+  }
+}</code></pre>
+<pre data-file="probes.txt"><code class="language-plaintext">odoo_cron_overdue_seconds 4312
+odoo_cron_failing 0
+odoo_mail_queue{state="outgoing"} 161
+odoo_mail_queue{state="exception"} 0
+odoo_receivable_open 248748.78
+odoo_reconciliation_drift_egp 48.78
+odoo_filestore_free_bytes 131123589120</code></pre>
+  <div class="ar-note">الناتج ده حقيقي من الـ lab. الـ cron متأخر 4,312 ثانية لأن الـ lab شغال بـ <code>max_cron_threads = 0</code>، فالـ alert هنا صح وبيكشف فعلًا إن مفيش cron بيشتغل. الـ 161 إيميل outgoing لأنه مفيش SMTP. الـ drift رقم 248,700 جاي من stand-in بدل billing حقيقي، والفرق 48.78 جنيه كان هيضرب الـ alert. مفيش <code>odoo_certificate_not_after_seconds</code> لأن الـ demo مفيهوش شهادات.</div>
+
+<pre data-file="src/burn-rate.ts"><code class="language-typescript">// معدل الحرق = نسبة الأخطاء الفعلية مقسومة على المسموح بيها في الـ SLO
+export function burnRate(errors: number, total: number, slo: number): number {
+  if (total === 0) return 0;
+  const allowed = 1 - slo;
+  return errors / total / allowed;
+}
+
+// الوقت لحد ما الـ budget يخلص لو الحرق فضل ثابت
+export function hoursToExhaust(rate: number, windowDays = 30): number {
+  return rate === 0 ? Infinity : (windowDays * 24) / rate;
+}
+
+const slo = 0.999;
+const samples = [
+  { name: "quiet hour", errors: 1, total: 4000 },
+  { name: "month-end hour", errors: 80, total: 4000 },
+  { name: "hot sequence hour", errors: 240, total: 4000 },
+];
+
+for (const s of samples) {
+  const rate = burnRate(s.errors, s.total, slo);
+  const decision = rate &gt;= 14.4 ? "page" : rate &gt;= 6 ? "ticket" : "ok";
+  console.log(`${s.name}: burn=${rate.toFixed(1)} exhausts_in=${hoursToExhaust(rate).toFixed(0)}h -&gt; ${decision}`);
+}</code></pre>
+<pre><code class="language-plaintext">quiet hour: burn=0.2 exhausts_in=2880h -&gt; ok
+month-end hour: burn=20.0 exhausts_in=36h -&gt; page
+hot sequence hour: burn=60.0 exhausts_in=12h -&gt; page</code></pre>
+  <div class="ar-note">3 ساعات متخيلة من نفس الحجم، 4,000 طلب. ساعة هادية فيها خطأ واحد: الحرق 0.2، الـ budget يكفي 2,880 ساعة. ساعة آخر الشهر فيها 80 خطأ (2%): الحرق 20، يخلص في 36 ساعة، فينادي حد. ساعة فيها hot sequence بـ 240 خطأ: الحرق 60، يخلص في 12 ساعة.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ alert ملوش لازمة لو محدش مطلوب منه يتصرف. في Odoo قسّمهم 3 عائلات: <b>availability</b> (حرق الـ error budget)، <b>workload</b> (قتل الـ workers، تأخير الـ cron، الـ retries، طابور الإيميل)، و <b>business</b> (فرق الفلوس، انتهاء الشهادات، ديسك الـ filestore). العيلة الأخيرة هي اللي بتفرق ERP عن web app: الموقع ممكن يبقى شغال والدفاتر غلط.</p>
+    <p>أغلب إشارات الـ workload والـ business مش في الـ log. دي في جداول، فـ probe بيقراها بـ SQL: <code>ir_cron.nextcall</code> و <code>failure_count</code>، و <code>mail_mail.state</code>، و <code>certificate_certificate.date_end</code>، والأرصدة المفتوحة قصاد إجمالي نظام الـ billing. الـ Prometheus rules فوق، وحسبة الـ burn rate في <a href="../../13-Testing-Security-DevOps/lessons/43-slos-burn-rate-capacity.html">section 13 · SLOs</a>.</p>
+    <p>لـ SLO بـ 99.9%، الـ budget هو 0.1%. حرق بـ 14.4 لمدة ساعة بياكل 2% من budget الـ 30 يوم، وعشان كده بينادي حد. حرق بـ 6 على 6 ساعات يفتح تذكرة. الـ rules <i>مش متشغّلة هنا</i> (مفيش Prometheus على الجهاز): عملنا parse للـ YAML وحسبنا منطق الـ burn rate في Node.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ sync service بتاعك بين المشروع و Odoo: بدل ما تعرف من المحاسب إن فيه فرق، خلي probe يحسب كل ساعة إجمالي الفواتير عندك قصاد Odoo، ولو الفرق عدّى جنيه ينادي حد. ده الـ alert اللي بيحميك. الغلطة الشائعة: تعمل alert على CPU، و CPU كان 2% وإنت بتفشل 12 طلب من 32.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks: alert fatigue</b>
+    A cron that fails five times in a row over seven days gets deactivated by Odoo itself (<code>MIN_FAILURE_COUNT_BEFORE_DEACTIVATION = 5</code>, <code>MIN_DELTA_BEFORE_DEACTIVATION = 7 days</code>). Alerting on <code>nextcall</code> alone then goes quiet, because inactive crons aren't overdue. Also alert when a cron you expect to be active isn't.
+    <div class="ar-note">الـ cron اللي يفشل 5 مرات على مدى 7 أيام، Odoo نفسه بيعمله deactivate (<code>MIN_FAILURE_COUNT_BEFORE_DEACTIVATION = 5</code> و <code>MIN_DELTA_BEFORE_DEACTIVATION = 7 أيام</code>). وقتها الـ alert على <code>nextcall</code> لوحده بيسكت، لأن الـ cron المتوقف مش "متأخر". فنبّه كمان لو cron المفروض يبقى شغال بقى مش active.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Docker deploy <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ deploy بـ Docker</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Not run here:</b> Docker isn't available on this machine. We checked the tags against Docker Hub on 2026-11-11 (<code>odoo:20</code>, <code>odoo:20.0</code>, <code>odoo:20.0-20261102</code>, <code>postgres:18</code> all exist), read the official <code>odoo/docker</code> Dockerfile and <code>entrypoint.sh</code>, and parsed the compose file. The repo's own <code>setup/docker/*</code> files say at the top that they are "used for testing nightly builds and should not be used to deploy Odoo", so start from the official image.</p>
+    <p><b>Facts from reading the image.</b> It already runs as <code>USER odoo</code>, declares volumes at <code>/var/lib/odoo</code> (filestore) and <code>/mnt/extra-addons</code>, and reads the config from <code>$ODOO_RC</code>. Pin a dated tag rather than <code>odoo:20</code>, which moves.</p>
+    <p><b>Two traps.</b> First, <code>entrypoint.sh</code> reads <code>PASSWORD_FILE</code> but then passes the value as <code>--db_password</code> on the command line, where it's visible in the process list. It skips that when <code>db_password</code> is already in the config file, so mount the whole config as a secret. Second, the official <code>postgres:18</code> image moved its volume from <code>/var/lib/postgresql/data</code> to <code>/var/lib/postgresql</code>, and Odoo's image docs still show the old path; follow them and your data lands somewhere you aren't persisting.</p>
+    <p>For image hardening in general see <a href="../../13-Testing-Security-DevOps/lessons/26-production-dockerfile.html">section 13 · production Dockerfile</a>.</p>
+  </section>
+
+<pre data-file="Dockerfile"><code class="language-dockerfile"># التاريخ: pin بتاريخ محدد عشان الـ build يتكرر
+FROM odoo:20.0-20261102
+
+USER root
+COPY requirements.txt /tmp/requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt \
+    &amp;&amp; rm /tmp/requirements.txt
+# الرجوع: الـ image أصلًا بيشتغل non-root، متسيبهوش root
+USER odoo</code></pre>
+
+<pre data-file="compose.yaml"><code class="language-yaml"># مش متشغّل هنا: Docker مش متاح على الجهاز ده، الملف اتعمله parse بس
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    shm_size: 1g
+    environment:
+      POSTGRES_USER: odoo
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      # مهم: من Postgres 18 الـ volume بقى على المسار ده مش ⁦/var/lib/postgresql/data⁩
+      - pgdata:/var/lib/postgresql
+    # الظبط: flags مباشرة، عشان config_file كامل هيحتاج listen_addresses وباقي الإعدادات
+    command:
+      - postgres
+      - -c
+      - shared_buffers=8GB
+      - -c
+      - effective_cache_size=24GB
+      - -c
+      - work_mem=32MB
+      - -c
+      - max_connections=200
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - log_lock_waits=on
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odoo -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks: [backend]
+
+  odoo:
+    build: .
+    restart: unless-stopped
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # الملف ده جواه db_password و admin_passwd، فمفيش سر في الـ env
+      ODOO_RC: /run/secrets/odoo_conf
+    secrets:
+      - odoo_conf
+    volumes:
+      - odoo-data:/var/lib/odoo
+      - ./addons:/mnt/extra-addons:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8069/web/health?db_server_status=1"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 120s
+    networks: [backend, edge]
+
+  proxy:
+    image: nginx:1.29
+    restart: unless-stopped
+    depends_on:
+      odoo:
+        condition: service_healthy
+    ports:
+      - "443:443"
+    volumes:
+      - ./nginx/odoo.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/tls:/etc/nginx/tls:ro
+    networks: [edge]
+
+volumes:
+  pgdata:
+  odoo-data:
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  odoo_conf:
+    file: ./secrets/odoo.conf
+
+networks:
+  backend:
+    internal: true
+  edge:</code></pre>
+
+<pre data-file="secrets/odoo.conf"><code class="language-ini">[options]
+# الأسرار: هنا في ملف mounted، مش في environment ومش في command line
+db_host = db
+db_port = 5432
+db_user = odoo
+db_password = CHANGE_ME_NOT_A_REAL_PASSWORD
+admin_passwd = CHANGE_ME_NOT_A_REAL_MASTER_PASSWORD
+addons_path = /mnt/extra-addons
+data_dir = /var/lib/odoo
+proxy_mode = True
+list_db = False
+dbfilter = ^prod$
+workers = 8
+max_cron_threads = 2
+db_maxconn = 12
+db_maxconn_gevent = 40
+limit_memory_soft = 2147483648
+limit_memory_hard = 2684354560
+limit_time_cpu = 60
+limit_time_real = 120</code></pre>
+
+<pre data-file="upgrade-one-module.sh"><code class="language-bash"># الـ module update: في container منفصل وبعدين ترجع الخدمة
+docker compose stop odoo
+docker compose run --rm odoo odoo -d prod -u my_module --stop-after-init --no-http
+docker compose up -d odoo</code></pre>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>مش متشغّل هنا:</b> Docker مش موجود على الجهاز. راجعنا الـ tags على Docker Hub يوم 2026-11-11 (<code>odoo:20</code> و <code>odoo:20.0</code> و <code>odoo:20.0-20261102</code> و <code>postgres:18</code> كلهم موجودين)، وقرينا الـ Dockerfile و <code>entrypoint.sh</code> الرسميين، وعملنا parse للـ compose. وملفات <code>setup/docker/*</code> اللي جوه الـ repo مكتوب في أولها إنها "للـ nightly builds ومتستخدمهاش في deploy"، فابدأ من الـ image الرسمية.</p>
+    <p><b>من قراية الـ image:</b> شغالة أصلًا بـ <code>USER odoo</code>، وفيها volumes على <code>/var/lib/odoo</code> (الـ filestore) و <code>/mnt/extra-addons</code>، وبتقرا الـ config من <code>$ODOO_RC</code>. ثبّت tag بتاريخ بدل <code>odoo:20</code> اللي بيتحرك.</p>
+    <p><b>فخين:</b> الأول، <code>entrypoint.sh</code> بيقرا <code>PASSWORD_FILE</code> بس بعدين بيبعت القيمة كـ <code>--db_password</code> على الـ command line، يعني تبان في قايمة الـ processes. وبيتخطى ده لو <code>db_password</code> موجود في الـ config، فاعمل mount للـ config كله كـ secret. التاني، <code>postgres:18</code> نقل الـ volume من <code>/var/lib/postgresql/data</code> لـ <code>/var/lib/postgresql</code>، وdocs الـ image بتاعة Odoo لسه كاتبة القديم؛ لو مشيت عليها الـ data هتروح مكان مش محفوظ.</p>
+    <p>تأمين الـ images عمومًا في <a href="../../13-Testing-Security-DevOps/lessons/26-production-dockerfile.html">section 13 · production Dockerfile</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما عميل عايز Odoo on-premise على VPS: الـ compose ده هو البداية. الـ <code>backend</code> network <code>internal</code> يعني Postgres مش مكشوف، والـ proxy هو الوحيد اللي عنده port، و <code>mem_limit</code> لو حطيته لازم يبقى أكبر من <code>workers × limit_memory_hard</code> وإلا الـ kernel هيقتل الـ container كله بدل ما Odoo يدوّر worker واحد. الغلطة الشائعة: <code>environment: PASSWORD=...</code> في الـ compose و commit في git.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: addons baked in or mounted</b>
+    Mounting <code>./addons:ro</code> is easy to update but means the code and the image can drift. Baking with <code>COPY</code> gives one immutable artifact per release, and rollback is a tag change. For more than one server, bake. For a single on-premise box run by one team, mounting is defensible.
+    <div class="ar-note">الـ mount لـ <code>./addons:ro</code> سهل في التحديث بس الكود والـ image ممكن يختلفوا. الـ <code>COPY</code> بيديك artifact ثابت لكل release، والـ rollback مجرد تغيير tag. لو أكتر من سيرفر، اعمل <code>COPY</code>. لو سيرفر واحد on-premise مع فريق واحد، الـ mount مقبول.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Cron locks and long transactions <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — الـ cron locks والـ transactions الطويلة</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Odoo claims a cron job with <code>FOR NO KEY UPDATE SKIP LOCKED</code> on the <code>ir_cron</code> row. We proved it: with one cursor holding the claim, a second <code>_acquire_one_job</code> returned nothing. That protects the <i>claim</i>: two workers won't run the same job. It does nothing for the <b>rows the job writes</b>. If the job updates 200 deliveries in one transaction, it holds 200 row locks until it commits, and any user touching one of them waits.</p>
+    <p>A long transaction also holds a <b>snapshot</b>. While it's open, its <code>backend_xmin</code> stops vacuum from removing any row version newer than that snapshot, in every table. We held one cursor, updated 50,000 rows elsewhere, and vacuum reported all 50,000 "dead but not yet removable". After the cursor closed, the same vacuum removed them. MVCC itself is covered in <a href="../../09-Databases/lessons/14-mvcc-vacuum-long-transactions.html">section 09 · MVCC</a>.</p>
+    <p><b>The fix is batches with <code>_commit_progress</code>.</b> Each batch commits, releases its locks and takes a new snapshot; the framework records progress in <code>ir_cron_progress</code>, reschedules unfinished work, and enforces a time budget. Commits mean a batch has to be restartable: pick the next rows from their <code>state</code>, never from an in-memory list. Note that <code>_commit_progress</code> can't run inside <code>env.cr.savepoint()</code>. For claiming rows, <code>try_lock_for_update()</code> gives you the ORM's own <code>SKIP LOCKED</code>.</p>
+  </section>
+
+<pre class="diagram">
+one transaction                              batches with _commit_progress
+
+cron  |=== holds 200 row locks ==========|   cron  |=20=|c|=20=|c|=20=|c|=20=|c| ...
+user        |--- blocked 1770 ms --------|x  user        |-|ok      |ok   |ok
+                                         |
+                              40001, then retry
+</pre>
+  <div class="ar-note">على الشمال: الـ cron ماسك 200 row lock في transaction واحدة، فالـ user بيستنى ≈1770ms وبعدها ياخد 40001 ويعيد. على اليمين: كل 20 صف commit، فالـ lock بيتفك بسرعة والـ user بيعدّي.</div>
+
+<pre data-file="prod_lab/models/delivery.py"><code class="language-python">import time
+
+from odoo import api, models
+
+
+class Delivery(models.Model):
+    _inherit = 'prod_lab.delivery'
+
+    # الغلط: كل الصفوف في transaction واحدة، فالـ locks كلها ماسكة للآخر
+    @api.model
+    def _cron_settle_monolith(self):
+        todo = self.search([('state', '=', 'pending'), ('name', '=like', 'CRON-%')], order='id')
+        for delivery in todo:
+            delivery.state = 'sent'
+            self.env.flush_all()
+            time.sleep(0.01)
+
+    # الصح: كل batch بيعمل commit، ويبلّغ التقدم، ويقف لو الوقت خلص
+    @api.model
+    def _cron_settle_batched(self, batch=20):
+        domain = [('state', '=', 'pending'), ('name', '=like', 'CRON-%')]
+        ir_cron = self.env['ir.cron']
+        ir_cron._commit_progress(remaining=self.search_count(domain))
+        while True:
+            # القراية: من الـ state كل مرة، عشان لو الـ job وقع يكمّل من مكانه
+            todo = self.search(domain, order='id', limit=batch)
+            if not todo:
+                return
+            for delivery in todo:
+                delivery.state = 'sent'
+                self.env.flush_all()
+                time.sleep(0.01)
+            left = ir_cron._commit_progress(len(todo))
+            if not left:
+                return</code></pre>
+
+<pre data-file="py/longtx.py"><code class="language-python"># الماسك: cursor فتح transaction وسكت، زي report بطيء أو مكالمة لـ carrier
+holder = reg.cursor()
+holder.execute("SELECT count(*) FROM prod_lab_delivery")
+time.sleep(1.2)
+
+# الشغل: traffic عادي بيعدّل 50 ألف صف ويعمل commit
+with reg.cursor() as w:
+    w.execute("UPDATE prod_lab_delivery SET amount = amount + 1 WHERE name LIKE 'D-%' AND id % 2 = 0")
+
+vacuum('while-held')
+holder.rollback()
+holder.close()
+vacuum('after-release')</code></pre>
+
+<pre><code class="language-plaintext">pg_stat_activity: ('idle in transaction', 'Client', 'ClientRead', xmin_age=41, xact_s=2.0, 'SELECT count(*) FROM prod_lab_delivery')
+
+VACUUM while held:
+  tuples: 0 removed, 150200 remain, 50000 are dead but not yet removable
+  removable cutoff: 2727, which was 41 XIDs old when operation ended
+
+VACUUM after release:
+  tuples: 50000 removed, 100200 remain, 0 are dead but not yet removable
+  removable cutoff: 2768, which was 0 XIDs old when operation ended
+
+claim:  first True, second False                       (SKIP LOCKED on ir_cron)
+
+one transaction:  cron 2.29 s, user waits_ms [1770, 1, 1, ...], codes {'40001': 1}
+                  sample: ('active', 'Lock', 'transactionid', 'UPDATE prod_lab_delivery ...')
+batches of 20:    cron 2.49 s, user waits_ms [1, 1, 10, 1, ...]
+                  ir_cron_progress (done, remaining): (40, 160) then (160, 0)</code></pre>
+  <div class="ar-note">ناتج حقيقي. وهو ماسك: الـ cursor ظاهر <code>idle in transaction</code> بـ xmin عمره 41 transaction، والـ vacuum شايل 0 وسايب 50 ألف dead. بعد ما اتقفل: 50 ألف اتشالوا. الـ claim التاني رجع False بسبب <code>SKIP LOCKED</code>. في الـ transaction الواحدة الـ user استنى ≈1770ms وأخد <code>40001</code>، وعلى 4 runs الانتظار كان بين ≈1770 و ≈2100ms. في الـ batches أسوأ انتظار كان بين ≈10 و ≈600ms حسب اللحظة، والـ cron نفسه أخد وقت زيادة (≈9% في الـ run ده، ولحد ≈60% في runs تانية، بسبب الـ commits والـ retries). ولاحظ <code>(40, 160)</code> ثم <code>(160, 0)</code>: الـ cron نفسه وقع بـ 40001 لما الـ user كتب في صف في نفس الـ batch، بس الـ 40 اللي خلصوا اتحفظوا والـ loop كمّل. لو كان monolith كان هيرجع من الأول.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>Odoo بيحجز الـ cron بـ <code>FOR NO KEY UPDATE SKIP LOCKED</code> على صف <code>ir_cron</code>. وأثبتناها: cursor ماسك الحجز، فـ <code>_acquire_one_job</code> التاني مرجعش حاجة. ده بيحمي <i>الحجز</i>: اتنين workers مش هيشغّلوا نفس الـ job. بس ملوش دعوة بـ <b>الصفوف اللي الـ job بيكتب فيها</b>. لو الـ job بيعدّل 200 delivery في transaction واحدة، هيمسك 200 row lock لحد الـ commit، وأي user يلمس واحد منهم هيستنى.</p>
+    <p>الـ transaction الطويلة كمان ماسكة <b>snapshot</b>. طول ما هي مفتوحة، الـ <code>backend_xmin</code> بتاعها بيمنع الـ vacuum يشيل أي نسخة صف أحدث منه، في كل الجداول. مسكنا cursor واحد وعدّلنا 50 ألف صف من مكان تاني، والـ vacuum قال الـ 50 ألف "dead but not yet removable". بعد ما الـ cursor اتقفل نفس الـ vacuum شالهم. شرح الـ MVCC في <a href="../../09-Databases/lessons/14-mvcc-vacuum-long-transactions.html">section 09 · MVCC</a>.</p>
+    <p><b>الحل batches بـ <code>_commit_progress</code>:</b> كل batch بيعمل commit، فيفك الـ locks وياخد snapshot جديد، والـ framework بيسجل التقدم في <code>ir_cron_progress</code>، ويعيد جدولة اللي لسه، ويطبّق ميزانية وقت. الـ commits معناها إن الـ batch لازم يتعاد عادي: هات الصفوف الجاية من الـ <code>state</code> بتاعها، مش من list في الـ memory. و <code>_commit_progress</code> مينفعش جوه <code>env.cr.savepoint()</code>. ولحجز صفوف، <code>try_lock_for_update()</code> بيديك <code>SKIP LOCKED</code> من الـ ORM.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      cron بيبعت 50 ألف فاتورة لمصلحة الضرايب بالليل. لو عملته loop واحد، أي محاسب يعدّل فاتورة هيقف، والجدول هيتنفخ لأن الـ vacuum واقف، ولو الـ job وقع عند رقم 49,999 كله يترجع. بـ batches: كل 100 فاتورة commit، ولو وقع يكمّل. الغلطة الشائعة: تحط <code>self.env.cr.commit()</code> بإيدك في نص <code>write</code> عادي، فتكسر الـ atomicity بتاعة الطلب.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "<code>SKIP LOCKED</code> is on the job queue. Why can a cron still block users?" → It only protects the claim on the job row. The job's own writes take ordinary row locks that last until commit. Batch with commits, so each lock's lifetime is one batch, and make every batch restartable.
+    <div class="ar-note">"الـ <code>SKIP LOCKED</code> موجود على طابور الـ jobs. ليه الـ cron ممكن لسه يعطّل المستخدمين؟" ← لأنه بيحمي الحجز على صف الـ job بس. الكتابات بتاعة الـ job نفسه بتاخد row locks عادية بتفضل لحد الـ commit. قسّم batches بـ commits عشان عمر الـ lock يبقى batch واحد، وخلي كل batch ينفع يتعاد.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Serialization failures <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — الـ serialization failures والـ retries</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>At <code>REPEATABLE READ</code>, a transaction that updates a row someone else committed after its snapshot gets <code>SerializationFailure 40001 could not serialize access due to concurrent update</code> (real output below). Odoo's answer lives in <code>odoo/http/retrying.py</code>: it rolls back and <b>calls your whole request again</b>, up to <code>MAX_TRIES_ON_CONCURRENCY_FAILURE</code> (5) tries, sleeping <code>random.uniform(0, 2**try)</code> between them. It retries <code>SerializationFailure</code>, <code>DeadlockDetected</code>, <code>LockNotAvailable</code> and <code>ConcurrencyError</code>.</p>
+    <p>The database work is rolled back cleanly. <b>Everything else isn't.</b> An HTTP call to a payment provider inside the request fires again on each replay. We ran 6 concurrent requests against a loopback stand-in: 20 charges. One customer got a 500 and was charged 5 times. That is the trap, and it's specific to frameworks that replay.</p>
+    <p><b>The fix:</b> move the side effect after the commit with <code>env.cr.postcommit.add(fn)</code>. Rollback clears those callbacks, so only the attempt that committed fires: 6 requests, 6 charges. Postcommit is at-most-once: a crash between commit and call loses it. For money, use an outbox row written in the same transaction and dispatched by a cron with an idempotency key, as in <a href="../../09-Databases/lessons/41-outbox-cdc-idempotency.html">section 09 · outbox</a> and <a href="./28-idempotency-webhooks-sync-queues.html">lesson 28</a>. Isolation theory is in <a href="../../09-Databases/lessons/13-isolation-anomalies-retries.html">section 09 · isolation</a>.</p>
+  </section>
+
+<pre class="diagram">
+request --&gt; try 1: charge() ---&gt; UPDATE hot row --X 40001 --&gt; ROLLBACK
+                      |                                         |
+                      v                                    DB work undone
+              provider: 1 charge                           provider NOT undone
+                                                                |
+            sleep uniform(0, 2) ----------------------------&lt;---+
+request --&gt; try 2: charge() ---&gt; UPDATE hot row --X 40001 --&gt; ROLLBACK
+                      |
+                      v
+              provider: 2 charges            ... up to 5 tries, then HTTP 500
+</pre>
+  <div class="ar-note">كل محاولة بتنادي <code>charge()</code> قبل الكتابة. لما الكتابة تقع بـ 40001، Odoo بيعمل rollback، فشغل الـ database بيرجع، بس الـ provider مبيرجعش. بينام شوية ويعيد الطلب كله، فالـ provider ياخد مكالمة تانية، ولحد 5 محاولات، وبعدها 500 للعميل.</div>
+
+<pre data-file="prod_lab/controllers/main.py"><code class="language-python">import functools
+import time
+
+import requests
+
+from odoo import http
+from odoo.http import request
+
+
+def _charge(url, ref):
+    requests.post(url, json={'order': ref}, timeout=5)
+
+
+class ProdLab(http.Controller):
+
+    def _provider(self):
+        return request.env['ir.config_parameter'].sudo().get_str('prod_lab.provider_url')
+
+    def _hot(self):
+        return request.env.ref('base.main_partner').sudo()
+
+    # الغلط: المكالمة جوه الطلب، فكل retry بيعمل charge جديد
+    @http.route('/prod_lab/charge_bad', type='http', auth='public', methods=['POST'], csrf=False)
+    def charge_bad(self, ref='x'):
+        _charge(self._provider(), ref)
+        partner = self._hot()
+        partner.comment = f'charged {ref}'
+        request.env.flush_all()
+        time.sleep(0.05)
+        return 'ok'
+
+    # الصح: المكالمة بعد الـ commit، والـ rollback بيمسح الـ callback
+    @http.route('/prod_lab/charge_good', type='http', auth='public', methods=['POST'], csrf=False)
+    def charge_good(self, ref='x'):
+        url = self._provider()
+        partner = self._hot()
+        partner.comment = f'charged {ref}'
+        request.env.flush_all()
+        time.sleep(0.05)
+        request.env.cr.postcommit.add(functools.partial(_charge, url, ref))
+        return 'ok'</code></pre>
+
+<pre><code class="language-plaintext">two cursors, one row:
+SerializationFailure 40001 could not serialize access due to concurrent update
+
+charge_bad   statuses 200,200,500,200,200,200   provider calls 20
+             per order [["SO-4",1],["SO-1",2],["SO-2",5],["SO-3",4],["SO-0",5],["SO-5",3]]
+             retry log lines 14, gave up 1
+
+charge_good  statuses 200,200,200,200,200,200   provider calls 6
+             per order [["SO-0",1],["SO-2",1],["SO-3",1],["SO-1",1],["SO-5",1],["SO-4",1]]
+             retry log lines 14, gave up 0
+
+odoo.http: SERIALIZATION_FAILURE, 4 tries left, try again in 0.2829 sec...</code></pre>
+  <div class="ar-note">ناتج حقيقي على stand-in محلي بدل provider حقيقي. في <code>charge_bad</code>: 6 طلبات عملوا 20 مكالمة، و <code>SO-2</code> تحديدًا رجعله 500 واتحاسب 5 مرات: يعني العميل شاف "فشل" وفلوسه اتخصمت 5 مرات. في <code>charge_good</code>: نفس عدد الـ retries بالظبط (14)، بس 6 مكالمات بس، واحدة لكل order.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>في <code>REPEATABLE READ</code>، الـ transaction اللي تعدّل صف حد تاني عمله commit بعد الـ snapshot بتاعها بتاخد <code>SerializationFailure 40001 could not serialize access due to concurrent update</code>. رد Odoo موجود في <code>odoo/http/retrying.py</code>: بيعمل rollback و <b>بينادي الطلب بتاعك كله تاني</b>، لحد <code>MAX_TRIES_ON_CONCURRENCY_FAILURE</code> (5) محاولات، وبينام <code>random.uniform(0, 2**try)</code> بينهم. وبيعمل retry على <code>SerializationFailure</code> و <code>DeadlockDetected</code> و <code>LockNotAvailable</code> و <code>ConcurrencyError</code>.</p>
+    <p>شغل الـ database بيترجع نضيف. <b>أي حاجة تانية لأ.</b> مكالمة HTTP لـ payment provider جوه الطلب بتتكرر مع كل replay. شغّلنا 6 طلبات متوازية على stand-in محلي: 20 charge. وعميل واحد شاف 500 واتحاسب 5 مرات. ده الفخ، وخاص بالـ frameworks اللي بتعيد الطلب.</p>
+    <p><b>الحل:</b> انقل الـ side effect بعد الـ commit بـ <code>env.cr.postcommit.add(fn)</code>. الـ rollback بيمسح الـ callbacks دي، فالمحاولة اللي عملت commit بس هي اللي بتنفّذ: 6 طلبات، 6 charges. الـ postcommit هو at-most-once: لو الـ process وقع بين الـ commit والمكالمة، راحت. للفلوس استخدم outbox row في نفس الـ transaction وcron يبعته بـ idempotency key، زي <a href="../../09-Databases/lessons/41-outbox-cdc-idempotency.html">section 09 · outbox</a> و <a href="./28-idempotency-webhooks-sync-queues.html">الدرس 28</a>. نظرية الـ isolation في <a href="../../09-Databases/lessons/13-isolation-anomalies-retries.html">section 09 · isolation</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      أي controller أو override لـ <code>action_post</code> بيبعت SMS، أو webhook، أو بينادي شركة شحن، أو بيرفع ملف لـ S3. في code review اسأل سؤال واحد: "لو الطلب ده اتعاد 5 مرات، إيه اللي هيحصل بره الـ database؟" لو الإجابة مش "ولا حاجة"، يبقى لازم postcommit أو outbox. ولو جاي من Node وبتستغرب: Express مش بيعيد الطلب لوحده، Odoo بيعيده.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "A customer was charged twice from one click in an Odoo integration. There are no duplicate rows in the database. What happened?" → The request replayed after a serialization failure. Database work rolled back, so no duplicate rows, but the provider call inside the request ran again. Fix with <code>postcommit</code> or an outbox, plus an idempotency key at the provider.
+    <div class="ar-note">"عميل اتحاسب مرتين من ضغطة واحدة في integration مع Odoo، ومفيش صفوف مكررة في الـ database. إيه اللي حصل؟" ← الطلب اتعاد بعد serialization failure. شغل الـ database اترجع، فمفيش تكرار، بس المكالمة للـ provider جوه الطلب اتنفذت تاني. الحل <code>postcommit</code> أو outbox، زائد idempotency key عند الـ provider.</div>
+  </div>
+
+  <!-- ===================== PART 7 ===================== -->
+  <h2 id="p7">Part 7 — Load test <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 7 — اختبار الضغط</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Honest scope.</b> k6 is <i>not run here</i>, so a small Node generator hits a threaded lab with <code>workers = 0</code>, the only mode on Windows. That is not production: one Python process, one GIL, a loaded machine. Absolute numbers mean nothing; the comparison between two runs on the same setup does. Load-testing method is in <a href="../../13-Testing-Security-DevOps/lessons/10-load-chaos-event-driven-tests.html">section 13 · load tests</a>.</p>
+    <p><b>The experiment.</b> One endpoint takes a number from an <code>ir.sequence</code>, sleeps 30 ms to stand in for the rest of an invoice, and creates a row. The only difference between the two series is the sequence's <code>implementation</code>: <code>standard</code> uses a Postgres sequence, with no row lock. <code>no_gap</code> does <code>SELECT ... FOR UPDATE NOWAIT</code> and then <code>UPDATE</code> on one row. 32 requests per level, closed loop.</p>
+    <p><b>The result.</b> <code>standard</code> scales to ≈22 req/s and never retries. <code>no_gap</code> drops from ≈5 req/s to ≈1, and at 16 clients it fails 12 of 32 requests, with a p95 of ≈24 s, while the Odoo process uses 2% of a CPU. <b>The bottleneck is lock contention, not CPU.</b> More workers would make it worse: more concurrent transactions colliding on the same row.</p>
+    <p><b>What didn't help.</b> We expected taking the number last, to shorten the lock, to fix it. It didn't: same 4 and 10 failures, same 27 and 57 retries. At <code>REPEATABLE READ</code> the conflict window is the whole transaction, because the snapshot starts at the first query, so any commit on that row since then fails you, however briefly you hold it. What works: use <code>no_gap</code> only where law demands it, assign numbers in one place (a single cron over committed drafts), and shorten the whole transaction. Odoo's own invoice numbering is a different mechanism (<code>_locked_increment</code> in <code>sequence_mixin.py</code>), which this benchmark did not measure.</p>
+  </section>
+
+<pre data-file="src/load.mjs"><code class="language-javascript">// الاستخدام: ⁦node load.mjs &lt;url&gt; &lt;no_gap|standard&gt; &lt;clients&gt;⁩
+const [url, implementation, clients] = process.argv.slice(2);
+const concurrency = Number(clients);
+const REQ = 32;
+let next = 0;
+const latencies = [];
+const statuses = {};
+
+// الـ closed loop: كل client بيبعت الطلب الجاي بعد ما اللي قبله يخلص
+const started = performance.now();
+await Promise.all(
+  Array.from({ length: concurrency }, async () =&gt; {
+    while (next &lt; REQ) {
+      next++;
+      const t0 = performance.now();
+      const response = await fetch(`${url}/prod_lab/invoice/${implementation}`, {
+        method: "POST",
+        signal: AbortSignal.timeout(120_000),
+      });
+      await response.text();
+      statuses[response.status] = (statuses[response.status] ?? 0) + 1;
+      latencies.push(performance.now() - t0);
+    }
+  }),
+);
+
+latencies.sort((a, b) =&gt; a - b);
+const wall = (performance.now() - started) / 1000;
+console.log({
+  statuses,
+  rps: Number((REQ / wall).toFixed(1)),
+  p50: Math.round(latencies[latencies.length &gt;&gt; 1]),
+  p95: Math.round(latencies[Math.floor(latencies.length * 0.95)]),
+});</code></pre>
+
+  <figure>
+    <svg viewBox="0 0 760 300" width="100%" role="img" aria-label="p95 latency and retries against concurrency for a no_gap and a standard sequence" style="color:var(--text);font-family:var(--font-en)">
+<g><circle cx="52" cy="12" r="4.5" fill="currentColor"/><line x1="40" x2="64" y1="12" y2="12" stroke="currentColor" stroke-width="2"/><text x="72" y="16" font-size="12" fill="currentColor">no_gap sequence</text>
+<rect x="208" y="8" width="8" height="8" fill="var(--surface)" stroke="currentColor" stroke-width="2"/><line x1="196" x2="228" y1="12" y2="12" stroke="currentColor" stroke-width="2" stroke-dasharray="6 5"/><text x="236" y="16" font-size="12" fill="currentColor">standard sequence</text></g>
+<text x="46" y="34" font-size="14" font-weight="600" fill="currentColor">p95 latency (seconds)</text><line x1="46" x2="312" y1="248" y2="248" stroke="currentColor" stroke-opacity="0.15"/><text x="38" y="252" text-anchor="end" font-size="11" fill="currentColor" fill-opacity="0.7">0</text><line x1="46" x2="312" y1="210" y2="210" stroke="currentColor" stroke-opacity="0.15"/><text x="38" y="214" text-anchor="end" font-size="11" fill="currentColor" fill-opacity="0.7">5</text><line x1="46" x2="312" y1="172" y2="172" stroke="currentColor" stroke-opacity="0.15"/><text x="38" y="176" text-anchor="end" font-size="11" fill="currentColor" fill-opacity="0.7">10</text><line x1="46" x2="312" y1="134" y2="134" stroke="currentColor" stroke-opacity="0.15"/><text x="38" y="138" text-anchor="end" font-size="11" fill="currentColor" fill-opacity="0.7">15</text><line x1="46" x2="312" y1="96" y2="96" stroke="currentColor" stroke-opacity="0.15"/><text x="38" y="100" text-anchor="end" font-size="11" fill="currentColor" fill-opacity="0.7">20</text><line x1="46" x2="312" y1="58" y2="58" stroke="currentColor" stroke-opacity="0.15"/><text x="38" y="62" text-anchor="end" font-size="11" fill="currentColor" fill-opacity="0.7">25</text><text x="46" y="266" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">1</text><text x="112.5" y="266" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">2</text><text x="179" y="266" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">4</text><text x="245.5" y="266" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">8</text><text x="312" y="266" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">16</text><text x="179" y="286" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">concurrent clients</text><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="6 5" points="46,247.24 112.5,245.72 179,246.48 245.5,242.68 312,240.4"/><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"  points="46,244.96 112.5,225.96 179,176.56 245.5,71.68 312,64.83999999999997"/><rect x="42" y="243.24" width="8" height="8" fill="var(--surface)" stroke="currentColor" stroke-width="2"><title>standard, 1 clients: 0.1 s</title></rect><rect x="108.5" y="241.72" width="8" height="8" fill="var(--surface)" stroke="currentColor" stroke-width="2"><title>standard, 2 clients: 0.3 s</title></rect><rect x="175" y="242.48" width="8" height="8" fill="var(--surface)" stroke="currentColor" stroke-width="2"><title>standard, 4 clients: 0.2 s</title></rect><rect x="241.5" y="238.68" width="8" height="8" fill="var(--surface)" stroke="currentColor" stroke-width="2"><title>standard, 8 clients: 0.7 s</title></rect><rect x="308" y="236.4" width="8" height="8" fill="var(--surface)" stroke="currentColor" stroke-width="2"><title>standard, 16 clients: 1 s</title></rect><circle cx="46" cy="244.96" r="4.5" fill="currentColor"><title>no_gap, 1 clients: 0.4 s</title></circle><circle cx="112.5" cy="225.96" r="4.5" fill="currentColor"><title>no_gap, 2 clients: 2.9 s</title></circle><circle cx="179" cy="176.56" r="4.5" fill="currentColor"><title>no_gap, 4 clients: 9.4 s</title></circle><circle cx="245.5" cy="71.68" r="4.5" fill="currentColor"><title>no_gap, 8 clients: 23.2 s</title></circle><circle cx="312" cy="64.83999999999997" r="4.5" fill="currentColor"><title>no_gap, 16 clients: 24.1 s</title></circle><text x="304" y="54.839999999999975" text-anchor="end" font-size="11" font-weight="600" fill="currentColor">no_gap 24.1</text><text x="304" y="230.4" text-anchor="end" font-size="11" fill="currentColor">standard 1</text>
+<text x="430" y="34" font-size="14" font-weight="600" fill="currentColor">Retries per 32 requests</text><line x1="430" x2="696" y1="248" y2="248" stroke="currentColor" stroke-opacity="0.15"/><text x="422" y="252" text-anchor="end" font-size="11" fill="currentColor" fill-opacity="0.7">0</text><line x1="430" x2="696" y1="193.71428571428572" y2="193.71428571428572" stroke="currentColor" stroke-opacity="0.15"/><text x="422" y="197.71428571428572" text-anchor="end" font-size="11" fill="currentColor" fill-opacity="0.7">20</text><line x1="430" x2="696" y1="139.42857142857144" y2="139.42857142857144" stroke="currentColor" stroke-opacity="0.15"/><text x="422" y="143.42857142857144" text-anchor="end" font-size="11" fill="currentColor" fill-opacity="0.7">40</text><line x1="430" x2="696" y1="85.14285714285714" y2="85.14285714285714" stroke="currentColor" stroke-opacity="0.15"/><text x="422" y="89.14285714285714" text-anchor="end" font-size="11" fill="currentColor" fill-opacity="0.7">60</text><text x="430" y="266" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">1</text><text x="496.5" y="266" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">2</text><text x="563" y="266" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">4</text><text x="629.5" y="266" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">8</text><text x="696" y="266" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">16</text><text x="563" y="286" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.7">concurrent clients</text><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="6 5" points="430,248 496.5,248 563,248 629.5,248 696,248"/><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"  points="430,248 496.5,237.14285714285714 563,226.28571428571428 629.5,172 696,79.71428571428572"/><rect x="426" y="244" width="8" height="8" fill="var(--surface)" stroke="currentColor" stroke-width="2"><title>standard, 1 clients: 0 retries</title></rect><rect x="492.5" y="244" width="8" height="8" fill="var(--surface)" stroke="currentColor" stroke-width="2"><title>standard, 2 clients: 0 retries</title></rect><rect x="559" y="244" width="8" height="8" fill="var(--surface)" stroke="currentColor" stroke-width="2"><title>standard, 4 clients: 0 retries</title></rect><rect x="625.5" y="244" width="8" height="8" fill="var(--surface)" stroke="currentColor" stroke-width="2"><title>standard, 8 clients: 0 retries</title></rect><rect x="692" y="244" width="8" height="8" fill="var(--surface)" stroke="currentColor" stroke-width="2"><title>standard, 16 clients: 0 retries</title></rect><circle cx="430" cy="248" r="4.5" fill="currentColor"><title>no_gap, 1 clients: 0 retries</title></circle><circle cx="496.5" cy="237.14285714285714" r="4.5" fill="currentColor"><title>no_gap, 2 clients: 4 retries</title></circle><circle cx="563" cy="226.28571428571428" r="4.5" fill="currentColor"><title>no_gap, 4 clients: 8 retries</title></circle><circle cx="629.5" cy="172" r="4.5" fill="currentColor"><title>no_gap, 8 clients: 28 retries</title></circle><circle cx="696" cy="79.71428571428572" r="4.5" fill="currentColor"><title>no_gap, 16 clients: 62 retries</title></circle><text x="688" y="69.71428571428572" text-anchor="end" font-size="11" font-weight="600" fill="currentColor">no_gap 62</text><text x="688" y="238" text-anchor="end" font-size="11" fill="currentColor">standard 0</text>
+</svg>
+    <figcaption>Real run on Windows, workers = 0, 32 requests per point. Compare the two lines; don't read the numbers as capacity.</figcaption>
+  </figure>
+  <div class="ar-note">الرسمتين من run حقيقي: الخط المتقطع بالمربعات هو <code>standard</code>، والمتصل بالدواير هو <code>no_gap</code>. على الشمال p95 بالثواني: <code>standard</code> فضل تحت ثانية، و <code>no_gap</code> وصل 24 ثانية. على اليمين عدد الـ retries لكل 32 طلب: صفر لـ <code>standard</code>، و 62 لـ <code>no_gap</code> عند 16 client. قارن الخطين ومتعتبرش الأرقام capacity.</div>
+
+  <table>
+    <tr><th>Sequence</th><th>Clients</th><th>200 / 500</th><th>req/s ≈</th><th>p50 ms ≈</th><th>p95 ms ≈</th><th>Retries</th><th>Gave up</th><th>Odoo CPU ≈</th></tr>
+    <tr><td>standard</td><td>1</td><td>32 / 0</td><td>8.0</td><td>121</td><td>150</td><td>0</td><td>0</td><td>9%</td></tr>
+    <tr><td>standard</td><td>4</td><td>32 / 0</td><td>19.8</td><td>209</td><td>244</td><td>0</td><td>0</td><td>14%</td></tr>
+    <tr><td>standard</td><td>16</td><td>32 / 0</td><td>22.1</td><td>722</td><td>1,015</td><td>0</td><td>0</td><td>23%</td></tr>
+    <tr><td>no_gap</td><td>1</td><td>32 / 0</td><td>5.1</td><td>118</td><td>412</td><td>0</td><td>0</td><td>5%</td></tr>
+    <tr><td>no_gap</td><td>2</td><td>32 / 0</td><td>2.3</td><td>127</td><td>2,883</td><td>4</td><td>0</td><td>2%</td></tr>
+    <tr><td>no_gap</td><td>4</td><td>32 / 0</td><td>1.3</td><td>129</td><td>9,411</td><td>8</td><td>0</td><td>2%</td></tr>
+    <tr><td>no_gap</td><td>8</td><td>27 / 5</td><td>1.1</td><td>181</td><td>23,171</td><td>28</td><td>5</td><td>2%</td></tr>
+    <tr><td>no_gap</td><td>16</td><td>20 / 12</td><td>1.2</td><td>4,356</td><td>24,116</td><td>62</td><td>12</td><td>2%</td></tr>
+  </table>
+  <div class="ar-note">صف صف: <code>standard</code> طلع من 8 لـ 22 طلب في الثانية مع زيادة الـ clients، صفر retries، وصفر فشل، والـ CPU وصل 23%. <code>no_gap</code> بدأ بـ 5.1 عند client واحد، ونزل لـ 2.3 ثم 1.3 ثم 1.1 ثم 1.2 مع زيادة الـ clients، يعني كل ما زوّدت ضغط الإنتاجية قلت. الـ p95 طلع من 412ms لـ 24 ثانية. الفشل بدأ عند 8 clients (5 طلبات) ووصل 12 عند 16. والـ CPU فضل 2%: السيرفر فاضي ومستني. الأوقات مقاسة على Windows وجهاز عليه ضغط، فهي تقريبية.</div>
+
+<pre><code class="language-plaintext">no_gap, number taken first   8 clients: 28 ok, 4 failed, 27 retries   16 clients: 22 ok, 10 failed, 57 retries
+no_gap, number taken last    8 clients: 28 ok, 4 failed, 27 retries   16 clients: 22 ok, 10 failed, 57 retries</code></pre>
+  <div class="ar-note">التجربة اللي فشلت: توقعنا إن أخد الرقم في آخر الطلب هيقصّر الـ lock ويحل المشكلة. النتيجة نفس الفشل ونفس الـ retries بالظبط. السبب إن الـ snapshot بيبدأ مع أول query، فأي commit على الصف من ساعتها بيوقعك مهما كان مسكك قصير.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>حدود التجربة بصراحة:</b> k6 <i>مش متشغّل هنا</i>، فـ generator صغير بـ Node بيضرب lab بـ <code>workers = 0</code>، وده الوضع الوحيد على Windows. ده مش production: process واحد و GIL واحد وجهاز عليه ضغط. الأرقام المطلقة ملهاش معنى، بس المقارنة بين run ورن على نفس الإعداد ليها. طريقة الـ load test في <a href="../../13-Testing-Security-DevOps/lessons/10-load-chaos-event-driven-tests.html">section 13 · load tests</a>.</p>
+    <p><b>التجربة:</b> endpoint بياخد رقم من <code>ir.sequence</code>، وينام 30ms كبديل لباقي شغل الفاتورة، ويعمل صف. الفرق الوحيد بين الخطين هو <code>implementation</code>: الـ <code>standard</code> بيستخدم Postgres sequence من غير row lock، و <code>no_gap</code> بيعمل <code>SELECT ... FOR UPDATE NOWAIT</code> وبعدين <code>UPDATE</code> على صف واحد. 32 طلب لكل مستوى، closed loop.</p>
+    <p><b>النتيجة:</b> <code>standard</code> وصل ≈22 طلب في الثانية ومعملش ولا retry. <code>no_gap</code> نزل من ≈5 لـ ≈1، وعند 16 client فشل 12 من 32 طلب، بـ p95 ≈24 ثانية، والـ process مستخدم 2% من CPU. <b>عنق الزجاجة lock contention مش CPU.</b> وزيادة الـ workers هتزوّدها: transactions أكتر بتخبط في نفس الصف.</p>
+    <p><b>اللي مانفعش:</b> توقعنا إن أخد الرقم في الآخر يقصّر الـ lock ويحلها. مانفعتش: نفس الـ 4 و 10 فشل، ونفس الـ 27 و 57 retry. في <code>REPEATABLE READ</code> نافذة التعارض هي الـ transaction كلها، لأن الـ snapshot بيبدأ مع أول query، فأي commit على الصف من ساعتها بيوقعك مهما مسكته قليل. اللي بينفع: استخدم <code>no_gap</code> بس لو القانون طالبه، ووزّع الأرقام من مكان واحد (cron واحد على drafts متعمل لها commit)، وقصّر الـ transaction كلها. والترقيم بتاع فواتير Odoo نفسها آلية تانية (<code>_locked_increment</code> في <code>sequence_mixin.py</code>) والـ benchmark ده مقاسهاش.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      قبل go-live لعميل عنده 40 محاسب: ابني سيناريو بأكتر عملية متنافسة عنده (مثلًا صنف واحد عليه كل الطلبات، أو journal واحد كل الفواتير بتعدّي عليه)، وزوّد الـ concurrency تدريجيًا، وارسم الـ retries مش الـ CPU. لو الـ retries طلعت والإنتاجية نزلت، إنت قدام hot row. الغلطة الشائعة: تطلب سيرفر أكبر، والسيرفر الحالي فاضي 98%.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks at scale</b>
+    Retries multiply load exactly when you can least afford it. With 5 tries and backoff up to 2<sup>4</sup> seconds, a worker can sit on a failing request for ≈24 s (we measured 24.028 s of <code>remaining_time</code>). With 8 workers, eight such requests occupy every worker, and healthy requests queue behind them. Contention on one row becomes an outage of the whole site.
+    <div class="ar-note">الـ retries بتضاعف الضغط في أسوأ وقت. بـ 5 محاولات و backoff لحد 2<sup>4</sup> ثانية، الـ worker ممكن يفضل ماسك طلب فاشل ≈24 ثانية (قسنا 24.028 ثانية في <code>remaining_time</code>). ومع 8 workers، 8 طلبات زي دول بيمسكوا كل الـ workers، والطلبات السليمة تقف وراهم. يعني التنافس على صف واحد بيتحول لوقوع الموقع كله.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Side effect inside the request</b>
+<pre><code class="language-python"># الغلط: كل retry بيعمل charge جديد
+_charge(url, ref)
+partner.comment = f'charged {ref}'</code></pre></div>
+    <div class="good"><b>✅ After the commit</b>
+<pre><code class="language-python"># الصح: بينفذ مرة واحدة بعد commit ناجح
+partner.comment = f'charged {ref}'
+env.cr.postcommit.add(functools.partial(_charge, url, ref))</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ المكالمة جوه الطلب: Odoo بيعيد الطلب كله لحد 5 مرات لو حصل 40001، والمكالمة بتتكرر معاه، وعندنا 6 طلبات عملوا 20 charge. ✅ <code>postcommit</code> بيتنفذ بعد الـ commit بس، والـ rollback بيمسحه، فبقوا 6. ولو الفلوس مهمة استخدم outbox.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ One transaction for a whole cron</b>
+<pre><code class="language-python"># الغلط: كل الـ locks ماسكة لحد الآخر
+for delivery in self.search(domain):
+    delivery.state = 'sent'</code></pre></div>
+    <div class="good"><b>✅ Batches that can restart</b>
+<pre><code class="language-python"># الصح: Commit لكل batch، والقراية من الـ state
+while todo := self.search(domain, limit=100):
+    todo.write({'state': 'sent'})
+    if not self.env['ir.cron']._commit_progress(len(todo)):
+        return</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ transaction الواحدة بتعطّل المستخدمين (≈1770ms عندنا) وبتوقف الـ vacuum، ولو وقعت عند آخر صف كله يترجع. ✅ كل batch بيعمل commit وبيفك الـ locks، ولو الـ job وقع يكمّل من الـ state. وخد بالك إن <code>_commit_progress</code> بيرجع الوقت الباقي، فلو صفر لازم تقف.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Index by hand in production</b>
+<pre><code class="language-sql">-- الغلط: موجود في production بس، ومحدش عارف
+CREATE INDEX my_idx ON prod_lab_delivery (partner_id);</code></pre></div>
+    <div class="good"><b>✅ In the module, pre-built if big</b>
+<pre><code class="language-sql">-- الصح: بنفس اسم models.Index، قبل الـ deploy
+CREATE INDEX CONCURRENTLY prod_lab_delivery_partner_state_idx
+  ON prod_lab_delivery (partner_id, scheduled_at DESC)
+  WHERE state = 'pending';</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ index اليدوي مش في الكود، فالـ staging وأي database جديدة مش هيبقى فيهم. ✅ عرّفه بـ <code>models.Index</code> في الـ module. ولو الجدول كبير، ابنيه <code>CONCURRENTLY</code> قبل <code>-u</code> بنفس الاسم بالظبط، و Odoo هيسيبه زي ما هو بدل ما يقفل الكتابة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Health check that sees nothing</b>
+<pre><code class="language-yaml"># الغلط: بيثبت إن الـ thread عايش وخلاص
+test: ["CMD", "curl", "-f", "http://127.0.0.1:8069/web/health"]</code></pre></div>
+    <div class="good"><b>✅ Touch the database, probe the business</b>
+<pre><code class="language-yaml"># الصح: يفتح cursor، والـ probes تغطي الباقي
+test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8069/web/health?db_server_status=1"]</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>/web/health</code> لوحده بيرد pass حتى لو Postgres واقع. ✅ <code>?db_server_status=1</code> بيفتح cursor حقيقي. وده برضه مش كفاية: الـ cron ممكن يبقى واقف والدفاتر غلط، فالـ probes اللي في Part 3 هي اللي بتكمّل الصورة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Secret in the environment</b>
+<pre><code class="language-yaml"># الغلط: بيبان في docker inspect وبيتعمله commit
+environment:
+  PASSWORD: CHANGE_ME_NOT_A_REAL_PASSWORD</code></pre></div>
+    <div class="good"><b>✅ Config file as a secret</b>
+<pre><code class="language-yaml"># الصح: الـ entrypoint بيلاقي db_password في الملف فمبيبعتهوش
+environment:
+  ODOO_RC: /run/secrets/odoo_conf
+secrets:
+  - odoo_conf</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الباسورد في <code>environment</code> بيبان في <code>docker inspect</code>، وحتى <code>PASSWORD_FILE</code> بيوصل لـ <code>--db_password</code> على الـ command line. ✅ حط <code>db_password</code> جوه ملف config واعمله mount كـ secret، و <code>check_config</code> في الـ entrypoint هيلاقيه فمش هيبعته كـ argument.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Read the log line <span class="lvl lvl-1">🟢 easy</span></b>
+    Start your Odoo with <code>node D:/tools/odoo/odoo.mjs start</code>, open a list view, and find the access line for the request in the console. Write down the query count, SQL time and remaining time. Then open the same view with 80 records per page instead of 20 and compare.
+    <div class="ar-note">شغّل Odoo بتاعك بـ <code>node D:/tools/odoo/odoo.mjs start</code>، وافتح شاشة list، ودوّر على سطر الـ access بتاع الطلب في الـ console. اكتب عدد الـ queries ووقت SQL والوقت الباقي. وبعدين افتح نفس الشاشة بـ 80 record في الصفحة بدل 20 وقارن.</div>
+    <details><summary>Hint · تلميح</summary>
+      The last four columns are <code>query_count query_time remaining_time cursor_mode</code>. If the query count grows with the page size, something is reading record by record.
+      <div class="ar-note">آخر 4 أعمدة هم <code>query_count query_time remaining_time cursor_mode</code>. لو عدد الـ queries بيكبر مع حجم الصفحة، يبقى فيه حاجة بتقرا record ورا record.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. The next query on the list <span class="lvl lvl-2">🟡 medium</span></b>
+    After the partial index, <code>SELECT COUNT(*) ... "name" IN ($1)</code> became the top query. Fix it in the model. Show the plan before and after.
+    <div class="ar-note">بعد الـ partial index، بقت <code>SELECT COUNT(*) ... "name" IN ($1)</code> هي أول query. صلّحها في الـ model، ووريني الخطة قبل وبعد.</div>
+    <details><summary>Solution · الحل</summary>
+<pre><code class="language-python"># الحل: index عادي على الحقل، والاسم بيتولد لوحده
+name = fields.Char(required=True, index=True)</code></pre>
+<pre><code class="language-plaintext">before:  Seq Scan on prod_lab_delivery (actual time=0.013..6.963 rows=1.00)  Buffers: shared hit=1718   Execution Time: 6.989 ms
+after:   Index Only Scan using prod_lab_delivery__name_index (actual time=0.032..0.032 rows=1.00)  Buffers: shared hit=2 read=2   Execution Time: 0.051 ms</code></pre>
+      <div class="ar-note">ناتج حقيقي على 100 ألف صف: من 1,718 buffer لـ 4، ومن ≈7ms لـ ≈0.05ms. اسم الـ index اتولد <code>prod_lab_delivery__name_index</code>.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Make the charge safe with an outbox <span class="lvl lvl-3">🔴 hard</span></b>
+    <code>postcommit</code> loses the call if the process dies right after the commit. Replace it with an outbox model and a cron. Prove it: 6 concurrent requests on a hot row, then exactly 6 provider calls, and a second cron run sends nothing.
+    <div class="ar-note"><code>postcommit</code> بيضيّع المكالمة لو الـ process مات بعد الـ commit على طول. بدّله بـ outbox model و cron. وأثبتها: 6 طلبات متوازية على hot row، وبعدها 6 مكالمات بالظبط، وتشغيل الـ cron مرة تانية مايبعتش حاجة.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="prod_lab/models/outbox.py"><code class="language-python">import requests
+
+from odoo import api, fields, models
+
+
+class Outbox(models.Model):
+    _name = 'prod_lab.outbox'
+    _description = 'Provider call waiting to be sent'
+
+    ref = fields.Char(required=True)
+    state = fields.Selection([('pending', 'Pending'), ('sent', 'Sent')], default='pending', required=True)
+
+    # الضمان: ref واحد بس، حتى لو الطلب اتعاد
+    _ref_unique = models.UniqueIndex('(ref)')
+    _pending_idx = models.Index("(id) WHERE state = 'pending'")
+
+    @api.model
+    def _cron_dispatch(self, batch=50):
+        ir_cron = self.env['ir.cron']
+        url = self.env['ir.config_parameter'].sudo().get_str('prod_lab.provider_url')
+        domain = [('state', '=', 'pending')]
+        ir_cron._commit_progress(remaining=self.search_count(domain))
+        while todo := self.search(domain, order='id', limit=batch):
+            for row in todo:
+                # المفتاح: لو الـ commit فشل بعد المكالمة، الـ provider يعرف إنها مكررة
+                requests.post(url, json={'order': row.ref}, headers={'Idempotency-Key': row.ref}, timeout=5)
+                row.state = 'sent'
+            if not ir_cron._commit_progress(len(todo)):
+                return</code></pre>
+<pre><code class="language-plaintext">statuses 200,200,200,200,200,200   calls before cron 0   rows pending: 6
+run 200 ok   calls after cron 6   per order 1 each   distinct keys 6   rows sent: 6
+rerun 200 ok   calls 6</code></pre>
+      <div class="ar-note">ناتج حقيقي: بعد الطلبات الستة صفر مكالمات و 6 صفوف pending، رغم الـ retries، لأن الـ rollback بيشيل الصف مع المحاولة الفاشلة. بعد الـ cron: 6 مكالمات، واحدة لكل order. التشغيل التاني مبعتش حاجة. ولما الـ provider علّق في تجربة سابقة، الـ job وقع بـ <code>ReadTimeout</code> والصفوف فضلت pending ومضاعتش.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    Put a hot row in your side project's Odoo integration on purpose: one counter every sync request updates. Add the exporter, run a Node load generator at 1, 4 and 16 clients, and write one paragraph in your Artifact 4 sync report: where is your bottleneck, with numbers?
+    <div class="ar-note">حط hot row بالقصد في الـ integration بتاع مشروعك مع Odoo: عدّاد واحد كل طلب sync بيعدّله. ضيف الـ exporter، وشغّل load generator بـ Node عند 1 و 4 و 16 client، واكتب فقرة في تقرير الـ sync (Artifact 4): عنق الزجاجة فين، بالأرقام؟</div>
+    <details><summary>Hint · تلميح</summary>
+      Put the module in <code>D:/tools/odoo/custom-addons</code>. Compare <code>odoo_concurrency_retries_total</code> with Odoo's CPU. Rising retries with flat CPU means contention.
+      <div class="ar-note">حط الـ module في <code>D:/tools/odoo/custom-addons</code>. قارن <code>odoo_concurrency_retries_total</code> بالـ CPU بتاع Odoo. الـ retries طالعة والـ CPU ثابت يبقى contention.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Odoo runs <code>REPEATABLE READ</code>. Tables that grow: <code>mail_message</code>, <code>account_move_line</code>, <code>ir_attachment</code>, <code>stock_move</code>.</li>
+    <li>Tune by measurement: <code>pg_stat_statements</code> sorted by total time, <code>EXPLAIN (ANALYZE, BUFFERS)</code>, then <code>models.Index</code>. Big table: <code>CONCURRENTLY</code> first, same name.</li>
+    <li>Connections: <code>(workers + max_cron_threads) × db_maxconn + db_maxconn_gevent + ops &lt; max_connections</code>. Odoo uses <code>LISTEN</code> and session advisory locks.</li>
+    <li>Access line ends in <code>query_count query_time remaining_time cursor_mode</code>. Big <code>remaining_time</code> with low <code>query_time</code> on a failure means retry sleeps.</li>
+    <li><code>/web/health</code> alone doesn't touch Postgres. Add <code>?db_server_status=1</code>, and probe cron lag, mail, drift, certificates, disk.</li>
+    <li>Page on burn 14.4 over 1 h and 5 min; ticket on burn 6 over 6 h.</li>
+    <li>Docker: pin a dated tag, mount the config as a secret, <code>postgres:18</code> volume at <code>/var/lib/postgresql</code>.</li>
+    <li><code>SKIP LOCKED</code> protects the job claim, not the rows it writes. Batch with <code>_commit_progress</code>, restart from <code>state</code>.</li>
+    <li>A long transaction blocks vacuum everywhere: watch <code>idle in transaction</code> and <code>age(backend_xmin)</code>.</li>
+    <li><code>retrying()</code> replays the whole request up to 5 times. External calls go in <code>postcommit</code> or an outbox.</li>
+    <li>Under contention, retries climb, throughput falls and CPU stays flat. Shortening the lock doesn't help at <code>REPEATABLE READ</code>; shrink the transaction or serialize the work.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>Odoo شغال بـ <code>REPEATABLE READ</code>. الجداول اللي بتكبر: <code>mail_message</code> و <code>account_move_line</code> و <code>ir_attachment</code> و <code>stock_move</code>.</li>
+      <li>الظبط بالقياس: <code>pg_stat_statements</code> مترتب بالوقت الكلي، و <code>EXPLAIN (ANALYZE, BUFFERS)</code>، وبعدين <code>models.Index</code>. جدول كبير: <code>CONCURRENTLY</code> الأول بنفس الاسم.</li>
+      <li>الـ connections: <code>(workers + max_cron_threads) × db_maxconn + db_maxconn_gevent + ops</code> لازم أقل من <code>max_connections</code>. و Odoo بيستخدم <code>LISTEN</code> و session advisory locks.</li>
+      <li>سطر الـ access بيخلص بـ <code>query_count query_time remaining_time cursor_mode</code>. <code>remaining_time</code> كبير و <code>query_time</code> صغير على طلب فاشل معناه نوم الـ retries.</li>
+      <li><code>/web/health</code> لوحده مش بيلمس Postgres. ضيف <code>?db_server_status=1</code>، واعمل probes لتأخير الـ cron والإيميل وفرق الفلوس والشهادات والديسك.</li>
+      <li>نادي حد عند حرق 14.4 على ساعة و5 دقايق، وافتح تذكرة عند حرق 6 على 6 ساعات.</li>
+      <li>Docker: ثبّت tag بتاريخ، اعمل mount للـ config كـ secret، و volume بتاع <code>postgres:18</code> على <code>/var/lib/postgresql</code>.</li>
+      <li><code>SKIP LOCKED</code> بيحمي حجز الـ job مش الصفوف اللي بيكتبها. قسّم بـ <code>_commit_progress</code> وكمّل من الـ <code>state</code>.</li>
+      <li>الـ transaction الطويلة بتوقف الـ vacuum في كل مكان: راقب <code>idle in transaction</code> و <code>age(backend_xmin)</code>.</li>
+      <li><code>retrying()</code> بيعيد الطلب كله لحد 5 مرات. المكالمات الخارجية مكانها <code>postcommit</code> أو outbox.</li>
+      <li>تحت الـ contention، الـ retries بتطلع والإنتاجية بتنزل والـ CPU ثابت. تقصير الـ lock مش بيفيد في <code>REPEATABLE READ</code>؛ قصّر الـ transaction أو وحّد الشغل في مكان واحد.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 17 · 3.3 — PostgreSQL tuning لـ Odoo</label>
+    <label><input type="checkbox" data-key="r2"> 17 · 3.3 — Monitoring و logs و alerts</label>
+    <label><input type="checkbox" data-key="r3"> 17 · 3.3 — Docker deploy</label>
+    <label><input type="checkbox" data-key="r4"> 17 · 3.3 — إيه اللي بيكسر تحت الـ load: cron locks، long transactions، serialization failures</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.postgresql.org/docs/18/pgstatstatements.html">PostgreSQL 18 — pg_stat_statements</a></li>
+    <li><a href="https://www.postgresql.org/docs/18/transaction-iso.html">PostgreSQL 18 — Transaction isolation</a></li>
+    <li><a href="https://www.odoo.com/documentation/20.0/administration/on_premise/deploy.html">Odoo 20 — System configuration (deploy)</a></li>
+    <li><a href="https://www.odoo.com/documentation/20.0/developer/reference/backend/actions.html">Odoo 20 — Actions, including scheduled actions</a></li>
+    <li><a href="https://hub.docker.com/_/odoo">Docker Hub — official Odoo image</a></li>
+    <li><a href="https://sre.google/workbook/alerting-on-slos/">Google SRE Workbook — Alerting on SLOs</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./34-odoo-production-workers-proxy-backups.html"><small>← Previous</small>34 · Production I</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./36-odoo-upgrades-migration-porting.html"><small>Next →</small>36 · Upgrades</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

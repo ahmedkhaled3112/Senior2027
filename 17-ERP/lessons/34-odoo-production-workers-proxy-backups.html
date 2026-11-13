@@ -1,0 +1,1249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Odoo in Production I: Workers, Reverse Proxy, Filestore, Backups, Multi-Database — 17 ERP &amp; Odoo</title>
+<meta name="section" content="17-ERP">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">17 · ERP &amp; Odoo</a></span>
+    <span>·</span>
+    <span>Lesson 34 / 41</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Odoo in Production I: Workers, Reverse Proxy, Filestore, Backups, Multi-Database</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 34 of 41 — ERP &amp; Odoo</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">Odoo 20 · Node 22+ · TypeScript 7</span>
+      <span class="chip">Prereq: 11 Meet Odoo, 26 Test &amp; Debug Odoo</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>17 · 3.3 — Workers، <code>limit_memory</code>، <code>limit_time</code>، و gevent websocket</li>
+        <li>17 · 3.3 — Reverse proxy و <code>proxy_mode</code> و TLS</li>
+        <li>17 · 3.3 — Filestore و backups و restore test</li>
+        <li>17 · 3.3 — Multi-database و <code>dbfilter</code></li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Workers and limits</a></li>
+      <li><a href="#p2">Part 2 — Gevent and websockets</a></li>
+      <li><a href="#p3">Part 3 — Reverse proxy, proxy_mode and TLS</a></li>
+      <li><a href="#p4">Part 4 — Filestore and backups</a></li>
+      <li><a href="#p5">Part 5 — The restore test</a></li>
+      <li><a href="#p6">Part 6 — Multi-database and dbfilter</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Odoo runs fine on a laptop with the defaults, and those same defaults are wrong for a company whose invoices live in it. Production adds four questions: how many processes fit on this host, how requests reach them through a proxy without losing the client's identity, whether a backup really contains the PDFs, and which database a hostname opens. Each one has a failure that stays silent until a bad day: chat that stops updating, audit logs full of <code>127.0.0.1</code>, a restored database with empty attachments, or a login page that lists every client you host.</p>
+    <p>This lesson runs what can run here against real Odoo 20. This machine is Windows, so multi-worker mode is <b>not run here</b>, and nginx is <b>not run here</b> either: a labelled Node proxy shows the mechanism in front of a real server.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>Odoo بيشتغل كويس على اللابتوب بالـ defaults، بس نفس الـ defaults دي غلط لشركة فواتيرها كلها جواه. الـ production بيضيف 4 أسئلة: كام process يستحملهم السيرفر ده، الـ requests هتوصلهم إزاي عن طريق proxy من غير ما هوية الـ client تضيع، الـ backup فيه الـ PDFs فعلًا ولا لأ، وأنهي database هتفتح مع أنهي hostname. كل سؤال منهم ليه failure ساكت لحد يوم وحش: chat وقف يتحدّث، audit logs مليانة <code>127.0.0.1</code>، database رجعت من backup والـ attachments فاضية، أو صفحة login بتعرض أسماء كل عملائك.</p>
+    <p>الدرس بيشغّل اللي ينفع يتشغّل هنا على Odoo 20 حقيقي. الجهاز Windows، فالـ multi-worker mode <b>not run here</b>، و nginx كمان <b>not run here</b>: بدله Node proxy متعلّم عليه إنه stand-in عشان يوضّح الآلية قدام server حقيقي.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Workers and limits <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — الـ workers والـ limits</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Odoo has three server classes in <code>odoo/service/server.py</code>. <code>ThreadedServer</code> is used when <code>workers = 0</code>: one process, one thread per request. <code>PreforkServer</code> is used when <code>workers &gt; 0</code>: a master forks HTTP workers, cron workers and a gevent process. <code>GeventServer</code> is that gevent process. Prefork relies on <code>fork</code>, <code>fcntl</code> and POSIX signals, so it does not exist on Windows. In <code>config.py</code>, <code>workers</code>, <code>limit_memory_hard</code>, <code>limit_time_cpu</code> and <code>limit_request</code> are <code>PosixOnlyOption</code>s: on Windows they stay at their defaults and are hidden from <code>--help</code>. Setting them is silently ignored: on this machine both <code>--workers 2</code> and <code>workers = 2</code> in the config file exited 0 and left <code>config['workers']</code> at 0.</p>
+    <p>The limits, read from <code>odoo/tools/config.py</code>:</p>
+    <ul>
+      <li><code>limit_memory_soft</code>, 2048 MiB: past it, the worker finishes the current request and is recycled.</li>
+      <li><code>limit_memory_hard</code>, 2560 MiB: past it, any allocation fails. On Linux it is set through <code>RLIMIT_AS</code>.</li>
+      <li><code>limit_time_cpu</code>, 60 s of CPU per request, and <code>limit_time_real</code>, 120 s of wall clock. A query waiting on a lock burns real time without burning CPU, which is why both exist.</li>
+      <li><code>limit_request</code>, 65536: a worker is recycled after that many requests, which bounds slow leaks.</li>
+      <li><code>max_cron_threads</code>, 2: cron workers, which also compete for CPU.</li>
+    </ul>
+    <p>One detail catches people: the memory limits measure <b>virtual</b> memory. <code>odoo/tools/osutil.py</code> returns <code>pmem.vms</code> everywhere except macOS, so a dashboard showing RSS will not line up with when workers get recycled. For sizing, Odoo's deployment guide gives rules of thumb: <code>(CPUs × 2) + 1</code> as the worker ceiling, about 6 concurrent users per worker, and memory of <code>workers × (0.8 × 150 MB + 0.2 × 1 GB)</code>.</p>
+  </section>
+
+<pre data-file="src/sizing.ts"><code class="language-typescript">// الأرقام دي من دليل Odoo الرسمي، وهي نقطة بداية مش نتيجة: قيس على الـ workload بتاعك
+const USERS_PER_WORKER = 6;
+const LIGHT_MB = 150;
+const HEAVY_MB = 1024;
+const HEAVY_SHARE = 0.2;
+
+type Host = { users: number; cpus: number; ramGb: number; cronWorkers: number };
+
+export function size({ users, cpus, ramGb, cronWorkers }: Host) {
+  const wanted = Math.ceil(users / USERS_PER_WORKER);
+  const cpuCap = cpus * 2 + 1;
+  // الـ cron بياخد من نفس الـ CPU، فبيتخصم من السقف
+  const httpCap = cpuCap - cronWorkers;
+  const workers = Math.min(wanted, httpCap);
+  const perWorkerMb = (1 - HEAVY_SHARE) * LIGHT_MB + HEAVY_SHARE * HEAVY_MB;
+  const processes = workers + cronWorkers;
+  const expectedGb = (processes * perWorkerMb) / 1024;
+  // أسوأ حالة: كل process وصل الـ hard limit الافتراضي في نفس اللحظة
+  const worstCaseGb = processes * 2.5;
+  return {
+    users, cpus, wanted, cpuCap, workers,
+    servesUsers: workers * USERS_PER_WORKER,
+    enough: workers &gt;= wanted,
+    expectedGb: +expectedGb.toFixed(1),
+    worstCaseGb,
+    fitsExpected: expectedGb &lt;= ramGb * 0.75,
+    fitsWorstCase: worstCaseGb &lt;= ramGb,
+  };
+}
+
+for (const host of [{ cpus: 4, ramGb: 16 }, { cpus: 8, ramGb: 16 }, { cpus: 8, ramGb: 48 }]) {
+  const r = size({ users: 80, cronWorkers: 2, ...host });
+  console.log(`cpus=${r.cpus} ram=${host.ramGb}GB wanted=${r.wanted} cap=${r.cpuCap} workers=${r.workers} serves=${r.servesUsers} enough=${r.enough}`);
+  console.log(`  expected=${r.expectedGb}GB worst=${r.worstCaseGb}GB fitsWorst=${r.fitsWorstCase}`);
+}
+</code></pre>
+<pre><code class="language-plaintext">cpus=4 ram=16GB wanted=14 cap=9 workers=7 serves=42 enough=false
+  expected=2.9GB worst=22.5GB fitsWorst=false
+cpus=8 ram=16GB wanted=14 cap=17 workers=14 serves=84 enough=true
+  expected=5.1GB worst=40GB fitsWorst=false
+cpus=8 ram=48GB wanted=14 cap=17 workers=14 serves=84 enough=true
+  expected=5.1GB worst=40GB fitsWorst=true
+</code></pre>
+  <div class="ar-note">الناتج ده من تشغيل حقيقي، وكل سيرفر ليه سطرين. الأول: 80 user على 4 CPU محتاجين 14 worker بس السقف 9، وبعد ما نخصم 2 cron يفضل 7 workers يخدموا 42 user، يعني <code>enough=false</code>. التاني: 8 CPU تكفي، والذاكرة المتوقعة 5.1GB، بس لو كل process وصل الـ hard limit الافتراضي يبقى 40GB وده أكبر من 16GB. التالت: نفس الحساب على سيرفر 48GB بيعدّي أسوأ حالة.</div>
+
+  <p>The real defaults and the real startup line, from a threaded lab on this machine:</p>
+  <div class="ar-note">تحت القيم الفعلية اللي Odoo قراها، وبعدها سطور الـ startup الحقيقية من lab شغال threaded على الجهاز ده.</div>
+<pre><code class="language-plaintext">workers 0
+gevent_workers 1
+max_cron_threads 0
+limit_memory_soft 2147483648
+limit_memory_hard 2684354560
+limit_memory_soft_gevent None
+limit_memory_hard_gevent None
+limit_time_cpu 60
+limit_time_real 120
+limit_time_real_cron -1
+limit_request 65536
+gevent_port 8072
+db_maxconn 64
+db_maxconn_gevent None
+</code></pre>
+  <div class="ar-note">كل دي الـ defaults من <code>config.py</code>، ما عدا <code>max_cron_threads 0</code>: ده لأن ملف الـ lab نفسه كاتب <code>max_cron_threads = 0</code>، والـ default الحقيقي 2. و<code>None</code> في قيم الـ gevent معناها "استخدم نفس القيمة العادية".</div>
+<pre><code class="language-plaintext">19728 INFO ? odoo: Odoo version 20.0
+19728 INFO ? odoo: database: odoo_lab@127.0.0.1:56594
+19728 INFO ? odoo.service.server: HTTP service running on 127.0.0.1:56628
+</code></pre>
+  <div class="ar-note">السطر الأخير <code>HTTP service running on</code> جاي من <code>ThreadedServer</code>. على Linux بـ <code>workers &gt; 0</code> السطر بييجي من <code>PreforkServer</code> ومعاه workers منفصلين، وده <b>not run here</b>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>Odoo عنده 3 server classes في <code>odoo/service/server.py</code>. <code>ThreadedServer</code> لما <code>workers = 0</code>: process واحد و thread لكل request. <code>PreforkServer</code> لما <code>workers &gt; 0</code>: master بيعمل fork لـ HTTP workers و cron workers و process للـ gevent. و<code>GeventServer</code> هو الـ process ده. الـ prefork معتمد على <code>fork</code> و <code>fcntl</code> و POSIX signals، فمالوش وجود على Windows. وفي <code>config.py</code> الخيارات <code>workers</code> و <code>limit_memory_hard</code> و <code>limit_time_cpu</code> و <code>limit_request</code> نوعها <code>PosixOnlyOption</code>: على Windows بتفضل على الـ default ومستخبية من <code>--help</code>. ولو حطيتها بتتجاهل من غير ولا كلمة: على الجهاز ده <code>--workers 2</code> و<code>workers = 2</code> في ملف الـ config الاتنين خلصوا بـ exit 0 و<code>config['workers']</code> فضل 0.</p>
+    <p>الـ limits زي ما هي في <code>odoo/tools/config.py</code>:</p>
+    <ul>
+      <li><code>limit_memory_soft</code> بـ 2048 MiB: لو عدّاها الـ worker بيخلّص الـ request الحالي وبعدين يتعمله recycle.</li>
+      <li><code>limit_memory_hard</code> بـ 2560 MiB: لو عدّاها أي allocation بيفشل، وعلى Linux بتتطبق عن طريق <code>RLIMIT_AS</code>.</li>
+      <li><code>limit_time_cpu</code> بـ 60 ثانية CPU لكل request، و<code>limit_time_real</code> بـ 120 ثانية وقت حقيقي. الـ query اللي مستنية lock بتاكل وقت حقيقي من غير CPU، وعشان كده الاتنين موجودين.</li>
+      <li><code>limit_request</code> بـ 65536: الـ worker بيتعمله recycle بعد العدد ده من الـ requests، وده بيحدّ أي leak بطيء.</li>
+      <li><code>max_cron_threads</code> بـ 2: الـ cron workers، وهم كمان بينافسوا على الـ CPU.</li>
+    </ul>
+    <p>تفصيلة بتوقّع ناس كتير: الـ memory limits بتقيس الـ <b>virtual</b> memory. <code>odoo/tools/osutil.py</code> بيرجّع <code>pmem.vms</code> في كل الأنظمة ما عدا macOS، فلو الـ dashboard بتاعك بيعرض RSS مش هيطابق توقيت الـ recycle. وللـ sizing دليل Odoo بيدي قواعد تقريبية: <code>(CPUs × 2) + 1</code> سقف الـ workers، حوالي 6 users متزامنين لكل worker، والذاكرة <code>workers × (0.8 × 150 MB + 0.2 × 1 GB)</code>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عميل عنده 80 موظف بيشتكي إن Odoo "بيهنّج الساعة 9 الصبح" على سيرفر 4 CPU. بدل ما تزوّد <code>workers = 30</code>، تحسب: السقف 9، فالـ requests بتقف في الطابور عشان مفيش CPU مش عشان مفيش workers. نفس منطق تظبيط PM2 cluster في Node: عدد الـ processes مربوط بالـ CPU، والزيادة بتجيب context switching مش throughput. الغلطة الشائعة إنك تضاعف الـ workers وتسيب الـ limits على الـ default، فأسوأ حالة الذاكرة تعدّي الـ RAM والـ OOM killer يقتل Postgres.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: soft limit size</b>
+    A low <code>limit_memory_soft</code> recycles workers often, costing a registry reload per new process but capping leaks. A high one avoids churn but lets a few heavy reports eat the host. Start from the defaults, watch recycles in the log, then lower the limits until the worst case fits the RAM.
+    <div class="ar-note">لو <code>limit_memory_soft</code> قليل، الـ workers بيتعملهم recycle كتير وكل process جديد بيدفع تمن تحميل الـ registry، بس الـ leaks محدودة. ولو عالي، الـ churn بيقل بس كام report تقيل ممكن ياكلوا السيرفر. ابدأ بالـ defaults، راقب الـ recycles في الـ log، ونزّل الـ limits لحد ما أسوأ حالة تدخل في الـ RAM.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Why does Odoo have both <code>limit_time_cpu</code> and <code>limit_time_real</code>?" → CPU time catches a computation stuck in a loop. Real time catches a request that burns no CPU because it is blocked, usually on a Postgres lock or an external HTTP call. A worker blocked on a lock would never hit a CPU limit.
+    <div class="ar-note">"ليه Odoo عنده <code>limit_time_cpu</code> و <code>limit_time_real</code> الاتنين؟" ← الـ CPU time بيمسك computation واقفة في loop. والـ real time بيمسك request مش بياكل CPU عشان واقف مستني، غالبًا على Postgres lock أو HTTP call خارجي. worker واقف على lock عمره ما هيوصل لـ CPU limit.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Gevent and websockets <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — الـ gevent والـ websockets</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A prefork HTTP worker handles one request at a time. A websocket stays open for hours, so one open browser tab would pin a whole worker. Odoo therefore runs long-lived bus connections in a separate gevent process on <code>gevent_port</code> (8072), where each connection is a cheap greenlet. It has its own knobs: <code>limit_memory_soft_gevent</code>, <code>limit_memory_hard_gevent</code> and <code>db_maxconn_gevent</code>, all defaulting to the regular values. The model is close to a Node websocket server, one process multiplexing many sockets, and <a href="../../06-NodeJS/lessons/37-realtime-at-scale.html">section 06 · real-time</a> covers the general design.</p>
+    <p>The source shows why routing matters. In <code>odoo/http/server.py</code>, the raw socket is exposed only in threaded or evented mode, with the comment "cannot use websocket in prefork HTTP workers". If <code>/websocket</code> reaches a prefork worker on 8069, the lookup fails and <code>addons/bus/websocket.py</code> raises <code>Couldn't bind the websocket. Is the connection opened on the evented port (8072)?</code></p>
+    <p>The user sees almost nothing. The page loads, forms save, because those are ordinary RPCs. Only live updates stop: Discuss messages, notifications, presence. The browser's worker keeps retrying with a delay of up to 120 s plus up to 30 s of jitter (<code>websocket_worker.js</code>). Prefork and the gevent process are <b>not run here</b>: <code>gevent</code> is excluded on Windows in <code>requirements.txt</code>. Threaded mode serves websockets on the main port, so a real handshake can still prove what a proxy must do.</p>
+  </section>
+
+<pre data-file="src/ws-check.ts"><code class="language-typescript">// بيجرّب الـ websocket handshake مباشر وورا proxy غلط وورا proxy صح
+import crypto from "node:crypto";
+import http from "node:http";
+import { startProxy } from "./proxy-standin.ts";
+
+process.env.PYTHONUTF8 = "1";
+type Lab = { server(): Promise&lt;{ httpPort: number; stop(): void }&gt;; stop(): Promise&lt;void&gt; };
+const LAB_URL: string = "file:///D:/tools/odoo/odoo.mjs";
+const { startLab } = (await import(LAB_URL)) as { startLab(o: { dir: string; addons: string[] }): Promise&lt;Lab&gt; };
+
+const handshake = (port: number) =&gt;
+  new Promise&lt;string&gt;((done) =&gt; {
+    const key = crypto.randomBytes(16).toString("base64");
+    const request = http.request({
+      host: "127.0.0.1", port, path: "/websocket?version=saas-19.5-1",
+      headers: { Connection: "Upgrade", Upgrade: "websocket", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": key, Origin: "http://127.0.0.1" },
+    });
+    request.on("upgrade", (res, socket) =&gt; { socket.destroy(); done(`${res.statusCode} upgraded`); });
+    request.on("response", (res) =&gt; { res.resume(); done(`${res.statusCode} not upgraded`); });
+    request.on("error", (e) =&gt; done(`error ${e.message}`));
+    request.end();
+  });
+
+const lab = await startLab({ dir: process.cwd().replace(/\\/g, "/"), addons: [] });
+try {
+  const server = await lab.server();
+  const naive = await startProxy(server.httpPort, { forwardedHost: true, relayUpgrade: false });
+  const correct = await startProxy(server.httpPort, { forwardedHost: true, relayUpgrade: true });
+  console.log("direct to Odoo :", await handshake(server.httpPort));
+  console.log("naive proxy    :", await handshake(naive.port));
+  console.log("upgrade relayed:", await handshake(correct.port));
+  naive.close();
+  correct.close();
+  server.stop();
+} finally {
+  await lab.stop();
+}
+process.exit(0);
+</code></pre>
+<pre><code class="language-plaintext">direct to Odoo : 101 upgraded
+naive proxy    : 400 not upgraded
+upgrade relayed: 101 upgraded
+</code></pre>
+  <div class="ar-note">ده تشغيل حقيقي قدام Odoo 20 في threaded mode. مباشرة: <code>101</code> يعني الـ upgrade نجح. ورا proxy مش بيبعت <code>Upgrade</code>: رد <code>400</code>، لأن <code>_assert_handshake_validity</code> بيدوّر على الـ headers دي ومش لاقيها. ورا proxy بيعمل relay للـ upgrade صح: <code>101</code> تاني.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ prefork HTTP worker بيخدم request واحد في المرة. الـ websocket بيفضل مفتوح ساعات، فـ tab واحدة مفتوحة كانت هتحجز worker كامل. عشان كده Odoo بيشغّل الـ bus connections الطويلة في gevent process منفصل على <code>gevent_port</code> (8072)، وكل connection فيه greenlet رخيص. ليه إعداداته الخاصة: <code>limit_memory_soft_gevent</code> و <code>limit_memory_hard_gevent</code> و <code>db_maxconn_gevent</code>، وكلهم بياخدوا القيم العادية لو متحددوش. الموديل قريب من websocket server في Node: process واحد بيخدم sockets كتير، و<a href="../../06-NodeJS/lessons/37-realtime-at-scale.html">القسم 06 · real-time</a> فيه التصميم العام.</p>
+    <p>الـ source بيوضّح ليه الـ routing مهم. في <code>odoo/http/server.py</code> الـ raw socket متاح بس في الـ threaded أو الـ evented mode، ومكتوب جنبه comment إن الـ websocket مينفعش في prefork HTTP workers. لو <code>/websocket</code> وصل لـ prefork worker على 8069، الـ lookup بيفشل و<code>addons/bus/websocket.py</code> بيرمي <code>Couldn't bind the websocket. Is the connection opened on the evented port (8072)?</code></p>
+    <p>الـ user مش بيشوف حاجة تقريبًا. الصفحة بتفتح والـ forms بتتحفظ لأن دي RPCs عادية. اللي بيقف هو التحديث اللحظي بس: رسايل Discuss، الـ notifications، والـ presence. والـ worker بتاع المتصفح بيعيد المحاولة بتأخير لحد 120 ثانية زائد لحد 30 ثانية jitter (<code>websocket_worker.js</code>). الـ prefork والـ gevent process <b>not run here</b>: <code>gevent</code> مستبعد على Windows في <code>requirements.txt</code>. بس الـ threaded mode بيخدم الـ websocket على الـ port الأساسي، فـ handshake حقيقي يقدر يثبت الـ proxy لازم يعمل إيه.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      فريق المبيعات بيقول "الرسايل مش بتوصل غير لما أعمل refresh" بعد ما نقلتوا لـ nginx جديد. مفيش error ظاهر، و<code>/web/health</code> بيقول pass. أول حاجة تعملها: تفتح DevTools على tab الـ Network وتشوف طلب <code>/websocket</code> رجع إيه، وتراجع إن الـ location بتاعه رايح 8072 ومعاه <code>Upgrade</code>. الغلطة الشائعة إن الـ health check الوحيد بيبص على HTTP، فالـ monitoring أخضر والخدمة بايظة نصها.
+    </div>
+  </section>
+
+<pre class="diagram">
+                        +--------------------+
+  browser --HTTPS--&gt;    |       nginx        |
+                        |  (TLS terminates)  |
+                        +----+----------+----+
+             location /      |          |   location /websocket
+                             v          v
+                  +-------------+   +----------------+
+                  | :8069       |   | :8072          |
+                  | HTTP worker |   | gevent process |
+                  | HTTP worker |   | many greenlets |
+                  | cron worker |   +-------+--------+
+                  +------+------+           |
+                         +--------+---------+
+                                  v
+                             PostgreSQL
+</pre>
+  <div class="ar-note">المتصفح بيكلّم nginx بـ HTTPS، و nginx بيفك الـ TLS. أي path عادي بيروح 8069 للـ HTTP workers. الـ <code>/websocket</code> بس بيروح 8072 للـ gevent process اللي بيشيل connections كتير. الاتنين في الآخر بيكلموا نفس Postgres.</div>
+
+  <div class="callout warn">
+    <b>What breaks</b>
+    Your health check can pass while realtime is down. <code>/web/health</code> is an ordinary HTTP route and says nothing about the websocket path. Add a synthetic check that completes a real <code>101</code> handshake through the public hostname.
+    <div class="ar-note">الـ health check ممكن يعدّي والـ realtime واقع. <code>/web/health</code> route عادي على HTTP ومبيقولش أي حاجة عن مسار الـ websocket. ضيف synthetic check بيكمّل handshake حقيقي ويرجّع <code>101</code> عن طريق الـ hostname العام.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Reverse proxy, proxy_mode and TLS <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — الـ reverse proxy و proxy_mode و TLS</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Odoo's built-in server speaks plain HTTP, so TLS terminates at a proxy in front of it. The general pattern is in <a href="../../12-System-Design/lessons/08-reverse-proxy-gateway-mesh.html">section 12 · reverse proxy</a>; this part covers what Odoo adds. The config below follows Odoo's deployment guide and is labelled <b>not run here</b> because nginx is not on this machine. Note the header inheritance rule: nginx inherits <code>proxy_set_header</code> from the outer level only if the current location defines none, so <code>location /websocket</code> has to repeat them.</p>
+    <p><code>proxy_mode = True</code> tells Odoo to trust forwarded headers. In <code>odoo/http/server.py</code> the check is <code>if config['proxy_mode'] and environ.get('HTTP_X_FORWARDED_HOST')</code>, then werkzeug's <code>ProxyFix</code> with <code>x_for=1, x_proto=1, x_host=1</code>. Two consequences follow. The headers are applied <b>only when <code>X-Forwarded-Host</code> is present</b>, so a proxy that omits it silently turns the feature off. And <code>x_for=1</code> takes the last entry of <code>X-Forwarded-For</code>, the one your own proxy appended, so a value the client sent earlier in the list is ignored. In a real run, a client-supplied value passing through the proxy was ignored, while a request reaching Odoo directly with those headers was believed. That is why the port has to be firewalled.</p>
+    <p>Why this matters beyond logs: <code>hr.url_root</code> feeds generated links, and an admin login stores it as <code>web.base.url</code> unless <code>web.base.url.freeze</code> is set. With the wrong scheme, password-reset and portal links come out as <code>http://</code>.</p>
+  </section>
+
+<pre data-file="deploy/odoo.nginx.conf"><code class="language-nginx"># تنبيه: not run here، nginx مش متشغّل على الجهاز ده والملف للقراية والتطبيق عندك
+upstream odoo {
+  server 127.0.0.1:8069;
+}
+upstream odoochat {
+  server 127.0.0.1:8072;
+}
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  ''      close;
+}
+
+server {
+  listen 80;
+  server_name erp.example.test;
+  return 301 https://$host$request_uri;
+}
+
+server {
+  listen 443 ssl;
+  server_name erp.example.test;
+
+  ssl_certificate     /etc/ssl/erp/fullchain.pem;
+  ssl_certificate_key /etc/ssl/erp/privkey.pem;
+  ssl_protocols       TLSv1.2 TLSv1.3;
+
+  # الرقم ده لازم يكفي أكبر attachment أو restore بتستقبله
+  client_max_body_size 64m;
+  # أطول من limit_time_real عشان الـ proxy ميقطعش قبل Odoo
+  proxy_read_timeout 720s;
+  proxy_connect_timeout 720s;
+  proxy_send_timeout 720s;
+
+  # الـ headers دي بتتورث بس لو الـ location معرّفش proxy_set_header خالص
+  proxy_set_header X-Forwarded-Host $http_host;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_set_header X-Real-IP $remote_addr;
+
+  location /websocket {
+    proxy_pass http://odoochat;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    # لازم نعيدهم هنا: الـ location ده عرّف proxy_set_header فالوراثة وقفت
+    proxy_set_header X-Forwarded-Host $http_host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Real-IP $remote_addr;
+  }
+
+  location ~* /[^/]+/static/ {
+    proxy_cache_valid 200 60m;
+    expires 7d;
+    proxy_pass http://odoo;
+  }
+
+  location / {
+    proxy_pass http://odoo;
+    proxy_redirect off;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    proxy_cookie_flags session_id samesite=lax secure;
+  }
+
+  gzip on;
+  gzip_types text/css text/plain application/json application/javascript;
+}
+</code></pre>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ server بتاع Odoo بيتكلم HTTP عادي، فالـ TLS بيتفك في proxy قدامه. الـ pattern العام في <a href="../../12-System-Design/lessons/08-reverse-proxy-gateway-mesh.html">القسم 12 · reverse proxy</a>، وهنا هنركّز على اللي Odoo بيضيفه. الـ config اللي فوق ماشي على دليل Odoo ومتعلّم عليه <b>not run here</b> لأن nginx مش موجود على الجهاز ده. خد بالك من قاعدة الوراثة: nginx بيورّث <code>proxy_set_header</code> من المستوى الخارجي بس لو الـ location الحالي معرّفش أي واحد، فـ <code>location /websocket</code> لازم يكررهم.</p>
+    <p><code>proxy_mode = True</code> معناها "صدّق الـ forwarded headers". في <code>odoo/http/server.py</code> الشرط هو <code>if config['proxy_mode'] and environ.get('HTTP_X_FORWARDED_HOST')</code>، وبعدها <code>ProxyFix</code> بتاع werkzeug بـ <code>x_for=1, x_proto=1, x_host=1</code>. ده بيطلّع نتيجتين. الأولى: الـ headers بتتطبق <b>بس لو <code>X-Forwarded-Host</code> موجود</b>، فالـ proxy اللي مبيبعتوش بيقفل الميزة من غير ولا كلمة. التانية: <code>x_for=1</code> بياخد آخر قيمة في <code>X-Forwarded-For</code>، اللي الـ proxy بتاعك ضافها، فأي قيمة الـ client بعتها قبلها بتتجاهل.</p>
+    <p>وأهميته أكبر من الـ logs: <code>hr.url_root</code> هو اللي بتتبني منه اللينكات، و login الأدمن بيخزّنه في <code>web.base.url</code> إلا لو <code>web.base.url.freeze</code> متظبط. لو الـ scheme غلط، لينكات الـ password reset والـ portal بتطلع <code>http://</code>.</p>
+  </section>
+
+<pre data-file="addons/erp_ops_lab/controllers/main.py"><code class="language-python">class OpsLab(http.Controller):
+    # بيرجّع اللي Odoo شايفه فعلًا عن الـ request بعد الـ proxy
+    @http.route('/lab/whoami', type='http', auth='none', csrf=False, save_session=False)
+    def whoami(self):
+        hr = request.httprequest
+        return request.make_json_response({
+            'db': request.db,
+            'remote_addr': hr.remote_addr,
+            'scheme': hr.scheme,
+            'host': hr.host,
+            'url_root': hr.url_root,
+        })
+</code></pre>
+<pre data-file="src/proxy-standin.ts"><code class="language-typescript">// تنبيه: ⁦[STAND-IN for nginx] Node proxy⁩ بيوضّح الآلية بس، مش بديل لـ production
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+
+const HOP_BY_HOP = new Set(["connection", "upgrade", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding"]);
+export type ProxyOptions = { forwardedHost: boolean; relayUpgrade: boolean };
+
+export function startProxy(target: number, options: ProxyOptions) {
+  const forwardHeaders = (req: http.IncomingMessage) =&gt; {
+    const headers: http.OutgoingHttpHeaders = {};
+    for (const [key, value] of Object.entries(req.headers)) if (!HOP_BY_HOP.has(key)) headers[key] = value;
+    const peer = (req.socket.remoteAddress ?? "").replace("::ffff:", "");
+    // زي proxy_add_x_forwarded_for: الـ IP الحقيقي بيتضاف في آخر القايمة
+    const previous = req.headers["x-forwarded-for"];
+    headers["x-forwarded-for"] = previous ? `${previous}, ${peer}` : peer;
+    headers["x-forwarded-proto"] = "https";
+    if (options.forwardedHost) headers["x-forwarded-host"] = req.headers.host;
+    else delete headers["x-forwarded-host"];
+    return headers;
+  };
+
+  const server = http.createServer((req, res) =&gt; {
+    const upstream = http.request({ host: "127.0.0.1", port: target, path: req.url, method: req.method, headers: forwardHeaders(req) }, (r) =&gt; {
+      res.writeHead(r.statusCode ?? 502, r.headers);
+      r.pipe(res);
+    });
+    upstream.on("error", (e) =&gt; { res.writeHead(502); res.end(String(e)); });
+    req.pipe(upstream);
+  });
+
+  if (options.relayUpgrade) {
+    // ده المقابل لـ location /websocket في nginx: Upgrade لازم يتبعت صريح
+    server.on("upgrade", (req, socket, head) =&gt; {
+      const headers = { ...forwardHeaders(req), connection: "Upgrade", upgrade: req.headers.upgrade };
+      const upstream = http.request({ host: "127.0.0.1", port: target, path: req.url, method: req.method, headers });
+      upstream.on("upgrade", (r, upstreamSocket, upstreamHead) =&gt; {
+        const lines = Object.entries(r.headers).map(([k, v]) =&gt; `${k}: ${String(v)}`).join("\r\n");
+        socket.write(`HTTP/1.1 101 Switching Protocols\r\n${lines}\r\n\r\n`);
+        if (upstreamHead.length) socket.write(upstreamHead);
+        if (head.length) upstreamSocket.write(head);
+        upstreamSocket.pipe(socket);
+        socket.pipe(upstreamSocket);
+        upstreamSocket.on("error", () =&gt; socket.destroy());
+        socket.on("error", () =&gt; upstreamSocket.destroy());
+      });
+      upstream.on("response", (r) =&gt; socket.end(`HTTP/1.1 ${r.statusCode} upstream\r\n\r\n`));
+      upstream.on("error", () =&gt; socket.destroy());
+      upstream.end();
+    });
+  }
+
+  return new Promise&lt;{ port: number; close: () =&gt; void }&gt;((ready) =&gt;
+    server.listen(0, "127.0.0.1", () =&gt;
+      ready({ port: (server.address() as AddressInfo).port, close: () =&gt; { server.closeAllConnections(); server.close(); } }),
+    ),
+  );
+}
+</code></pre>
+<pre data-file="src/verify-proxy.ts"><code class="language-typescript">// يشغّل الـ proxy stand-in قدام Odoo حقيقي ويطبع اللي Odoo شايفه
+import fs from "node:fs";
+import http from "node:http";
+import { startProxy } from "./proxy-standin.ts";
+
+process.env.PYTHONUTF8 = "1";
+type Lab = { conf: string; odoo(a: string[]): { status: number }; server(): Promise&lt;{ httpPort: number; stop(): void }&gt;; stop(): Promise&lt;void&gt; };
+const LAB_URL: string = "file:///D:/tools/odoo/odoo.mjs";
+const { startLab } = (await import(LAB_URL)) as { startLab(o: { dir: string; addons: string[] }): Promise&lt;Lab&gt; };
+const work = process.cwd().replace(/\\/g, "/");
+const lab = await startLab({ dir: work, addons: [work.replace("/l34", "") + "/addons"] });
+
+const whoami = (port: number) =&gt;
+  new Promise&lt;string&gt;((done, fail) =&gt; {
+    // بنربط الـ client على 127.0.0.9 عشان يبان مختلف عن الـ proxy
+    const rq = http.request({ host: "127.0.0.1", port, path: "/lab/whoami", localAddress: "127.0.0.9", headers: { Host: "erp.acme.test" } }, (r) =&gt; {
+      let body = "";
+      r.on("data", (d) =&gt; (body += d));
+      r.on("end", () =&gt; {
+        const seen = JSON.parse(body) as { remote_addr: string; scheme: string; url_root: string };
+        done(`${seen.remote_addr} ${seen.scheme} ${seen.url_root}`);
+      });
+    });
+    rq.on("error", fail);
+    rq.end();
+  });
+
+try {
+  lab.odoo(["-d", "odoo", "-i", "erp_ops_lab", "--stop-after-init"]);
+  for (const proxyMode of [false, true]) {
+    fs.appendFileSync(lab.conf, `proxy_mode = ${proxyMode ? "True" : "False"}\n`);
+    const server = await lab.server();
+    const proxy = await startProxy(server.httpPort, { forwardedHost: true, relayUpgrade: false });
+    console.log(`proxy_mode=${proxyMode}:`, await whoami(proxy.port));
+    proxy.close();
+    if (proxyMode) {
+      const noHost = await startProxy(server.httpPort, { forwardedHost: false, relayUpgrade: false });
+      console.log("proxy_mode=true, no X-Forwarded-Host:", await whoami(noHost.port));
+      noHost.close();
+    }
+    server.stop();
+    await new Promise((r) =&gt; setTimeout(r, 2500));
+    fs.writeFileSync(lab.conf, fs.readFileSync(lab.conf, "utf8").replace(/^proxy_mode = .*\n/m, ""));
+  }
+} finally {
+  await lab.stop();
+}
+process.exit(0);
+</code></pre>
+<pre><code class="language-plaintext">proxy_mode=false: 127.0.0.1 http http://erp.acme.test/
+proxy_mode=true: 127.0.0.9 https https://erp.acme.test/
+proxy_mode=true, no X-Forwarded-Host: 127.0.0.1 http http://erp.acme.test/
+</code></pre>
+  <div class="ar-note">تشغيل حقيقي، الـ client مربوط على <code>127.0.0.9</code>. لما <code>proxy_mode=false</code>: Odoo شايف الـ proxy (<code>127.0.0.1</code>) و<code>http</code>. لما <code>proxy_mode=true</code>: شايف الـ client الحقيقي (<code>127.0.0.9</code>) و<code>https</code>. السطر التالت هو المفاجأة: <code>proxy_mode=true</code> بس الـ proxy مبعتش <code>X-Forwarded-Host</code>، فـ Odoo رجع يشوف <code>127.0.0.1</code> و<code>http</code> من غير أي warning.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ controller الصغير بيرجّع اللي Odoo شايفه، والـ Node proxy متعلّم عليه stand-in وبيعمل نفس شغل nginx: بيضيف الـ IP الحقيقي، وبيبعت الـ scheme والـ host. وجرّبنا كمان إن لو الـ client بعت <code>X-Forwarded-For</code> من عنده وعدّى من الـ proxy، Odoo فضل شايف الـ IP الحقيقي، لأن الـ proxy بيضيف في الآخر و<code>x_for=1</code> بياخد الآخر.</p>
+    <p>الشرط المهم: <code>proxy_mode</code> لازم يتفعّل بس ورا proxy، والـ port بتاع Odoo ميبقاش متاح من بره. في التشغيل الحقيقي، طلب وصل لـ Odoo <b>مباشرة</b> ومعاه forwarded headers اتصدّق وأخد قيمها، لأن Odoo مالوش طريقة يعرف مين اللي بعت. يعني الحماية هنا هي الـ firewall، مش الـ config.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ audit log بتاع Odoo كله <code>127.0.0.1</code>، والـ rate limiter على الـ login بقى بيعامل كل المستخدمين كأنهم IP واحد، فلما حد يغلط في الباسورد كام مرة الكل بيتقفل. ده نفس bug <code>app.set('trust proxy')</code> في Express: لو سبته مقفول كل الناس IP واحد، ولو فتحته من غير proxy أي حد يكتب الـ IP اللي عايزه. الغلطة الشائعة إنك تضيف <code>X-Forwarded-For</code> و<code>Proto</code> وتنسى <code>Host</code>.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "What does a trusted-proxy setting protect, and what breaks if the app port is reachable directly?" → It lets the app believe forwarded headers because only the proxy can reach it. If clients can connect directly, they can supply those headers themselves, and the app records whatever they claim. So the setting is only safe together with a network rule that admits only the proxy.
+    <div class="ar-note">"إعداد الـ trusted proxy بيحمي إيه، وإيه اللي بيكسر لو الـ port بتاع الـ app متاح مباشرة؟" ← بيخلّي الـ app يصدّق الـ forwarded headers على أساس إن الـ proxy بس اللي يقدر يوصله. لو الـ clients يقدروا يوصلوا مباشرة، يقدروا يبعتوا الـ headers دي بنفسهم والـ app هيسجّل اللي قالوه. فالإعداد آمن بس مع network rule تسمح للـ proxy لوحده.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Filestore and backups <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ filestore والـ backups</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Binary attachments do not live in Postgres by default. <code>ir_attachment</code> stores a path in <code>store_fname</code>, and the bytes live at <code>data_dir/filestore/&lt;db&gt;/&lt;first 2 hex&gt;/&lt;sha1&gt;</code>. The name <i>is</i> the content's SHA-1, so storage is content-addressed: two attachments with the same bytes share one file. Deleting a row therefore cannot delete the file straight away. <code>_mark_for_gc</code> adds the name to a <code>checklist</code> folder, and <code>_gc_file_store</code> (an autovacuum job) later removes files no row references, after a grace period of at least 30 minutes.</p>
+    <p>The consequence is the point of this part: <b>a database backup without the filestore loses every PDF</b>, and nothing complains at backup time. The rows survive and still claim a size, while the bytes are gone. There are two backup shapes. <code>odoo-bin db dump</code> writes a zip with <code>dump.sql</code>, <code>manifest.json</code> and <code>filestore/</code>. <code>pg_dump</code> plus a file copy is the same data in two pieces, and it scales better because the zip path copies the filestore to a temp folder first.</p>
+    <p>If you take the two pieces separately, dump the database <b>first</b> and copy files <b>after</b>. A file with no row is harmless. A row with no file is a lost invoice.</p>
+  </section>
+
+<pre data-file="backup.sh"><code class="language-bash"># المسارات دي relative عشان الـ db load بيفهم C: كأنها URL scheme
+PATH="/c/Program Files/PostgreSQL/18/bin:$PATH"
+BIN=D:/tools/odoo/src/odoo-bin
+PY=D:/tools/odoo/venv/Scripts/python.exe
+
+# الشكل الأول: zip فيه الـ SQL والـ filestore
+"$PY" "$BIN" db -c odoo.conf dump odoo full.zip
+
+# الشكل التاني: zip من غير ملفات، ده اللي بيضيّع الـ PDFs
+"$PY" "$BIN" db -c odoo.conf dump odoo nofs.zip --no-filestore
+
+# الشكل التالت: pg_dump custom format، والملفات عليك إنت
+"$PY" "$BIN" db -c odoo.conf dump odoo plain.dump --format dump
+</code></pre>
+<pre><code class="language-plaintext">ATT 1759 1760 b7/b71c94a3... b7/b71c94a3... True 208000
+PATH filestore/odoo/b7/b71c94a3... True
+DBCOL [(True, 208000, 'b7/b71c94a3...')]
+AFTER_UNLINK_ONE exists True
+AFTER_UNLINK_LAST before gc True
+AFTER_GC False
+FILESTORE {"files":558,"mb":17.2}
+</code></pre>
+  <div class="ar-note">ناتج حقيقي. <code>ATT</code>: اتنين attachments بنفس الـ bytes ليهم نفس <code>store_fname</code> والـ checksum بيطابق SHA-1. <code>PATH</code>: مكان الملف. <code>DBCOL</code>: <code>db_datas</code> فاضي، يعني الـ bytes مش في Postgres. <code>AFTER_UNLINK_ONE</code>: مسحنا واحد والملف لسه موجود عشان التاني بيستخدمه. <code>AFTER_UNLINK_LAST</code>: بعد مسح آخر row الملف لسه موجود. <code>AFTER_GC</code>: الـ garbage collection هو اللي شاله. <code>FILESTORE</code>: 558 ملف بـ 17.2MB.</div>
+<pre><code class="language-plaintext">DUMP full.zip 0 ms 9196 MB 20.8 
+DUMP nofs.zip 0 ms 2080 MB 4.7 
+DUMP plain.dump 0 ms 3905 MB 10.1 
+ZIP 560 ['dump.sql', 'manifest.json'] 558
+</code></pre>
+  <div class="ar-note">الأحجام الحقيقية: الـ zip الكامل 20.8MB، من غير filestore 4.7MB، والـ pg_dump custom 10.1MB. الأوقات بالـ ms على جهاز عليه ضغط، فاعتبرها تقريبية. سطر <code>ZIP</code> بيقول فيه 560 entry: <code>dump.sql</code> و<code>manifest.json</code> و558 ملف filestore.</div>
+<pre><code class="language-plaintext">LOAD nofs 0 30057 
+NOFS name INV-1001.pdf store b7/b71c94a3... file_size 208000 raw_len 0
+_file_read reading &lt;lab&gt;/data/filestore/nofs/b7/b71c94a3...
+</code></pre>
+  <div class="ar-note">هنا عملنا restore من الـ backup اللي من غير filestore. الـ <code>load</code> رجّع status <code>0</code> يعني نجح. الـ row لسه بيقول <code>file_size 208000</code>، بس <code>raw_len 0</code>: الـ bytes ضاعت. وOdoo سجّل الموضوع كـ <code>INFO</code> بس، مش error.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ attachments مش في Postgres بالـ default. <code>ir_attachment</code> بيخزّن مسار في <code>store_fname</code>، والـ bytes نفسها في <code>data_dir/filestore/&lt;db&gt;/&lt;أول حرفين hex&gt;/&lt;sha1&gt;</code>. اسم الملف هو الـ SHA-1 بتاع محتواه، يعني content-addressed: اتنين attachments بنفس الـ bytes بيشتركوا في ملف واحد. وعشان كده مسح row مينفعش يمسح الملف على طول. <code>_mark_for_gc</code> بيحط الاسم في فولدر <code>checklist</code>، و<code>_gc_file_store</code> (autovacuum job) بعدين بيشيل الملفات اللي مفيش row بيشاور عليها، بعد grace period 30 دقيقة على الأقل.</p>
+    <p>النتيجة هي أهم نقطة في الجزء: <b>backup للـ database من غير filestore بيضيّع كل الـ PDFs</b>، ومفيش حاجة بتشتكي وقت الـ backup. الـ rows بتفضل وبتقول إن ليها حجم، والـ bytes راحت. عندك شكلين للـ backup: <code>odoo-bin db dump</code> بيطلّع zip فيه <code>dump.sql</code> و<code>manifest.json</code> و<code>filestore/</code>. أو <code>pg_dump</code> مع نسخ الملفات، نفس الـ data على قطعتين، وده بيكبر أحسن لأن طريقة الـ zip بتنسخ الـ filestore لفولدر مؤقت الأول.</p>
+    <p>لو أخدت القطعتين منفصلين، اعمل dump للـ database <b>الأول</b> وانسخ الملفات <b>بعدها</b>. ملف من غير row مش مشكلة. لكن row من غير ملف يعني فاتورة ضايعة.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ DevOps عامل cron بيعمل <code>pg_dump</code> كل ليلة وبيقول "عندنا backups". يوم ما السيرفر يقع، الأرقام ترجع والـ PDFs وصور المنتجات والمستندات الموقّعة تبقى فاضية. ده نفس فخ إنك تعمل backup لـ Postgres وتنسى الـ S3 bucket بتاع الـ uploads في تطبيق Node. الغلطة الشائعة إنك تثق في exit code <code>0</code> بتاع الـ backup من غير ما تعد الملفات.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: zip versus pg_dump plus files</b>
+    The zip is one atomic artifact and restores with one command, which suits small databases. It copies the whole filestore on every run and needs that disk space in a temp folder. For a large filestore, use <code>pg_dump -Fc</code> plus an incremental file sync, and accept that you now have to keep two pieces consistent.
+    <div class="ar-note">الـ zip ملف واحد وبيرجع بأمر واحد، ومناسب للـ databases الصغيرة، بس بينسخ الـ filestore كله كل مرة ومحتاج مساحته في فولدر مؤقت. لو الـ filestore كبير، استخدم <code>pg_dump -Fc</code> مع file sync تزايدي، وساعتها بقى عليك إنك تحافظ على توافق القطعتين.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — The restore test <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — اختبار الـ restore</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A backup is a hypothesis until it has been restored. The drill below loads the backup into a second database, neutralizes it, starts a server, and asserts on record counts, attachment reads and a real login. The general theory of RPO, RTO and PITR is in <a href="../../09-Databases/lessons/27-backups-pitr-upgrades.html">section 09 · backups</a>; here the Odoo-specific parts matter.</p>
+    <p><b>Neutralize is not optional on a copy of production.</b> <code>db load -n</code> runs every installed module's <code>data/neutralize.sql</code>. The base script deactivates mail servers and clears their credentials, inserts a dummy mail server, disables crons except autovacuum, and sets <code>database.is_neutralized</code>. Without it, a restored copy would email real customers and run real integrations on its first cron tick. <code>db load</code> also generates a new database UUID unless you pass <code>--move</code>, so a copy cannot pose as the original to services keyed on it.</p>
+    <p>Time the drill, because the elapsed time from restore to first login <i>is</i> your measured RTO. Then automate it as a scheduled job that fails loudly, and prove the check can fail by damaging the restore on purpose. A check that has never failed has not been tested.</p>
+  </section>
+
+<pre data-file="src/restore-drill.ts"><code class="language-typescript">// الـ drill: backup متعملوش restore يبقى لسه مش backup
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+process.env.PYTHONUTF8 = "1";
+process.env.PATH = `C:\\Program Files\\PostgreSQL\\18\\bin;${process.env.PATH}`;
+
+type Lab = {
+  conf: string; home: string;
+  odoo(args: string[], opts?: { input?: string }): { status: number; stdout: string; stderr: string };
+  server(): Promise&lt;{ url: string; stop(): void }&gt;;
+  stop(): Promise&lt;void&gt;;
+};
+const LAB_URL: string = "file:///D:/tools/odoo/odoo.mjs";
+const { startLab } = (await import(LAB_URL)) as { startLab(o: { dir: string; addons: string[] }): Promise&lt;Lab&gt; };
+
+const PY = "D:/tools/odoo/venv/Scripts/python.exe";
+const BIN = "D:/tools/odoo/src/odoo-bin";
+const work = process.cwd().replace(/\\/g, "/");
+
+const CENSUS = `import hashlib, json, os
+from odoo.tools import SQL
+A = env['ir.attachment'].sudo()
+rows = env.execute_query(SQL("select store_fname, checksum from ir_attachment where store_fname is not null"))
+missing = corrupt = 0
+for fname, checksum in rows:
+    full = A._full_path(fname)
+    if not os.path.exists(full):
+        missing += 1
+    elif hashlib.sha1(open(full, 'rb').read()).hexdigest() != checksum:
+        corrupt += 1
+print('CENSUS ' + json.dumps({
+    'partners': env['res.partner'].search_count([]),
+    'moves': env['account.move'].search_count([]),
+    'attachments': len(rows), 'missing': missing, 'corrupt': corrupt,
+    'neutralized': env['ir.config_parameter'].sudo().get_str('database.is_neutralized'),
+    'crons': env['ir.cron'].sudo().search_count([]),
+}))
+`;
+type Census = { partners: number; moves: number; attachments: number; missing: number; corrupt: number; neutralized: string | false; crons: number };
+
+const lab = await startLab({ dir: work, addons: [] });
+const db = (...args: string[]) =&gt; {
+  const r = spawnSync(PY, [BIN, "db", "-c", lab.conf, ...args], { encoding: "utf8", cwd: work, timeout: 400_000 });
+  if (r.status !== 0) throw new Error(`odoo-bin db ${args[0]} exited ${r.status}`);
+};
+const census = (name: string): Census =&gt; {
+  const r = lab.odoo(["shell", "-d", name, "--no-http"], { input: CENSUS });
+  const line = r.stdout.split("\n").find((l) =&gt; l.startsWith("CENSUS "));
+  if (!line) throw new Error(`no census from ${name}`);
+  return JSON.parse(line.slice(7)) as Census;
+};
+const setConf = (key: string, value: string) =&gt; {
+  const conf = fs.readFileSync(lab.conf, "utf8");
+  fs.writeFileSync(lab.conf, conf.replace(new RegExp(`^${key} = .*$`, "m"), () =&gt; `${key} = ${value}`));
+};
+
+let failed = false;
+const check = (name: string, ok: boolean, detail: unknown) =&gt; {
+  if (!ok) failed = true;
+  console.log(`${ok ? "PASS" : "FAIL"} ${name}: ${JSON.stringify(detail)}`);
+};
+
+try {
+  const source = census("odoo");
+  db("dump", "odoo", `${work}/drill.zip`);
+  console.log("backup MB ≈", (fs.statSync(`${work}/drill.zip`).size / 1048576).toFixed(1));
+
+  // الساعة بتبدأ من هنا: الـ RTO هو من لحظة الـ restore لحد ما حد يقدر يدخل
+  const started = performance.now();
+  // المسار لازم يكون relative: الـ C: بتتفهم كأنها URL scheme
+  db("load", "-n", "restored", "drill.zip");
+  const restored = census("restored");
+
+  check("partners match", restored.partners === source.partners, [source.partners, restored.partners]);
+  check("moves match", restored.moves === source.moves, [source.moves, restored.moves]);
+  check("attachments match", restored.attachments === source.attachments, [source.attachments, restored.attachments]);
+  check("no missing files", restored.missing === 0, restored.missing);
+  check("no corrupt files", restored.corrupt === 0, restored.corrupt);
+  check("neutralized", restored.neutralized === "True", restored.neutralized);
+  check("crons disabled", restored.crons &lt; source.crons, [source.crons, restored.crons]);
+
+  setConf("dbfilter", "^restored$");
+  const server = await lab.server();
+  const res = await fetch(`${server.url}/web/session/authenticate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", method: "call", params: { db: "restored", login: "admin", password: "admin" } }),
+  });
+  const login = (await res.json()) as { result?: { uid?: number; db?: string } };
+  check("login works", typeof login.result?.uid === "number" &amp;&amp; login.result.db === "restored", login.result?.db);
+  server.stop();
+  console.log("RTO seconds ≈", ((performance.now() - started) / 1000).toFixed(0));
+
+  // نتأكد إن الـ drill نفسه بيمسك المشكلة: نمسح ملف واحد ونعيد الفحص
+  const store = path.join(lab.home, "data/filestore/restored");
+  const shard = fs.readdirSync(store).find((d) =&gt; /^[0-9a-f]{2}$/.test(d))!;
+  const victim = fs.readdirSync(path.join(store, shard))[0]!;
+  fs.rmSync(path.join(store, shard, victim));
+  const damaged = census("restored");
+  console.log("after deleting one file, missing =", damaged.missing);
+} finally {
+  await lab.stop();
+}
+console.log(failed ? "DRILL FAILED" : "DRILL PASSED");
+process.exit(failed ? 1 : 0);
+</code></pre>
+<pre><code class="language-plaintext">backup MB ≈ 20.9
+PASS partners match: [73,73]
+PASS moves match: [122,122]
+PASS attachments match: [1365,1365]
+PASS no missing files: 0
+PASS no corrupt files: 0
+PASS neutralized: "True"
+PASS crons disabled: [39,1]
+PASS login works: "restored"
+RTO seconds ≈ 49
+after deleting one file, missing = 1
+DRILL PASSED
+</code></pre>
+  <div class="ar-note">تشغيل حقيقي. الـ backup حوالي 20.9MB. كل الـ checks عدّت: عدد الـ partners والـ moves والـ attachments مطابق، مفيش ملفات ناقصة أو بايظة، الـ neutralize اتطبق، والـ crons نزلت من 39 لـ 1، والـ login اشتغل. الـ RTO حوالي 49 ثانية على الجهاز ده وهو عليه ضغط وبحجم صغير، فده رقم للتجربة مش رقم تخطيط. السطر قبل الأخير بيثبت إن الفحص بيمسك المشكلة: مسحنا ملف واحد فطلع <code>missing = 1</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ backup فرضية لحد ما يترجّع. الـ drill اللي فوق بيعمل load للـ backup في database تانية، يعمل neutralize، يشغّل server، ويتأكد من عدد الـ records وقراية الـ attachments و login حقيقي. النظرية العامة بتاعة RPO و RTO و PITR في <a href="../../09-Databases/lessons/27-backups-pitr-upgrades.html">القسم 09 · backups</a>، وهنا المهم الحاجات الخاصة بـ Odoo.</p>
+    <p><b>الـ neutralize مش اختياري على نسخة من production.</b> <code>db load -n</code> بيشغّل <code>data/neutralize.sql</code> بتاع كل module متسطّب. الـ script الأساسي بيقفل الـ mail servers ويمسح الـ credentials بتاعتهم، يضيف mail server وهمي، يقفل الـ crons ما عدا الـ autovacuum، ويحط <code>database.is_neutralized</code>. من غيره النسخة هتبعت إيميلات لعملاء حقيقيين وتشغّل integrations حقيقية مع أول cron. وكمان <code>db load</code> بيولّد database UUID جديد إلا لو بعت <code>--move</code>، فالنسخة متقدرش تتنكر في الأصل قدام خدمات معتمدة عليه.</p>
+    <p>وقّت الـ drill، لأن الوقت من الـ restore لأول login هو الـ RTO المقاس بتاعك. وبعدين خليه scheduled job بيفشل بصوت عالي، وأثبت إن الفحص يقدر يفشل بإنك تبوّظ الـ restore عن قصد. الفحص اللي عمره ما فشل يبقى لسه متجربش.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ CFO بيسأل "لو السيرفر وقع النهارده، نرجع في قد إيه؟". بدل ما تقول "ساعتين تقريبًا"، تفتح آخر تقرير drill وتقوله الرقم المقاس وتاريخه. تحط الـ drill في <a href="../../13-Testing-Security-DevOps/lessons/28-ci-fundamentals-github-actions.html">CI schedule</a> أسبوعي على آخر backup، ولو فشل يفتح incident. الغلطة الشائعة إنك تعمل restore على نفس السيرفر من غير neutralize، فالـ cron يبعت فواتير للعملاء مرتين.
+    </div>
+  </section>
+
+<pre class="diagram">
+  production DB + filestore
+         |  (1) db dump
+         v
+     backup.zip  ---- off-site copy
+         |  (2) db load -n   (timer starts)
+         v
+   restored DB + filestore
+         |  (3) census: rows, files, sha1, neutralized
+         |  (4) start server, real login   (timer stops = RTO)
+         v
+   PASS: record date + RTO        FAIL: open an incident
+</pre>
+  <div class="ar-note">الخطوات: (1) backup من production ونسخة بره السيرفر. (2) restore مع neutralize والساعة بتبدأ. (3) عدّ الـ rows والملفات وراجع الـ SHA-1 والـ neutralize. (4) شغّل server واعمل login حقيقي والساعة تقف، وده الـ RTO. النتيجة: لو نجح سجّل التاريخ والـ RTO، ولو فشل افتح incident.</div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "How do you know your backups work?" → I restore them on a schedule into an isolated environment and assert on content, not exit codes: row counts against the source, every file present with a matching checksum, and a real login. The elapsed time is the measured RTO. I also break a restore on purpose to prove the check fails.
+    <div class="ar-note">"عرفت منين إن الـ backups شغالة؟" ← برجّعها على schedule في environment معزولة وبتأكد من المحتوى مش الـ exit codes: عدد الـ rows مقارنة بالأصل، كل ملف موجود والـ checksum مطابق، و login حقيقي. والوقت اللي أخدته هو الـ RTO المقاس. وكمان ببوّظ restore عن قصد عشان أثبت إن الفحص بيفشل.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Multi-database and dbfilter <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — الـ multi-database و dbfilter</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>One Odoo server can host many databases. <code>_set_session_and_dbname</code> in <code>odoo/http/router.py</code> picks one per request from the session cookie, the <code>X-Odoo-Database</code> header, or, if exactly one database is visible, that one ("monodb"). All three pass through <code>db_filter</code>. <code>dbfilter</code> is a regex with two placeholders: <code>%h</code> for the full host and <code>%d</code> for its first label after removing <code>www.</code>. So <code>dbfilter = ^%d$</code> maps <code>cairo.erp.test</code> to the database <code>cairo</code>.</p>
+    <p>The related options: <code>db_name</code> (<code>-d</code>) limits exposed databases when no <code>dbfilter</code> is set. <code>list_db = False</code> disables the selector and the database manager. Each database that receives traffic gets its own registry in the process, and every worker pays that separately. The registries sit in an LRU: on POSIX its size comes from <code>limit_memory_soft</code> at 15 MB per registry (136 at the default), and elsewhere it stays at the class default of 42; <code>ODOO_REGISTRY_LRU_SIZE</code> overrides both. In the real run below, RSS rose by about 13 MB per extra registry on an idle database, close to the 10 MB average that Odoo's source comment estimates. A busy one with warm caches will cost more, so measure yours.</p>
+    <p>The risk is a wide filter. <code>dbfilter = .*</code> with <code>list_db = True</code> shows every client's database name to anyone who opens the selector, and lets a request pick any of them by header. A hardening checklist: an anchored <code>dbfilter</code>; <code>list_db = False</code>; a long random <code>admin_passwd</code> (its default is literally <code>admin</code>, and it can only be set in the config file); a firewall so that 5432, 8069 and 8072 are unreachable from outside.</p>
+  </section>
+
+<pre data-file="odoo.conf"><code class="language-ini">[options]
+; الفلتر ده بيربط أول جزء من الـ hostname باسم الـ database
+dbfilter = ^%d$
+; ده بيقفل الـ selector والـ database manager
+list_db = False
+; القيمة دي مثال وهمي، حط قيمة عشوائية طويلة من الـ vault
+admin_passwd = replace-me-with-a-long-random-value
+proxy_mode = True
+</code></pre>
+<pre><code class="language-plaintext">MEM start db=odoo rss_mb=192 registries=1
+ROUTE cairo db=cairo
+MEM cairo db=cairo rss_mb=205 registries=2
+ROUTE alex db=alex
+MEM alex db=alex rss_mb=218 registries=3
+ROUTE www.alex db=alex
+ROUTE nope 404 Not Found
+HDR mismatch 404 Not Found
+HDR match 200 db=cairo
+LOGIN restored 200 uid=2 db=restored
+</code></pre>
+  <div class="ar-note">تشغيل حقيقي بـ <code>dbfilter = ^%d$</code>. <code>cairo.erp.test</code> فتح database <code>cairo</code> و<code>alex.erp.test</code> فتح <code>alex</code>، و<code>www.alex</code> برضه راح <code>alex</code>. <code>MEM</code> بيوضّح إن كل database جديدة زوّدت registry والـ RSS طلع حوالي 13MB. <code>nope</code> رجع 404 لأن مفيش database بالاسم ده. <code>HDR mismatch</code>: الـ header طلب <code>alex</code> والـ host <code>cairo</code>، فالفلتر رفض ورجع 404. <code>HDR match</code>: الاتنين متفقين فعدّى. <code>LOGIN restored</code>: اتعمل login على النسخة المسترجعة.</div>
+<pre><code class="language-plaintext">SELECTOR wide 200 [ 'odoo', 'cairo', 'alex', 'restored', 'nofs' ]
+WIDE HDR 200 db=alex
+</code></pre>
+  <div class="ar-note">نفس السيرفر بفلتر واسع <code>.*</code> و<code>list_db = True</code>: الـ selector عرض أسماء الخمس databases كلهم لـ hostname غريب، والـ header قدر يختار <code>alex</code>. ومع <code>list_db = False</code>، الصفحة بتقول "The database manager has been disabled by the administrator"، و<code>/web/database/list</code> بيرجّع <code>AccessDenied</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>سيرفر Odoo واحد يقدر يشيل databases كتير. <code>_set_session_and_dbname</code> في <code>odoo/http/router.py</code> بيختار واحدة لكل request من الـ session cookie، أو الـ header <code>X-Odoo-Database</code>، أو لو ظاهر database واحدة بس بياخدها ("monodb"). التلاتة بيعدّوا على <code>db_filter</code>. و<code>dbfilter</code> regex فيها placeholders: <code>%h</code> للـ host كله و<code>%d</code> لأول جزء منه بعد شيل <code>www.</code>. يعني <code>dbfilter = ^%d$</code> بيربط <code>cairo.erp.test</code> بـ database اسمها <code>cairo</code>.</p>
+    <p>الخيارات المرتبطة: <code>db_name</code> (<code>-d</code>) بيحدد الـ databases الظاهرة لو مفيش <code>dbfilter</code>. <code>list_db = False</code> بيقفل الـ selector والـ database manager. وكل database بيجيلها traffic بيبقى ليها registry جوه الـ process، وكل worker بيدفع ده لوحده. الـ registries محفوظين في LRU: على POSIX حجمه بيتحسب من <code>limit_memory_soft</code> بواقع 15MB لكل registry (يعني 136 بالـ default)، وفي الأنظمة التانية بيفضل 42؛ و<code>ODOO_REGISTRY_LRU_SIZE</code> بيغطي على الاتنين. في التشغيل الحقيقي الـ RSS زاد حوالي 13MB لكل registry على database هادية، قريب من متوسط الـ 10MB اللي مكتوب في comment جوه source بتاع Odoo. والـ database المشغولة بالـ caches بتاعتها هتكلّف أكتر، فقيس عندك.</p>
+    <p>الخطر هو الفلتر الواسع. <code>dbfilter = .*</code> مع <code>list_db = True</code> بيعرض أسماء databases كل عملائك لأي حد يفتح الـ selector، وبيخلّي أي request يختار أي واحدة بالـ header. الـ hardening checklist: <code>dbfilter</code> مقفول بـ <code>^</code> و <code>$</code>؛ <code>list_db = False</code>؛ <code>admin_passwd</code> طويل وعشوائي (الـ default بتاعه حرفيًا <code>admin</code>، وبيتحط في ملف الـ config بس)؛ و firewall بحيث 5432 و 8069 و 8072 ميتوصلوش من بره.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      شركة بتعمل hosting لـ 30 عميل صغير على Odoo. <code>^%d$</code> بيخلّي كل subdomain يفتح الـ database بتاعته، زي tenant routing في Next.js middleware. بس لازم تحسب: 30 registry في كل worker بيضربوا في عدد الـ workers، والـ upgrade بقى 30 مرة. الغلطة الشائعة إنك تسيب <code>dbfilter</code> فاضي عشان "لسه شغالين"، فأول عميل يشوف قايمة باقي العملاء.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks at scale</b>
+    With more active databases than the registry LRU holds, every request can evict and rebuild a registry, which takes seconds. Lowering <code>limit_memory_soft</code> also shrinks the LRU on POSIX, so tuning memory can change this. Size <code>ODOO_REGISTRY_LRU_SIZE</code> and the RAM for your real tenant count, or split tenants across servers.
+    <div class="ar-note">لو عدد الـ databases النشطة أكبر من حجم الـ registry LRU، كل request ممكن يطرد registry ويبني واحدة جديدة، وده بياخد ثواني. وتقليل <code>limit_memory_soft</code> بيصغّر الـ LRU كمان على POSIX، فظبط الذاكرة ممكن يأثر على ده. ظبّط <code>ODOO_REGISTRY_LRU_SIZE</code> والـ RAM على عدد الـ tenants الحقيقي، أو قسّم الـ tenants على سيرفرات.</div>
+  </div>
+
+  <table>
+    <tr><th>Hardening item</th><th>Setting</th><th>What it stops</th></tr>
+    <tr><td>Anchored filter</td><td><code>dbfilter = ^%d$</code></td><td>One hostname opening another tenant's database</td></tr>
+    <tr><td>No listing</td><td><code>list_db = False</code></td><td>Database names and the manager being public</td></tr>
+    <tr><td>Master password</td><td>long random <code>admin_passwd</code></td><td>The default value <code>admin</code> staying in place</td></tr>
+    <tr><td>Firewall</td><td>5432, 8069, 8072 closed outside</td><td>Direct database access, and forged forwarded headers</td></tr>
+  </table>
+  <div class="ar-note">صف صف: الفلتر المقفول بيمنع hostname يفتح database عميل تاني. <code>list_db = False</code> بيمنع إن أسماء الـ databases والـ manager يبقوا مكشوفين. الـ <code>admin_passwd</code> الطويل بيمنع إن القيمة الافتراضية <code>admin</code> تفضل زي ما هي. والـ firewall بيقفل الوصول المباشر لـ Postgres وبيمنع forwarded headers مزيفة توصل لـ Odoo.</div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>proxy_mode</code> without <code>X-Forwarded-Host</code></b>
+<pre><code class="language-nginx"># الـ proxy_mode هنا مش هيعمل حاجة خالص
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;</code></pre></div>
+    <div class="good"><b>✅ Send all three headers</b>
+<pre><code class="language-nginx"># الشرط في الكود بيبص على الـ Host ده بالذات
+proxy_set_header X-Forwarded-Host $http_host;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ من غير <code>X-Forwarded-Host</code>، الشرط في <code>odoo/http/server.py</code> مبيتحققش، فـ Odoo بيفضل شايف الـ proxy و<code>http</code> ومن غير أي warning، حتى لو <code>proxy_mode = True</code>. ✅ ابعت التلاتة، وراجع النتيجة بـ endpoint زي <code>/lab/whoami</code> بدل ما تفترض.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>/websocket</code> falls through to 8069</b>
+<pre><code class="language-nginx"># الـ websocket هيروح لـ prefork worker ويفشل
+location / {
+  proxy_pass http://odoo;
+}</code></pre></div>
+    <div class="good"><b>✅ A dedicated location to 8072</b>
+<pre><code class="language-nginx"># الـ Upgrade لازم يتبعت صريح للـ gevent
+location /websocket {
+  proxy_pass http://odoochat;
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection $connection_upgrade;
+}</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ لو <code>/websocket</code> وقع في <code>location /</code>، بيروح 8069 والـ prefork worker مش عنده socket، فالتحديث اللحظي بيقف والصفحة شغالة عادي. ✅ location مخصوص رايح 8072 ومعاه <code>Upgrade</code> و<code>Connection</code>. ومتنساش تكرر الـ forwarded headers جواه عشان الوراثة بتقف.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Backing up only Postgres</b>
+<pre><code class="language-bash"># بيرجّع exit 0 والـ PDFs مش جواه
+pg_dump -Fc -p "$PG_PORT" odoo &gt; odoo.dump</code></pre></div>
+    <div class="good"><b>✅ Database first, then files, then verify</b>
+<pre><code class="language-bash"># الترتيب مهم: ملف زيادة أهون من row من غير ملف
+pg_dump -Fc -p "$PG_PORT" odoo &gt; odoo.dump
+rsync -a "$DATA_DIR/filestore/odoo/" backup/filestore/
+# الفحص الحقيقي هو الـ restore drill
+node restore-drill.ts</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>pg_dump</code> لوحده بيرجّع نجاح والـ attachments مش جواه، وهتكتشف ده يوم الكارثة. ✅ الـ database الأول وبعدها الملفات، وبعدين restore drill يتأكد إن كل ملف موجود. <code>rsync</code> هنا مثال ومتشغّلش على الجهاز ده.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Restoring production without neutralize</b>
+<pre><code class="language-bash"># النسخة دي هتبعت إيميلات حقيقية مع أول cron
+odoo-bin db -c odoo.conf load staging prod.zip</code></pre></div>
+    <div class="good"><b>✅ Always neutralize copies</b>
+<pre><code class="language-bash"># الـ crons والـ mail servers بيتقفلوا قبل أول تشغيل
+odoo-bin db -c odoo.conf load -n staging prod.zip</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ من غير <code>-n</code>، الـ staging معاه mail servers و crons و webhooks بتوع production، فأول cron يبعت تذكير دفع لعملاء حقيقيين. ✅ <code>-n</code> بيشغّل الـ neutralize، وفي التشغيل الحقيقي الـ crons نزلت من 39 لـ 1.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A wide filter on a shared server</b>
+<pre><code class="language-ini">; أي حد يشوف أسماء كل الـ databases
+dbfilter = .*
+list_db = True</code></pre></div>
+    <div class="good"><b>✅ Anchored, no listing</b>
+<pre><code class="language-ini">; كل hostname بيفتح database واحدة بس
+dbfilter = ^%d$
+list_db = False</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>.*</code> مع <code>list_db = True</code> عرض الخمس databases كلهم لـ hostname غريب في التشغيل الحقيقي. ✅ فلتر مقفول بـ <code>^</code> و <code>$</code>، و<code>list_db = False</code>. ومن غير <code>^</code> و <code>$</code> الـ regex ممكن تطابق أكتر من database.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Size your own host <span class="lvl lvl-1">🟢 easy</span></b>
+    Run <code>sizing.ts</code> with 150 users on 8 CPUs and 32 GB. Is it enough? What is the smallest CPU count that serves them?
+    <div class="ar-note">شغّل <code>sizing.ts</code> بـ 150 user على 8 CPU و 32GB. يكفوا؟ وإيه أقل عدد CPU يخدمهم؟</div>
+    <details><summary>Hint · تلميح</summary>
+      You need <code>ceil(150 / 6) = 25</code> workers, plus 2 for cron, under <code>cpus × 2 + 1</code>.
+      <div class="ar-note">محتاج <code>ceil(150 / 6) = 25</code> worker، زائد 2 cron، وكلهم تحت <code>cpus × 2 + 1</code>.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+      8 CPUs give a ceiling of 17, so 15 HTTP workers serving 90 users: not enough. 13 CPUs give 27, leaving exactly 25 HTTP workers.
+      <div class="ar-note">الـ 8 CPU سقفهم 17، يعني 15 HTTP worker يخدموا 90 user، فمش كفاية. الـ 13 CPU سقفهم 27، فيفضل 25 HTTP worker بالظبط.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. See the proxy headers yourself <span class="lvl lvl-2">🟡 medium</span></b>
+    Copy <code>erp_ops_lab</code> into <code>D:/tools/odoo/custom-addons</code>, start your practice Odoo with <code>node D:/tools/odoo/odoo.mjs start</code>, install the module, and put <code>proxy-standin.ts</code> in front of port 8069. Open <code>/lab/whoami</code> through it, then remove <code>X-Forwarded-Host</code> and compare.
+    <div class="ar-note">انسخ <code>erp_ops_lab</code> في <code>D:/tools/odoo/custom-addons</code>، شغّل Odoo بتاعك بـ <code>node D:/tools/odoo/odoo.mjs start</code>، سطّب الـ module، وحط <code>proxy-standin.ts</code> قدام port 8069. افتح <code>/lab/whoami</code> عن طريقه، وبعدين شيل <code>X-Forwarded-Host</code> وقارن.</div>
+    <details><summary>Hint · تلميح</summary>
+      The helper rewrites <code>D:/tools/odoo/practice/odoo.conf</code> on every start, so an edit there won't stick. Stop Odoo with Ctrl+C (Postgres stays up), then run <code>odoo-bin</code> yourself with that config and <code>--proxy-mode</code>.
+      <div class="ar-note">الـ helper بيعيد كتابة <code>D:/tools/odoo/practice/odoo.conf</code> كل مرة بيبدأ، فأي تعديل فيه مش هيفضل. وقّف Odoo بـ Ctrl+C (الـ Postgres بيفضل شغال)، وبعدين شغّل <code>odoo-bin</code> بنفسك بنفس الـ config ومعاه <code>--proxy-mode</code>.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Break a restore on purpose <span class="lvl lvl-3">🔴 hard</span></b>
+    Extend <code>restore-drill.ts</code> so a corrupted file, one whose bytes changed but whose name did not, makes the drill fail. Then add an RTO budget: fail if the run exceeds 120 seconds.
+    <div class="ar-note">طوّر <code>restore-drill.ts</code> بحيث ملف بايظ، الـ bytes بتاعته اتغيرت واسمه زي ما هو، يخلّي الـ drill يفشل. وبعدين ضيف RTO budget: يفشل لو التشغيل عدّى 120 ثانية.</div>
+    <details><summary>Solution · الحل</summary>
+<pre><code class="language-typescript">// بعد الـ census: غيّر bytes ملف واحد وأعد الفحص
+fs.appendFileSync(path.join(store, shard, victim), "x");
+const corrupted = census("restored");
+check("corruption detected", corrupted.corrupt === 1, corrupted.corrupt);
+
+// الـ RTO budget بيتحسب بعد الـ login
+const rtoSeconds = (performance.now() - started) / 1000;
+check("RTO within budget", rtoSeconds &lt;= 120, Math.round(rtoSeconds));</code></pre>
+      <div class="ar-note">الـ census أصلًا بيحسب SHA-1 لكل ملف ويقارنه بالـ checksum، فأي تغيير في الـ bytes هيظهر في <code>corrupt</code>. والـ budget مجرد check زيادة بعد الـ login. لازم تعمل تعديل الملف بعد ما تحسب الـ RTO، عشان ميأثرش على الوقت.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    Write a one-page deployment doc for your side project's ERP integration: host size with the arithmetic, the proxy config, the backup shape and its restore drill schedule, and your filter and firewall rules. Record it as an ADR using <code>project/adr/0000-template.md</code>.
+    <div class="ar-note">اكتب deployment doc صفحة واحدة للـ ERP integration في مشروعك الجانبي: حجم السيرفر بالحسابات، الـ proxy config، شكل الـ backup وجدول الـ restore drill، وقواعد الفلتر والـ firewall. وسجّله كـ ADR باستخدام <code>project/adr/0000-template.md</code>.</div>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li><code>workers = 0</code> is threaded; <code>workers &gt; 0</code> is prefork and POSIX only.</li>
+    <li>Sizing: ceiling <code>CPUs × 2 + 1</code>, about 6 users per worker, cron counts against CPU.</li>
+    <li>Defaults: soft 2048 MiB, hard 2560 MiB, CPU 60 s, real 120 s, 65536 requests. Memory limits measure virtual memory.</li>
+    <li><code>/websocket</code> must go to 8072 with <code>Upgrade</code>. If it doesn't, only live updates die, silently.</li>
+    <li><code>proxy_mode</code> applies only if <code>X-Forwarded-Host</code> is present.</li>
+    <li>Enable <code>proxy_mode</code> only behind a proxy, and firewall Odoo's ports.</li>
+    <li>Attachments are files named by SHA-1, deduplicated, and removed by GC.</li>
+    <li>A database backup without the filestore loses every PDF and still exits 0.</li>
+    <li>Separate pieces: database first, files after.</li>
+    <li>Restore on a schedule with <code>load -n</code>, assert on content, time it for RTO, and prove the check fails.</li>
+    <li><code>dbfilter = ^%d$</code>, <code>list_db = False</code>, random <code>admin_passwd</code>, firewall 5432.</li>
+    <li>Each active database is a registry in every worker: count it in RAM.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li><code>workers = 0</code> يعني threaded، و<code>workers &gt; 0</code> يعني prefork وده على POSIX بس.</li>
+      <li>الـ sizing: السقف <code>CPUs × 2 + 1</code>، حوالي 6 users لكل worker، والـ cron بيتحسب من الـ CPU.</li>
+      <li>الـ defaults: soft 2048 MiB، hard 2560 MiB، CPU 60 ثانية، real 120 ثانية، 65536 request. والـ memory limits بتقيس الـ virtual memory.</li>
+      <li><code>/websocket</code> لازم يروح 8072 ومعاه <code>Upgrade</code>. لو لأ، التحديث اللحظي بس اللي بيموت ومن غير صوت.</li>
+      <li><code>proxy_mode</code> بيتطبق بس لو <code>X-Forwarded-Host</code> موجود.</li>
+      <li>فعّل <code>proxy_mode</code> ورا proxy بس، واقفل ports بتاعة Odoo بـ firewall.</li>
+      <li>الـ attachments ملفات اسمها الـ SHA-1، بتتعملها dedupe، والـ GC هو اللي بيشيلها.</li>
+      <li>backup للـ database من غير filestore بيضيّع كل الـ PDFs وبيرجّع exit 0 برضه.</li>
+      <li>لو القطعتين منفصلين: الـ database الأول والملفات بعدها.</li>
+      <li>اعمل restore على schedule بـ <code>load -n</code>، اتأكد من المحتوى، وقّته للـ RTO، وأثبت إن الفحص بيفشل.</li>
+      <li><code>dbfilter = ^%d$</code>، <code>list_db = False</code>، <code>admin_passwd</code> عشوائي، و firewall على 5432.</li>
+      <li>كل database نشطة registry في كل worker: احسبها في الـ RAM.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 17 · 3.3 — Workers، <code>limit_memory</code>، <code>limit_time</code>، و gevent websocket</label>
+    <label><input type="checkbox" data-key="r2"> 17 · 3.3 — Reverse proxy و <code>proxy_mode</code> و TLS</label>
+    <label><input type="checkbox" data-key="r3"> 17 · 3.3 — Filestore و backups و restore test</label>
+    <label><input type="checkbox" data-key="r4"> 17 · 3.3 — Multi-database و <code>dbfilter</code></label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.odoo.com/documentation/20.0/administration/on_premise/deploy.html">Odoo 20 docs — System configuration (workers, nginx, dbfilter, security)</a></li>
+    <li><a href="https://www.odoo.com/documentation/20.0/developer/reference/cli.html">Odoo 20 docs — Command-line interface</a></li>
+    <li><a href="https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_set_header">nginx — proxy_set_header and its inheritance rule</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/app-pgdump.html">PostgreSQL — pg_dump</a></li>
+    <li>Odoo 20 source read directly: <code>odoo/service/server.py</code>, <code>odoo/tools/config.py</code>, <code>odoo/http/router.py</code>, <code>odoo/http/server.py</code>, <code>addons/bus/websocket.py</code>, <code>odoo/addons/base/models/ir_attachment.py</code>, <code>odoo/modules/db.py</code>.<div class="ar-note">كمان قريت الـ source بتاع Odoo 20 مباشرة في الملفات اللي فوق، وكل الأرقام الافتراضية والشروط من هناك.</div></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <!-- ===== Prev / Next (use class="empty" on a span when there is no prev/next) ===== -->
+  <nav class="lesson-nav">
+    <a class="prev" href="./33-uae-peppol-build-vs-buy-multi-country.html"><small>← Previous</small>33 · UAE &amp; Multi-Country</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./35-odoo-production-postgres-monitoring-load.html"><small>Next →</small>35 · Production II</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
