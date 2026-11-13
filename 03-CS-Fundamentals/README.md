@@ -1,4 +1,4 @@
-# 01 — أساسيات علوم الحاسب (CS Fundamentals)
+# 03 — أساسيات علوم الحاسب (CS Fundamentals)
 
 > **ليه القسم ده:** دي الأرضية اللي كل حاجة بعدها بتقف عليها. الـ Big-O بيظهر في تحليل الـ queries، الـ OS بيظهر في فهم Node والـ event loop، والـ networking بيظهر في كل سؤال System Design.
 >

@@ -1,7 +1,7 @@
 <!-- AUTO:START -->
-# 01 — أساسيات علوم الحاسب (CS Fundamentals) — Progress
+# 03 — أساسيات علوم الحاسب (CS Fundamentals) — Progress
 
-> آخر تحديث: 2026-11-09 · شغّل `node _tools/update-progress.js` بعد أي تعديل.
+> آخر تحديث: 2026-11-13 · شغّل `node _tools/update-progress.js` بعد أي تعديل.
 
 **الإجمالي:** 0 / 107 بند · **0%**
 
