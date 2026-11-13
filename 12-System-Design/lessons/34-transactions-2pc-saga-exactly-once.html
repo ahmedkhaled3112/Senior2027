@@ -1,0 +1,1515 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Transactions at Scale: 2PC, Sagas, TCC &amp; Exactly-Once Streams — 12 System Design</title>
+<meta name="section" content="12-System-Design">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">12 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 34 / 63</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+<!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Transactions at Scale: 2PC, Sagas, TCC &amp; Exactly-Once Streams</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 34 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Postgres 18 · Redis 8.10 · TypeScript</span>
+      <span class="chip">Prereq: 07 Saga &amp; Outbox, 33 Distributed Locks</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>12 · 3.1 — Transactions على scale: 2PC (coordinator، blocking، نادر عمليًا)، sagas (compensation)، TCC (try-confirm-cancel) كمفهوم</li>
+        <li>12 · 3.1 — Exactly-once في stream processing (checkpointing، idempotent sinks، transactional outbox)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — 2PC, for real</a></li>
+      <li><a href="#p2">Part 2 — Why 2PC blocks</a></li>
+      <li><a href="#p3">Part 3 — Sagas from the system angle</a></li>
+      <li><a href="#p4">Part 4 — TCC: try, confirm, cancel</a></li>
+      <li><a href="#p5">Part 5 — Exactly-once in streams</a></li>
+      <li><a href="#p6">Part 6 — Sinks and the boundary</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The moment an order touches two databases, a single <code>COMMIT</code> stops being available and you have to choose what to give up. Two-phase commit keeps atomicity and can freeze rows until someone intervenes. Sagas keep the system moving and let other readers see half-finished work. "Exactly-once" in a stream sounds like a broker feature, but it's really about saving your progress and your results in the same place.</p>
+    <p>Every one of these shows up as a production incident: a row locked with no client attached, a customer notified about a payment that gets undone, a dashboard total that's quietly wrong after a redeploy. Each part below reproduces the failure on real Postgres and Redis first. "How would you keep two services consistent?" is one of the most common senior design questions, and exit-test question 4 asks why exactly-once delivery doesn't really exist.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>أول ما الـ order يلمس 2 databases، الـ <code>COMMIT</code> الواحد مابقاش موجود، ولازم تختار هتتنازل عن إيه. الـ two-phase commit بيحافظ على الـ atomicity بس ممكن يجمّد صفوف لحد ما حد يتدخل. الـ sagas بتخلي السيستم ماشي بس بتسيب القرّاء التانيين يشوفوا شغل نص مخلص. و"exactly-once" في الـ stream شكلها feature في الـ broker، بس هي في الحقيقة إنك تحفظ التقدم بتاعك والنتايج في نفس المكان.</p>
+    <p>كل واحدة من دول بتظهر كـ production incident: صف متقفل ومفيش client ماسكه، عميل وصله إشعار بدفعة اتلغت بعدها، أو dashboard رقمه غلط في صمت بعد deploy. كل جزء تحت بيعيد الفشل ده على Postgres و Redis حقيقيين الأول. وسؤال "هتخلي 2 services consistent إزاي؟" من أشهر أسئلة الـ design للسنيور، وسؤال 4 في اختبار الخروج بيسأل ليه الـ exactly-once delivery مش موجودة فعليًا.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — 2PC, for real <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — الـ 2PC بجد</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Two-phase commit makes several independent resources commit or abort as one. A <b>coordinator</b> runs it in two phases. In the <b>prepare</b> phase, each participant does its work and then promises that it can commit no matter what happens next, including a crash. In Postgres that promise is <code>PREPARE TRANSACTION 'id'</code>, which writes the transaction to disk, keeps its locks, and detaches it from the connection. Then the coordinator writes its decision durably, and in the <b>commit</b> phase it sends <code>COMMIT PREPARED</code> to everyone, or <code>ROLLBACK PREPARED</code> if anyone voted no.</p>
+    <p>The script below uses two real databases, <code>inventory</code> and <code>payments</code>, on one Postgres cluster. They stand in for two separate servers. The first order commits on both sides. The second tries to charge 9000 from a balance of 400, so the <code>CHECK</code> constraint fails and that participant votes no. The inventory side had already prepared, so it gets <code>ROLLBACK PREPARED</code> and nothing changes.</p>
+    <p>Two practical details came out of running it. <code>max_prepared_transactions</code> defaults to 0, so a stock server refuses with <code>55000 prepared transactions are disabled</code>, and changing it requires a restart. And the id is unique across the <b>whole cluster</b>, not per database: using <code>order-1</code> on both failed with <code>transaction identifier "order-1" is already in use</code>, so the script appends <code>-inv</code> and <code>-pay</code>. The id also can't be a bind parameter, which is why it's validated before being placed in the SQL.</p>
+  </section>
+
+<pre class="diagram">
+ coordinator            inventory              payments
+     |-- work + PREPARE --&gt;|                      |
+     |&lt;----- vote yes -----|                      |
+     |-- work + PREPARE ------------------------&gt;|
+     |&lt;----- vote yes ----------------------------|
+     |  write decision to a durable log
+     |-- COMMIT PREPARED --&gt;|                     |
+     |-- COMMIT PREPARED ------------------------&gt;|
+     the rows stay locked from the first work until COMMIT PREPARED
+</pre>
+  <div class="ar-note">الـ coordinator بيطلب من كل participant يعمل الشغل و PREPARE، وكل واحد بيرد بالموافقة. بعدها بيكتب القرار في log durable، وبعدين بيبعت <code>COMMIT PREPARED</code> لكل واحد. والصفوف بتفضل متقفلة من أول شغل لحد <code>COMMIT PREPARED</code>.</div>
+
+<div class="callout ok"><b>How to run the scripts</b>Same setup as <a href="./33-distributed-locks-fencing.html">lesson 33</a>: <code>"type": "module"</code>, <code>npm i pg ioredis</code>, throwaway Postgres and Redis on non-default ports. Start Postgres with <code>max_prepared_transactions=10</code>, and run <code>PG_PORT=5544 node src/p1-2pc.ts</code>. In Part 2, <code>lab-restart.ts</code> is a small wrapper around <code>pg_ctl stop</code> and <code>start</code> for that throwaway cluster, so use your own restart command there.<div class="ar-note">نفس الـ setup بتاع <a href="./33-distributed-locks-fencing.html">lesson 33</a>: <code>"type": "module"</code>، و<code>npm i pg ioredis</code>، و Postgres و Redis مؤقتين على ports مش default. شغّل Postgres بـ <code>max_prepared_transactions=10</code>، وبعدين <code>PG_PORT=5544 node src/p1-2pc.ts</code>. وفي الجزء 2، <code>lab-restart.ts</code> ده غلاف صغير حوالين <code>pg_ctl stop</code> و<code>start</code> للـ cluster المؤقت، فاستخدم أمر الـ restart بتاعك هناك.</div></div>
+
+<pre data-file="src/env.ts"><code class="language-typescript">import { Redis } from "ioredis";
+import pg from "pg";
+
+// الـ port الفاضي معناه الـ default، يعني الـ service الحقيقي بتاعك: ارفضه قبل أي connection
+function checked(raw: string | undefined): number {
+  const n = Number(raw);
+  if (!/^\d+$/.test(String(raw)) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) {
+    throw new Error("refusing port " + raw);
+  }
+  return n;
+}
+
+export const redisPorts = (): number[] =&gt; (process.env.REDIS_PORTS ?? "").split(",").map(checked);
+export const pgPort = (): number =&gt; checked(process.env.PG_PORT);
+export const redis = (port: number): Redis =&gt;
+  new Redis({ host: "127.0.0.1", port, maxRetriesPerRequest: 1, commandTimeout: 500, retryStrategy: () =&gt; null });
+
+export async function pgClient(database = "postgres"): Promise&lt;pg.Client&gt; {
+  const client = new pg.Client({ host: "127.0.0.1", port: pgPort(), user: "app", database });
+  await client.connect();
+  return client;
+}
+
+export const sleep = (ms: number) =&gt; new Promise&lt;void&gt;((r) =&gt; setTimeout(r, ms));
+
+// ده بديل عن GC pause: الـ thread كله واقف، والـ event loop مابيشغّلش أي timer
+export function freeze(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}</code></pre>
+<pre data-file="src/p1-2pc.ts"><code class="language-typescript">import { pgClient } from "./env.ts";
+
+const admin = await pgClient();
+for (const db of ["inventory", "payments"]) await admin.query(`CREATE DATABASE ${db}`);
+await admin.query("CREATE TABLE tx_log (gid text PRIMARY KEY, decision text NOT NULL, at timestamptz DEFAULT now())");
+
+const inventory = await pgClient("inventory");
+const payments = await pgClient("payments");
+await inventory.query("CREATE TABLE stock (sku text PRIMARY KEY, available int NOT NULL CHECK (available &gt;= 0))");
+await inventory.query("INSERT INTO stock VALUES ('SKU-1', 10)");
+await payments.query("CREATE TABLE accounts (user_id int PRIMARY KEY, balance int NOT NULL CHECK (balance &gt;= 0))");
+await payments.query("INSERT INTO accounts VALUES (7, 500)");
+
+// الـ gid بيتحط في الـ SQL كنص، فلازم يكون من حروف وأرقام بس
+// والـ gid لازم يبقى unique على مستوى الـ cluster كله، مش الـ database بس
+const safeGid = (gid: string) =&gt; {
+  if (!/^[a-z0-9-]+$/.test(gid)) throw new Error("bad gid");
+  return gid;
+};
+
+async function placeOrder(gid: string, qty: number, amount: number): Promise&lt;"committed" | "aborted"&gt; {
+  safeGid(gid);
+  const prepared: { name: string; client: typeof inventory; gid: string }[] = [];
+  try {
+    console.log(`[${gid}] phase 1: work and PREPARE on each participant`);
+    await inventory.query("BEGIN");
+    await inventory.query("UPDATE stock SET available = available - $1 WHERE sku = 'SKU-1'", [qty]);
+    await inventory.query(`PREPARE TRANSACTION '${gid}-inv'`);
+    prepared.push({ name: "inventory", client: inventory, gid: `${gid}-inv` });
+    console.log(`[${gid}] inventory voted yes`);
+
+    await payments.query("BEGIN");
+    await payments.query("UPDATE accounts SET balance = balance - $1 WHERE user_id = 7", [amount]);
+    await payments.query(`PREPARE TRANSACTION '${gid}-pay'`);
+    prepared.push({ name: "payments", client: payments, gid: `${gid}-pay` });
+    console.log(`[${gid}] payments voted yes`);
+  } catch (e) {
+    console.log(`[${gid}] a participant voted no: ${(e as Error).message}`);
+    await payments.query("ROLLBACK").catch(() =&gt; {});
+    await inventory.query("ROLLBACK").catch(() =&gt; {});
+    for (const p of prepared) await p.client.query(`ROLLBACK PREPARED '${p.gid}'`);
+    console.log(`[${gid}] phase 2: ROLLBACK PREPARED on ${prepared.map((p) =&gt; p.name).join(", ")}`);
+    return "aborted";
+  }
+
+  // القرار لازم يتسجل durable قبل phase 2: ده اللي بيخلي الـ recovery ممكن
+  await admin.query("INSERT INTO tx_log (gid, decision) VALUES ($1, 'commit')", [gid]);
+  const { rows } = await admin.query("SELECT gid, database FROM pg_prepared_xacts ORDER BY database");
+  console.log(`[${gid}] decision logged, prepared now:`, rows.map((r) =&gt; `${r.database}/${r.gid}`).join(" "));
+
+  await inventory.query(`COMMIT PREPARED '${gid}-inv'`);
+  await payments.query(`COMMIT PREPARED '${gid}-pay'`);
+  console.log(`[${gid}] phase 2: COMMIT PREPARED on both`);
+  return "committed";
+}
+
+console.log("result:", await placeOrder("order-1", 2, 100));
+console.log();
+console.log("result:", await placeOrder("order-2", 1, 9000));
+
+const stock = (await inventory.query("SELECT available FROM stock")).rows[0].available;
+const balance = (await payments.query("SELECT balance FROM accounts")).rows[0].balance;
+console.log(`\nfinal: stock=${stock} (10 - 2), balance=${balance} (500 - 100)`);
+await Promise.all([inventory.end(), payments.end(), admin.end()]);</code></pre>
+<pre><code class="language-plaintext">[order-1] phase 1: work and PREPARE on each participant
+[order-1] inventory voted yes
+[order-1] payments voted yes
+[order-1] decision logged, prepared now: inventory/order-1-inv payments/order-1-pay
+[order-1] phase 2: COMMIT PREPARED on both
+result: committed
+
+[order-2] phase 1: work and PREPARE on each participant
+[order-2] inventory voted yes
+[order-2] a participant voted no: new row for relation "accounts" violates check constraint "accounts_balance_check"
+[order-2] phase 2: ROLLBACK PREPARED on inventory
+result: aborted
+
+final: stock=8 (10 - 2), balance=400 (500 - 100)</code></pre>
+  <div class="ar-note">order-1: الاتنين وافقوا، القرار اتسجل، و<code>pg_prepared_xacts</code> بيوري الاتنين، وبعدين <code>COMMIT PREPARED</code>. order-2: الـ inventory وافق، والـ payments رفض بسبب الـ CHECK، فالـ inventory خد <code>ROLLBACK PREPARED</code>. النتيجة: stock بقى 8 والـ balance بقى 400، يعني أول order بس هو اللي اتحسب.</div>
+
+<pre data-file="src/p1-disabled.ts"><code class="language-typescript">import { pgClient } from "./env.ts";
+
+// الـ default بتاع max_prepared_transactions هو 0 في Postgres
+const db = await pgClient();
+console.log("max_prepared_transactions =", (await db.query("SHOW max_prepared_transactions")).rows[0].max_prepared_transactions);
+await db.query("BEGIN");
+try {
+  await db.query("PREPARE TRANSACTION 'order-1'");
+} catch (e) {
+  console.log((e as { code: string; message: string }).code, (e as Error).message);
+}
+await db.end();</code></pre>
+<pre><code class="language-plaintext">max_prepared_transactions = 0
+55000 prepared transactions are disabled</code></pre>
+  <div class="ar-note">على Postgres بالإعدادات الافتراضية الـ <code>max_prepared_transactions</code> بـ 0، و<code>PREPARE TRANSACTION</code> بيرجع الـ error <code>55000 prepared transactions are disabled</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ two-phase commit بيخلي كذا resource مستقلين يعملوا commit أو abort كأنهم واحد. فيه <b>coordinator</b> بيشغّله على مرحلتين. في مرحلة الـ <b>prepare</b>، كل participant بيعمل شغله وبعدين يوعد إنه يقدر يعمل commit مهما حصل بعد كده، حتى لو عمل crash. في Postgres الوعد ده هو <code>PREPARE TRANSACTION 'id'</code>، وده بيكتب الـ transaction على الديسك، ويفضل ماسك الـ locks، ويفصله عن الـ connection. بعدها الـ coordinator بيكتب قراره durable، وفي مرحلة الـ <b>commit</b> بيبعت <code>COMMIT PREPARED</code> للكل، أو <code>ROLLBACK PREPARED</code> لو حد قال لأ.</p>
+    <p>السكريبت بيستخدم 2 databases حقيقيين، <code>inventory</code> و<code>payments</code>، على Postgres cluster واحد، وهم بدلاء عن 2 servers منفصلين. أول order بيعمل commit على الناحيتين. التاني بيحاول يخصم 9000 من رصيد 400، فالـ <code>CHECK</code> constraint بيفشل والـ participant ده بيرفض. الـ inventory كان عمل prepare خلاص، فبياخد <code>ROLLBACK PREPARED</code> ومفيش حاجة بتتغير.</p>
+    <p>تفصيلتين عمليتين طلعوا من التشغيل. الـ <code>max_prepared_transactions</code> الافتراضي 0، فالـ server العادي بيرفض بـ <code>55000 prepared transactions are disabled</code>، وتغييره محتاج restart. والـ id لازم يكون unique على مستوى <b>الـ cluster كله</b>، مش كل database: لما استخدمنا <code>order-1</code> على الاتنين فشل بـ <code>transaction identifier "order-1" is already in use</code>، فالسكريبت بيزود <code>-inv</code> و<code>-pay</code>. وكمان الـ id ماينفعش يكون bind parameter، وعشان كده بنتحقق منه قبل ما نحطه في الـ SQL.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      غالبًا مش هتستخدمه مباشرة: الـ Postgres docs نفسها بتقول إن <code>PREPARE TRANSACTION</code> مش معمول للاستخدام في التطبيقات، وهدفه transaction managers خارجية. هتقابله لو عندك transaction manager خارجي بيستخدم XA، زي JTA في Java. والأهم إنك تعرف تقرا <code>pg_prepared_xacts</code> لما تلاقي صف متقفل ومفيش حد ماسكه.
+    </div>
+  </section>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Why 2PC blocks <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — ليه الـ 2PC بيعلّق</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A participant that voted yes has given up its right to decide. It can't commit, because another participant may have voted no. It can't abort either, because the coordinator may have already decided to commit. So it waits, with its locks held, for a coordinator that might never return. That's the <b>blocking</b> problem.</p>
+    <p>In the run, the coordinator process prepares on both databases and is killed right after. (On Windows the exit shows as <code>code=1</code> with no signal, because <code>SIGKILL</code> maps to a hard process termination.) Nothing else is connected, yet <code>pg_prepared_xacts</code> still lists both transactions, and any other order touching that row fails with <code>55P03 canceling statement due to lock timeout</code>. A full server restart changes nothing, since prepared transactions are on disk by design. Only an explicit <code>COMMIT PREPARED</code> or <code>ROLLBACK PREPARED</code> ends it. A recovery job reads the coordinator's log: no decision was recorded, so it can safely roll back both. The Postgres docs warn that leaving transactions prepared for a long time also blocks <code>VACUUM</code> and, in extreme cases, can force a shutdown to prevent transaction ID wraparound, so an age alert on <code>pg_prepared_xacts</code> is mandatory.</p>
+    <p>It's slow even when nothing fails. Each transaction holds its row locks across extra round trips and durable writes per participant. On a hot row with 8 clients, the local transaction did ≈1445 tx/s and 2PC ≈571 tx/s in the printed run; an earlier run measured ≈1547 and ≈359, so read this as roughly 2.5x to 4x, on a loaded Windows machine. That's why 2PC is rare between services: it couples their availability and multiplies lock time. Databases that do use it internally, like Spanner and CockroachDB, solve the coordinator problem differently: the coordinator's decision is replicated through consensus (Paxos or Raft, <a href="./32-consensus-raft-coordination.html">lesson 32</a>), so if the coordinator's node dies, another replica already has the decision and finishes the job.</p>
+  </section>
+
+<pre data-file="src/p2-blocked.ts"><code class="language-typescript">import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { restartPostgres } from "./lab-restart.ts";
+import { pgClient, sleep } from "./env.ts";
+
+const GID = "order-1";
+
+// ده الـ coordinator: بيجهّز الـ transaction ويموت قبل ما يقرر
+if (process.argv[2] === "coordinator") {
+  const inventory = await pgClient("inventory");
+  const payments = await pgClient("payments");
+  await inventory.query("BEGIN");
+  await inventory.query("UPDATE stock SET available = available - 1 WHERE sku = 'SKU-1'");
+  await inventory.query(`PREPARE TRANSACTION '${GID}-inv'`);
+  await payments.query("BEGIN");
+  await payments.query("UPDATE accounts SET balance = balance - 100 WHERE user_id = 7");
+  await payments.query(`PREPARE TRANSACTION '${GID}-pay'`);
+  process.kill(process.pid, "SIGKILL");
+}
+
+const setup = await pgClient();
+await setup.query("CREATE TABLE tx_log (gid text PRIMARY KEY, decision text NOT NULL)");
+for (const db of ["inventory", "payments"]) await setup.query(`CREATE DATABASE ${db}`);
+await setup.end();
+const inv0 = await pgClient("inventory");
+await inv0.query("CREATE TABLE stock (sku text PRIMARY KEY, available int NOT NULL); INSERT INTO stock VALUES ('SKU-1', 10)");
+await inv0.end();
+const pay0 = await pgClient("payments");
+await pay0.query("CREATE TABLE accounts (user_id int PRIMARY KEY, balance int NOT NULL); INSERT INTO accounts VALUES (7, 500)");
+await pay0.end();
+
+const child = spawn(process.execPath, [import.meta.filename, "coordinator"], { stdio: "ignore" });
+const [exitCode, signal] = await once(child, "exit");
+console.log(`coordinator process died: code=${exitCode} signal=${signal}`);
+await sleep(200);
+
+async function inspect(label: string) {
+  const inventory = await pgClient("inventory");
+  const payments = await pgClient("payments");
+  const prepared = await inventory.query("SELECT database, gid FROM pg_prepared_xacts ORDER BY database");
+  const others = await inventory.query(
+    "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname IN ('inventory', 'payments') AND pid &lt;&gt; pg_backend_pid() AND backend_type = 'client backend'",
+  );
+  console.log(`\n[${label}] prepared:`, prepared.rows.map((r) =&gt; `${r.database}/${r.gid}`).join(" "));
+  console.log(`[${label}] other client connections to those databases:`, others.rows[0].n - 1);
+  await inventory.query("SET lock_timeout = '500ms'");
+  await inventory.query("UPDATE stock SET available = available - 1 WHERE sku = 'SKU-1'").catch((e) =&gt; {
+    console.log(`[${label}] other order, same row: ${e.code} ${e.message}`);
+  });
+  await inventory.end();
+  await payments.end();
+}
+
+await inspect("before restart");
+restartPostgres();
+await inspect("after restart");
+
+// الـ recovery بيقرا قرار الـ coordinator: مفيش قرار متسجل، يبقى rollback
+const logDb = await pgClient();
+const decided = await logDb.query("SELECT decision FROM tx_log WHERE gid = $1", [GID]);
+await logDb.end();
+console.log(`
+recovery: decision in the coordinator log = ${decided.rows[0]?.decision ?? "none"}`);
+const inventory = await pgClient("inventory");
+const payments = await pgClient("payments");
+const verb = decided.rowCount === 1 ? "COMMIT" : "ROLLBACK";
+await inventory.query(`${verb} PREPARED '${GID}-inv'`);
+await payments.query(`${verb} PREPARED '${GID}-pay'`);
+const left = await inventory.query("SELECT count(*)::int AS n FROM pg_prepared_xacts");
+const stock = (await inventory.query("SELECT available FROM stock")).rows[0].available;
+const balance = (await payments.query("SELECT balance FROM accounts")).rows[0].balance;
+console.log(`${verb} PREPARED on both. prepared left: ${left.rows[0].n}, stock=${stock}, balance=${balance}`);
+await inventory.end();
+await payments.end();</code></pre>
+<pre><code class="language-plaintext">coordinator process died: code=1 signal=null
+
+[before restart] prepared: inventory/order-1-inv payments/order-1-pay
+[before restart] other client connections to those databases: 0
+[before restart] other order, same row: 55P03 canceling statement due to lock timeout
+
+[after restart] prepared: inventory/order-1-inv payments/order-1-pay
+[after restart] other client connections to those databases: 0
+[after restart] other order, same row: 55P03 canceling statement due to lock timeout
+
+recovery: decision in the coordinator log = none
+ROLLBACK PREPARED on both. prepared left: 0, stock=10, balance=500</code></pre>
+  <div class="ar-note">الـ coordinator مات (<code>code=1</code> على Windows). قبل الـ restart: الـ 2 prepared transactions موجودين، ومفيش ولا client متوصل، وأي order تاني على نفس الصف بياخد <code>55P03</code>. بعد الـ restart: نفس الكلام بالظبط. الـ recovery قرا الـ log ومفيش قرار، فعمل <code>ROLLBACK PREPARED</code> على الاتنين ورجعنا stock=10 و balance=500.</div>
+
+<pre data-file="src/p2-throughput.ts"><code class="language-typescript">import { pgClient } from "./env.ts";
+import type pg from "pg";
+
+const setup = await pgClient();
+for (const db of ["inventory", "payments"]) await setup.query(`CREATE DATABASE ${db}`);
+await setup.end();
+const inv = await pgClient("inventory");
+const pay = await pgClient("payments");
+await inv.query("CREATE TABLE stock (sku text PRIMARY KEY, available bigint NOT NULL); INSERT INTO stock VALUES ('HOT', 0)");
+await inv.query("CREATE TABLE accounts (user_id int PRIMARY KEY, balance bigint NOT NULL); INSERT INTO accounts VALUES (7, 0)");
+await pay.query("CREATE TABLE accounts (user_id int PRIMARY KEY, balance bigint NOT NULL); INSERT INTO accounts VALUES (7, 0)");
+await inv.end();
+await pay.end();
+
+const WORKERS = 8;
+const DURATION_MS = 3000;
+type Client = pg.Client;
+
+async function drive(name: string, connect: () =&gt; Promise&lt;Client[]&gt;, once: (c: Client[], n: string) =&gt; Promise&lt;void&gt;) {
+  const conns = await Promise.all(Array.from({ length: WORKERS }, connect));
+  const deadline = Date.now() + DURATION_MS;
+  let done = 0;
+  let totalLockMs = 0;
+  await Promise.all(conns.map(async (c, w) =&gt; {
+    while (Date.now() &lt; deadline) {
+      const t = performance.now();
+      await once(c, `w${w}-${done}`);
+      totalLockMs += performance.now() - t;
+      done++;
+    }
+  }));
+  console.log(`${name.padEnd(26)} ${(done / (DURATION_MS / 1000)).toFixed(0).padStart(5)} tx/s   mean tx time ≈ ${(totalLockMs / done).toFixed(1)} ms`);
+  await Promise.all(conns.flat().map((c) =&gt; c.end()));
+}
+
+await drive("local, one database", async () =&gt; [await pgClient("inventory")], async ([c]) =&gt; {
+  await c.query("BEGIN");
+  await c.query("UPDATE stock SET available = available + 1 WHERE sku = 'HOT'");
+  await c.query("UPDATE accounts SET balance = balance + 1 WHERE user_id = 7");
+  await c.query("COMMIT");
+});
+
+await drive("2PC, two databases", async () =&gt; [await pgClient("inventory"), await pgClient("payments")], async ([a, b], gid) =&gt; {
+  await a.query("BEGIN");
+  await a.query("UPDATE stock SET available = available + 1 WHERE sku = 'HOT'");
+  await a.query(`PREPARE TRANSACTION '${gid}-a'`);
+  await b.query("BEGIN");
+  await b.query("UPDATE accounts SET balance = balance + 1 WHERE user_id = 7");
+  await b.query(`PREPARE TRANSACTION '${gid}-b'`);
+  await a.query(`COMMIT PREPARED '${gid}-a'`);
+  await b.query(`COMMIT PREPARED '${gid}-b'`);
+});</code></pre>
+<pre><code class="language-plaintext">local, one database         1445 tx/s   mean tx time ≈ 5.5 ms
+2PC, two databases           571 tx/s   mean tx time ≈ 14.0 ms</code></pre>
+  <div class="ar-note">نفس الشغل على صف ساخن و8 clients: transaction محلية ≈1445 tx/s و≈5.5ms، والـ 2PC ≈571 tx/s و≈14ms. الأرقام تقريبية، على Windows وعليه ضغط، وتشغيلة قبلها طلعت ≈1547 و≈359، يعني الفرق بين 2.5 و4 مرات. والـ durable writes الزيادة والـ round trips هم السبب.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ participant اللي قال موافق اتنازل عن حقه في القرار. مايقدرش يعمل commit لأن participant تاني ممكن يكون رفض. ومايقدرش يعمل abort لأن الـ coordinator ممكن يكون قرر commit فعلًا. فبيفضل مستني، وماسك الـ locks، coordinator ممكن مايرجعش أبدًا. دي مشكلة الـ <b>blocking</b>.</p>
+    <p>في التشغيل، الـ coordinator process بيعمل prepare على الـ 2 databases وبعدين بيتقتل على طول. (على Windows الخروج بيظهر <code>code=1</code> من غير signal، لأن <code>SIGKILL</code> هناك بيبقى قتل مباشر للـ process.) مفيش حد تاني متوصل، ومع ذلك <code>pg_prepared_xacts</code> لسه فيه الـ 2 transactions، وأي order تاني بيلمس الصف ده بياخد <code>55P03 canceling statement due to lock timeout</code>. وحتى restart كامل للـ server مابيغيرش حاجة، لأن الـ prepared transactions على الديسك عن قصد. مفيش غير <code>COMMIT PREPARED</code> أو <code>ROLLBACK PREPARED</code> صريح بينهيه. الـ recovery job بيقرا الـ log بتاع الـ coordinator: مفيش قرار متسجل، يبقى آمن يعمل rollback للاتنين. والـ docs بتاعة Postgres بتحذر إن ترك الـ transactions في حالة prepared مدة طويلة بيعطل <code>VACUUM</code> كمان، وفي الحالات المتطرفة ممكن يوقف الـ database عشان يمنع transaction ID wraparound، فالـ alert على عمر الصفوف في <code>pg_prepared_xacts</code> إجباري.</p>
+    <p>وهو بطيء حتى لو مفيش حاجة فشلت. كل transaction ماسك الـ row locks طول الـ round trips والكتابات الـ durable الزيادة لكل participant. على صف ساخن و8 clients، الـ transaction المحلية عملت ≈1445 tx/s والـ 2PC ≈571 في التشغيلة المتطبعة، وتشغيلة قبلها طلعت ≈1547 و≈359، فاعتبرها من 2.5 لـ 4 مرات، على جهاز Windows عليه ضغط. وعشان كده الـ 2PC نادر بين الـ services: بيربط الـ availability بتاعتهم ببعض وبيضاعف وقت الـ locks. والـ databases اللي بتستخدمه جوّاها، زي Spanner و CockroachDB، بتحل مشكلة الـ coordinator بطريقة تانية: قرار الـ coordinator بيتعمله replication عن طريق consensus (Paxos أو Raft، <a href="./32-consensus-raft-coordination.html">lesson 32</a>)، فلو الـ node بتاع الـ coordinator مات، replica تانية عندها القرار وبتكمل الشغل.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      Incident: صف في جدول <code>orders</code> كل الـ updates عليه بتعمل timeout، و<code>pg_stat_activity</code> مافيهوش أي session شايلة الـ lock. افتح <code>pg_prepared_xacts</code>. لو لقيت صف قديم، ده tool أو connector وقع بعد PREPARE. قرر من الـ log بتاعه: commit ولا rollback، ونفّذها بإيدك، وضيف alert على العمر.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Why is 2PC rare between microservices?" → After voting yes, a participant must hold its locks until the coordinator decides, so a coordinator failure blocks unrelated traffic indefinitely. It also couples every service's availability and adds round trips under lock. Teams use sagas or an outbox instead. Systems like Spanner keep 2PC but make the coordinator fault-tolerant through consensus.
+    <div class="ar-note">"ليه الـ 2PC نادر بين الـ microservices؟" ← بعد ما الـ participant يوافق لازم يفضل ماسك الـ locks لحد ما الـ coordinator يقرر، فوقوع الـ coordinator بيوقف traffic تاني ملوش علاقة لمدة مفتوحة. وكمان بيربط الـ availability بتاعة كل service ببعض وبيزود round trips تحت الـ lock. الفرق بتستخدم sagas أو outbox بداله. وسيستمز زي Spanner بتحتفظ بالـ 2PC بس بتخلي الـ coordinator نفسه fault-tolerant عن طريق consensus.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Sagas from the system angle <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — الـ sagas من زاوية السيستم</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The code patterns are in <a href="../../09-Databases/lessons/42-saga-event-sourcing.html">09 lesson 42</a> and <a href="../../10-Design-Patterns/lessons/28-saga-as-code.html">10 lesson 28</a>, and service boundaries in <a href="../../11-Software-Architecture/lessons/31-sync-async-sagas.html">11 lesson 31</a>. Here's the system view. A saga is a chain of local transactions, each committing on its own, with a <b>compensating action</b> to undo each one if a later step fails. There's no global lock, so one failed service can't freeze the others. The cost is <b>no isolation</b>: between the steps, everyone can see intermediate states.</p>
+    <p>The run sends 40 orders through 3 steps across 2 real databases: reserve stock, charge, ship. About half fail at shipping, using a seeded PRNG. In naive mode a concurrent reader saw 9 orders as <code>PAID</code> that were later refunded, so a real dashboard or a notification worker would have told customers about money that was given back. The storefront showed "sold out" 11 times and rejected 18 orders, while 1 unit ended up unsold.</p>
+    <p>The fix is a <b>semantic lock</b>: an application-level state that marks work as in flight. In semantic mode the charge stays <code>PENDING</code> until the saga finishes, so <code>status = 'PAID'</code> never shows anything that gets undone (0 dirty reads). The storefront counts held units as "maybe", so it never said sold out, and orders wait briefly instead of being rejected: 11 shipped against 9, and 0 units left unsold. Compensation has its own failures. The refund retries with backoff, and after the retries are used up the order goes to a <b>human queue</b>. In the run, order 13 can never be refunded and lands in <code>manual_review</code>. In the naive run order 5 ran out of retries on transient 503s too. Note that its reserved unit stays held until a human resolves it. Compensation must also be idempotent, which is the <code>status IN (...)</code> guard.</p>
+  </section>
+
+<pre data-file="src/p3-saga.ts"><code class="language-typescript">import pg from "pg";
+import { pgClient, pgPort, sleep } from "./env.ts";
+
+type Mode = "naive" | "semantic";
+const ORDERS = 40;
+const STOCK = 12;
+const WORKERS = 6;
+const POISON_ORDER = 13;
+
+function mulberry32(seed: number) {
+  return () =&gt; {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed &gt;&gt;&gt; 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+const admin = await pgClient();
+for (const db of ["inventory", "payments"]) await admin.query(`CREATE DATABASE ${db}`);
+await admin.end();
+const pool = (database: string) =&gt; new pg.Pool({ host: "127.0.0.1", port: pgPort(), user: "app", database, max: WORKERS + 2 });
+const inventory = pool("inventory");
+const payments = pool("payments");
+
+await inventory.query(`CREATE TABLE stock (sku text PRIMARY KEY, available int NOT NULL CHECK (available &gt;= 0));
+  CREATE TABLE reservations (order_id int PRIMARY KEY, status text NOT NULL)`);
+await payments.query(`CREATE TABLE charges (order_id int PRIMARY KEY, amount int NOT NULL, status text NOT NULL);
+  CREATE TABLE manual_review (order_id int PRIMARY KEY, step text NOT NULL, last_error text NOT NULL)`);
+
+async function run(mode: Mode) {
+  await inventory.query("TRUNCATE stock, reservations");
+  await payments.query("TRUNCATE charges, manual_review");
+  await inventory.query("INSERT INTO stock VALUES ('SKU-1', $1)", [STOCK]);
+  const rng = mulberry32(7);
+  const shipFails = Array.from({ length: ORDERS }, (_, i) =&gt; i === POISON_ORDER || rng() &lt; 0.5);
+  const flakyRefund = mulberry32(99);
+  let refundCalls = 0, transientFailures = 0, ok = 0, compensated = 0, rejected = 0;
+
+  // المحاكاة دي بتمثّل payment gateway بيفشل أحيانًا، وأوردر واحد بيفشل دايمًا
+  async function refundGateway(orderId: number) {
+    refundCalls++;
+    if (orderId === POISON_ORDER) throw new Error("gateway: account closed");
+    if (flakyRefund() &lt; 0.3) { transientFailures++; throw new Error("gateway: 503"); }
+  }
+
+  // الـ compensation لازم idempotent، ولو فشلت خالص تروح لـ human queue
+  async function compensate(orderId: number) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await refundGateway(orderId);
+        await payments.query("UPDATE charges SET status = $1 WHERE order_id = $2 AND status IN ('PAID', 'PENDING')",
+          [mode === "naive" ? "REFUNDED" : "CANCELLED", orderId]);
+        break;
+      } catch (e) {
+        if (attempt &gt;= 4) {
+          await payments.query("INSERT INTO manual_review VALUES ($1, 'refund', $2) ON CONFLICT DO NOTHING", [orderId, (e as Error).message]);
+          return;
+        }
+        await sleep(5 * 2 ** attempt);
+      }
+    }
+    await inventory.query(`WITH released AS (
+        UPDATE reservations SET status = 'RELEASED' WHERE order_id = $1 AND status = 'HELD' RETURNING 1
+      ) UPDATE stock SET available = available + (SELECT count(*) FROM released)`, [orderId]);
+  }
+
+  async function saga(orderId: number) {
+    let reserved = false;
+    for (let attempt = 0; attempt &lt; 6 &amp;&amp; !reserved; attempt++) {
+      const r = await inventory.query("UPDATE stock SET available = available - 1 WHERE sku = 'SKU-1' AND available &gt; 0");
+      reserved = r.rowCount === 1;
+      if (reserved) await inventory.query("INSERT INTO reservations VALUES ($1, 'HELD')", [orderId]);
+      else if (mode === "naive") break;
+      else {
+        // الـ semantic lock: فيه stock محجوز لساه، يبقى استنى بدل ما تقول sold out
+        const held = await inventory.query("SELECT count(*)::int AS n FROM reservations WHERE status = 'HELD'");
+        if (held.rows[0].n === 0) break;
+        await sleep(15);
+      }
+    }
+    if (!reserved) { rejected++; return; }
+
+    // الخطوة التانية بتعمل commit في database تانية، وبعدها مفيش rollback
+    await payments.query("INSERT INTO charges VALUES ($1, 100, $2)", [orderId, mode === "naive" ? "PAID" : "PENDING"]);
+    await sleep(4);
+
+    if (shipFails[orderId]) { compensated++; await compensate(orderId); return; }
+    await payments.query("UPDATE charges SET status = 'PAID' WHERE order_id = $1", [orderId]);
+    await inventory.query("UPDATE reservations SET status = 'SHIPPED' WHERE order_id = $1", [orderId]);
+    ok++;
+  }
+
+  // الـ dashboard ده قارئ من بره الـ saga، بيعد اللي شايفه
+  const seenPaid = new Set&lt;number&gt;();
+  let soldOutReads = 0;
+  let reading = true;
+  const reader = (async () =&gt; {
+    while (reading) {
+      const { rows } = await payments.query("SELECT order_id FROM charges WHERE status = 'PAID'");
+      rows.forEach((r) =&gt; seenPaid.add(r.order_id));
+      const s = await inventory.query("SELECT available, (SELECT count(*)::int FROM reservations WHERE status = 'HELD') AS held FROM stock");
+      const shown = mode === "naive" ? s.rows[0].available : s.rows[0].available + s.rows[0].held;
+      if (shown === 0) soldOutReads++;
+      await sleep(2);
+    }
+  })();
+
+  let next = 0;
+  await Promise.all(Array.from({ length: WORKERS }, async () =&gt; {
+    while (next &lt; ORDERS) await saga(next++);
+  }));
+  reading = false;
+  await reader;
+
+  const refunded = await payments.query("SELECT order_id FROM charges WHERE status IN ('REFUNDED', 'CANCELLED')");
+  const dirty = refunded.rows.filter((r) =&gt; seenPaid.has(r.order_id)).length;
+  const finalStock = (await inventory.query("SELECT available FROM stock")).rows[0].available;
+  const review = (await payments.query("SELECT order_id, last_error FROM manual_review")).rows;
+  console.log(`--- ${mode} ---`);
+  console.log(`orders: shipped=${ok} compensated=${compensated} rejected=${rejected} | final stock=${finalStock}`);
+  console.log(`reader saw PAID, later undone: ${dirty} | storefront showed sold out: ${soldOutReads} times`);
+  console.log(`refund calls=${refundCalls} transient failures=${transientFailures} | manual review:`, review);
+}
+
+await run("naive");
+await run("semantic");
+await inventory.end();
+await payments.end();</code></pre>
+<pre><code class="language-plaintext">--- naive ---
+orders: shipped=9 compensated=13 rejected=18 | final stock=1
+reader saw PAID, later undone: 9 | storefront showed sold out: 11 times
+refund calls=22 transient failures=7 | manual review: [
+  { order_id: 5, last_error: 'gateway: 503' },
+  { order_id: 13, last_error: 'gateway: account closed' }
+]
+--- semantic ---
+orders: shipped=11 compensated=18 rejected=11 | final stock=0
+reader saw PAID, later undone: 0 | storefront showed sold out: 0 times
+refund calls=29 transient failures=8 | manual review: [ { order_id: 13, last_error: 'gateway: account closed' } ]</code></pre>
+  <div class="ar-note">naive: 9 اتشحنوا، و13 compensated، و18 اترفضوا، وفضل unit واحد متباعش. القارئ شاف 9 أوردرات <code>PAID</code> واترجعوا بعدها، والـ storefront قال sold out 11 مرة. في الـ manual review: أوردر 5 (503 خلصت الـ retries) و13 (الحساب مقفول). semantic: 11 اتشحنوا، والقارئ شاف 0 حاجات اترجعت، و0 مرات sold out، وفضل 13 بس للـ human queue. الأرقام بتتغير من تشغيلة للتانية حسب التوقيت، بس فكرتها ثابتة.</div>
+
+  <table>
+    <tr><th></th><th>2PC</th><th>Saga</th></tr>
+    <tr><td>Atomicity</td><td>Yes, enforced by the protocol</td><td>Eventual, through compensation</td></tr>
+    <tr><td>Isolation</td><td>Yes, locks held throughout</td><td>None: use semantic locks</td></tr>
+    <tr><td>Failure of a coordinator</td><td>Participants block, holding locks</td><td>The saga waits, nothing is locked</td></tr>
+    <tr><td>Latency under contention</td><td>High: locks across round trips</td><td>Low per step</td></tr>
+    <tr><td>Can reach external APIs</td><td>Only if they support XA</td><td>Yes, if they can be compensated</td></tr>
+  </table>
+  <div class="ar-note">الجدول سطر بسطر. الـ atomicity: الـ 2PC مضمونة بالـ protocol، والـ saga eventual بالـ compensation. الـ isolation: الـ 2PC موجودة بالـ locks، والـ saga مفيش وبتستخدم semantic locks. وقوع الـ coordinator: في الـ 2PC الـ participants بيعلّقوا وهم ماسكين locks، وفي الـ saga بتستنى ومفيش حاجة متقفلة. الـ latency تحت التنافس: عالية في الـ 2PC عشان الـ locks مع الـ round trips، وقليلة لكل خطوة في الـ saga. الـ APIs اللي بره: الـ 2PC لو بتدعم XA بس، والـ saga تنفع لو ينفع compensation.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ code patterns في <a href="../../09-Databases/lessons/42-saga-event-sourcing.html">09 lesson 42</a> و<a href="../../10-Design-Patterns/lessons/28-saga-as-code.html">10 lesson 28</a>، وحدود الـ services في <a href="../../11-Software-Architecture/lessons/31-sync-async-sagas.html">11 lesson 31</a>. هنا الزاوية بتاعة السيستم. الـ saga سلسلة local transactions، كل واحدة بتعمل commit لوحدها، ولكل واحدة <b>compensating action</b> بيرجّعها لو خطوة بعدها فشلت. مفيش global lock، فـ service واحدة وقعت مش هتجمد الباقي. التمن هو <b>مفيش isolation</b>: بين الخطوات، الكل يقدر يشوف الحالات اللي في النص.</p>
+    <p>التشغيل بيبعت 40 order على 3 خطوات عبر 2 databases حقيقيين: حجز stock، خصم، شحن. حوالي النص بيفشل في الشحن، بـ PRNG بـ seed ثابت. في الـ naive mode، قارئ شغال في نفس الوقت شاف 9 أوردرات <code>PAID</code> واترجعت بعد كده، يعني dashboard حقيقي أو notification worker كان هيقول للعملاء عن فلوس رجعت لهم. والـ storefront قال "sold out" 11 مرة ورفض 18 order، وفي الآخر unit واحد فضل متباعش.</p>
+    <p>الحل هو <b>semantic lock</b>: حالة على مستوى التطبيق بتقول إن الشغل ده لسه ماشي. في الـ semantic mode الـ charge بيفضل <code>PENDING</code> لحد ما الـ saga تخلص، فـ <code>status = 'PAID'</code> عمره ما بيوري حاجة هتترجع (0 dirty reads). والـ storefront بيعدّ الـ units المحجوزة كـ "يمكن"، فعمره ما قال sold out، والأوردرات بتستنى شوية بدل ما تترفض: 11 اتشحنوا بدل 9، و0 units فضلت متباعتش. والـ compensation ليها فشلها هي كمان. الـ refund بيعمل retry بـ backoff، ولما الـ retries تخلص الأوردر بيروح لـ <b>human queue</b>. في التشغيل، أوردر 13 مستحيل يترد وبيروح لـ <code>manual_review</code>. وفي الـ naive، أوردر 5 خلصت الـ retries بتاعته على 503 عابرة كمان. وخد بالك إن الـ unit بتاعه بيفضل محجوز لحد ما بني آدم يحلها. والـ compensation لازم idempotent، وده دور الـ guard اللي هو <code>status IN (...)</code>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      flow "دفع ثم شحن" في e-commerce: ماتبعتش إيميل "تم الدفع" و Stripe رجّع نجاح بس لسه الـ inventory بيتأكد. خلي الـ order بحالة <code>PENDING</code>، وابعت الإيميل لما الـ saga تخلص. واعمل جدول <code>manual_review</code> وشاشة صغيرة لفريق الدعم من أول يوم، لأن فيه أوردرات compensation بتاعتها هتفشل، ودي مسألة وقت بس.
+    </div>
+  </section>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — TCC: try, confirm, cancel <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ TCC: try و confirm و cancel</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>TCC is a reservation protocol, like 2PC done at the business level. <b>Try</b> holds a resource with a TTL (seats, funds). <b>Confirm</b> turns the hold into the real thing, and <b>Cancel</b> releases it. Unlike a saga, the visible state is an explicit "held" from the start, so nothing is sold and then taken back. Unlike 2PC, no database locks are held between the phases, so the TTL is the worst case for a stuck resource.</p>
+    <p>Calls arrive over an unreliable network, so three failure cases must be handled explicitly. Confirm and Cancel must be <b>idempotent</b>, because they will be retried: a second confirm changes 0 rows, a second cancel is a no-op. An <b>empty rollback</b> happens when a Cancel arrives for a Try that never landed, for example because Try timed out on the way. The participant must succeed and record a tombstone. <b>Hanging</b> is the reverse: the delayed Try arrives after that Cancel. Without the tombstone it reserves seats that nothing will ever release, as the run shows (2 seats stuck until the TTL). With it, the Try is refused.</p>
+    <p>The TTL sweeper handles coordinators that disappear, cancelling expired holds. Concurrency relies on a guarded update, <code>WHERE free &gt;= $1</code>: 20 racing tries for the last 8 seats gave exactly 8 holds and no overselling. TCC fits when you own both sides and the resource has a natural hold concept, like seat maps or card pre-authorization. If a step can't be held, a saga is the realistic choice.</p>
+  </section>
+
+<pre data-file="src/p4-tcc.ts"><code class="language-typescript">import pg from "pg";
+import { pgClient, pgPort, sleep } from "./env.ts";
+
+const db = await pgClient();
+await db.query(`
+  CREATE TABLE seats (flight text PRIMARY KEY, free int NOT NULL CHECK (free &gt;= 0));
+  CREATE TABLE holds (hold_id text PRIMARY KEY, flight text, qty int, status text NOT NULL, expires_at timestamptz);
+  INSERT INTO seats VALUES ('CAI-DXB', 10);
+`);
+const free = async () =&gt; (await db.query("SELECT free FROM seats")).rows[0].free as number;
+
+// الـ try: بيحجز الـ seats بمدة TTL، ولو لقى الـ tombstone يرفض (ده علاج الـ hanging)
+async function tccTry(c: pg.ClientBase, holdId: string, qty: number, ttlMs: number): Promise&lt;string&gt; {
+  await c.query("BEGIN");
+  try {
+    const seen = await c.query("SELECT status FROM holds WHERE hold_id = $1 FOR UPDATE", [holdId]);
+    if (seen.rowCount === 1) {
+      await c.query("COMMIT");
+      return seen.rows[0].status === "CANCELLED" ? "rejected: already cancelled (hanging prevented)" : "idempotent replay";
+    }
+    const taken = await c.query("UPDATE seats SET free = free - $1 WHERE flight = 'CAI-DXB' AND free &gt;= $1", [qty]);
+    if (taken.rowCount === 0) {
+      await c.query("COMMIT");
+      return "rejected: no seats";
+    }
+    await c.query("INSERT INTO holds VALUES ($1, 'CAI-DXB', $2, 'TRIED', now() + make_interval(secs =&gt; $3))", [holdId, qty, ttlMs / 1000]);
+    await c.query("COMMIT");
+    return "held";
+  } catch (e) {
+    await c.query("ROLLBACK");
+    throw e;
+  }
+}
+
+// الـ confirm idempotent: تأكيد تاني مابيغيرش حاجة
+async function tccConfirm(holdId: string): Promise&lt;number&gt; {
+  const r = await db.query("UPDATE holds SET status = 'CONFIRMED' WHERE hold_id = $1 AND status = 'TRIED'", [holdId]);
+  return r.rowCount ?? 0;
+}
+
+// الـ cancel: لو مفيش try لسه، بيسجل ⁦tombstone (⁩ده الـ empty rollback)
+async function tccCancel(holdId: string): Promise&lt;string&gt; {
+  await db.query("BEGIN");
+  const tomb = await db.query("INSERT INTO holds (hold_id, status) VALUES ($1, 'CANCELLED') ON CONFLICT (hold_id) DO NOTHING", [holdId]);
+  if (tomb.rowCount === 1) {
+    await db.query("COMMIT");
+    return "empty rollback: tombstone recorded, nothing to undo";
+  }
+  const undone = await db.query("UPDATE holds SET status = 'CANCELLED' WHERE hold_id = $1 AND status = 'TRIED' RETURNING qty", [holdId]);
+  if (undone.rowCount === 1) await db.query("UPDATE seats SET free = free + $1", [undone.rows[0].qty]);
+  await db.query("COMMIT");
+  return undone.rowCount === 1 ? `cancelled, ${undone.rows[0].qty} seats back` : "no-op (already final)";
+}
+
+// ده الـ sweeper: أي hold عدى الـ TTL بيتعمل له cancel
+async function sweep(): Promise&lt;number&gt; {
+  const due = await db.query("SELECT hold_id FROM holds WHERE status = 'TRIED' AND expires_at &lt; now()");
+  for (const { hold_id } of due.rows) await tccCancel(hold_id);
+  return due.rowCount ?? 0;
+}
+
+console.log("--- happy path ---");
+console.log("try:", await tccTry(db, "booking-1", 2, 60_000), "| free:", await free());
+console.log("confirm:", await tccConfirm("booking-1"), "| again:", await tccConfirm("booking-1"), "| free:", await free());
+
+console.log("\n--- cancel twice ---");
+console.log("try:", await tccTry(db, "booking-2", 3, 60_000), "| free:", await free());
+console.log("cancel:", await tccCancel("booking-2"));
+console.log("cancel:", await tccCancel("booking-2"), "| free:", await free());
+
+console.log("\n--- empty rollback, then the late try (hanging) ---");
+console.log("cancel arrives first:", await tccCancel("booking-3"));
+console.log("late try:", await tccTry(db, "booking-3", 1, 60_000), "| free:", await free());
+
+console.log("\n--- without the tombstone: a naive cancel and a late try ---");
+const naiveCancel = () =&gt; db.query("UPDATE holds SET status = 'CANCELLED' WHERE hold_id = 'booking-4' AND status = 'TRIED'");
+console.log("naive cancel, rows:", (await naiveCancel()).rowCount);
+console.log("late try:", await tccTry(db, "booking-4", 2, 60_000), "| free:", await free(), "(2 seats stuck until the TTL)");
+await tccCancel("booking-4");
+
+console.log("\n--- TTL sweep ---");
+console.log("try with 50 ms TTL:", await tccTry(db, "booking-5", 2, 50), "| free:", await free());
+await sleep(120);
+console.log("swept:", await sweep(), "| free:", await free());
+
+console.log("\n--- 20 concurrent tries for 1 seat each, free seats now:", await free(), "---");
+const pool = new pg.Pool({ host: "127.0.0.1", port: pgPort(), user: "app", database: "postgres", max: 20 });
+const results = await Promise.all(Array.from({ length: 20 }, async (_, i) =&gt; {
+  const c = await pool.connect();
+  const r = await tccTry(c, `race-${i}`, 1, 60_000);
+  c.release();
+  return r;
+}));
+console.log("held:", results.filter((r) =&gt; r === "held").length, "| rejected:", results.filter((r) =&gt; r.startsWith("rejected")).length, "| free:", await free());
+await pool.end();
+await db.end();</code></pre>
+<pre><code class="language-plaintext">--- happy path ---
+try: held | free: 8
+confirm: 1 | again: 0 | free: 8
+
+--- cancel twice ---
+try: held | free: 5
+cancel: cancelled, 3 seats back
+cancel: no-op (already final) | free: 8
+
+--- empty rollback, then the late try (hanging) ---
+cancel arrives first: empty rollback: tombstone recorded, nothing to undo
+late try: rejected: already cancelled (hanging prevented) | free: 8
+
+--- without the tombstone: a naive cancel and a late try ---
+naive cancel, rows: 0
+late try: held | free: 6 (2 seats stuck until the TTL)
+
+--- TTL sweep ---
+try with 50 ms TTL: held | free: 6
+swept: 1 | free: 8
+
+--- 20 concurrent tries for 1 seat each, free seats now: 8 ---
+held: 8 | rejected: 12 | free: 0</code></pre>
+  <div class="ar-note">الـ happy path: try حجز 2 وconfirm مرتين والتانية 0 صفوف. الـ cancel مرتين: رجّع 3 seats مرة واحدة. الـ empty rollback: cancel قبل try سجّل tombstone، والـ try المتأخر اترفض. من غير tombstone: try المتأخر حجز 2 seats فضلوا عالقين. الـ TTL sweep: بعد الوقت رجّع 2 seats. وآخر حاجة: 20 محاولة على 8 seats، بالظبط 8 نجحوا و12 اترفضوا.</div>
+
+  <table>
+    <tr><th>Question</th><th>TCC</th><th>Saga</th></tr>
+    <tr><td>Is the state visible before commit?</td><td>Yes, as an explicit hold</td><td>Yes, as if already done</td></tr>
+    <tr><td>Do participants need new APIs?</td><td>Yes: try, confirm, cancel</td><td>Only a compensating action</td></tr>
+    <tr><td>Resource must be holdable</td><td>Yes</td><td>No</td></tr>
+    <tr><td>Good fit</td><td>Seats, funds pre-authorization</td><td>Multi-step business flows</td></tr>
+  </table>
+  <div class="ar-note">السؤال الأول: الحالة باينة قبل الـ commit؟ في TCC أيوه كـ hold صريح، وفي الـ saga أيوه كأنها حصلت خلاص. التاني: الـ participants محتاجين APIs جديدة؟ TCC محتاج try و confirm و cancel، والـ saga محتاجة compensating action بس. التالت: لازم الـ resource ينفع يتحجز؟ في TCC أيوه، وفي الـ saga لأ. الرابع: بيناسب إيه؟ TCC للمقاعد وحجز الفلوس، والـ saga للـ flows متعددة الخطوات.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ TCC هو reservation protocol، زي 2PC بس على مستوى البيزنس. الـ <b>Try</b> بيحجز resource بـ TTL (مقاعد، فلوس). الـ <b>Confirm</b> بيحوّل الحجز للحقيقة، والـ <b>Cancel</b> بيفكه. عكس الـ saga، الحالة الظاهرة من الأول "محجوز" صريحة، فمفيش حاجة بتتباع وبعدين تترجع. وعكس الـ 2PC، مفيش database locks ماسكة بين المرحلتين، فالـ TTL هو أسوأ حالة لأي resource معلق.</p>
+    <p>الـ calls بتيجي على شبكة مش مضمونة، فلازم نتعامل مع 3 حالات فشل. الـ Confirm والـ Cancel لازم <b>idempotent</b> لأنهم هيتعمل لهم retry: الـ confirm التاني بيغير 0 صفوف، والـ cancel التاني no-op. الـ <b>empty rollback</b> بيحصل لما Cancel يوصل لـ Try عمره ما وصل، زي إن الـ Try عمل timeout في الطريق. الـ participant لازم ينجح ويسجل tombstone. والـ <b>hanging</b> هو العكس: الـ Try المتأخر بيوصل بعد الـ Cancel. من غير tombstone بيحجز مقاعد محدش هيفكها، زي ما التشغيل وضّح (2 seats عالقين لحد الـ TTL). ومع الـ tombstone، الـ Try بيترفض.</p>
+    <p>الـ TTL sweeper بيتعامل مع الـ coordinators اللي بتختفي، وبيعمل cancel للـ holds اللي عدت مدتها. والـ concurrency معتمدة على update بشرط: <code>WHERE free &gt;= $1</code>: 20 محاولة على آخر 8 مقاعد طلّعوا بالظبط 8 holds ومن غير overselling. الـ TCC بيناسب لما إنت ماسك الناحيتين والـ resource عنده فكرة الحجز، زي خرايط المقاعد أو الـ card pre-authorization. ولو خطوة ماينفعش تتحجز، الـ saga هي الاختيار الواقعي.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      حجز flash sale أو تذاكر: <code>POST /holds</code> بـ TTL 10 دقايق، <code>POST /holds/:id/confirm</code> بعد الدفع، و<code>DELETE /holds/:id</code>. الـ <code>holdId</code> يتولّد من الـ client ويتكرر مع الـ retry. ولو الـ gateway عمل timeout وبعت cancel قبل ما الـ try يوصل، الـ tombstone اللي في الجدول هو اللي بيحميك.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "What are the empty rollback and hanging problems in TCC, and how do you handle them?" → An empty rollback is a Cancel with no prior Try: the participant must succeed and record that the id was cancelled. Hanging is a late Try arriving after that Cancel: the participant sees the record and refuses. One table keyed by the hold id solves both, and it also makes Confirm and Cancel idempotent.
+    <div class="ar-note">"إيه هي مشكلتي الـ empty rollback والـ hanging في TCC وبتتعامل معاهم إزاي؟" ← الـ empty rollback هو Cancel من غير Try قبله: الـ participant لازم ينجح ويسجل إن الـ id ده اتلغى. والـ hanging هو Try متأخر وصل بعد الـ Cancel ده: الـ participant بيشوف السجل ويرفض. جدول واحد بالـ key بتاع الـ hold id بيحل الاتنين، وبيخلي Confirm و Cancel idempotent كمان.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Exactly-once in streams <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — الـ exactly-once في الـ streams</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A network can't guarantee a message is delivered exactly once, since the sender can't distinguish a lost message from a lost acknowledgement. What you can have is <b>exactly-once processing</b>: at-least-once delivery combined with state that absorbs duplicates. The core technique is <b>checkpointing</b>: save "how far I've read" and "what I computed" <b>atomically</b>, so after a crash you resume from a position that matches your results exactly.</p>
+    <p>The experiment runs a real consumer process over a Redis stream of 4000 payments with a known total, and kills it repeatedly. The offset is the stream entry id, and each run reads the stream as a log from its last offset. Two wrong designs keep the offset in Redis and the totals in Postgres. Saving state first, then the offset, double-counts a batch when the process dies between them. Saving the offset first, then the state, loses a batch. The third design writes the state and the offset in one Postgres transaction, so a crash leaves both or neither.</p>
+    <p>Random kills may or may not land in the gap between the two writes, which is exactly why this bug survives testing: in this run, random kills gave +8685 for state-first and 0 for offset-first, though an earlier run with 3000 events gave -3130 for offset-first. So the script also kills the process <em>inside</em> the gap 6 times. The state-first total comes out +14503, the offset-first total -14844, and the atomic version is exact in every case. A Kafka consumer that stores its offsets outside Kafka follows the same logic; only the storage differs. This requires the sink to be transactional and to hold the offset, which is why it pairs so well with Postgres.</p>
+  </section>
+
+<pre class="diagram">
+ offset in another system                  offset and state together
+
+ read batch                                read batch
+ write state  ----&gt; Postgres               BEGIN
+   CRASH here: reread, counted twice         UPDATE state
+ write offset ----&gt; Redis                    UPSERT offset
+                                             CRASH here: rolled back
+                                           COMMIT
+ two systems, a gap between them           one atomic step, no gap
+</pre>
+  <div class="ar-note">الشمال: الحالة بتتكتب في Postgres والـ offset في Redis. لو الـ process مات بين الكتابتين، بعد الـ restart بيقرا نفس الـ batch تاني ويتحسب مرتين. اليمين: الحالة والـ offset جوه <code>BEGIN</code> و<code>COMMIT</code> واحد، فلو مات قبل الـ <code>COMMIT</code> الاتنين بيترجعوا. نظامين فيهم فجوة، مقابل خطوة atomic واحدة مفيهاش فجوة.</div>
+
+<pre data-file="src/p5-exactly-once.ts"><code class="language-typescript">import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { pgClient, redis, redisPorts, sleep } from "./env.ts";
+
+type Mode = "offset-after-state" | "offset-before-state" | "atomic";
+const STREAM = "payments";
+const EVENTS = 4000;
+const BATCH = 10;
+
+function mulberry32(seed: number) {
+  return () =&gt; {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed &gt;&gt;&gt; 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+// الـ consumer: process حقيقي بيتقتل من بره في أي لحظة
+if (process.argv[2] === "consume") {
+  const mode = process.argv[3] as Mode;
+  const r = redis(redisPorts()[0]);
+  const db = await pgClient();
+  const key = `offset:${mode}`;
+  const crashAfter = Number(process.argv[4] ?? 0);
+  let batches = 0;
+  // ده kill حقيقي للـ process، في الفجوة بين الكتابتين بالظبط
+  const crashInTheGap = () =&gt; {
+    if (crashAfter &amp;&amp; ++batches === crashAfter) process.kill(process.pid, "SIGKILL");
+  };
+
+  const readOffset = async () =&gt;
+    mode === "atomic"
+      ? (await db.query("SELECT last_id FROM consumer_offsets WHERE name = $1", [key])).rows[0]?.last_id ?? "0"
+      : (await r.get(key)) ?? "0";
+
+  let offset = await readOffset();
+  for (;;) {
+    const entries = (await r.xrange(STREAM, `(${offset}`, "+", "COUNT", BATCH)) as [string, string[]][];
+    if (entries.length === 0) break;
+    const lastId = entries[entries.length - 1][0];
+    const sum = entries.reduce((s, [, fields]) =&gt; s + Number(fields[1]), 0);
+
+    if (mode === "atomic") {
+      // الحالة والـ offset في transaction واحدة، يا الاتنين يا ولا حاجة
+      await db.query("BEGIN");
+      await db.query("UPDATE totals SET amount = amount + $1 WHERE mode = $2", [sum, mode]);
+      await db.query(
+        "INSERT INTO consumer_offsets VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET last_id = EXCLUDED.last_id",
+        [key, lastId],
+      );
+      crashInTheGap();
+      await db.query("COMMIT");
+    } else if (mode === "offset-after-state") {
+      // ❌ لو اتقتل بين السطرين، الـ batch ده هيتحسب مرتين
+      await db.query("UPDATE totals SET amount = amount + $1 WHERE mode = $2", [sum, mode]);
+      crashInTheGap();
+      await r.set(key, lastId);
+    } else {
+      // ❌ لو اتقتل بين السطرين، الـ batch ده هيضيع
+      await r.set(key, lastId);
+      crashInTheGap();
+      await db.query("UPDATE totals SET amount = amount + $1 WHERE mode = $2", [sum, mode]);
+    }
+    offset = lastId;
+  }
+  await db.end();
+  r.disconnect();
+  process.exit(0);
+}
+
+const r = redis(redisPorts()[0]);
+const db = await pgClient();
+await db.query("CREATE TABLE totals (mode text PRIMARY KEY, amount bigint NOT NULL)");
+await db.query("CREATE TABLE consumer_offsets (name text PRIMARY KEY, last_id text NOT NULL)");
+
+let expected = 0;
+const amounts = mulberry32(2026);
+for (let i = 0; i &lt; EVENTS; i++) {
+  const amount = Math.floor(amounts() * 500) + 1;
+  expected += amount;
+  await r.xadd(STREAM, "*", "amount", String(amount));
+}
+
+// الـ kills هنا عشوائية بس بـ seed ثابت، فالمواعيد بتتكرر
+async function drive(mode: Mode): Promise&lt;void&gt; {
+  await db.query("DELETE FROM totals WHERE mode = $1", [mode]);
+  await db.query("DELETE FROM consumer_offsets");
+  await r.del(`offset:${mode}`);
+  await db.query("INSERT INTO totals VALUES ($1, 0)", [mode]);
+  const rng = mulberry32(11);
+  let kills = 0;
+  for (;;) {
+    const child = spawn(process.execPath, [import.meta.filename, "consume", mode], { stdio: "ignore" });
+    const exited = once(child, "exit");
+    const kill = kills &lt; 12 ? setTimeout(() =&gt; { kills++; child.kill("SIGKILL"); }, 180 + rng() * 220) : null;
+    await exited;
+    if (kill) clearTimeout(kill);
+    if (child.exitCode === 0) break;
+    await sleep(20);
+  }
+  const { rows } = await db.query("SELECT amount FROM totals WHERE mode = $1", [mode]);
+  const got = Number(rows[0].amount);
+  console.log(`random kills    ${mode.padEnd(20)} kills=${String(kills).padStart(2)}  expected=${expected}  got=${got}  diff=${got - expected}`);
+}
+
+// الـ kills العشوائية ممكن تفوّت الفجوة، فهنا بنقتل الـ process جوه الفجوة نفسها 6 مرات
+async function driveInjected(mode: Mode): Promise&lt;void&gt; {
+  await db.query("DELETE FROM totals WHERE mode = $1", [mode]);
+  await db.query("DELETE FROM consumer_offsets");
+  await r.del(`offset:${mode}`);
+  await db.query("INSERT INTO totals VALUES ($1, 0)", [mode]);
+  for (let life = 0; life &lt; 7; life++) {
+    const args = [import.meta.filename, "consume", mode, life &lt; 6 ? "5" : "0"];
+    const child = spawn(process.execPath, args, { stdio: "ignore" });
+    await once(child, "exit");
+  }
+  const { rows } = await db.query("SELECT amount FROM totals WHERE mode = $1", [mode]);
+  const got = Number(rows[0].amount);
+  console.log(`kill in the gap ${mode.padEnd(20)} kills= 6  expected=${expected}  got=${got}  diff=${got - expected}`);
+}
+
+const modes: Mode[] = ["offset-after-state", "offset-before-state", "atomic"];
+for (const mode of modes) await drive(mode);
+for (const mode of modes) await driveInjected(mode);
+await db.end();
+r.disconnect();</code></pre>
+<pre><code class="language-plaintext">random kills    offset-after-state   kills= 7  expected=1005524  got=1014209  diff=8685
+random kills    offset-before-state  kills= 7  expected=1005524  got=1005524  diff=0
+random kills    atomic               kills= 5  expected=1005524  got=1005524  diff=0
+kill in the gap offset-after-state   kills= 6  expected=1005524  got=1020027  diff=14503
+kill in the gap offset-before-state  kills= 6  expected=1005524  got=990680  diff=-14844
+kill in the gap atomic               kills= 6  expected=1005524  got=1005524  diff=0</code></pre>
+  <div class="ar-note">الأسطر الأولانية kills عشوائية: state-first طلع +8685، و offset-first طلع 0 في التشغيلة دي لأن الـ kills مالمستش الفجوة، والـ atomic مظبوط. الأسطر اللي بعدها الـ kill جوه الفجوة بالظبط 6 مرات: state-first +14503 (تكرار)، و offset-first -14844 (ضياع)، و atomic 0. يعني الاختبار لازم يحط الـ crash في الفجوة عن قصد.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الشبكة مش ممكن تضمن إن رسالة توصل مرة واحدة بالظبط، لأن المرسل مايقدرش يفرق بين رسالة ضاعت و ack ضاع. اللي تقدر تعمله هو <b>exactly-once processing</b>: at-least-once delivery مع state بيستوعب التكرار. الأساس هو الـ <b>checkpointing</b>: تحفظ "قريت لحد فين" و"حسبت إيه" بشكل <b>atomic</b>، فبعد الـ crash تكمل من نقطة مطابقة لنتايجك بالظبط.</p>
+    <p>التجربة بتشغّل consumer process حقيقي على Redis stream فيه 4000 payment مجموعهم معروف، وبتقتله أكتر من مرة. الـ offset هو الـ entry id بتاع الـ stream، وكل تشغيلة بتقرا الـ stream كـ log من آخر offset. فيه تصميمين غلط، الـ offset في Redis والمجاميع في Postgres. لو حفظت الحالة الأول وبعدين الـ offset، الـ batch بيتحسب مرتين لو الـ process مات بينهم. لو حفظت الـ offset الأول وبعدين الحالة، الـ batch بيضيع. التصميم التالت بيكتب الحالة والـ offset في transaction واحدة في Postgres، فالـ crash بيسيب الاتنين أو ولا واحد.</p>
+    <p>الـ kills العشوائية ممكن تقع في الفجوة بين الكتابتين وممكن لأ، وده بالظبط اللي مخلي البج ده يعدّي من التيست: في التشغيلة دي الـ kills العشوائية طلّعت +8685 للـ state-first و0 للـ offset-first، رغم إن تشغيلة قبلها بـ 3000 event طلّعت -3130 للـ offset-first. فالسكريبت كمان بيقتل الـ process <em>جوه</em> الفجوة 6 مرات. مجموع الـ state-first طلع +14503، والـ offset-first طلع -14844، والـ atomic مظبوط في كل مرة. والمنطق هو نفسه بتاع Kafka consumer بيخزن الـ offsets بره Kafka، الفرق بس في الـ storage. وده محتاج إن الـ sink يكون transactional ويشيل الـ offset، وعشان كده بيركب حلو مع Postgres.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      consumer بيقرا events من Kafka أو Redis Streams ويحسب revenue لكل merchant في Postgres. ماتعتمدش على الـ auto-commit بتاع الـ offset. خلي جدول <code>consumer_offsets</code> في نفس الـ database، واكتب المجموع والـ offset في transaction واحدة، وعند الـ startup اقرا الـ offset من Postgres وابدأ منه. وضيف test بيقتل الـ process بين الكتابتين عن قصد.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question (exit test Q4)</b>
+    "Why doesn't exactly-once delivery really exist, and how do you achieve it in practice?" → The sender can't tell a lost message from a lost ack, so it must retry, and retries mean possible duplicates. In practice you make processing effectively once: deliver at least once, and store offsets with state atomically or make writes idempotent. The guarantee ends where your transaction ends.
+    <div class="ar-note">"ليه الـ exactly-once delivery مش موجودة فعليًا، وبتحققها عمليًا إزاي؟" ← المرسل مايقدرش يفرق بين رسالة ضاعت و ack ضاع، فلازم يعمل retry، والـ retry معناه احتمال تكرار. عمليًا بتخلي المعالجة effectively once: delivery على الأقل مرة، وبتحفظ الـ offsets مع الحالة atomically أو بتخلي الكتابات idempotent. والضمان بينتهي عند حدود الـ transaction بتاعتك.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Sinks and the boundary <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — الـ sinks والحدود</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>When you can't put the offset next to the output, make the output <b>idempotent</b>. An idempotent sink writes the full value for a stable key, so replaying is harmless: <code>ON CONFLICT (win, sku) DO UPDATE SET amount = EXCLUDED.amount</code>. The script replays one window twice. The additive version gives 1400 and 600, and the idempotent upsert keeps 700 and 300. To publish results to other services, use a <b>transactional outbox</b>, covered in <a href="../../09-Databases/lessons/41-outbox-cdc-idempotency.html">09 lesson 41</a> and <a href="../../10-Design-Patterns/lessons/27-outbox-as-code.html">10 lesson 27</a>: the event row commits with the state, and a relay publishes it at least once.</p>
+    <p>Kafka provides this inside the broker: a transactional producer writes output records and consumer offsets in one transaction, and consumers set <code>read_committed</code> to skip aborted records. Flink builds on it with a two-phase sink tied to its checkpoints: records are written to an open Kafka transaction and committed once the checkpoint completes. None of that runs here, so the code below is labelled <code>Not run here</code>: the Kafka snippet is only compile-checked against <code>@confluentinc/kafka-javascript</code> 1.11, the maintained client (kafkajs last shipped in 2023). The small log model in the script is a stand-in showing what <code>read_committed</code> filters.</p>
+    <p>All of these guarantees stop at the system's <b>boundary</b>. An email or a bank transfer isn't part of your transaction. After a replay, an email goes out twice: the stand-in provider counted 2 sends with no key. With an idempotency key that the receiver honours, it counted 1. If the receiver doesn't deduplicate, you're choosing between at-least-once and at-most-once for that side effect. So decide which is worse for each one, and say so in the design.</p>
+  </section>
+
+<pre data-file="src/p6-sinks.ts"><code class="language-typescript">import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { pgClient } from "./env.ts";
+
+const db = await pgClient();
+await db.query("CREATE TABLE window_totals (win text, sku text, amount int NOT NULL, PRIMARY KEY (win, sku))");
+
+const recomputed = [["2026-11-09T10:00", "SKU-1", 700], ["2026-11-09T10:00", "SKU-2", 300]] as const;
+
+console.log("--- additive sink: replaying the same window ---");
+const applyAdditive = async () =&gt; {
+  for (const [win, sku, amount] of recomputed) {
+    await db.query(
+      `INSERT INTO window_totals VALUES ($1, $2, $3)
+       ON CONFLICT (win, sku) DO UPDATE SET amount = window_totals.amount + EXCLUDED.amount`, [win, sku, amount]);
+  }
+};
+await applyAdditive();
+await applyAdditive();
+console.log((await db.query("SELECT sku, amount FROM window_totals ORDER BY sku")).rows);
+
+await db.query("TRUNCATE window_totals");
+console.log("\n--- idempotent sink: upsert by (window, key) with the full value ---");
+const applyIdempotent = async () =&gt; {
+  for (const [win, sku, amount] of recomputed) {
+    await db.query(
+      `INSERT INTO window_totals VALUES ($1, $2, $3)
+       ON CONFLICT (win, sku) DO UPDATE SET amount = EXCLUDED.amount`, [win, sku, amount]);
+  }
+};
+await applyIdempotent();
+await applyIdempotent();
+console.log((await db.query("SELECT sku, amount FROM window_totals ORDER BY sku")).rows);
+
+console.log("\n--- the boundary: a stand-in email provider on a local HTTP server ---");
+const seenKeys = new Set&lt;string&gt;();
+let sendsPlain = 0;
+let sendsDeduped = 0;
+const server = http.createServer((req, res) =&gt; {
+  const key = req.headers["idempotency-key"];
+  if (typeof key === "string") {
+    if (!seenKeys.has(key)) { seenKeys.add(key); sendsDeduped++; }
+  } else {
+    sendsPlain++;
+  }
+  res.end("sent");
+});
+await new Promise&lt;void&gt;((res) =&gt; server.listen(0, "127.0.0.1", () =&gt; res()));
+const port = (server.address() as AddressInfo).port;
+const send = (headers: Record&lt;string, string&gt;) =&gt; fetch(`http://127.0.0.1:${port}/send`, { method: "POST", headers });
+
+// الـ replay بيبعت نفس الإيميل تاني بعد crash قبل ما الـ offset يتسجل
+await send({});
+await send({});
+console.log("no key, delivered twice → emails actually sent:", sendsPlain);
+await send({ "idempotency-key": "invoice-77-receipt" });
+await send({ "idempotency-key": "invoice-77-receipt" });
+console.log("same key, delivered twice → emails actually sent:", sendsDeduped);
+await new Promise((r) =&gt; server.close(r));
+
+console.log("\n--- stand-in model of read_committed: a log with transaction markers ---");
+type Rec = { txn: number; value?: string; ctrl?: "commit" | "abort" };
+const log: Rec[] = [
+  { txn: 1, value: "order-1" }, { txn: 1, ctrl: "commit" },
+  { txn: 2, value: "order-2" }, { txn: 2, ctrl: "abort" },
+  { txn: 3, value: "order-3" },
+];
+const outcome = new Map(log.filter((r) =&gt; r.ctrl).map((r) =&gt; [r.txn, r.ctrl]));
+const readUncommitted = log.filter((r) =&gt; r.value).map((r) =&gt; r.value);
+const readCommitted = log.filter((r) =&gt; r.value &amp;&amp; outcome.get(r.txn) === "commit").map((r) =&gt; r.value);
+console.log("read_uncommitted:", readUncommitted);
+console.log("read_committed:  ", readCommitted, "(txn 3 still open)");
+
+await db.end();</code></pre>
+<pre><code class="language-plaintext">--- additive sink: replaying the same window ---
+[ { sku: 'SKU-1', amount: 1400 }, { sku: 'SKU-2', amount: 600 } ]
+
+--- idempotent sink: upsert by (window, key) with the full value ---
+[ { sku: 'SKU-1', amount: 700 }, { sku: 'SKU-2', amount: 300 } ]
+
+--- the boundary: a stand-in email provider on a local HTTP server ---
+no key, delivered twice → emails actually sent: 2
+same key, delivered twice → emails actually sent: 1
+
+--- stand-in model of read_committed: a log with transaction markers ---
+read_uncommitted: [ 'order-1', 'order-2', 'order-3' ]
+read_committed:   [ 'order-1' ] (txn 3 still open)</code></pre>
+  <div class="ar-note">الـ additive sink بعد replay طلّع 1400 و600 (ضعف الصح). الـ idempotent upsert ثبت على 700 و300. الـ email: من غير key اتبعت مرتين، ومع key اتبعت مرة. وآخر جزء stand-in لـ read_committed: الـ uncommitted بيشوف الـ 3، والـ committed بيشوف <code>order-1</code> بس، لأن txn 2 اتعمله abort و txn 3 لسه مفتوح.</div>
+
+<pre data-file="src/kafka-tx.ts"><code class="language-typescript">// مش متشغل هنا (Not run here): محتاج Kafka broker، الكود ده اتعمله compile بس
+import { KafkaJS } from "@confluentinc/kafka-javascript";
+
+const kafka = new KafkaJS.Kafka({ kafkaJS: { brokers: ["localhost:9092"] } });
+const producer = kafka.producer({ kafkaJS: { transactionalId: "orders-aggregator-1", idempotent: true } });
+// الـ readUncommitted بـ false هو نفس read_committed: الرسايل بتاعة transaction اتلغت مابتتقراش
+const consumer = kafka.consumer({ kafkaJS: { groupId: "orders-aggregator", readUncommitted: false, autoCommit: false } });
+
+await producer.connect();
+await consumer.connect();
+
+const tx = await producer.transaction();
+try {
+  await tx.send({ topic: "order-totals", messages: [{ key: "SKU-1", value: "700" }] });
+  // الـ output والـ offset بيتعمل لهم commit مع بعض
+  await tx.sendOffsets({ consumer, topics: [{ topic: "orders", partitions: [{ partition: 0, offset: "42" }] }] });
+  await tx.commit();
+} catch (e) {
+  await tx.abort();
+  throw e;
+}
+</code></pre>
+
+<pre data-file="KafkaSinkConfig.java"><code class="language-java">// مش متشغل هنا (Not run here): محتاج Flink و Kafka، ولا اتعمله compile
+KafkaSink&lt;String&gt; sink = KafkaSink.&lt;String&gt;builder()
+    .setBootstrapServers("localhost:9092")
+    .setRecordSerializer(serializer)
+    // الـ EXACTLY_ONCE معناه كتابة في transaction بتتقفل مع الـ checkpoint
+    .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
+    .setTransactionalIdPrefix("orders-totals")
+    .build();
+</code></pre>
+
+<pre class="diagram">
+                   stream      processor     sink        side effect
+                   (Kafka)     (consumer)    (Postgres)  (email, bank)
+ at-least-once     delivers more than once ----&gt; duplicates reach the sink
+ offset + state    |&lt;----- one Postgres transaction -----&gt;|  not covered
+ idempotent sink   duplicates absorbed by the key -------&gt;|  not covered
+ Kafka transaction |&lt;-- output + offsets, Kafka only --&gt;|     not covered
+ idempotency key                                              |&lt;-- only if the
+                                                              receiver honours it
+</pre>
+  <div class="ar-note">الجدول بيوضح كل ضمان بيغطي لحد فين. الـ at-least-once بيوصل أكتر من مرة، فالتكرار بيوصل للـ sink. الـ offset مع الـ state: transaction واحدة في Postgres، ومش بتغطي الـ side effect. الـ idempotent sink: التكرار بيتامتص بالـ key، ومش بيغطي الـ side effect برضه. الـ Kafka transaction: الـ output والـ offsets جوه Kafka بس. والـ idempotency key: بيغطي الـ side effect بس لو الطرف التاني بيحترمه.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>لو مش قادر تحط الـ offset جنب الـ output، خلي الـ output <b>idempotent</b>. الـ idempotent sink بيكتب القيمة كاملة على key ثابت، فالـ replay مابيأذيش: <code>ON CONFLICT (win, sku) DO UPDATE SET amount = EXCLUDED.amount</code>. السكريبت بيعمل replay لنفس الـ window مرتين. النسخة الـ additive طلّعت 1400 و600، والـ idempotent upsert ثبت على 700 و300. ولو عايز تنشر النتايج لـ services تانية، استخدم <b>transactional outbox</b>، موجود في <a href="../../09-Databases/lessons/41-outbox-cdc-idempotency.html">09 lesson 41</a> و<a href="../../10-Design-Patterns/lessons/27-outbox-as-code.html">10 lesson 27</a>: صف الـ event بيتعمل له commit مع الحالة، و relay بينشره at-least-once.</p>
+    <p>Kafka بيوفر ده جوه الـ broker: الـ transactional producer بيكتب الـ output records والـ consumer offsets في transaction واحدة، والـ consumers بيعملوا <code>read_committed</code> عشان يتخطوا الـ records اللي اتلغت. و Flink بيبني على ده بـ two-phase sink مربوط بالـ checkpoints: الـ records بتتكتب في Kafka transaction مفتوحة وبتتعمل commit لما الـ checkpoint يخلص. ولا حاجة من دول اتشغلت هنا، فالكود فوق عليه علامة <code>Not run here</code>: كود Kafka اتعمله compile بس على <code>@confluentinc/kafka-javascript</code> 1.11، وده الـ client اللي لسه بيتحدث (kafkajs آخر نسخة ليه في 2023). والموديل الصغير اللي في السكريبت stand-in بيوضح <code>read_committed</code> بيفلتر إيه.</p>
+    <p>وكل الضمانات دي بتقف عند <b>حدود</b> السيستم. الإيميل أو التحويل البنكي مش جزء من الـ transaction بتاعتك. بعد الـ replay، الإيميل بيتبعت مرتين: الـ stand-in provider عدّ 2 من غير key، ومع idempotency key بيحترمه الطرف التاني عدّ 1. ولو الطرف التاني مابيعملش dedupe، إنت بتختار بين at-least-once و at-most-once للـ side effect ده. فاحسم أنهي أسوأ لكل واحد، واكتبها في الـ design.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      job بيجمّع الطلبات كل 5 دقايق ويكتب في <code>sales_per_minute</code>: خلي الـ key <code>(window, sku)</code> والكتابة قيمة كاملة، فأي replay أو backfill آمن. أما إيميل "تم الشحن" فروح لـ provider بيدعم idempotency key، وخلي الـ key هو <code>order_id + event_type</code>. وفي الـ design doc اكتب بوضوح: "الإيميل at-least-once، وممكن يتكرر".
+    </div>
+  </section>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ No alert on prepared transactions</b>
+<pre><code class="language-sql">-- مفيش alert، والصف فضل متقفل 3 أيام
+SELECT * FROM orders WHERE id = 42 FOR UPDATE;</code></pre></div>
+    <div class="good"><b>✅ Alert on their age</b>
+<pre><code class="language-sql">-- أي prepared transaction أقدم من 5 دقايق يبقى alert
+SELECT gid, prepared FROM pg_prepared_xacts
+WHERE prepared &lt; now() - interval '5 minutes';</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ prepared transaction اليتيم بيمسك الـ locks ومش بيظهر كـ session عادية، فمحدش بيلاحظ لحد ما الـ timeouts تبدأ، و<code>VACUUM</code> بيتعطل. ✅ الـ query دي بتطلّع أي واحد قديم، وعليها alert.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A compensation that isn't idempotent</b>
+<pre><code class="language-typescript">// الـ retry هنا بيرجّع الفلوس مرتين
+await db.query("UPDATE wallets SET balance = balance + 100 WHERE user_id = 7");</code></pre></div>
+    <div class="good"><b>✅ Guard it with the current state</b>
+<pre><code class="language-typescript">// الشرط ده بيخلي الـ retry الزيادة يغير 0 صفوف
+await db.query("UPDATE charges SET status = 'REFUNDED' WHERE order_id = $1 AND status = 'PAID'", [orderId]);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ compensation بيتعمل له retry، فلو مش idempotent الـ retry الواحد بيرجّع الفلوس مرتين. ✅ الشرط على الحالة بيخلي العملية تحصل مرة واحدة، وأي retry بعدها يغير 0 صفوف.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Cancel with no tombstone</b>
+<pre><code class="language-sql">-- لو الـ try لسه ماوصلش، الـ cancel ده no-op
+UPDATE holds SET status = 'CANCELLED'
+WHERE hold_id = 'booking-4' AND status = 'TRIED';</code></pre></div>
+    <div class="good"><b>✅ Record the cancel first</b>
+<pre><code class="language-sql">-- ده بيسجل tombstone، فالـ try المتأخر هيترفض
+INSERT INTO holds (hold_id, status)
+VALUES ('booking-4', 'CANCELLED')
+ON CONFLICT (hold_id) DO NOTHING;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ من غير tombstone، الـ cancel مابيعملش حاجة، والـ try المتأخر بيحجز 2 seats عالقين. ✅ الـ <code>INSERT</code> بيسجل إن الـ hold ده اتلغى، فالـ try اللي يوصل بعده بيشوف السجل ويرفض.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Offset and state in two systems</b>
+<pre><code class="language-typescript">await db.query("UPDATE totals SET amount = amount + $1", [sum]);
+// لو الـ process مات هنا، الـ batch هيتحسب مرتين
+await r.set("offset", lastId);</code></pre></div>
+    <div class="good"><b>✅ Both in one transaction</b>
+<pre><code class="language-typescript">await db.query("BEGIN");
+await db.query("UPDATE totals SET amount = amount + $1", [sum]);
+await db.query("UPDATE consumer_offsets SET last_id = $1", [lastId]);
+await db.query("COMMIT");</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ كتابتين في 2 systems بينهم فجوة، والـ kill جواها طلّع +14503 في التجربة. ✅ transaction واحدة، فيا الاتنين يحصلوا يا ولا واحد، والفرق كان 0 في كل مرة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ An additive sink with replays</b>
+<pre><code class="language-sql">-- أي replay بيجمع القيمة تاني
+ON CONFLICT (win, sku)
+DO UPDATE SET amount = window_totals.amount + EXCLUDED.amount;</code></pre></div>
+    <div class="good"><b>✅ Write the full value for the key</b>
+<pre><code class="language-sql">-- الـ replay بيكتب نفس الرقم تاني، فمفيش ضرر
+ON CONFLICT (win, sku)
+DO UPDATE SET amount = EXCLUDED.amount;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ upsert اللي بيجمع بيضاعف الرقم مع كل replay: 700 بقت 1400. ✅ كتابة القيمة كاملة على key ثابت بتخلي الـ replay مالوش أثر، وده معناه idempotent sink.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Find the orphan <span class="lvl lvl-1">🟢 easy</span></b>
+    Start Postgres with <code>max_prepared_transactions=5</code> and prepare a transaction. Write a query that finds it and prints its age, then end it by hand.
+    <div class="ar-note">شغّل Postgres بـ <code>max_prepared_transactions=5</code>، واعمل prepare لـ transaction. اكتب query تلاقيه وتطبع عمره، وبعدين انهيه بإيدك.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-orphans.ts"><code class="language-typescript">import { pgClient, sleep } from "./env.ts";
+
+const db = await pgClient();
+await db.query("CREATE TABLE stock (sku text PRIMARY KEY, available int NOT NULL); INSERT INTO stock VALUES ('SKU-1', 10)");
+await db.query("BEGIN");
+await db.query("UPDATE stock SET available = available - 1");
+await db.query("PREPARE TRANSACTION 'order-77-inv'");
+await sleep(1100);
+
+// الـ query دي هي الـ alert: أي prepared transaction أقدم من ثانية (في الإنتاج خليها دقايق)
+const orphans = await db.query(`
+  SELECT gid, database, extract(epoch FROM now() - prepared)::int AS age_seconds
+  FROM pg_prepared_xacts
+  WHERE prepared &lt; now() - interval '1 second'
+`);
+console.log(orphans.rows);
+await db.query("ROLLBACK PREPARED 'order-77-inv'");
+await db.end();</code></pre>
+<pre><code class="language-plaintext">[ { gid: 'order-77-inv', database: 'postgres', age_seconds: 1 } ]</code></pre>
+      <div class="ar-note">الـ query بتطلع <code>order-77-inv</code> وعمره بالثواني. في الإنتاج خليها كل دقيقة بحد 5 دقايق، و<code>ROLLBACK PREPARED</code> أو <code>COMMIT PREPARED</code> بعد ما تراجع قرار الـ coordinator.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Add a fourth step <span class="lvl lvl-2">🟡 medium</span></b>
+    Add a "loyalty points" step to the order saga in the third part, with its own compensation. Run it and confirm that a shipping failure undoes all three previous steps exactly once.
+    <div class="ar-note">ضيف خطوة "loyalty points" للـ order saga اللي في الجزء التالت، ومعاها compensation. شغّله واتأكد إن فشل الشحن بيرجّع الـ 3 خطوات اللي قبله مرة واحدة بالظبط.</div>
+    <details><summary>Hint · تلميح</summary>
+      Compensate in reverse order, and add a status guard to each compensation. Use a seeded failure so the run repeats.
+      <div class="ar-note">اعمل الـ compensation بالترتيب العكسي، وحط guard على الحالة في كل compensation، واستخدم seed ثابت عشان التشغيل يتكرر.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Crash the outbox relay <span class="lvl lvl-3">🔴 hard</span></b>
+    Write a consumer that reads the Redis stream and inserts an outbox row in the same Postgres transaction as the total. Kill it inside the gap, and show the total is exact while the relay may publish a duplicate. Then deduplicate on the consumer side by a unique event id.
+    <div class="ar-note">اكتب consumer بيقرا الـ Redis stream ويعمل insert لصف outbox في نفس الـ transaction مع المجموع. اقتله جوه الفجوة، ووضّح إن المجموع مظبوط والـ relay ممكن ينشر تكرار. وبعدين اعمل dedupe على ناحية الـ consumer بـ event id unique.</div>
+    <details><summary>Hint · تلميح</summary>
+      The relay crashes between publishing and marking the row as sent. That produces a duplicate no matter how careful you are, so the deduplication has to happen at the consumer.
+      <div class="ar-note">الـ relay بيقع بين النشر وتعليم الصف إنه اتبعت. ده بيطلّع تكرار مهما كنت حريص، فالـ dedupe لازم يبقى عند الـ consumer.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project / at work <span class="lvl lvl-3">🔴 project</span></b>
+    Pick one flow in your side project that touches two systems, for example "order placed, then notify". Draw which guarantee each step has, and mark the point where a crash causes a duplicate or a loss. Fix one with an outbox, a <code>consumer_offsets</code> row, or an idempotency key, and test it with a real kill.
+    <div class="ar-note">اختار flow في مشروعك بيلمس 2 systems، زي "order placed وبعدين notify". ارسم كل خطوة ليها أنهي ضمان، وعلّم المكان اللي الـ crash فيه بيطلّع تكرار أو ضياع. صلّح واحدة بـ outbox أو صف <code>consumer_offsets</code> أو idempotency key، واختبرها بـ kill حقيقي.</div>
+    <details><summary>Hint · تلميح</summary>
+      Start with the step where a duplicate would be worst. Put <code>process.kill(process.pid, "SIGKILL")</code> between the two writes, and check the totals afterwards.
+      <div class="ar-note">ابدأ بالخطوة اللي التكرار فيها أسوأ حاجة. حط <code>process.kill(process.pid, "SIGKILL")</code> بين الكتابتين، واتأكد من المجاميع بعدها.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>2PC: prepare, durable decision, then commit. A yes vote means holding locks until the coordinator decides.</li>
+    <li>Coordinator lost after prepare: locks stay, <code>55P03</code> for others, survives restart. Only <code>COMMIT PREPARED</code> or <code>ROLLBACK PREPARED</code> ends it. Alert on age.</li>
+    <li>Prepared transaction ids are unique per cluster, and <code>max_prepared_transactions</code> defaults to 0.</li>
+    <li>2PC is rare between services: blocking, coupled availability, ≈2.5x to 4x less throughput on a hot row here. Spanner-style systems replicate the coordinator with consensus.</li>
+    <li>Saga: local commits plus compensation, no isolation. Semantic locks (<code>PENDING</code>) hide intermediate states.</li>
+    <li>Compensations must be idempotent, retried with backoff, and sent to a human queue when they keep failing.</li>
+    <li>TCC: hold with a TTL, then confirm or cancel. Handle empty rollback and hanging with one tombstone row.</li>
+    <li>Exactly-once processing means saving offset and state atomically. Random kills can miss the gap, so inject the crash there.</li>
+    <li>Idempotent sink: write the full value for a stable key, never add. Outbox for publishing events.</li>
+    <li>The guarantee ends at your transaction. External email or bank calls need a receiver-side idempotency key, or an explicit choice of duplicates vs loss.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ 2PC: prepare، وقرار durable، وبعدين commit. والموافقة معناها إنك ماسك الـ locks لحد ما الـ coordinator يقرر.</li>
+      <li>لو الـ coordinator ضاع بعد الـ prepare: الـ locks بتفضل، والباقيين بياخدوا <code>55P03</code>، وبيعدي من الـ restart. مفيش غير <code>COMMIT PREPARED</code> أو <code>ROLLBACK PREPARED</code> ينهيه. حط alert على العمر.</li>
+      <li>الـ ids بتاعة الـ prepared transactions unique على مستوى الـ cluster، و<code>max_prepared_transactions</code> الافتراضي 0.</li>
+      <li>الـ 2PC نادر بين الـ services: blocking، و availability مربوطة ببعض، و throughput أقل ≈2.5 لـ 4 مرات على صف ساخن هنا. والسيستمز زي Spanner بتعمل replication للـ coordinator بـ consensus.</li>
+      <li>الـ saga: local commits مع compensation، ومفيش isolation. الـ semantic locks (<code>PENDING</code>) بتخبّي الحالات اللي في النص.</li>
+      <li>الـ compensations لازم idempotent، بـ retry و backoff، ولو فضلت تفشل تروح لـ human queue.</li>
+      <li>الـ TCC: hold بـ TTL وبعدين confirm أو cancel. والـ empty rollback والـ hanging بيتحلوا بصف tombstone واحد.</li>
+      <li>الـ exactly-once processing معناه تحفظ الـ offset والـ state atomically. والـ kills العشوائية ممكن تفوّت الفجوة، فحط الـ crash جواها عن قصد.</li>
+      <li>الـ idempotent sink: اكتب القيمة كاملة على key ثابت، وماتجمعش. والـ outbox لنشر الـ events.</li>
+      <li>الضمان بينتهي عند حدود الـ transaction بتاعتك. الإيميل أو البنك محتاجين idempotency key عند الطرف التاني، أو قرار صريح بين التكرار والضياع.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 12 · 3.1 — Transactions على scale: 2PC (coordinator، blocking، نادر عمليًا)، sagas (compensation)، TCC (try-confirm-cancel) كمفهوم</label>
+    <label><input type="checkbox" data-key="r2"> 12 · 3.1 — Exactly-once في stream processing (checkpointing، idempotent sinks، transactional outbox)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.postgresql.org/docs/current/sql-prepare-transaction.html">PostgreSQL docs — PREPARE TRANSACTION</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/two-phase.html">PostgreSQL docs — Two-Phase Transactions</a></li>
+    <li><a href="https://www.cs.cornell.edu/andru/cs711/2002fa/reading/sagas.pdf">Garcia-Molina &amp; Salem — Sagas (1987)</a></li>
+    <li><a href="https://research.google/pubs/spanner-googles-globally-distributed-database-2/">Google — Spanner: Google's Globally-Distributed Database</a></li>
+    <li><a href="https://www.confluent.io/blog/transactions-apache-kafka/">Confluent — Transactions in Apache Kafka</a></li>
+    <li><a href="https://nightlies.apache.org/flink/flink-docs-stable/docs/connectors/datastream/kafka/">Apache Flink — Kafka connector</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./33-distributed-locks-fencing.html"><small>← Previous</small>33 · Distributed Locks</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./35-storage-engines-btree-lsm.html"><small>Next →</small>35 · B-Tree vs LSM</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

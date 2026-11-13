@@ -1,0 +1,1603 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Object Storage, Retention &amp; Backups at Scale — 12 System Design</title>
+<meta name="section" content="12-System-Design">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">12 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 15 / 63</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <header>
+    <h1>Object Storage, Retention &amp; Backups at Scale</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 15 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">AWS SDK v3 · Postgres 18 · Node 22</span>
+      <span class="chip">Prereq: 14 Consistency &amp; CAP</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>12 · 2.2 — Object storage (S3): semantics (eventual → strong consistency دلوقتي)، presigned URLs (upload مباشر من الـ client)، multipart upload، lifecycle policies (hot → cold → glacier)، versioning</li>
+        <li>12 · 2.2 — Data retention، archival، backups على scale (RPO/RTO)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Object storage semantics</a></li>
+      <li><a href="#p2">Part 2 — Presigned URLs</a></li>
+      <li><a href="#p3">Part 3 — Multipart uploads</a></li>
+      <li><a href="#p4">Part 4 — Lifecycle &amp; cost</a></li>
+      <li><a href="#p5">Part 5 — Retention &amp; archival</a></li>
+      <li><a href="#p6">Part 6 — Backups, RPO &amp; RTO</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Every real product ends up storing files: invoice PDFs, exports, avatars, database backups. Object storage is the cheap, durable place for them, but it behaves nothing like a filesystem or a database, and the differences decide your design: no partial updates, uploads that should skip your API, parts that bill you forever when abandoned, and archive tiers that take hours to read.</p>
+    <p>Retention and backups are where a system design answer turns into a production answer. "We have backups" means nothing until you can state the RPO, the RTO and the date of your last restore test. Interviewers ask this, and incidents test it.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>أي منتج حقيقي في الآخر بيخزّن ملفات: فواتير PDF، exports، صور، backups بتاعة الداتابيز. الـ object storage هو المكان الرخيص والـ durable ليها، بس هو مش زي الـ filesystem ولا زي الداتابيز، والفروق دي هي اللي بتحدد الـ design بتاعك: مفيش partial update، الـ uploads المفروض متعديش على الـ API بتاعك، الـ parts اللي بتتساب بتتحاسب عليها للأبد، والـ archive tiers القراية منها بتاخد ساعات.</p>
+    <p>والـ retention والـ backups هما المكان اللي إجابة الـ system design بتتحول فيه لإجابة production. جملة "عندنا backups" ملهاش معنى لحد ما تقول الـ RPO كام، والـ RTO كام، وآخر مرة جرّبت فيها restore كانت إمتى. ده اللي الـ interviewer بيسأل عليه، وده اللي الـ incidents بتختبره.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Object storage semantics <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الـ semantics بتاعة الـ object storage</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>The model is a flat map from key to blob.</b> A key like <code>tenants/t-42/invoices/2026/INV-1001.json</code> is one string: the slashes are ordinary characters. "Folders" are computed at read time from <code>Prefix</code> plus <code>Delimiter</code>, so renaming a "folder" means copying and deleting every object under it.</p>
+    <p><b>Objects are immutable.</b> There is no partial update: changing one field means writing the whole object again. Partial <em>reads</em> do exist through <code>Range</code>. Listing is paginated, up to 1,000 keys per page on AWS, so any "list everything" code needs a <code>ContinuationToken</code> loop.</p>
+    <p><b>Consistency.</b> Since December 1, 2020, S3 gives strong read-after-write for GET, PUT and LIST, in every region, at no extra cost. So the README's "eventual → strong" is history you may still see in old blog posts. Strong does not mean transactional: there are no multi-key transactions, and two concurrent writers to one key end with last-writer-wins unless you use a condition.</p>
+    <p><b>Conditional writes</b> are the fix for that race. <code>If-None-Match: *</code> means "create only if the key does not exist", and <code>If-Match: &lt;etag&gt;</code> means "replace only if it is still the version I read". They work on PutObject, CompleteMultipartUpload and CopyObject. Among concurrent writers the first to finish wins and the others get <code>412 Precondition Failed</code>; a concurrent delete can produce <code>409 Conflict</code> instead.</p>
+    <p><b>Current limits</b> (AWS docs): 48.8 TiB maximum object, 10,000 parts maximum, parts from 5 MiB to 5 GiB with no minimum on the last part, and multipart worth considering from 100 MB. Note that the largest object is simply 10,000 × 5 GiB, while minimum-size parts only reach 48.8 GiB, so part size must be chosen from the file size.</p>
+  </section>
+
+<pre data-file="src/p1-semantics.ts"><code class="language-typescript">import {
+  PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command,
+} from "@aws-sdk/client-s3";
+import { startS3 } from "./lab.ts";
+
+console.log("STAND-IN: s3rver 3.7.1 (not AWS). Real AWS SDK client.");
+const { s3, bucket: Bucket, close } = await startS3();
+const body = async (Key: string, Range?: string) =&gt;
+  (await s3.send(new GetObjectCommand({ Bucket, Key, Range }))).Body!.transformToString();
+
+// (1) المفتاح نص مسطّح: مفيش فولدر بيتعمل، الـ ⁦"/"⁩ مجرد حرف في الاسم
+const Key = "tenants/t-42/invoices/2026/INV-1001.json";
+const v1 = await s3.send(new PutObjectCommand({ Bucket, Key, Body: '{"total":1000,"status":"open"}' }));
+console.log("put v1  etag", v1.ETag);
+
+// (2) الـ read بعد الـ write بيرجّع آخر نسخة، وده اللي AWS بتضمنه من ديسمبر 2020
+console.log("get     ", await body(Key));
+
+// (3) مفيش partial update: تعديل حقل واحد معناه تكتب الـ object كله من أول وجديد
+const v2 = await s3.send(new PutObjectCommand({ Bucket, Key, Body: '{"total":1000,"status":"paid"}' }));
+console.log("put v2  etag", v2.ETag, "(whole object replaced)");
+console.log("get     ", await body(Key));
+
+// (4) القراية الجزئية موجودة: Range بيجيب bytes معينة، بس الكتابة الجزئية لأ
+console.log("range   ", await body(Key, "bytes=0-11"));
+
+// (5) الكتابة المشروطة: على AWS ده بيرجّع ⁦412 —⁩ الـ stand-in بيتجاهل الشرط خالص
+const cond = await s3.send(new PutObjectCommand({ Bucket, Key, Body: '{"total":0}', IfNoneMatch: "*" }));
+console.log("If-None-Match:* on existing key -&gt;", cond.$metadata.httpStatusCode, "(stand-in ignores it; real S3 = 412)");
+const head = await s3.send(new HeadObjectCommand({ Bucket, Key }));
+console.log("size now", head.ContentLength);
+
+// (6) الـ list بصفحات: كل صفحة max 1000 على AWS، هنا 3 عشان نشوف الـ token
+for (let i = 1; i &lt;= 7; i++) {
+  await s3.send(new PutObjectCommand({ Bucket, Key: `tenants/t-7/invoices/INV-${i}.pdf`, Body: "%PDF" }));
+}
+let token: string | undefined;
+let page = 0;
+do {
+  const r = await s3.send(new ListObjectsV2Command({
+    Bucket, Prefix: "tenants/t-7/", MaxKeys: 3, ContinuationToken: token,
+  }));
+  console.log(`page ${++page}:`, r.Contents?.map((o) =&gt; o.Key!.split("/").pop()).join(" "), "truncated:", r.IsTruncated);
+  token = r.NextContinuationToken;
+} while (token);
+
+// (7) الـ "فولدرات" بتتحسب وقت القراية بـ ⁦Delimiter —⁩ مفيش حاجة اسمها rename فولدر
+for (const m of ["2026-01", "2026-02"]) {
+  await s3.send(new PutObjectCommand({ Bucket, Key: `reports/${m}/summary.csv`, Body: "id,total" }));
+}
+const dirs = await s3.send(new ListObjectsV2Command({ Bucket, Prefix: "reports/", Delimiter: "/" }));
+console.log("prefixes:", dirs.CommonPrefixes?.map((p) =&gt; p.Prefix).join(" "));
+
+// (8) حساب حدود الـ multipart من الأرقام الرسمية
+const MiB = 2 ** 20, GiB = 2 ** 30, TiB = 2 ** 40;
+console.log("10,000 x 5 MiB =", (10_000 * 5 * MiB / GiB).toFixed(1), "GiB");
+console.log("10,000 x 5 GiB =", (10_000 * 5 * GiB / TiB).toFixed(1), "TiB");
+await close();
+process.exit(0);
+</code></pre>
+<pre><code class="language-plaintext">STAND-IN: s3rver 3.7.1 (not AWS). Real AWS SDK client.
+put v1  etag "8383861105b875db484540888068634f"
+get      {"total":1000,"status":"open"}
+put v2  etag "9d572318038a969e7a4e38e4ce173b84" (whole object replaced)
+get      {"total":1000,"status":"paid"}
+range    {"total":100
+If-None-Match:* on existing key -&gt; 200 (stand-in ignores it; real S3 = 412)
+size now 11
+page 1: INV-1.pdf INV-2.pdf INV-3.pdf truncated: true
+page 2: INV-4.pdf INV-5.pdf INV-6.pdf truncated: true
+page 3: INV-7.pdf truncated: false
+prefixes: reports/2026-01/ reports/2026-02/
+10,000 x 5 MiB = 48.8 GiB
+10,000 x 5 GiB = 48.8 TiB
+</code></pre>
+  <div class="ar-note">الناتج من تشغيل حقيقي بالـ AWS SDK على s3rver. الـ ETag اتغير مع كل كتابة لأن الـ object كله اتبدل، والـ <code>Range</code> جاب أول 12 byte بس، والـ list طلع 3 صفحات بالـ token. سطر <code>If-None-Match</code> رجع 200 وغيّر الحجم لـ 11: ده <b>عيب في الـ stand-in</b>، على AWS الرد 412 والقيمة القديمة تفضل زي ما هي. وآخر سطرين حساب للحدود: أصغر parts توصّلك لـ 48.8 GiB بس، وأكبر parts توصّلك لـ 48.8 TiB.</div>
+
+  <table>
+    <tr><th>Behaviour</th><th>AWS S3 (docs)</th><th>s3rver 3.7.1 in this lesson</th></tr>
+    <tr><td>put, get, overwrite, Range, list pages</td><td>yes</td><td>yes (run here; needs <code>--openssl-legacy-provider</code> on Node 22 for list tokens)</td></tr>
+    <tr><td><code>If-None-Match</code> / <code>If-Match</code></td><td>412 on failure</td><td>ignored, the write succeeds</td></tr>
+    <tr><td>Signature check on presigned URLs</td><td>403 if tampered</td><td>not checked (200)</td></tr>
+    <tr><td>Expiry check on presigned URLs</td><td>403</td><td>403 (run here)</td></tr>
+    <tr><td>POST policy limits</td><td>enforced</td><td>not enforced</td></tr>
+    <tr><td>ListParts, ListMultipartUploads, Abort</td><td>yes</td><td>not implemented (405 / 501)</td></tr>
+    <tr><td>5 MiB minimum part size</td><td>enforced at complete</td><td>not enforced</td></tr>
+    <tr><td>Multipart ETag format</td><td>not the MD5 of the file</td><td>returns the file's MD5</td></tr>
+    <tr><td>Lifecycle, versioning, storage classes</td><td>yes</td><td>not modelled: calculators only</td></tr>
+  </table>
+  <div class="ar-note">الجدول ده عشان متتلخبطش: عمود AWS من الـ docs الرسمية، وعمود s3rver هو اللي شوفناه بنفسنا. put/get/overwrite/Range/list شغالين فعلًا، بس الكتابة المشروطة بيتجاهلها، والتوقيع المتلعب فيه بيقبله، وحدود الـ POST policy مش بيطبقها، و ListParts و Abort مش موجودين، و5 MiB كحد أدنى مش بيطبقه، والـ ETag بتاع الـ multipart عنده غلط عن AWS، والـ lifecycle والـ versioning مش موجودين خالص. أي حاجة من دول في الدرس اتقالت من الـ docs مش من التشغيل، ومكتوب عليها كده. الوحيد اللي شغال زي AWS هو رفض اللينك المنتهي (403).</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ object storage ببساطة map مسطّحة من key لـ blob. المفتاح زي <code>tenants/t-42/invoices/2026/INV-1001.json</code> ده نص واحد، والـ "/" حرف عادي. الـ "فولدرات" بتتحسب وقت القراية بـ <code>Prefix</code> و<code>Delimiter</code>، فلو عايز تعمل rename لفولدر، لازم تعمل copy و delete لكل object جواه.</p>
+    <p>الـ objects <b>immutable</b>: مفيش partial update. لو هتغيّر حقل واحد هتكتب الـ object كله من أول وجديد. القراية الجزئية موجودة بـ <code>Range</code>، بس الكتابة الجزئية لأ. والـ list بصفحات، على AWS لحد 1000 key في الصفحة، فأي كود بيقول "هات كل حاجة" لازم يلف بـ <code>ContinuationToken</code>.</p>
+    <p><b>الـ consistency:</b> من 1 ديسمبر 2020 الـ S3 بيدي strong read-after-write لـ GET و PUT و LIST في كل الـ regions ومن غير فلوس زيادة. يعني "eventual → strong" اللي في الـ README ده تاريخ لسه هتلاقيه في blog posts قديمة. بس strong مش معناها transactions: مفيش transaction على أكتر من key، واتنين بيكتبوا على نفس الـ key في نفس الوقت، اللي يخلص الأخير هو اللي يكسب، إلا لو استخدمت شرط.</p>
+    <p><b>الكتابة المشروطة</b> هي الحل للـ race ده. <code>If-None-Match: *</code> معناها "اكتب بس لو الـ key مش موجود"، و<code>If-Match: &lt;etag&gt;</code> معناها "بدّل بس لو لسه نفس النسخة اللي قريتها". شغالين على PutObject و CompleteMultipartUpload و CopyObject. لو في كذا حد بيكتب مع بعض، أول واحد يخلص يكسب والباقي ياخدوا <code>412 Precondition Failed</code>، ولو حصل delete في نفس الوقت ممكن تاخد <code>409 Conflict</code>.</p>
+    <p><b>الحدود الحالية</b> من الـ docs: أكبر object 48.8 TiB، أقصى عدد parts هو 10,000، حجم الـ part من 5 MiB لـ 5 GiB والـ part الأخير ملوش حد أدنى، وفكّر في الـ multipart من 100 MB. لاحظ إن أكبر object هو ببساطة 10,000 × 5 GiB، بينما أصغر parts بتوصّلك لـ 48.8 GiB بس، يعني حجم الـ part لازم يتحسب من حجم الملف.</p>
+    <p>إحنا بنشغل الأمثلة على <b>s3rver</b>، ده stand-in محلي مش AWS. الجدول فوق بيقولك بالظبط إيه اللي موديله وإيه لأ.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      فواتير SaaS: خلّي الـ key <code>tenants/{tenantId}/invoices/{yyyy}/{uuid}.pdf</code>. الـ tenant في أول المفتاح بيدّيك IAM policy بالـ prefix وتكلفة لكل عميل وexport سهل. والـ cron اللي بيبني تقرير شهري من أكتر من worker: اكتبه بـ <code>If-None-Match: *</code>، أول worker يكسب والباقي ياخدوا 412 ويتجاهلوها، بدل ما تعمل distributed lock عشان ملف.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: the key is your only index</b>
+    The only query S3 answers quickly is "keys starting with this prefix, in lexical order". Listing is paged at 1,000 keys per request, so finding "all invoices over $500" means a metadata table in Postgres, not S3. Keep bytes in S3 and facts in the database, and link them with the key.
+    <div class="ar-note">الـ key هو الـ index الوحيد عندك. السؤال الوحيد اللي S3 بيجاوبه بسرعة هو "المفاتيح اللي بتبدأ بالـ prefix ده بالترتيب الأبجدي". والـ list بصفحات كل واحدة 1000 key، فسؤال زي "كل الفواتير فوق 500 دولار" محتاج جدول metadata في Postgres مش S3. خلّي الـ bytes في S3 والمعلومات في الداتابيز، واربط بينهم بالـ key.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "S3 is strongly consistent now. Can two workers still overwrite each other's output?" → Yes. Strong consistency only guarantees that a read sees the latest finished write. Two PUTs to one key are still last-writer-wins. Use <code>If-None-Match: *</code> for create-once or <code>If-Match</code> with the ETag for compare-and-swap, and treat 412 as "someone else won".
+    <div class="ar-note">"الـ S3 بقى strongly consistent. ممكن لسه اتنين workers يكتبوا فوق بعض؟" ← أيوه. الـ strong consistency بتضمن بس إن القراية تشوف آخر كتابة خلصت. اتنين PUT على نفس الـ key برضه آخر واحد يكسب. استخدم <code>If-None-Match: *</code> للإنشاء مرة واحدة، أو <code>If-Match</code> مع الـ ETag لـ compare-and-swap، وتعامل مع الـ 412 على إنها "حد تاني سبقني".</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Presigned URLs: invoice uploads that skip your API <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ presigned URLs: رفع الفواتير من غير ما يعدّي على الـ API</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Proxying uploads through Node is the expensive default.</b> Eight concurrent 20 MiB invoice uploads, measured on the API process alone: buffering peaked at about 416 MB RSS, and streaming still moved all 160 MiB through the process while holding one connection per upload. With presigning the API moved 0 bytes: it signs a URL and returns a small JSON. Memory and connection slots are what fall over first under real load, so the difference matters most when uploads are slow, because a slow mobile client holds a proxy connection for minutes.</p>
+    <p><b>A presigned URL</b> is a normal S3 URL with an expiry and a signature computed from your credentials. Whoever holds it can do exactly that one operation on that one key until it expires, and no AWS credentials ever reach the browser. One detail bites people: the AWS SDK v3 presigner does <em>not</em> sign <code>Content-Type</code> by default (its source adds it to <code>unsignableHeaders</code>), so a URL you meant for PDFs would accept any type. Pass <code>signableHeaders: new Set(["content-type"])</code>, and the client must then send exactly that header. Line (9) of the run prints both signed-header lists. Our stand-in doesn't verify signatures, so the enforcement itself comes from AWS's signing rules, not from this run.</p>
+    <p><b>You cannot trust the client about what it uploaded.</b> A plain presigned PUT doesn't give you a size range, so use a POST policy with <code>content-length-range</code> when you need a hard limit. Either way, record a <code>pending</code> row before signing, then confirm: on completion read the real size with <code>HeadObject</code> and only then mark it <code>uploaded</code>. Generate the key yourself, never from the user's filename, and let a reaper expire rows whose upload never arrived. Completion can come from the client or, more reliably, from an S3 event notification into a queue (not run here).</p>
+  </section>
+
+<pre class="diagram">
+  Browser                API (Node)              Postgres            S3
+     |  POST /uploads       |                        |                |
+     |--------------------->|  INSERT status=pending |                |
+     |                      |----------------------->|                |
+     |   { id, url }        |  sign PUT (no S3 call) |                |
+     |&lt;---------------------|                        |                |
+     |  PUT file bytes directly                                       |
+     |--------------------------------------------------------------->|
+     |  POST /uploads/id/complete                                     |
+     |--------------------->|  HeadObject: real size                  |
+     |                      |---------------------------------------->|
+     |                      |  UPDATE status=uploaded|                |
+     |        200           |----------------------->|                |
+     |&lt;---------------------|                        |                |
+</pre>
+  <div class="ar-note">الـ Browser بيطلب رفع من الـ API، فالـ API يسجّل صف <code>pending</code> في Postgres ويمضي URL من غير ما يكلم S3 أصلًا، ويرجّع الـ id والـ URL. بعدين الـ Browser يرفع الملف على S3 مباشرة، والـ bytes مبتعديش على الـ API خالص. لما يخلص يكلّم <code>complete</code>، فالـ API يسأل S3 بـ <code>HeadObject</code> عن الحجم الحقيقي، ولو تمام يحوّل الصف لـ <code>uploaded</code>.</div>
+
+<pre data-file="src/p2-api.ts"><code class="language-typescript">// الـ API لوحده في process منفصل عشان الـ RSS بتاعه يتقاس لوحده
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { Transform } from "node:stream";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { s3Client } from "./lab.ts";
+
+const Bucket = "invoices";
+const s3 = s3Client(process.env.S3_ENDPOINT!);
+const stats = { bytesThroughApi: 0, peakRssMb: 0 };
+setInterval(() =&gt; {
+  stats.peakRssMb = Math.max(stats.peakRssMb, Math.round(process.memoryUsage().rss / 2 ** 20));
+}, 10).unref();
+
+const server = http.createServer(async (req, res) =&gt; {
+  const url = new URL(req.url!, "http://x");
+  const Key = `tenants/t-42/invoices/${url.searchParams.get("name")}`;
+  const ContentLength = Number(req.headers["content-length"] ?? 0);
+  const count = (c: Buffer) =&gt; { stats.bytesThroughApi += c.length; };
+
+  if (url.pathname === "/proxy-buffer") {
+    // ❌ الأوحش: الملف كله في الـ heap قبل ما يتبعت لـ S3
+    const chunks: Buffer[] = [];
+    for await (const c of req) { count(c as Buffer); chunks.push(c as Buffer); }
+    await s3.send(new PutObjectCommand({ Bucket, Key, Body: Buffer.concat(chunks), ContentType: "application/pdf" }));
+    res.end("ok");
+  } else if (url.pathname === "/proxy-stream") {
+    // ❌ أحسن في الـ memory: بس الـ API لسه ماسك الـ connection وعدّى عليه كل byte
+    const counted = req.pipe(new Transform({ transform(c, _e, cb) { count(c); cb(null, c); } }));
+    await s3.send(new PutObjectCommand({ Bucket, Key, Body: counted, ContentLength, ContentType: "application/pdf" }));
+    res.end("ok");
+  } else if (url.pathname === "/presign") {
+    // ✅ الـ API بيعمل توقيع بس: JSON صغير والـ client بيرفع لـ S3 مباشرة
+    const signed = await getSignedUrl(s3, new PutObjectCommand({ Bucket, Key, ContentType: "application/pdf" }), { expiresIn: 300 });
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ url: signed }));
+  } else if (url.pathname === "/stats") {
+    res.end(JSON.stringify(stats));
+  } else { res.statusCode = 404; res.end(); }
+});
+server.listen(0, "127.0.0.1", () =&gt; {
+  process.send!({ port: (server.address() as AddressInfo).port });
+});
+</code></pre>
+<pre data-file="src/p2-measure.ts"><code class="language-typescript">// بنرفع 8 فواتير كل واحدة 20 MiB في نفس الوقت بالـ 3 طرق ونقيس الـ API نفسه
+import { fork } from "node:child_process";
+import { once } from "node:events";
+import { startS3 } from "./lab.ts";
+
+console.log("STAND-IN: s3rver on localhost. RSS and time are from this loaded Windows machine: treat as approximate.");
+setTimeout(() =&gt; { console.log("WATCHDOG"); process.exit(1); }, 45_000).unref();
+const { endpoint, close } = await startS3();
+const FILE = Buffer.alloc(20 * 2 ** 20, 7);
+const COUNT = 8;
+
+async function run(mode: "proxy-buffer" | "proxy-stream" | "presign") {
+  const api = fork(new URL("./p2-api.ts", import.meta.url), { env: { ...process.env, S3_ENDPOINT: endpoint }, execArgv: ["--openssl-legacy-provider"] });
+  const [{ port }] = (await once(api, "message")) as [{ port: number }];
+  const base = `http://127.0.0.1:${port}`;
+  const t0 = performance.now();
+  await Promise.all(Array.from({ length: COUNT }, async (_, i) =&gt; {
+    const name = `${mode}-${i}.pdf`;
+    if (mode === "presign") {
+      const { url } = (await (await fetch(`${base}/presign?name=${name}`)).json()) as { url: string };
+      // ده الـ client بيكلم S3 مباشرة: الـ API مش في الطريق أصلًا
+      const r = await fetch(url, { method: "PUT", headers: { "content-type": "application/pdf" }, body: FILE });
+      if (r.status !== 200) throw new Error(`direct PUT ${r.status}`);
+    } else {
+      const r = await fetch(`${base}/${mode}?name=${name}`, { method: "POST", body: FILE });
+      if (r.status !== 200) throw new Error(`proxy ${r.status}`);
+    }
+  }));
+  const ms = Math.round(performance.now() - t0);
+  const s = (await (await fetch(`${base}/stats`)).json()) as { bytesThroughApi: number; peakRssMb: number };
+  api.kill();
+  console.log(mode.padEnd(13), `API bytes=${(s.bytesThroughApi / 2 ** 20).toFixed(0).padStart(4)} MiB`, `peak RSS≈${String(s.peakRssMb).padStart(4)} MB`, `total≈${ms} ms`);
+}
+
+await run("proxy-buffer");
+await run("proxy-stream");
+await run("presign");
+await close();
+process.exit(0);
+</code></pre>
+<pre><code class="language-plaintext">STAND-IN: s3rver on localhost. RSS and time are from this loaded Windows machine: treat as approximate.
+proxy-buffer  API bytes= 160 MiB peak RSS≈ 416 MB total≈873 ms
+proxy-stream  API bytes= 160 MiB peak RSS≈ 134 MB total≈579 ms
+presign       API bytes=   0 MiB peak RSS≈  96 MB total≈517 ms
+</code></pre>
+  <div class="ar-note">كل سطر هو الـ API process لوحده وهو بيستقبل 8 ملفات 20 MiB مع بعض. الـ buffer: الـ 160 MiB كلها عدّت عليه والـ RSS وصل حوالي 416 MB. الـ stream: نفس الـ bytes عدّت عليه بس الـ memory أحسن كتير. الـ presign: صفر bytes عدّت على الـ API، والـ RSS هو تقريبًا الـ baseline بتاع Node و الـ SDK. الأرقام تقريبية لأن الجهاز عليه ضغط، والمهم النسب.</div>
+
+<pre data-file="src/p2-pending.ts"><code class="language-typescript">// الـ flow الكامل: pending في Postgres، presigned URL، وتأكيد بعد الـ upload
+import { PutObjectCommand, HeadObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
+import { createPrimary, connect, stopAll } from "./pg-cluster.mjs";
+import { startS3 } from "./lab.ts";
+
+console.log("STAND-IN: s3rver for S3, real Postgres 18 for the upload table.");
+const { s3, bucket: Bucket, close } = await startS3();
+const cluster = await createPrimary();
+const db = await connect(cluster.port);
+
+await db.query(`create table invoice_uploads (
+  id uuid primary key default uuidv7(),
+  tenant_id text not null,
+  s3_key text not null unique,
+  expected_bytes bigint not null check (expected_bytes between 1 and 10485760),
+  status text not null default 'pending'
+    check (status in ('pending','uploaded','rejected','expired')),
+  created_at timestamptz not null default now(),
+  confirmed_at timestamptz)`);
+
+async function beginUpload(tenantId: string, expectedBytes: number) {
+  // المفتاح من عندنا إحنا: عمره ما بييجي من اسم الملف بتاع المستخدم
+  const key = `tenants/${tenantId}/invoices/${crypto.randomUUID()}.pdf`;
+  const { rows: [row] } = await db.query(
+    `insert into invoice_uploads (tenant_id, s3_key, expected_bytes) values ($1,$2,$3) returning id`,
+    [tenantId, key, expectedBytes]);
+  // لازم تطلب توقيع الـ content-type بنفسك: الـ presigner مش بيمضيه لوحده
+  const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket, Key: key, ContentType: "application/pdf" }), {
+    expiresIn: 300, signableHeaders: new Set(["content-type"]),
+  });
+  return { id: row.id as string, key, url };
+}
+
+async function completeUpload(id: string) {
+  const { rows: [row] } = await db.query(`select * from invoice_uploads where id=$1`, [id]);
+  // لو اتأكد قبل كده: رد عادي من غير ما نعمل حاجة تاني (idempotent)
+  if (row.status !== "pending") return { http: 200, status: row.status, repeated: true };
+  let size: number;
+  try {
+    const head = await s3.send(new HeadObjectCommand({ Bucket, Key: row.s3_key }));
+    size = head.ContentLength!;
+  } catch {
+    return { http: 409, reason: "object not uploaded yet" };
+  }
+  // إحنا اللي بنتحقق: الـ client ممكن يقول أي حاجة، الحجم الفعلي من S3
+  if (size !== Number(row.expected_bytes)) {
+    await db.query(`update invoice_uploads set status='rejected' where id=$1`, [id]);
+    await s3.send(new DeleteObjectCommand({ Bucket, Key: row.s3_key }));
+    return { http: 422, reason: `size ${size} != expected ${row.expected_bytes}` };
+  }
+  const r = await db.query(
+    `update invoice_uploads set status='uploaded', confirmed_at=now() where id=$1 and status='pending'`, [id]);
+  return { http: 200, status: "uploaded", rows: r.rowCount };
+}
+
+const put = (url: string, size: number) =&gt;
+  fetch(url, { method: "PUT", headers: { "content-type": "application/pdf" }, body: Buffer.alloc(size, 37) });
+
+const a = await beginUpload("t-42", 1024);
+console.log("(1) complete before upload  ", await completeUpload(a.id));
+console.log("(2) direct PUT              ", (await put(a.url, 1024)).status);
+console.log("(3) complete                ", await completeUpload(a.id));
+console.log("(4) complete again          ", await completeUpload(a.id));
+
+const b = await beginUpload("t-42", 1024);
+await put(b.url, 2048);
+console.log("(5) uploaded 2048, expected 1024", await completeUpload(b.id));
+
+// (6) لينك انتهى: السيرفر بيرفض بعد الـ expiresIn
+const shortUrl = await getSignedUrl(s3, new GetObjectCommand({ Bucket, Key: a.key }), { expiresIn: 1 });
+await new Promise((r) =&gt; setTimeout(r, 2500));
+console.log("(6) expired presigned GET   ", (await fetch(shortUrl)).status);
+
+// (7) توقيع متلعب فيه: الـ stand-in قبله! على AWS بيرجع 403 SignatureDoesNotMatch
+const okUrl = await getSignedUrl(s3, new GetObjectCommand({ Bucket, Key: a.key }), { expiresIn: 60 });
+const tampered = okUrl.replace(/X-Amz-Signature=[0-9a-f]{6}/, "X-Amz-Signature=000000");
+console.log("(7) tampered signature      ", (await fetch(tampered)).status, "(stand-in does not verify; AWS docs: 403)");
+
+// (8) الـ POST policy: الحد الأقصى للحجم بيتمضي جوه الـ policy نفسها
+const post = await createPresignedPost(s3, {
+  Bucket, Key: `tenants/t-42/invoices/post-1.pdf`, Expires: 60,
+  Fields: { "Content-Type": "application/pdf" },
+  Conditions: [["content-length-range", 1, 1024], ["eq", "$Content-Type", "application/pdf"]],
+});
+const form = new FormData();
+for (const [k, v] of Object.entries(post.fields)) form.append(k, v);
+form.append("file", new Blob([Buffer.alloc(5000, 37)]), "big.pdf");
+console.log("(8) POST 5000 bytes, limit 1024:", (await fetch(post.url, { method: "POST", body: form })).status, "(stand-in ignores the policy; AWS docs: 400 EntityTooLarge)");
+
+// (9) مقارنة: الـ headers اللي دخلت في التوقيع بالـ default ولما تطلبها صراحةً
+const signedHeaders = (u: string) =&gt; new URL(u).searchParams.get("X-Amz-SignedHeaders");
+const cmd = () =&gt; new PutObjectCommand({ Bucket, Key: "x.pdf", ContentType: "application/pdf" });
+const plainUrl = await getSignedUrl(s3, cmd(), { expiresIn: 60 });
+const strictUrl = await getSignedUrl(s3, cmd(), { expiresIn: 60, signableHeaders: new Set(["content-type"]) });
+console.log("(9) signed headers: default =", signedHeaders(plainUrl), "| signableHeaders =", signedHeaders(strictUrl));
+
+// (10) الـ reaper: أي pending عدّى عليه أكتر من الـ ⁦expiry +⁩ سماح يبقى expired
+await beginUpload("t-9", 500);
+await db.query(`update invoice_uploads set created_at = now() - interval '2 hours' where tenant_id='t-9'`);
+const reap = await db.query(`update invoice_uploads set status='expired'
+  where status='pending' and created_at &lt; now() - interval '1 hour'`);
+console.log("(10) reaper expired rows:", reap.rowCount);
+const { rows } = await db.query(`select status, count(*)::int n from invoice_uploads group by 1 order by 1`);
+console.log("final:", rows.map((r: { status: string; n: number }) =&gt; `${r.status}=${r.n}`).join(" "));
+
+await db.end();
+await stopAll(cluster);
+await close();
+process.exit(0);
+</code></pre>
+<pre><code class="language-plaintext">STAND-IN: s3rver for S3, real Postgres 18 for the upload table.
+(1) complete before upload   { http: 409, reason: 'object not uploaded yet' }
+(2) direct PUT               200
+(3) complete                 { http: 200, status: 'uploaded', rows: 1 }
+(4) complete again           { http: 200, status: 'uploaded', repeated: true }
+(5) uploaded 2048, expected 1024 { http: 422, reason: 'size 2048 != expected 1024' }
+(6) expired presigned GET    403
+(7) tampered signature       200 (stand-in does not verify; AWS docs: 403)
+(8) POST 5000 bytes, limit 1024: 204 (stand-in ignores the policy; AWS docs: 400 EntityTooLarge)
+(9) signed headers: default = host | signableHeaders = content-type;host
+(10) reaper expired rows: 1
+final: expired=1 rejected=1 uploaded=1
+</code></pre>
+  <div class="ar-note">السيناريو كله على Postgres حقيقي و S3 stand-in. (1) تأكيد قبل الرفع: 409. (2) و(3) رفع مباشر وتأكيد ناجح. (4) تأكيد تاني: مفيش حاجة بتتكرر (idempotent). (5) ملف حجمه غلط: 422 والـ object بيتمسح. (6) لينك منتهي: 403 حقيقي من الـ stand-in. (7) توقيع متلعب فيه رجع 200، و(8) الـ POST policy اتجاهل: <b>دول حدود الـ stand-in</b>، وAWS بحسب الـ docs بيرجع 403 للأولى و400 <code>EntityTooLarge</code> للتانية، بس مشغلناش ده هنا. (9) الـ default بيمضي <code>host</code> بس، ومع <code>signableHeaders</code> الـ <code>content-type</code> بيدخل في التوقيع. (10) الـ reaper حوّل الصف المتساب لـ <code>expired</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>تعدية الـ uploads على Node هي الاختيار الغالي.</b> 8 فواتير 20 MiB مع بعض، والقياس على الـ API لوحده: الـ buffering وصل حوالي 416 MB RSS، والـ streaming برضه عدّى الـ 160 MiB كلها على الـ process ومسك connection لكل upload. مع الـ presign الـ API عدّى عليه صفر bytes: بيمضي URL ويرجّع JSON صغير. الـ memory والـ connection slots هما أول حاجة بتقع تحت الضغط، والفرق بيبان أكتر لما الـ uploads تبقى بطيئة، لأن موبايل على شبكة ضعيفة ممكن يمسك connection على الـ proxy دقايق.</p>
+    <p><b>الـ presigned URL</b> هو URL عادي لـ S3 فيه expiry و signature محسوبة من الـ credentials بتاعتك. اللي معاه اللينك يقدر يعمل العملية دي بالظبط على الـ key ده بس لحد ما ينتهي، والـ AWS credentials عمرها ما بتوصل للـ browser. في تفصيلة بتوقّع ناس كتير: الـ presigner بتاع AWS SDK v3 <b>مش بيمضي</b> الـ <code>Content-Type</code> بشكل افتراضي (الكود بتاعه بيحطه في <code>unsignableHeaders</code>)، فاللينك اللي إنت عامله للـ PDF هيقبل أي نوع. مرّر <code>signableHeaders: new Set(["content-type"])</code>، وساعتها الـ client لازم يبعت الـ header ده بالظبط. سطر (9) في التشغيل بيطبع الـ signed headers في الحالتين. والـ stand-in مش بيتحقق من التوقيع، فالإلزام نفسه جاي من قواعد التوقيع بتاعة AWS، مش من التشغيل ده.</p>
+    <p><b>متصدّقش الـ client في اللي رفعه.</b> الـ presigned PUT العادي مش بيدّيك حد للحجم، فلو عايز حد أقصى استخدم POST policy بـ <code>content-length-range</code>. وفي الحالتين: سجّل صف <code>pending</code> قبل التوقيع، ولما يخلص اقرا الحجم الحقيقي بـ <code>HeadObject</code> وبعدها بس علّمه <code>uploaded</code>. اعمل الـ key بنفسك، عمره ما يبقى من اسم ملف المستخدم، وخلّي reaper يحوّل الصفوف اللي الرفع بتاعها موصلش لـ expired. إشارة الانتهاء ممكن تيجي من الـ client، أو الأضمن من S3 event notification على queue (ده مشغلناهوش هنا).</p>
+    <p>الغلطة الشائعة: تعمل <code>req.on("data")</code> عشان تعدّ الـ bytes وبعدين تدّي الـ <code>req</code> للـ SDK. أنا نفسي وقعت فيها وأنا بكتب المثال ده: الـ listener بيشغّل الـ stream في flowing mode، فالـ SDK مش بيلاقي data والـ request بيعلّق للأبد. الحل <code>Transform</code> بيعدّ ويعدّي، زي اللي في الكود.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      شاشة "ارفع فاتورة المورّد" في SaaS: endpoint <code>POST /invoices/uploads</code> يعمل authz ويسجل pending ويرجّع URL صالح 5 دقايق. الـ Next client يرفع على S3 بـ <code>fetch</code> مع progress، وبعدين يكلّم <code>/complete</code>. الـ worker يبدأ يعمل virus scan و OCR بعد التأكيد بس. وcron كل ساعة يحوّل الـ pending القديمة لـ expired ويمسح أي object يتيم.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks: a presigned URL is a bearer token</b>
+    Anyone with the link can use it until it expires, so a URL logged in your access log or pasted into chat is a leak. Keep expiry short (minutes), never log the query string, and sign one key per upload. Revoking a single URL before expiry isn't a feature: the signature is checked against the credentials, so rotating them is the blunt instrument.
+    <div class="ar-note">الـ presigned URL زي الـ bearer token: اللي معاه اللينك يستخدمه لحد ما ينتهي، فأي لينك اتسجل في الـ access log أو اتبعت في شات يبقى تسريب. خلّي الـ expiry قصير (دقايق)، متسجلش الـ query string في الـ logs، وامضي key واحد لكل upload. مفيش حاجة اسمها تلغي URL واحد قبل ما ينتهي: التوقيع مربوط بالـ credentials، فتغييرها هو الحل الوحيد وهو حل تقيل.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Multipart uploads <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ multipart upload</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Multipart splits an object into numbered parts of at least 5 MiB (only the last may be smaller), uploaded independently and in parallel. A flaky network costs you one part instead of the whole file, and throughput grows with concurrency. Three calls: <code>CreateMultipartUpload</code> returns an upload id, <code>UploadPart</code> returns one ETag per part, and <code>CompleteMultipartUpload</code> stitches them in part-number order.</p>
+    <p><b>Resume needs state.</b> Save each part's ETag as it succeeds, in a file, a database row or browser storage. After a crash, send only the missing parts. On real S3, <code>ListParts</code> can rebuild that state; our stand-in doesn't implement it, so the example persists a JSON file. For server-side streams, <code>Upload</code> from <code>@aws-sdk/lib-storage</code> handles chunking and concurrency for you (not run here), but it does not resume across process restarts.</p>
+    <p><b>The ETag of a multipart object is not the MD5 of the file.</b> AWS's docs say so; the commonly observed form is the MD5 of the concatenated part MD5s, followed by <code>-N</code>, and that's an observation rather than a contract. Our stand-in returned the plain file MD5, which is a stand-in quirk, so the script prints the value AWS would produce next to it. If you need end-to-end integrity, send a checksum (<code>x-amz-checksum-sha256</code>) and compare that, rather than parsing ETags.</p>
+    <p><b>Abandoned uploads cost money forever.</b> Parts of an upload that is never completed or aborted stay billed and don't appear in a normal list. The fix is one lifecycle rule, <code>AbortIncompleteMultipartUpload</code>, shown in Part 4.</p>
+  </section>
+
+<pre data-file="src/p3-multipart.ts"><code class="language-typescript">// الـ multipart بإيدنا: parts بالتوازي، فشل في part 3، و resume من غير إعادة اللي خلص
+import { createHash } from "node:crypto";
+import { writeFileSync, readFileSync, rmSync } from "node:fs";
+import {
+  CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, HeadObjectCommand,
+} from "@aws-sdk/client-s3";
+import { startS3 } from "./lab.ts";
+
+console.log("STAND-IN: s3rver. The failure on part 3 is injected by this script.");
+const { s3, bucket: Bucket, close } = await startS3();
+const MiB = 2 ** 20;
+const PART_SIZE = 5 * MiB;
+const Key = "exports/2026-10-invoices.tar";
+
+// ملف 26 MiB بمحتوى ثابت عشان الـ ETag يطلع هو هو كل مرة
+const file = Buffer.alloc(26 * MiB);
+for (let i = 0; i &lt; file.length; i++) file[i] = i % 251;
+
+const parts = Array.from({ length: Math.ceil(file.length / PART_SIZE) }, (_, i) =&gt; ({
+  PartNumber: i + 1, body: file.subarray(i * PART_SIZE, (i + 1) * PART_SIZE),
+}));
+console.log("parts:", parts.map((p) =&gt; `${p.PartNumber}:${p.body.length / MiB}MiB`).join(" "));
+
+const { UploadId } = await s3.send(new CreateMultipartUploadCommand({ Bucket, Key }));
+
+type State = { uploadId: string; done: Record&lt;number, string&gt; };
+const STATE = "upload-state.json";
+const state: State = { uploadId: UploadId!, done: {} };
+const save = () =&gt; writeFileSync(STATE, JSON.stringify(state));
+
+let bytesSent = 0;
+let failOnce = true;
+async function uploadPart(p: (typeof parts)[number]) {
+  if (p.PartNumber === 3 &amp;&amp; failOnce) {
+    failOnce = false;
+    throw new Error("ECONNRESET while sending part 3");
+  }
+  const r = await s3.send(new UploadPartCommand({ Bucket, Key, UploadId: state.uploadId, PartNumber: p.PartNumber, Body: p.body }));
+  bytesSent += p.body.length;
+  // بنسجّل الـ ETag بعد كل part ناجح: ده اللي بيخلّي الـ resume ممكن
+  state.done[p.PartNumber] = r.ETag!;
+  save();
+}
+
+// تشغيل بحد أقصى 3 في نفس الوقت، والـ errors بتتجمع بدل ما توقّف الباقي
+async function runPool(todo: typeof parts, limit: number) {
+  const q = [...todo];
+  const errors: string[] = [];
+  await Promise.all(Array.from({ length: limit }, async () =&gt; {
+    while (q.length) {
+      const p = q.shift()!;
+      await uploadPart(p).catch((e: Error) =&gt; errors.push(`part ${p.PartNumber}: ${e.message}`));
+    }
+  }));
+  return errors;
+}
+
+const errors = await runPool(parts, 3);
+console.log("first pass errors:", errors, "| uploaded", Object.keys(state.done).length, "of", parts.length, "| bytes", bytesSent / MiB, "MiB");
+
+// الـ resume: نقرا الـ state من الـ disk زي ما يكون الـ process اتقفل
+const saved = JSON.parse(readFileSync(STATE, "utf8")) as State;
+Object.assign(state, saved);
+const missing = parts.filter((p) =&gt; !state.done[p.PartNumber]);
+const before = bytesSent;
+await runPool(missing, 3);
+console.log("resume uploaded parts:", missing.map((p) =&gt; p.PartNumber), "| bytes this pass", (bytesSent - before) / MiB, "MiB");
+
+const done = await s3.send(new CompleteMultipartUploadCommand({
+  Bucket, Key, UploadId: state.uploadId,
+  MultipartUpload: { Parts: parts.map((p) =&gt; ({ PartNumber: p.PartNumber, ETag: state.done[p.PartNumber]! })) },
+}));
+const head = await s3.send(new HeadObjectCommand({ Bucket, Key }));
+console.log("complete: size", head.ContentLength, "etag", done.ETag);
+
+// الـ ETag مش MD5 الملف: ده MD5 لسلسلة الـ MD5 بتاعة الـ parts وبعدها عددهم
+const md5 = (b: Buffer) =&gt; createHash("md5").update(b).digest();
+const fileMd5 = md5(file).toString("hex");
+const perPart = md5(Buffer.concat(parts.map((p) =&gt; md5(p.body)))).toString("hex") + `-${parts.length}`;
+console.log("md5(file)        ", fileMd5);
+console.log("md5(md5s)-count  ", perPart);
+const etag = done.ETag!.replaceAll('"', "");
+console.log("ETag == md5(file)?", etag === fileMd5);
+console.log("ETag == computed? ", etag === perPart);
+
+rmSync(STATE, { force: true });
+await close();
+process.exit(0);
+</code></pre>
+<pre><code class="language-plaintext">STAND-IN: s3rver. The failure on part 3 is injected by this script.
+parts: 1:5MiB 2:5MiB 3:5MiB 4:5MiB 5:5MiB 6:1MiB
+first pass errors: [ 'part 3: ECONNRESET while sending part 3' ] | uploaded 5 of 6 | bytes 21 MiB
+resume uploaded parts: [ 3 ] | bytes this pass 5 MiB
+complete: size 27262976 etag "ad082644db1b2e6da5b9b521a382e76c"
+md5(file)         ad082644db1b2e6da5b9b521a382e76c
+md5(md5s)-count   7306d5e64c3b821e90fc309fe71daa30-6
+ETag == md5(file)? true
+ETag == computed?  false
+</code></pre>
+  <div class="ar-note">الملف 26 MiB اتقسم 6 parts (خمسة 5 MiB وواحد 1 MiB). الجولة الأولى: part 3 فشل بالـ error اللي حقنّاه، والباقي 21 MiB اترفعوا. الـ resume بعت part 3 بس (5 MiB)، مش الملف كله. بعدها الـ complete نجح بالحجم الصح. آخر 4 سطور مهمين: الـ stand-in رجّع ETag هو الـ MD5 بتاع الملف (<code>true</code>)، وده <b>عكس AWS</b>. السطر <code>md5(md5s)-count</code> هو الشكل المعروف اللي AWS بيطلّعه، وعشان كده <code>ETag == computed</code> طلعت <code>false</code> هنا. مقارنة الـ ETag بـ MD5 الملف على AWS هتفشل لأي multipart.</div>
+
+<pre data-file="src/p3-abandoned.ts"><code class="language-typescript">// حاسبة: الـ multipart اللي اتساب من غير complete بيتحاسب عليه كل شهر ومش باين في الـ list
+const GB_MONTH = 0.023; // تسعيرة طرف تالت: راجعها على صفحة AWS
+const failedPerMonth = 200;
+const avgLeftBehindGb = 2;
+
+console.log("CALCULATOR. Assumes 200 failed uploads a month, 2 GB of parts left behind each, no abort rule.");
+for (const months of [1, 6, 12, 24, 36]) {
+  const storedGb = failedPerMonth * avgLeftBehindGb * months;
+  console.log(`month ${String(months).padStart(2)}: invisible ${(storedGb / 1024).toFixed(1).padStart(5)} TB, $${(storedGb * GB_MONTH).toFixed(0).padStart(4)} that month`);
+}
+let total = 0;
+for (let m = 1; m &lt;= 36; m++) total += failedPerMonth * avgLeftBehindGb * m * GB_MONTH;
+console.log(`3-year total: $${Math.round(total).toLocaleString("en-US")} for bytes no one can read`);
+</code></pre>
+<pre><code class="language-plaintext">CALCULATOR. Assumes 200 failed uploads a month, 2 GB of parts left behind each, no abort rule.
+month  1: invisible   0.4 TB, $   9 that month
+month  6: invisible   2.3 TB, $  55 that month
+month 12: invisible   4.7 TB, $ 110 that month
+month 24: invisible   9.4 TB, $ 221 that month
+month 36: invisible  14.1 TB, $ 331 that month
+3-year total: $6,127 for bytes no one can read
+</code></pre>
+  <div class="ar-note">حاسبة مش قياس. 200 upload بيفشل في الشهر و2 GB parts متبقية من كل واحد ومفيش abort rule: بعد 3 سنين عندك 14 TB محدش يقدر يقراها، وبتدفع عليها 331 دولار في الشهر الأخير، و6127 دولار إجمالي. السعر من مصادر طرف تالت، راجعه على صفحة AWS.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ multipart بيقسم الـ object لـ parts مترقمة، كل واحد على الأقل 5 MiB (الأخير بس ممكن يبقى أصغر)، وبيترفعوا لوحدهم وبالتوازي. شبكة بايظة بتكلفك part واحد مش الملف كله، والسرعة بتزيد مع الـ concurrency. 3 calls: <code>CreateMultipartUpload</code> بيرجّع upload id، و<code>UploadPart</code> بيرجّع ETag لكل part، و<code>CompleteMultipartUpload</code> بيجمّعهم بترتيب الأرقام.</p>
+    <p><b>الـ resume محتاج state.</b> احفظ الـ ETag بتاع كل part أول ما ينجح، في ملف أو صف في الداتابيز أو browser storage. لو الـ process وقع، ابعت الناقص بس. على S3 الحقيقي <code>ListParts</code> يقدر يرجّعلك الـ state ده، بس الـ stand-in بتاعنا مش عامله، فالمثال بيحفظ ملف JSON. ولو بترفع stream من السيرفر، <code>Upload</code> من <code>@aws-sdk/lib-storage</code> بيعمل التقسيم والـ concurrency لوحده (مشغلناهوش هنا)، بس مش بيعمل resume لو الـ process اتقفل.</p>
+    <p><b>الـ ETag بتاع الـ multipart مش الـ MD5 بتاع الملف.</b> الـ docs بتقول كده، والشكل المعروف إنه MD5 لسلسلة الـ MD5 بتاعة الـ parts وبعدها <code>-N</code>، وده ملاحظة الناس مش contract مضمون. الـ stand-in عندنا رجّع MD5 الملف عادي وده غلط منه، فالسكريبت بيطبع القيمة اللي AWS كان هيطلّعها جنبها. لو عايز تتأكد إن الملف وصل سليم، ابعت checksum (<code>x-amz-checksum-sha256</code>) وقارنه، ومتحللش الـ ETag.</p>
+    <p><b>الـ uploads المتسابة بتتحاسب عليها للأبد.</b> الـ parts بتاعة upload متعملوش complete ولا abort بتفضل متحاسب عليها ومبتظهرش في الـ list العادي. الحل lifecycle rule واحدة، <code>AbortIncompleteMultipartUpload</code>، هتشوفها في الجزء 4.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      export شهري لكل فواتير عميل كبير، tar حجمه 12 GB من worker. لو الشبكة قطعت عند 90% والـ worker اتعمله restart، احفظ <code>{uploadId, etags}</code> في Postgres ويكمّل من الناقص بدل ما يرفع 12 GB تاني. ومن الناحية التانية، أول ما تفتح S3 في مشروع جديد حط الـ abort rule في الـ Terraform في نفس الـ PR، عشان متكتشفش بعد سنتين إنك بتدفع على داتا محدش شايفها.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "How do you upload a 20 GB file from a browser on a weak connection?" → Multipart direct to S3 with presigned part URLs: the server starts the upload and signs a URL per part, the client sends parts in parallel, keeps the ETags, retries only failed parts, then asks the server to complete. Add an abort-incomplete lifecycle rule and a pending row so abandoned uploads get cleaned up.
+    <div class="ar-note">"إزاي ترفع ملف 20 GB من browser على نت ضعيف؟" ← multipart مباشر على S3 بـ presigned URL لكل part: السيرفر يبدأ الـ upload ويمضي URL لكل part، والـ client يبعت الـ parts بالتوازي ويحفظ الـ ETags ويعيد الفاشل بس، وبعدين يطلب من السيرفر يعمل complete. وضيف lifecycle rule للـ abort وصف pending عشان الـ uploads المتسابة تتنضف.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Lifecycle &amp; cost <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ lifecycle والتكلفة</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Lifecycle rules move data down in temperature</b> as it ages: hot, then cold, then archive. Each step lowers the price per GB and raises the cost and time of reading. The traps are fixed fees: a <b>minimum storage duration</b>, a <b>retrieval fee per GB</b> and a <b>transition fee per object</b>. S3 won't transition objects under 128 KB by default (since September 2024), and Flexible and Deep Archive add 40 KB of metadata per object.</p>
+    <p><b>The calculator below</b> runs 100 TB arriving evenly over 5 years. Prices are us-east-1 and were <b>checked in November 2026 from third-party pages only</b>, because the AWS price tables did not come through when fetched. The per-GB retrieval rates in particular could not be confirmed from any page reached, so treat them as assumptions and verify everything on the AWS page before deciding. Retrieval is a small share of these totals, so the conclusions don't hinge on it.</p>
+    <p><b>Versioning</b> protects against overwrites and deletes, and it is a classic cost surprise. Every overwrite keeps the old copy, billed as a normal object. A delete only adds a <b>delete marker</b>: the data stays and the bill doesn't move. Always pair versioning with a <code>NoncurrentVersionExpiration</code> rule.</p>
+  </section>
+
+  <table>
+    <tr><th>Class</th><th>Storage $/GB-month*</th><th>Min duration</th><th>First byte</th></tr>
+    <tr><td>Standard</td><td>0.023 (first 50 TB)</td><td>none</td><td>milliseconds</td></tr>
+    <tr><td>Standard-IA</td><td>0.0125</td><td>30 days</td><td>milliseconds</td></tr>
+    <tr><td>Glacier Instant Retrieval</td><td>0.004</td><td>90 days</td><td>milliseconds</td></tr>
+    <tr><td>Glacier Flexible Retrieval</td><td>0.0036</td><td>90 days</td><td>minutes to hours, restore first</td></tr>
+    <tr><td>Glacier Deep Archive</td><td>0.00099</td><td>180 days</td><td>hours, restore first</td></tr>
+  </table>
+  <div class="ar-note">كل ما تنزل في الجدول السعر بيقل والقراية بتبقى أصعب. Standard ملوش حد أدنى ووقته milliseconds. Standard-IA أرخص بس لازم يقعد 30 يوم. Glacier Instant لسه milliseconds بس 90 يوم. Flexible لازم تعمل restore الأول وبياخد من دقايق لساعات، و90 يوم. Deep Archive الأرخص خالص بس ساعات و180 يوم. المدد والأوقات من docs بتاعة AWS، و(*) الأسعار من مصادر طرف تالت اتراجعت نوفمبر 2026، فراجعها على صفحة AWS.</div>
+
+<pre data-file="src/p4-cost.ts"><code class="language-typescript">// حاسبة: 100 TB بتدخل على 60 شهر — كل cohort بيمشي على الـ tiers حسب عمره
+console.log("CALCULATOR. Prices are us-east-1, from third-party pages checked Nov 2026: verify on the AWS pricing page.");
+
+type Cls = "STANDARD" | "IA" | "GLACIER_IR" | "GLACIER" | "DEEP";
+const PRICE: Record&lt;Cls, { gbMonth: number; retrievalGb: number; transitionPer1k: number }&gt; = {
+  STANDARD: { gbMonth: 0.023, retrievalGb: 0, transitionPer1k: 0 },
+  IA: { gbMonth: 0.0125, retrievalGb: 0.01, transitionPer1k: 0.01 },
+  GLACIER_IR: { gbMonth: 0.004, retrievalGb: 0.03, transitionPer1k: 0.02 },
+  GLACIER: { gbMonth: 0.0036, retrievalGb: 0.01, transitionPer1k: 0.03 },
+  DEEP: { gbMonth: 0.00099, retrievalGb: 0.02, transitionPer1k: 0.05 },
+};
+const TB = 1024; // بالـ GB
+const MONTHS = 60;
+const TOTAL_GB = 100 * TB;
+const COHORT_GB = TOTAL_GB / MONTHS;
+
+// الـ Standard بسعرين: أول 50 TB بسعر، وبعد كده الجزء اللي فاضل أرخص
+const standardCost = (gb: number) =&gt; Math.min(gb, 50 * TB) * 0.023 + Math.max(gb - 50 * TB, 0) * 0.022;
+
+type Plan = Array&lt;{ cls: Cls; untilAgeMonths: number }&gt;;
+const classAt = (plan: Plan, age: number) =&gt; plan.find((p) =&gt; age &lt; p.untilAgeMonths)!.cls;
+
+function simulate(name: string, plan: Plan, avgObjectKb: number) {
+  const objectsPerCohort = (COHORT_GB * 1024 * 1024) / avgObjectKb;
+  let storage = 0, transitions = 0, retrieval = 0, overheadGb = 0;
+  for (let m = 0; m &lt; MONTHS; m++) {
+    const gbByClass: Record&lt;Cls, number&gt; = { STANDARD: 0, IA: 0, GLACIER_IR: 0, GLACIER: 0, DEEP: 0 };
+    for (let c = 0; c &lt;= m; c++) gbByClass[classAt(plan, m - c)] += COHORT_GB;
+    // الـ Glacier Flexible و Deep بيزودوا 40 KB metadata لكل object
+    const archivedObjects = (gbByClass.GLACIER + gbByClass.DEEP) / COHORT_GB * objectsPerCohort;
+    const extraGb = (archivedObjects * 40) / (1024 * 1024);
+    overheadGb = Math.max(overheadGb, extraGb);
+    storage += standardCost(gbByClass.STANDARD) + gbByClass.IA * PRICE.IA.gbMonth
+      + gbByClass.GLACIER_IR * PRICE.GLACIER_IR.gbMonth + gbByClass.GLACIER * PRICE.GLACIER.gbMonth
+      + gbByClass.DEEP * PRICE.DEEP.gbMonth + extraGb * PRICE.DEEP.gbMonth;
+    // كل شهر cohort بيتنقل لـ class جديدة: رسوم transition لكل object
+    for (let c = 0; c &lt; m; c++) {
+      const [from, to] = [classAt(plan, m - c - 1), classAt(plan, m - c)];
+      if (from !== to) transitions += (objectsPerCohort / 1000) * PRICE[to].transitionPer1k;
+    }
+    // افتراض: كل سنة 2% من الداتا اللي عمرها أكتر من سنة بترجع للتدقيق
+    if (m % 12 === 11) {
+      for (let c = 0; c &lt;= m - 12; c++) retrieval += COHORT_GB * 0.02 * PRICE[classAt(plan, m - c)].retrievalGb;
+    }
+  }
+  const total = storage + transitions + retrieval;
+  const usd = (n: number) =&gt; "$" + Math.round(n).toLocaleString("en-US").padStart(8);
+  console.log(name.padEnd(30), "storage", usd(storage), "| transitions", usd(transitions), "| retrieval", usd(retrieval), "| total", usd(total), "| overhead", (overheadGb / TB).toFixed(1), "TB");
+}
+
+const allStandard: Plan = [{ cls: "STANDARD", untilAgeMonths: Infinity }];
+const tiered: Plan = [
+  { cls: "STANDARD", untilAgeMonths: 1 }, { cls: "IA", untilAgeMonths: 3 },
+  { cls: "GLACIER_IR", untilAgeMonths: 12 }, { cls: "DEEP", untilAgeMonths: Infinity },
+];
+const deepFast: Plan = [{ cls: "STANDARD", untilAgeMonths: 1 }, { cls: "DEEP", untilAgeMonths: Infinity }];
+
+console.log("--- 100 TB arriving evenly over 5 years, avg object 2 MB ---");
+simulate("A all Standard", allStandard, 2048);
+simulate("B Std&gt;IA&gt;GlacierIR&gt;Deep", tiered, 2048);
+simulate("C Std 1 month then Deep", deepFast, 2048);
+console.log("--- same 100 TB but avg object 200 KB (10x more objects) ---");
+simulate("B Std&gt;IA&gt;GlacierIR&gt;Deep", tiered, 200);
+simulate("C Std 1 month then Deep", deepFast, 200);
+
+console.log("--- versioning: 100 TB bucket, 1% of objects overwritten per day, no noncurrent rule ---");
+for (const days of [30, 90, 365]) {
+  const noncurrentGb = TOTAL_GB * 0.01 * days;
+  console.log(`after ${String(days).padStart(3)} days: noncurrent ${(noncurrentGb / TB).toFixed(0).padStart(3)} TB, extra per month $${Math.round(standardCost(noncurrentGb)).toLocaleString("en-US")}`);
+}
+console.log("delete on a versioned bucket: adds a delete marker, frees 0 bytes.");
+</code></pre>
+<pre><code class="language-plaintext">CALCULATOR. Prices are us-east-1, from third-party pages checked Nov 2026: verify on the AWS pricing page.
+--- 100 TB arriving evenly over 5 years, avg object 2 MB ---
+A all Standard                 storage $  71,040 | transitions $       0 | retrieval $       0 | total $  71,040 | overhead 0.0 TB
+B Std&gt;IA&gt;GlacierIR&gt;Deep        storage $  10,133 | transitions $   3,609 | retrieval $      82 | total $  13,824 | overhead 1.6 TB
+C Std 1 month then Deep        storage $   5,404 | transitions $   2,578 | retrieval $      82 | total $   8,064 | overhead 1.9 TB
+--- same 100 TB but avg object 200 KB (10x more objects) ---
+B Std&gt;IA&gt;GlacierIR&gt;Deep        storage $  10,492 | transitions $  36,955 | retrieval $      82 | total $  47,528 | overhead 16.0 TB
+C Std 1 month then Deep        storage $   5,944 | transitions $  26,396 | retrieval $      82 | total $  32,422 | overhead 19.7 TB
+--- versioning: 100 TB bucket, 1% of objects overwritten per day, no noncurrent rule ---
+after  30 days: noncurrent  30 TB, extra per month $707
+after  90 days: noncurrent  90 TB, extra per month $2,079
+after 365 days: noncurrent 365 TB, extra per month $8,274
+delete on a versioned bucket: adds a delete marker, frees 0 bytes.
+</code></pre>
+  <div class="ar-note">حاسبة مش قياس. الـ A: كله Standard بـ 71 ألف دولار. الـ B: Standard شهر، IA لشهرين، Glacier Instant لحد سنة، وبعدها Deep: 13.8 ألف، يعني توفير حوالي 80%. الـ C: Deep بعد شهر واحد: 8 آلاف بس، والقراية بساعات. بعد كده نفس الـ 100 TB بس object متوسطه 200 KB: عدد الـ objects بقى 10 أضعاف، ورسوم الـ transition قفزت لـ 37 ألف، والـ overhead بقى 16 TB. الـ tiering خسر معظم مكسبه بسبب رسوم لكل object. ودرس الـ versioning: 1% من الـ bucket بيتكتب فوقه كل يوم ومفيش rule، بعد سنة 365 TB زيادة بـ 8274 دولار في الشهر.</div>
+
+<pre data-file="lifecycle.json"><code class="language-json">{
+  "Rules": [
+    {
+      "ID": "invoices-age-out",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "tenants/" },
+      "Transitions": [
+        { "Days": 30, "StorageClass": "STANDARD_IA" },
+        { "Days": 90, "StorageClass": "GLACIER_IR" },
+        { "Days": 365, "StorageClass": "DEEP_ARCHIVE" }
+      ],
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 30 },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 7 }
+    }
+  ]
+}
+</code></pre>
+  <div class="ar-note"><b>Not run here:</b> الـ stand-in ملوش lifecycle خالص، فالـ JSON ده من الـ docs ومتجربش. الـ rule بتنقل الفواتير لـ IA بعد 30 يوم، وGlacier Instant بعد 90، وDeep Archive بعد سنة، وبتمسح النسخ القديمة (noncurrent) بعد 30 يوم، وبتعمل abort لأي multipart فضل مفتوح 7 أيام.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ lifecycle rules بتنزّل الداتا في الحرارة كل ما تكبر: hot وبعدين cold وبعدين archive. كل خطوة بتقلل السعر للـ GB وبتزوّد تكلفة ووقت القراية. والفخاخ في الرسوم الثابتة: <b>minimum storage duration</b> و<b>retrieval fee لكل GB</b> و<b>transition fee لكل object</b>. الـ S3 مش بينقل objects أصغر من 128 KB بشكل افتراضي (من سبتمبر 2024)، و Flexible و Deep Archive بيزودوا 40 KB metadata على كل object.</p>
+    <p>الحاسبة فوق بتشغّل 100 TB داخلين بالتساوي على 5 سنين. الأسعار us-east-1 و<b>اتراجعت في نوفمبر 2026 من مواقع طرف تالت بس</b>، لأن جداول أسعار AWS مطلعتش لما حاولت أجيب الصفحة. وأسعار الـ retrieval لكل GB بالذات مقدرتش أأكدها من أي صفحة، فاعتبرها افتراضات وراجع كل حاجة على صفحة AWS قبل ما تقرر. الـ retrieval جزء صغير من الإجمالي، فالاستنتاجات مش واقفة عليه.</p>
+    <p><b>الـ versioning</b> بيحميك من الـ overwrite والـ delete، وبرضه مفاجأة تكلفة مشهورة. كل overwrite بيحتفظ بالنسخة القديمة ومتحاسب عليها كـ object عادي. والـ delete بيضيف <b>delete marker</b> بس: الداتا بتفضل والفاتورة مبتتحركش. دايمًا حط مع الـ versioning قاعدة <code>NoncurrentVersionExpiration</code>.</p>
+    <p>الغلطة الشائعة: تعمل lifecycle على bucket فيه ملايين الـ objects الصغيرة من غير ما تحسب رسوم الـ transition. زي ما شايف، لما متوسط الحجم بقى 200 KB الرسوم بقت أكبر من التخزين نفسه. الحل تجمّع الملفات الصغيرة في tar أو تستخدم size filter.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      فواتير عمرها أكتر من سنة محدش بيفتحها إلا في مراجعة ضرايب: Deep Archive يوفر جدًا، بس لازم تقول للـ product إن القراية بتاخد ساعات، وتعمل شاشة "اطلب الفاتورة وهنبعتها لك". أما صور المنتجات اللي بتتقرا كل يوم فتفضل Standard ورا CDN، ومتنقلهاش. وأول حاجة تعملها لما تفتح فاتورة AWS: شوف الـ noncurrent versions والـ incomplete multipart.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: Glacier Instant vs Deep Archive</b>
+    Instant keeps millisecond reads at about 4× the Deep Archive storage price, and costs more per GB to read. If a user-facing screen might ever need the file synchronously, Deep Archive isn't an option without a "we'll email it to you" flow. Decide by who is waiting, not only by the price per GB.
+    <div class="ar-note">الـ Glacier Instant بيحافظ على قراية بالـ milliseconds بسعر حوالي 4 أضعاف Deep Archive، والقراية منه أغلى لكل GB. لو في شاشة قدام المستخدم ممكن تحتاج الملف على طول، يبقى Deep Archive مش ينفع من غير flow زي "هنبعتهولك بالإيميل". قرّر على حسب مين اللي مستني، مش السعر بس.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Retention &amp; archival <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ retention والـ archival</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Retention is a policy per data type, written down</b>, not a TTL someone picked. Each type needs an owner, a reason and a deletion mechanism. The numbers below are illustrative: actual periods come from your legal and finance people, and tax rules differ by country.</p>
+    <p><b>Delete by dropping, not by <code>DELETE</code>.</b> In the run below, deleting one month from a flat table took about 116 ms, generated 5.4 MB of WAL and left the table at exactly 131.2 MB even after VACUUM, because the freed space is reusable inside the table and is not returned to the OS. Dropping the equivalent partition took about 11 ms in total (detach plus drop), wrote almost no WAL and returned 21.2 MB. These numbers are at 100,000 rows: DELETE grows with the row count, while the drop stays roughly constant. That's why time-based data should be partitioned from day one (see <a href="../../09-Databases/lessons/24-partitioning.html">partitioning</a>).</p>
+    <p><b>Archive, verify, then delete.</b> Export the partition with <code>COPY</code>, compress, upload, read it back and compare the row count before anything is dropped. Skipping the read-back means your first proof of a corrupted archive arrives when you need it.</p>
+    <p><b>Legal hold beats right to deletion, and both beat your cron job.</b> A legal hold means certain records must not be deleted; a GDPR-style erasure request means certain records must be. Your deletion job has to check for holds, and PII inside immutable archives and backups needs a plan, commonly crypto-shredding: encrypt per user and delete the key. Details are in <a href="../../09-Databases/lessons/21-soft-delete-audit-money-time-gdpr.html">soft delete, audit and GDPR</a> and <a href="./38-secrets-encryption-privacy.html">secrets, encryption and privacy</a>. S3 Object Lock gives a server-enforced hold (not run here).</p>
+  </section>
+
+  <table>
+    <tr><th>Data</th><th>Example retention</th><th>Where old data goes</th><th>Deletion mechanism</th><th>Owner</th></tr>
+    <tr><td>Invoices, ledger</td><td>per tax law, often 5–10 years</td><td>S3 then archive tier</td><td>lifecycle expiry after a legal check</td><td>Finance</td></tr>
+    <tr><td>Audit events</td><td>1–7 years</td><td>monthly partition to S3</td><td>drop partition after verified archive</td><td>Security</td></tr>
+    <tr><td>Application logs</td><td>14–30 days</td><td>log store, then gone</td><td>index or bucket TTL</td><td>Platform</td></tr>
+    <tr><td>Webhook deliveries</td><td>30 days</td><td>nowhere</td><td>drop partition</td><td>Team</td></tr>
+    <tr><td>Sessions, reset tokens</td><td>hours to days</td><td>nowhere</td><td>Redis TTL</td><td>Team</td></tr>
+    <tr><td>Closed-account PII</td><td>until erasure or end of legal period</td><td>nowhere, or encrypted archive</td><td>erasure job and crypto-shredding</td><td>Privacy</td></tr>
+    <tr><td>Database backups</td><td>e.g. 35 days, monthly for 1 year</td><td>S3, another region</td><td>lifecycle expiry</td><td>Platform</td></tr>
+  </table>
+  <div class="ar-note">الأرقام مثال، والأرقام الحقيقية بتيجي من الـ legal والمالية وبتختلف من بلد لبلد. صف صف: الفواتير والـ ledger بتتحفظ سنين حسب قانون الضرايب، بتروح S3 وبعدين archive، ومبتتمسحش إلا بعد مراجعة قانونية، وصاحبها المالية. الـ audit events من سنة لـ 7، كل شهر partition يتأرشف ويتشال، وصاحبها الـ security. الـ logs من 14 لـ 30 يوم وبتتمسح بـ TTL. الـ webhook deliveries شهر وبعدين drop. الـ sessions وأكواد إعادة الباسورد ساعات لأيام بـ Redis TTL. بيانات الحسابات المقفولة لحد طلب المسح أو نهاية المدة القانونية، بـ erasure job و crypto-shredding. الـ backups مثلًا 35 يوم وشهريًا لسنة، في region تاني.</div>
+
+<pre data-file="src/p5-retention.ts"><code class="language-typescript">// الـ retention الحقيقي: DELETE لشهر كامل مقابل DROP partition، وأرشفة قبل المسح
+import { createGzip, gunzipSync } from "node:zlib";
+import { pipeline } from "node:stream/promises";
+import { Writable } from "node:stream";
+import { to as copyTo } from "pg-copy-streams";
+import { PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { createPrimary, connect, stopAll } from "./pg-cluster.mjs";
+import { startS3 } from "./lab.ts";
+
+console.log("REAL Postgres 18 (durable settings), Windows, loaded machine: times are approximate. Archive target is the s3rver stand-in.");
+const cluster = await createPrimary();
+const db = await connect(cluster.port);
+const { s3, bucket: Bucket, close } = await startS3("archive");
+const MB = (n: number | string) =&gt; (Number(n) / 2 ** 20).toFixed(1).padStart(7) + " MB";
+const one = async (sql: string, params: unknown[] = []) =&gt; (await db.query(sql, params)).rows[0];
+const size = async (rel: string) =&gt; (await one(`select pg_total_relation_size($1::regclass) n`, [rel])).n as string;
+
+await db.query(`create extension pgstattuple`);
+await db.query(`create table audit_events (
+  id bigint not null, tenant_id int not null, action text not null, payload text not null,
+  created_at timestamptz not null, primary key (id, created_at)
+) partition by range (created_at)`);
+const MONTHS = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"];
+for (const [i, m] of MONTHS.entries()) {
+  const next = i + 1 &lt; MONTHS.length ? `${MONTHS[i + 1]}-01` : "2026-07-01";
+  await db.query(`create table audit_events_${m.replace("-", "_")} partition of audit_events
+    for values from ('${m}-01') to ('${next}')`);
+}
+// مية ألف صف لكل شهر — نفس الداتا هتروح partitioned و flat عشان المقارنة تبقى عادلة
+const ROWS_PER_MONTH = 100_000;
+await db.query(`insert into audit_events
+  select (m - 1) * ${ROWS_PER_MONTH} + g, (g % 500)::int, 'invoice.updated', repeat('x', 120),
+         make_timestamptz(2026, m, 1 + (g % 27)::int, 0, 0, 0, 'UTC')
+  from generate_series(1, 6) m, generate_series(1, ${ROWS_PER_MONTH}) g`);
+await db.query(`create table audit_events_flat (like audit_events including defaults)`);
+await db.query(`alter table audit_events_flat add primary key (id, created_at)`);
+await db.query(`insert into audit_events_flat select * from audit_events`);
+await db.query(`create index on audit_events_flat (created_at)`);
+await db.query(`vacuum analyze audit_events_flat`);
+
+async function run(label: string, sql: string) {
+  const { lsn: before } = await one(`select pg_current_wal_insert_lsn() lsn`);
+  const t0 = performance.now();
+  const r = await db.query(sql);
+  const ms = Math.round(performance.now() - t0);
+  const { wal } = await one(`select pg_wal_lsn_diff(pg_current_wal_insert_lsn(), $1) wal`, [before]);
+  console.log(label.padEnd(26), `≈${String(ms).padStart(5)} ms`, "WAL", MB(wal), `rows ${r.rowCount ?? "-"}`);
+}
+
+console.log("flat table size before  ", MB(await size("audit_events_flat")));
+await run("DELETE one month (flat)", `delete from audit_events_flat where created_at &lt; '2026-02-01'`);
+console.log("flat size after DELETE  ", MB(await size("audit_events_flat")));
+await run("VACUUM (flat)", `vacuum audit_events_flat`);
+console.log("flat size after VACUUM  ", MB(await size("audit_events_flat")));
+const bloat = await one(`select round(free_percent::numeric,1) free_pct, dead_tuple_count dead from pgstattuple('audit_events_flat')`);
+console.log("pgstattuple:", bloat);
+
+// الأرشفة: COPY → gzip → S3، وبعدين نتأكد من العدد قبل ما نمسح أي حاجة
+const partition = "audit_events_2026_01";
+const chunks: Buffer[] = [];
+const client = db as unknown as { query: (q: unknown) =&gt; NodeJS.ReadableStream };
+await pipeline(
+  client.query(copyTo(`COPY ${partition} TO STDOUT (FORMAT csv)`)),
+  createGzip(),
+  new Writable({ write(c, _e, cb) { chunks.push(c); cb(); } }),
+);
+const gz = Buffer.concat(chunks);
+const Key = `audit/${partition}.csv.gz`;
+await s3.send(new PutObjectCommand({ Bucket, Key, Body: gz, ContentType: "application/gzip" }));
+
+// لازم نرجع نقرا الأرشيف من S3 ونعد الصفوف: مسح من غير verify يعني مقامرة
+const obj = await s3.send(new GetObjectCommand({ Bucket, Key }));
+const back = Buffer.from(await obj.Body!.transformToByteArray());
+const archivedRows = gunzipSync(back).toString("utf8").trimEnd().split("\n").length;
+const { n: liveRows } = await one(`select count(*)::int n from ${partition}`);
+console.log(`archive: ${MB(gz.length)} gz, archived rows=${archivedRows}, live rows=${liveRows}, match=${archivedRows === liveRows}`);
+if (archivedRows !== liveRows) throw new Error("archive mismatch: do not drop");
+
+console.log("partition size before   ", MB(await size(partition)));
+await run("DETACH CONCURRENTLY", `alter table audit_events detach partition ${partition} concurrently`);
+await run("DROP partition", `drop table ${partition}`);
+const { n: left } = await one(`select count(*)::int n from audit_events`);
+console.log("rows left in partitioned table:", left);
+
+await db.end();
+await stopAll(cluster);
+await close();
+process.exit(0);
+</code></pre>
+<pre><code class="language-plaintext">REAL Postgres 18 (durable settings), Windows, loaded machine: times are approximate. Archive target is the s3rver stand-in.
+flat table size before     131.2 MB
+DELETE one month (flat)    ≈  116 ms WAL     5.4 MB rows 100000
+flat size after DELETE     131.2 MB
+VACUUM (flat)              ≈   32 ms WAL     1.1 MB rows -
+flat size after VACUUM     131.2 MB
+pgstattuple: { free_pct: '17.5', dead: '0' }
+archive:     0.7 MB gz, archived rows=100000, live rows=100000, match=true
+partition size before       21.2 MB
+DETACH CONCURRENTLY        ≈    4 ms WAL     0.0 MB rows -
+DROP partition             ≈    7 ms WAL     0.0 MB rows -
+rows left in partitioned table: 500000
+</code></pre>
+  <div class="ar-note">تشغيل حقيقي على Postgres بـ 600 ألف صف. الـ DELETE شال 100 ألف صف وكتب 5.4 MB WAL، والجدول فضل 131.2 MB حتى بعد الـ VACUUM، و<code>pgstattuple</code> بيقول 17.5% free. الأرشيف: 0.7 MB gzip، قريناه تاني من S3 وعدّينا 100 ألف صف مطابقين. الـ DETACH والـ DROP خدوا حوالي 11 ms ومن غير WAL تقريبًا، ورجّعوا الـ 21.2 MB فعلًا. والأوقات تقريبية لأن الجهاز عليه ضغط.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ retention سياسة مكتوبة لكل نوع داتا</b>، مش TTL حد اختاره وخلاص. كل نوع محتاج صاحب وسبب وطريقة مسح. الأرقام اللي في الجدول مثال بس، والأرقام الحقيقية بتيجي من الـ legal والمالية، وقوانين الضرايب بتختلف من بلد لبلد.</p>
+    <p><b>امسح بالـ drop مش بـ <code>DELETE</code>.</b> في التشغيل فوق، مسح شهر من جدول flat خد حوالي 116 ms، وكتب 5.4 MB WAL، وساب الجدول 131.2 MB بالظبط حتى بعد الـ VACUUM، لأن المساحة الفاضية بتتعاد جوه الجدول ومبترجعش للـ OS. الـ drop للـ partition المقابلة خد حوالي 11 ms على بعض (detach وdrop)، ومن غير WAL تقريبًا، ورجّع 21.2 MB. وده عند 100 ألف صف بس: الـ DELETE بيكبر مع عدد الصفوف، والـ drop ثابت تقريبًا. عشان كده الداتا المرتبطة بالوقت تتعمل partitioned من أول يوم (شوف درس <a href="../../09-Databases/lessons/24-partitioning.html">الـ partitioning</a>).</p>
+    <p><b>أرشف، اتأكد، وبعدين امسح.</b> اعمل export للـ partition بـ <code>COPY</code>، واضغط، وارفع، وارجع اقراه وقارن عدد الصفوف قبل ما تعمل drop لأي حاجة. لو سبت خطوة القراية، أول دليل إن الأرشيف بايظ هيوصلك وإنت محتاجه.</p>
+    <p><b>الـ legal hold بيكسب على حق المسح، والاتنين بيكسبوا على الـ cron بتاعك.</b> الـ legal hold معناه إن سجلات معينة ممنوع تتمسح، وطلب المسح زي GDPR معناه إن سجلات معينة لازم تتمسح. الـ job بتاع المسح لازم يشيك على الـ holds، والـ PII اللي جوه أرشيفات وbackups immutable محتاجة خطة، والشائع هو crypto-shredding: تشفّر لكل مستخدم وتمسح المفتاح. التفاصيل في درس <a href="../../09-Databases/lessons/21-soft-delete-audit-money-time-gdpr.html">soft delete والـ audit و GDPR</a> ودرس <a href="./38-secrets-encryption-privacy.html">الـ secrets والتشفير والخصوصية</a>. والـ S3 Object Lock بيدّيك hold مفروض من السيرفر (مشغلناهوش هنا).</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      جدول <code>webhook_deliveries</code> كبر لـ 400 GB والـ cron بتاع <code>DELETE ... WHERE created_at &lt; now() - interval '30 days'</code> بيعمل lag على الـ replica كل ليلة. الحل: partition بالشهر، job يعمل archive و verify و <code>DETACH CONCURRENTLY</code> و <code>DROP</code>. والليلة اللي بعدها الـ lag بيختفي، والـ VACUUM بيهدى.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks: the job that deletes without a guard</b>
+    Retention jobs are the code most able to destroy data, and they run unattended. Require a verified archive, a maximum number of partitions per run, a dry-run mode, a legal-hold check and an alert when the job does nothing for too long.
+    <div class="ar-note">الـ retention jobs هي أكتر كود يقدر يدمّر الداتا، وبتشتغل من غير ما حد يبص. لازم يكون فيها: أرشيف متأكد منه، حد أقصى لعدد الـ partitions في كل run، وضع dry-run، شيك على الـ legal hold، وتنبيه لو الـ job مش عامل حاجة بقاله كتير.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Backups, RPO &amp; RTO <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ backups والـ RPO والـ RTO</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>RPO</b> (recovery point objective) is how much data you can lose, measured in time. <b>RTO</b> (recovery time objective) is how long you can be down. They come from the business, cost money to tighten, and only mean something if you've measured them. <b>A backup you never restored isn't a backup.</b></p>
+    <p><b>Physical backup plus WAL archive gives point-in-time recovery.</b> The base backup is a copy of the data directory and the archive holds every WAL segment since. To undo a bad <code>DELETE</code>, restore the base and replay WAL until just before it. Our run restored 51,000 rows after a <code>DELETE</code> had left 10. The RTO was about 1.5 seconds, which is <em>meaningless at this size</em>: it's mostly startup time on a tiny dataset.</p>
+    <p><b>RPO is not zero with WAL archiving.</b> A segment is archived when it's full or switched, so writes in the open segment are lost with the primary. The run shows it: 500 rows written after the last archived segment disappeared. Set <code>archive_timeout</code> to bound the loss, or stream WAL continuously with <code>pg_receivewal</code> or a synchronous standby (not run here).</p>
+    <p><b>Incremental backups</b> exist natively since Postgres 17: enable <code>summarize_wal</code>, take a full backup, then <code>pg_basebackup --incremental=&lt;manifest&gt;</code>, and reconstruct with <code>pg_combinebackup</code>. In our run the incremental was 26.6 MB against a 91.4 MB full, of which 16 MB was just the WAL segment, and the combined backup started and had every changed row. On a larger database the ratio improves, because the WAL part is fixed. Restores get more complex though: lose one link and everything after it is gone.</p>
+    <p><b>Extrapolating RTO.</b> The tiny run can't be scaled directly, so use throughput: time to download and lay down the base, plus time to replay the WAL. A 5 TB base plus 200 GB of WAL comes to roughly 3.5 to 18 hours under the assumptions printed below. That is the number to bring to the business. Strategy across regions is in <a href="./26-redundancy-failover-disaster-recovery.html">redundancy, failover and disaster recovery</a>; the operational details are in <a href="../../09-Databases/lessons/27-backups-pitr-upgrades.html">backups, PITR and upgrades</a>.</p>
+  </section>
+
+<pre class="diagram">
+                 base backup
+   time ---------[B]---------------[target]--[bad DELETE]---[crash]--->
+                  |                    ^           ^           ^
+   WAL archive:   |== seg ==|== seg ==|== seg ==|== seg ==|. open .|
+                                                           ^^^^^^^^
+                                       never archived: this is your RPO
+   restore  = copy [B], then replay WAL up to [target]
+   RTO      = copy time + replay time + checks
+</pre>
+  <div class="ar-note">الخط الأفقي هو الوقت. عندك base backup عند B، والـ WAL بيتأرشف segment ورا التانية. عايز ترجع لـ target اللي قبل الـ DELETE الغلط: بتنسخ B وتعيد تشغيل الـ WAL لحد target. الجزء اللي تحته علامات <code>^^^</code> هو الـ segment المفتوح اللي لسه متأرشفش ساعة الـ crash: ده الـ RPO بتاعك. والـ RTO هو وقت النسخ زائد وقت إعادة الـ WAL زائد التحقق.</div>
+
+<pre data-file="src/p6-pitr.ts"><code class="language-typescript">// الـ PITR الحقيقي: base backup + WAL archive، DELETE غلط، ونرجع للحظة اللي قبله
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync, appendFileSync, cpSync, readdirSync, statSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { createPrimary, connect, stopNode, startNode, stopAll } from "./pg-cluster.mjs";
+
+const BIN = "C:/Program Files/PostgreSQL/18/bin";
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+console.log("REAL Postgres 18, durable settings, tiny dataset, Windows: times are approximate.");
+
+const cluster = await createPrimary({
+  conf: `archive_mode=on\narchive_command='copy "%p" "..\\\\wal\\\\%f"'\nwal_level=replica`,
+});
+const walDir = path.join(cluster.root, "wal");
+mkdirSync(walDir, { recursive: true });
+const db = await connect(cluster.port);
+
+await db.query(`create table invoices (id serial primary key, cents int not null)`);
+await db.query(`insert into invoices (cents) select g from generate_series(1, 50000) g`);
+
+// (2) الـ base backup من غير WAL: الـ WAL كله هيجي من الأرشيف
+execFileSync(`${BIN}/pg_basebackup.exe`, ["-h", "127.0.0.1", "-p", String(cluster.port), "-U", "app", "-D", "base", "-X", "none", "-c", "fast", "--no-sync"],
+  { cwd: cluster.root, stdio: "ignore", timeout: 60_000 });
+
+await db.query(`insert into invoices (cents) select g from generate_series(1, 1000) g`);
+await db.query(`select pg_switch_wal()`);
+await sleep(1500);
+
+// (3) اللحظة اللي عايز ترجعلها: استخدم now()::text من Postgres نفسه
+const { rows: [{ t: target }] } = await db.query(`select now()::text t`);
+const isoTarget = new Date().toISOString();
+await sleep(1200);
+
+// (4) الكارثة: DELETE من غير الـ WHERE الصح
+const del = await db.query(`delete from invoices where id &gt; 10`);
+console.log("bad DELETE removed", del.rowCount, "rows. target time =", target);
+await db.query(`select pg_switch_wal()`);
+await sleep(1500);
+
+// (5) صفوف اتكتبت بعد آخر WAL اتأرشف: دي اللي هتضيع لو الـ disk راح (ده الـ RPO)
+await db.query(`insert into invoices (cents) select g from generate_series(1, 500) g`);
+const { rows: [arch] } = await db.query(`select archived_count::int n, failed_count::int f from pg_stat_archiver`);
+console.log("archiver:", arch, "| rows now", (await db.query(`select count(*)::int n from invoices`)).rows[0].n);
+await db.end();
+
+// (6) الـ primary وقع crash: مفيش shutdown نضيف
+stopNode(cluster, "primary", "immediate");
+
+// نسخة تانية من الـ base عشان نجرب نوعين recovery من نفس الـ backup
+cpSync(path.join(cluster.root, "base"), path.join(cluster.root, "base2"), { recursive: true });
+cpSync(path.join(cluster.root, "base"), path.join(cluster.root, "base3"), { recursive: true });
+
+async function restore(name: string, target?: string) {
+  const dir = path.join(cluster.root, name);
+  const recovery = target ? `recovery_target_time='${target}'\nrecovery_target_action='promote'\n` : "";
+  appendFileSync(path.join(dir, "postgresql.auto.conf"),
+    `\nrestore_command='copy "..\\\\wal\\\\%f" "%p"'\n${recovery}archive_mode=off\n`);
+  writeFileSync(path.join(dir, "recovery.signal"), "");
+  cluster.nodes.push(name);
+  const start = performance.now();
+  startNode(cluster, name);
+  const r = await connect(cluster.port);
+  for (let i = 0; i &lt; 80; i++) {
+    if (!(await r.query(`select pg_is_in_recovery() x`)).rows[0].x) break;
+    await sleep(250);
+  }
+  const rto = Math.round(performance.now() - start);
+  const n = (await r.query(`select count(*)::int n from invoices`)).rows[0].n as number;
+  await r.end();
+  stopNode(cluster, name);
+  return { rows: n, rto };
+}
+
+const pitr = await restore("base", target);
+console.log("PITR to before the DELETE:", pitr.rows, "rows back, RTO ≈", pitr.rto, "ms");
+const toEnd = await restore("base2");
+console.log("restore to end of archive:", toEnd.rows, "rows (the 500 unarchived rows are gone, RPO &gt; 0)");
+// (6ب) نفس الـ recovery بـ target مكتوب ISO بالـ T و Z: جرّبناه بدل ما نفترض
+try {
+  const iso = await restore("base3", isoTarget);
+  console.log("ISO target", isoTarget, "accepted:", iso.rows, "rows");
+} catch {
+  const log = readFileSync(path.join(cluster.root, "base3.log"), "utf8");
+  const bad = log.split("\n").filter((l) =&gt; /invalid|FATAL/.test(l)).slice(0, 3);
+  console.log("ISO target", isoTarget, "rejected at startup:", bad[0]?.split("LOG:")[1]?.trim());
+}
+await stopAll(cluster);
+
+// (7) الـ ⁦incremental: full + WAL summaries +⁩ فرق بس، وبعدين pg_combinebackup
+const inc = await createPrimary({ conf: "summarize_wal=on" });
+const db2 = await connect(inc.port);
+const bb = (args: string[]) =&gt; execFileSync(`${BIN}/pg_basebackup.exe`,
+  ["-h", "127.0.0.1", "-p", String(inc.port), "-U", "app", "-c", "fast", "--no-sync", ...args],
+  { cwd: inc.root, stdio: "pipe", timeout: 90_000 });
+const dirSize = (d: string): number =&gt; readdirSync(d, { withFileTypes: true }).reduce((s, e) =&gt; {
+  const p = path.join(d, e.name);
+  return s + (e.isDirectory() ? dirSize(p) : statSync(p).size);
+}, 0);
+const mb = (n: number) =&gt; (n / 2 ** 20).toFixed(1) + " MB";
+
+await db2.query(`create table orders (id bigint primary key, note text)`);
+await db2.query(`insert into orders select g, repeat('n', 200) from generate_series(1, 200000) g`);
+await db2.query(`checkpoint`);
+await sleep(1000);
+const fullStart = performance.now();
+bb(["-D", "full"]);
+const fullSec = (performance.now() - fullStart) / 1000;
+await db2.query(`update orders set note = 'changed' where id &lt;= 2000`);
+await db2.query(`checkpoint`);
+await sleep(1500);
+bb(["-D", "incr", "--incremental=full/backup_manifest"]);
+execFileSync(`${BIN}/pg_combinebackup.exe`, ["full", "incr", "-o", "combined"], { cwd: inc.root, stdio: "pipe", timeout: 60_000 });
+const fullBytes = dirSize(path.join(inc.root, "full"));
+console.log("full:", mb(fullBytes), "| incremental:", mb(dirSize(path.join(inc.root, "incr"))), "(of which pg_wal:", mb(dirSize(path.join(inc.root, "incr", "pg_wal"))) + ") | combined:", mb(dirSize(path.join(inc.root, "combined"))));
+console.log("full backup speed on local disk: ≈", (fullBytes / 2 ** 20 / fullSec).toFixed(0), "MB/s (small dataset, includes the fixed checkpoint wait)");
+await db2.end();
+stopNode(inc, "primary", "immediate");
+inc.nodes.push("combined");
+startNode(inc, "combined");
+const r2 = await connect(inc.port);
+const check = (await r2.query(`select count(*)::int n, count(*) filter (where note = 'changed')::int c from orders`)).rows[0];
+console.log("restored combined backup:", check);
+await r2.end();
+await stopAll(inc);
+
+// (8) حاسبة: تقدير الـ RTO لـ ⁦5 TB —⁩ مش قياس
+const GB = 1024;
+for (const [label, downMBps, replayMBps] of [["optimistic", 500, 100], ["typical", 250, 40], ["bad day", 100, 15]] as const) {
+  const baseH = (5120 * GB) / downMBps / 3600;
+  const walGb = 200;
+  const walH = (walGb * GB) / replayMBps / 3600;
+  console.log(`CALCULATOR 5 TB base + ${walGb} GB WAL, ${label.padEnd(10)} download ${downMBps} MB/s, replay ${replayMBps} MB/s: RTO ≈ ${(baseH + walH).toFixed(1)} h`);
+}
+process.exit(0);
+</code></pre>
+<pre><code class="language-plaintext">REAL Postgres 18, durable settings, tiny dataset, Windows: times are approximate.
+bad DELETE removed 50990 rows. target time = 2026-11-09 05:23:51.887867+02
+archiver: { n: 5, f: 0 } | rows now 510
+PITR to before the DELETE: 51000 rows back, RTO ≈ 1669 ms
+restore to end of archive: 10 rows (the 500 unarchived rows are gone, RPO &gt; 0)
+ISO target 2026-11-09T03:23:51.887Z rejected at startup: invalid value for parameter "recovery_target_time": "2026-11-09T03:23:51.887Z"
+full: 91.4 MB | incremental: 26.6 MB (of which pg_wal: 16.0 MB) | combined: 91.5 MB
+full backup speed on local disk: ≈ 132 MB/s (small dataset, includes the fixed checkpoint wait)
+restored combined backup: { n: 200000, c: 2000 }
+CALCULATOR 5 TB base + 200 GB WAL, optimistic download 500 MB/s, replay 100 MB/s: RTO ≈ 3.5 h
+CALCULATOR 5 TB base + 200 GB WAL, typical    download 250 MB/s, replay 40 MB/s: RTO ≈ 7.2 h
+CALCULATOR 5 TB base + 200 GB WAL, bad day    download 100 MB/s, replay 15 MB/s: RTO ≈ 18.4 h
+</code></pre>
+  <div class="ar-note">تشغيل حقيقي لـ Postgres 18. الـ DELETE الغلط شال 50990 صف. الـ PITR رجّع 51000 صف. الـ restore لآخر الأرشيف رجّع 10 صفوف بس: الـ 500 صف اللي اتكتبوا بعد آخر segment ضاعوا، وده الـ RPO بعينه. السطر اللي بعده: الـ target المكتوب بصيغة ISO بالـ T والـ Z <b>اترفض وقت الـ startup</b> بـ <code>invalid value</code>. والـ incremental 26.6 MB منهم 16 MB WAL مقابل full 91.4 MB، والـ combined اتفتح وفيه الـ 2000 صف المتعدلين. آخر 3 سطور حاسبة بافتراضات مكتوبة مش قياس: 3.5 ساعة لـ 18 ساعة لـ 5 TB.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ RPO</b> هو قد إيه داتا ممكن تخسرها، بالوقت. <b>الـ RTO</b> هو قد إيه ممكن تفضل واقف. الاتنين بييجوا من الـ business، وتضييقهم بيكلّف فلوس، وملهمش معنى لو مقستهمش. <b>الـ backup اللي عمرك ما عملت منه restore مش backup.</b></p>
+    <p><b>الـ physical backup مع WAL archive بيدّوك point-in-time recovery.</b> الـ base backup نسخة من الـ data directory والأرشيف فيه كل WAL segment بعدها. عشان تلغي <code>DELETE</code> غلط، ترجّع الـ base وتعيد الـ WAL لحد قبله بالظبط. في التشغيل رجّعنا 51,000 صف بعد ما الـ <code>DELETE</code> ساب 10 بس. الـ RTO كان حوالي 1.5 ثانية، وده <b>ملوش معنى عند الحجم ده</b>: معظمه وقت startup على داتا صغيرة.</p>
+    <p><b>الـ RPO مش صفر مع الـ WAL archiving.</b> الـ segment بيتأرشف لما يتملي أو يتعمله switch، فالكتابات اللي في الـ segment المفتوح بتروح مع الـ primary. التشغيل بيوريك ده: 500 صف اتكتبوا بعد آخر segment اتأرشف واختفوا. استخدم <code>archive_timeout</code> عشان تحدد الخسارة، أو ابعت الـ WAL باستمرار بـ <code>pg_receivewal</code> أو synchronous standby (مشغلناهمش هنا).</p>
+    <p><b>الـ incremental backups</b> موجودة natively من Postgres 17: شغّل <code>summarize_wal</code>، خد full backup، وبعدين <code>pg_basebackup --incremental=&lt;manifest&gt;</code>، ورجّعها بـ <code>pg_combinebackup</code>. في التشغيل عندنا الـ incremental كان 26.6 MB مقابل full 91.4 MB، ومنهم 16 MB مجرد WAL segment، والـ combined اشتغل وفيه كل الصفوف المتعدلة. على داتابيز أكبر النسبة بتتحسن لأن جزء الـ WAL ثابت. بس الـ restore بيبقى أعقد: لو حلقة واحدة ضاعت، كل اللي بعدها راح.</p>
+    <p><b>تقدير الـ RTO.</b> التشغيل الصغير ميتكبرش مباشرة، فاستخدم الـ throughput: وقت تحميل ووضع الـ base زائد وقت إعادة الـ WAL. 5 TB base مع 200 GB WAL بتطلع تقريبًا من 3.5 لـ 18 ساعة بالافتراضات المطبوعة فوق. ده الرقم اللي تروح بيه للـ business. الاستراتيجية بين الـ regions في درس <a href="./26-redundancy-failover-disaster-recovery.html">الـ redundancy والـ failover والـ DR</a>، والتفاصيل التشغيلية في درس <a href="../../09-Databases/lessons/27-backups-pitr-upgrades.html">الـ backups والـ PITR والـ upgrades</a>.</p>
+    <p>الغلطة الشائعة: <code>recovery_target_time</code> بقيمة من <code>toISOString()</code>. لما جربناها، <code>ALTER SYSTEM SET</code> قبلها، بس لما الـ server قام من الـ config رفضها بـ <code>invalid value</code> والـ restore مكملش. استخدم القيمة من <code>now()::text</code> بتاع Postgres نفسه.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما الـ CTO يسأل "لو الـ primary راح دلوقتي بنخسر قد إيه وبنرجع إمتى؟" الإجابة تبقى: "RPO 60 ثانية بسبب <code>archive_timeout</code>، RTO متقاس آخر مرة من 3 أسابيع 4 ساعات و20 دقيقة على داتا الـ production". وحط job شهري يعمل restore على instance مؤقتة، يعد الصفوف، ويبعت الرقم على Slack. لو الـ job ده فشل يبقى عندك incident حتى لو مفيش حاجة واقعة.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Your primary is 5 TB. A developer ran a bad UPDATE ten minutes ago. Walk me through recovery." → A replica won't help, since the mistake replicated too, unless you keep a delayed standby. Restore the latest base backup to a new instance, replay WAL to a timestamp just before the UPDATE, verify counts, then either fail over or copy back only the damaged rows with <code>COPY</code>. Expect hours for 5 TB, so a delayed replica and tested RTO numbers are what actually shorten this.
+    <div class="ar-note">"الـ primary بتاعك 5 TB، ومطور عمل UPDATE غلط من 10 دقايق. احكيلي الـ recovery." ← الـ replica مش هتنفع لأن الغلطة اتنسخت عليها، إلا لو عندك delayed standby. ترجّع آخر base backup على instance جديدة، تعيد الـ WAL لوقت قبل الـ UPDATE بالظبط، تتأكد من الأعداد، وبعدين يا تعمل failover يا ترجّع الصفوف المتبوظة بس بـ <code>COPY</code>. استنى ساعات لـ 5 TB، فالـ delayed replica والـ RTO المتقاس هما اللي بيقصّروا الموضوع فعلًا.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Proxying every upload through the API</b>
+<pre><code class="language-typescript">// الملف كله بيعدّي على الـ process وبيمسك connection طول الرفع
+app.post("/invoices", async (req, res) =&gt; {
+  await s3.send(new PutObjectCommand({ Bucket, Key, Body: req, ContentLength }));
+  res.sendStatus(201);
+});</code></pre></div>
+    <div class="good"><b>✅ Sign and let the client upload</b>
+<pre><code class="language-typescript">// الـ API بيرد JSON صغير والـ bytes بتروح لـ S3 مباشرة
+app.post("/invoices/uploads", async (req, res) =&gt; {
+  const key = await insertPendingRow(req.user);
+  const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket, Key: key }), { expiresIn: 300 });
+  res.json({ url });
+});</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ كل upload بيعدّي على الـ API: في القياس عدّت 160 MiB على الـ process ومعاها connection مفتوحة طول الرفع، وعميل بطيء واحد بيمسك slot دقايق. ✅ الـ API بيمضي بس، والملف بيروح لـ S3 مباشرة، وفي القياس الـ API معدّاش عليه ولا byte. وسيب الـ <code>pending</code> و<code>HeadObject</code> بعدها زي الجزء 2.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Listening to <code>data</code> before handing over the stream</b>
+<pre><code class="language-typescript">// الـ listener بيشغّل الـ stream، والـ SDK بيلاقي الداتا راحت
+req.on("data", count);
+await s3.send(new PutObjectCommand({ Bucket, Key, Body: req, ContentLength }));
+// الطلب بيعلّق ومبيرجعش</code></pre></div>
+    <div class="good"><b>✅ Count inside a Transform</b>
+<pre><code class="language-typescript">// الـ Transform بيعدّ ويعدّي الـ chunk، والـ SDK بياخد كل حاجة
+const counted = req.pipe(new Transform({
+  transform(c, _e, cb) { count(c); cb(null, c); },
+}));
+await s3.send(new PutObjectCommand({ Bucket, Key, Body: counted, ContentLength }));</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>data</code> listener بيخلّي الـ stream في flowing mode، فالـ chunks بتتقرا قبل ما الـ SDK يبدأ، والـ S3 يفضل مستني باقي الـ <code>ContentLength</code>. ده حصل فعلًا أثناء كتابة الدرس والسكريبت علّق لحد ما الـ timeout قفله. ✅ حط <code>Transform</code> في النص: بيعدّ وبيعدّي، والـ SDK بياخد الـ stream كامل.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Comparing a multipart ETag to the file MD5</b>
+<pre><code class="language-typescript">// على AWS الـ multipart ETag مش MD5 الملف، فده هيفشل دايمًا
+if (head.ETag !== `"${md5(file)}"`) throw new Error("corrupt");</code></pre></div>
+    <div class="good"><b>✅ Use a real checksum</b>
+<pre><code class="language-typescript">// ابعت checksum واضح واطلبه تاني وقت الـ Head
+await s3.send(new PutObjectCommand({
+  Bucket, Key, Body, ChecksumAlgorithm: "SHA256",
+}));
+const head = await s3.send(new HeadObjectCommand({
+  Bucket, Key, ChecksumMode: "ENABLED",
+}));
+console.log(head.ChecksumSHA256);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ ETag بتاع object اترفع multipart مش الـ MD5 بتاع الملف على AWS، فالمقارنة دي هتقولك "corrupt" على ملف سليم. ✅ استخدم checksum صريح زي SHA256 واطلبه بـ <code>ChecksumMode</code>. الجزء ده اتكتب من الـ docs ومشغلناهوش على الـ stand-in، لأن الـ stand-in قديم ومش بيعمل checksums.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Monthly <code>DELETE</code> on a huge table</b>
+<pre><code class="language-sql">-- بيكتب WAL كتير، والمساحة مبترجعش للـ OS
+DELETE FROM audit_events
+WHERE created_at &lt; now() - interval '12 months';</code></pre></div>
+    <div class="good"><b>✅ Archive, verify, detach, drop</b>
+<pre><code class="language-sql">-- بعد ما تتأكد إن الأرشيف عدده مطابق
+ALTER TABLE audit_events
+  DETACH PARTITION audit_events_2025_10 CONCURRENTLY;
+DROP TABLE audit_events_2025_10;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>DELETE</code> بيعدّي صف صف، وبيكتب WAL على قد الصفوف، وبيتعب الـ replica، والمساحة بتفضل جوه الجدول حتى بعد الـ VACUUM: في القياس الجدول فضل 131.2 MB زي ما هو. ✅ الـ detach والـ drop تكلفتهم ثابتة تقريبًا (حوالي 11 ms ومن غير WAL) وبيرجّعوا المساحة فعلًا، بس لازم تأرشف وتتأكد قبلها.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ ISO timestamp as recovery target</b>
+<pre><code class="language-plaintext">recovery_target_time='2026-11-09T03:23:51.887Z'
+LOG: invalid value for parameter "recovery_target_time"</code></pre></div>
+    <div class="good"><b>✅ Postgres's own text format</b>
+<pre><code class="language-plaintext">recovery_target_time='2026-11-09 05:21:15.555142+02'
+(value taken from: select now()::text)</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ قيمة <code>toISOString()</code> بالـ T والـ Z: في التشغيل، <code>ALTER SYSTEM SET</code> قبلها عادي، بس الـ server لما قام من الـ config رفضها والـ restore وقف. يعني ممكن تكتشف ده في وسط الكارثة. ✅ استخدم الصيغة اللي Postgres بيطلّعها من <code>now()::text</code>، وجرّب الـ restore قبل ما تحتاجه.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Choose a part size <span class="lvl lvl-1">🟢 easy</span></b>
+    Write <code>partSizeFor(bytes)</code> returning the smallest whole-MiB part size that keeps the upload within 10,000 parts and at least 5 MiB, and throw when the object can't fit in S3.
+    <div class="ar-note">اكتب <code>partSizeFor(bytes)</code> ترجّع أصغر part size بالـ MiB الصحيح، بحيث عدد الـ parts ميعديش 10,000 وكل part على الأقل 5 MiB، وترمي error لو الملف أكبر من حدود S3.</div>
+    <details><summary>Hint · تلميح</summary>
+      Divide the file size by 10,000, round up to a whole MiB, then take the maximum with 5 MiB.
+      <div class="ar-note">اقسم حجم الملف على 10,000، وقرّب لفوق لأقرب MiB، وخد الأكبر بينه وبين 5 MiB.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex1.ts"><code class="language-typescript">// حل التمرين: أصغر part size يخلّي الملف يدخل في 10,000 part
+const MiB = 2 ** 20;
+const MIN_PART = 5 * MiB;
+const MAX_PART = 5 * 1024 * MiB;
+const MAX_PARTS = 10_000;
+
+export function partSizeFor(fileBytes: number): { partSize: number; parts: number } {
+  if (fileBytes &lt;= 0) throw new Error("empty file");
+  // الحد الأدنى اللي يكفي عشان عدد الـ parts ميعديش 10,000
+  const needed = Math.ceil(fileBytes / MAX_PARTS);
+  const partSize = Math.max(MIN_PART, Math.ceil(needed / MiB) * MiB);
+  if (partSize &gt; MAX_PART) throw new Error("object too large for S3");
+  return { partSize, parts: Math.ceil(fileBytes / partSize) };
+}
+
+const GiB = 1024 * MiB, TiB = 1024 * GiB;
+for (const [label, size] of [["20 MiB", 20 * MiB], ["80 GiB", 80 * GiB], ["2 TiB", 2 * TiB], ["48 TiB", 48 * TiB]] as const) {
+  const { partSize, parts } = partSizeFor(size);
+  console.log(label.padEnd(8), `part ${partSize / MiB} MiB`.padEnd(16), `parts ${parts}`);
+}
+try { partSizeFor(60 * TiB); } catch (e) { console.log("60 TiB -&gt;", (e as Error).message); }
+</code></pre>
+<pre><code class="language-plaintext">20 MiB   part 5 MiB       parts 4
+80 GiB   part 9 MiB       parts 9103
+2 TiB    part 210 MiB     parts 9987
+48 TiB   part 5034 MiB    parts 9999
+60 TiB -&gt; object too large for S3
+</code></pre>
+      <div class="ar-note">لملف 80 GiB الـ 5 MiB مش كفاية لأنها هتطلع 16,384 part، فالحل 9 MiB و9103 parts. ملف 48 TiB محتاج 5034 MiB، قريب من الحد الأقصى. وملف 60 TiB بيترفض.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. A retention planner <span class="lvl lvl-2">🟡 medium</span></b>
+    Write <code>retentionPlan(partitions, keepMonths, today)</code> that returns the monthly partitions older than the retention window, oldest first. It must reject names it can't parse rather than guess.
+    <div class="ar-note">اكتب <code>retentionPlan(partitions, keepMonths, today)</code> ترجّع الـ monthly partitions الأقدم من مدة الـ retention، الأقدم الأول. ولازم ترفض أي اسم مش عارفة تفهمه بدل ما تخمّن.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex2.ts"><code class="language-typescript">// حل التمرين: خطة الـ retention بتطلّع اللي يتأرشف من غير ما تمسح حاجة بنفسها
+export function retentionPlan(partitions: string[], keepMonths: number, today: Date): string[] {
+  const y = today.getUTCFullYear();
+  const m = today.getUTCMonth() + 1;
+  const toIndex = (year: number, month: number) =&gt; year * 12 + (month - 1);
+  const cutoff = toIndex(y, m) - keepMonths;
+  return partitions
+    .map((name) =&gt; {
+      const match = /_(\d{4})_(\d{2})$/.exec(name);
+      if (!match) throw new Error(`bad partition name: ${name}`);
+      return { name, idx: toIndex(Number(match[1]), Number(match[2])) };
+    })
+    .filter((p) =&gt; p.idx &lt; cutoff)
+    .sort((a, b) =&gt; a.idx - b.idx)
+    .map((p) =&gt; p.name);
+}
+
+const names = ["audit_events_2026_05", "audit_events_2026_01", "audit_events_2026_10", "audit_events_2026_08", "audit_events_2026_11"];
+console.log(retentionPlan(names, 6, new Date("2026-11-09T00:00:00Z")));
+console.log(retentionPlan(names, 12, new Date("2026-11-09T00:00:00Z")));
+try { retentionPlan(["orders"], 6, new Date()); } catch (e) { console.log((e as Error).message); }
+</code></pre>
+<pre><code class="language-plaintext">[ 'audit_events_2026_01' ]
+[]
+bad partition name: orders
+</code></pre>
+      <div class="ar-note">مع 6 شهور ومن نوفمبر 2026 الحد هو مايو، فالأقدم منه يناير بس. مع 12 شهر مفيش حاجة تتمسح. والاسم <code>orders</code> اترفض. لاحظ إن الدالة بترجّع خطة ومش بتمسح حاجة: الـ drop يبقى خطوة تانية بعد الأرشيف والتحقق.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Time your own restore <span class="lvl lvl-3">🔴 hard</span></b>
+    On a local Postgres with a few GB of data, take a base backup with WAL archiving, make a bad change, restore to just before it, and record the actual RTO. Then write down what the bottleneck was and what the number would be at 10× the size.
+    <div class="ar-note">على Postgres محلي بكام GB داتا، خد base backup مع WAL archiving، اعمل تعديل غلط، ارجع لقبله، وسجّل الـ RTO الفعلي. وبعدين اكتب إيه اللي كان الـ bottleneck، والرقم هيبقى كام عند 10 أضعاف الحجم.</div>
+    <details><summary>Hint · تلميح</summary>
+      Use the <code>restore()</code> function in <code>p6-pitr.ts</code> as a starting point, and take the target time from <code>select now()::text</code> before the bad change.
+      <div class="ar-note">ابدأ من الدالة <code>restore()</code> في <code>p6-pitr.ts</code>، وخد وقت الـ target من <code>select now()::text</code> قبل التعديل الغلط.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project: invoice uploads <span class="lvl lvl-3">🔴 project</span></b>
+    Add invoice uploads to your side project with a presigned URL and a <code>pending</code> table, confirm with <code>HeadObject</code>, expire abandoned rows, and write the retention table for every data type you store. Add the abort-incomplete lifecycle rule in your infrastructure code.
+    <div class="ar-note">في مشروعك الجانبي: ضيف رفع فواتير بـ presigned URL وجدول <code>pending</code>، وأكّد بـ <code>HeadObject</code>، وخلّي الصفوف المتسابة تنتهي، واكتب جدول الـ retention لكل نوع داتا بتخزّنه. وضيف الـ abort-incomplete lifecycle rule في كود الـ infrastructure.</div>
+    <details><summary>Hint · تلميح</summary>
+      Start from <code>p2-pending.ts</code>. On your laptop use MinIO or s3rver, and remember which behaviours a stand-in skips: test conditional writes and signature rejection against real S3 before relying on them.
+      <div class="ar-note">ابدأ من <code>p2-pending.ts</code>. على جهازك استخدم MinIO أو s3rver، وافتكر الـ stand-in بيفوّت إيه: جرّب الـ conditional writes ورفض التوقيع على S3 الحقيقي قبل ما تعتمد عليهم.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>S3 = flat keys, immutable objects, no partial update; <code>Range</code> reads only. Strong read-after-write since Dec 2020, but no transactions.</li>
+    <li>Concurrent writers: <code>If-None-Match: *</code> or <code>If-Match</code>; the first finisher wins, others get 412.</li>
+    <li>Limits: 48.8 TiB, 10,000 parts, 5 MiB to 5 GiB per part. Pick part size from file size.</li>
+    <li>Uploads: pending row → presign → client PUT → <code>HeadObject</code> → confirm. Never trust the client's claim, and treat the URL as a bearer token.</li>
+    <li>Multipart: save part ETags, retry only failed parts, and add <code>AbortIncompleteMultipartUpload</code> on day one. The multipart ETag is not the file MD5.</li>
+    <li>Lifecycle saves about 80% at 100 TB, and per-object fees can erase it for small objects. Aggregate them or filter by size.</li>
+    <li>Versioning needs <code>NoncurrentVersionExpiration</code>; a delete marker frees nothing.</li>
+    <li>Retention is a written policy per data type. Drop partitions rather than <code>DELETE</code>, and archive and verify first.</li>
+    <li>RPO is measured data loss, RTO is measured downtime. WAL archiving leaves the open segment at risk.</li>
+    <li>Use <code>now()::text</code> for <code>recovery_target_time</code>, restore on a schedule, and estimate RTO by throughput.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ S3 مفاتيح مسطّحة و objects immutable ومفيش partial update، والقراية الجزئية بـ <code>Range</code> بس. الـ read-after-write strong من ديسمبر 2020، بس مفيش transactions.</li>
+      <li>لو في كذا حد بيكتب مع بعض: <code>If-None-Match: *</code> أو <code>If-Match</code>، وأول واحد يخلص يكسب والباقي ياخدوا 412.</li>
+      <li>الحدود: 48.8 TiB و10,000 part وكل part من 5 MiB لـ 5 GiB. احسب حجم الـ part من حجم الملف.</li>
+      <li>الـ uploads: صف pending ثم presign ثم PUT من الـ client ثم <code>HeadObject</code> ثم تأكيد. متصدقش كلام الـ client، وتعامل مع الـ URL كـ bearer token.</li>
+      <li>الـ multipart: احفظ الـ ETags بتاعة الـ parts، وأعد الفاشل بس، وحط <code>AbortIncompleteMultipartUpload</code> من أول يوم. والـ ETag بتاع الـ multipart مش MD5 الملف.</li>
+      <li>الـ lifecycle بيوفر حوالي 80% عند 100 TB، ورسوم كل object ممكن تضيّع ده مع الملفات الصغيرة. جمّعها أو فلتر بالحجم.</li>
+      <li>الـ versioning لازم معاه <code>NoncurrentVersionExpiration</code>، والـ delete marker مش بيوفّر حاجة.</li>
+      <li>الـ retention سياسة مكتوبة لكل نوع داتا. اعمل drop للـ partitions بدل <code>DELETE</code>، وأرشف واتأكد الأول.</li>
+      <li>الـ RPO هو الداتا اللي ممكن تضيع متقاسة، والـ RTO هو وقت التوقف متقاس. الـ WAL archiving بيسيب الـ segment المفتوح في خطر.</li>
+      <li>استخدم <code>now()::text</code> لـ <code>recovery_target_time</code>، واعمل restore بجدول ثابت، وقدّر الـ RTO بالـ throughput.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 12 · 2.2 — Object storage (S3): semantics (eventual → strong consistency دلوقتي)، presigned URLs، multipart upload، lifecycle policies (hot → cold → glacier)، versioning</label>
+    <label><input type="checkbox" data-key="r2"> 12 · 2.2 — Data retention، archival، backups على scale (RPO/RTO)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://aws.amazon.com/s3/consistency/">Amazon S3 strong consistency</a></li>
+    <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html">Amazon S3 multipart upload limits</a></li>
+    <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html">Amazon S3 conditional writes</a></li>
+    <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-transition-general-considerations.html">Transitioning objects using S3 Lifecycle</a></li>
+    <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-intro.html">Amazon S3 storage classes</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/continuous-archiving.html">PostgreSQL: continuous archiving and point-in-time recovery</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./14-consistency-models-cap-pacelc.html"><small>← Previous</small>14 · Consistency &amp; CAP</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./16-caching-foundations-strategies.html"><small>Next →</small>16 · Caching Foundations</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

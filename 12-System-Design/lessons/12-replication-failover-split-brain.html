@@ -1,0 +1,1664 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Replication in Depth: Sync, Quorums, Failover &amp; Split-Brain — 12 System Design</title>
+<meta name="section" content="12-System-Design">
+<meta name="level" content="🟢 → 🟡">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">12 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 12 / 63</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Replication in Depth: Sync, Quorums, Failover &amp; Split-Brain</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 12 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🟢 → 🟡</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Postgres 18 · Redis 8 · TypeScript</span>
+      <span class="chip">Prereq: 11 Choosing a Store</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>12 · 1.5 — Replication كمفهوم: primary/replica، reads من الـ replicas</li>
+        <li>12 · 2.2 — Replication بعمق: leader-follower (single-leader)، multi-leader (conflicts!)، leaderless (Dynamo-style quorums W + R &gt; N)، sync vs async replication (durability vs latency)، failover وتحدياته (split-brain)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Primary and replica</a></li>
+      <li><a href="#p2">Part 2 — Sync vs async</a></li>
+      <li><a href="#p3">Part 3 — Multi-leader</a></li>
+      <li><a href="#p4">Part 4 — Leaderless quorums</a></li>
+      <li><a href="#p5">Part 5 — Failover and lost writes</a></li>
+      <li><a href="#p6">Part 6 — Split-brain</a></li>
+      <li><a href="#p7">Part 7 — Reads after writes in the app</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Replication is how a database survives a dead machine and serves more reads than one server can. It also causes some of the most expensive incidents in production: a read that misses the write the user just made, a commit that hangs when a standby dies, a failover that quietly loses acknowledged orders, two primaries accepting writes at once. "It's replicated, so it's safe" is exactly the sentence that causes those.</p>
+    <p>Each of those failures runs below for real, on Postgres 18 with an actual primary and standbys. The multi-leader and leaderless models run as labelled simulations, because Postgres has neither. Streaming versus logical replication and connection pooling were covered in <a href="../../09-Databases/lessons/23-replication-read-replicas.html">section 09 · replication &amp; read replicas</a>; this lesson is about what the system does when things go wrong.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ replication هي الطريقة اللي الـ database بتعيش بيها لو machine وقعت، وبتخدم بيها قراءات أكتر من اللي server واحد يقدر عليه. وهي كمان سبب في أغلى incidents بتحصل في production: قراية مش شايفة الكتابة اللي الـ user لسه عاملها، <code>COMMIT</code> بيتعلق لما standby يقع، failover بيضيّع orders اتأكدت للعميل من غير ما حد ياخد باله، واتنين primary بيقبلوا كتابة في نفس الوقت. جملة "ما هي متعملها replication، يبقى في أمان" هي بالظبط اللي بتسبب ده.</p>
+    <p>كل المشاكل دي بتتشغّل تحت بجد، على Postgres 18 و primary و standbys حقيقيين. الـ multi-leader والـ leaderless بيشتغلوا كـ simulations متعلّمة بوضوح، لأن Postgres مفيهوش الاتنين دول. الـ streaming مقابل logical والـ connection pooling اتشرحوا في <a href="../../09-Databases/lessons/23-replication-read-replicas.html">قسم 09: الـ replication والـ read replicas</a>، والدرس ده عن اللي النظام بيعمله لما الدنيا تبوظ.</p>
+  </section>
+
+  <div class="callout warn">
+    <b>How the numbers were taken</b>
+    Everything ran on one loaded Windows machine, on loopback. Replication "distance" is a TCP delay proxy, a stand-in for a real network: its real round trip is measured and printed next to each result. Latencies are ≈ medians. The simulations use a seeded PRNG and virtual time so their output repeats exactly.
+    <div class="ar-note"><b>القياسات اتعملت إزاي:</b> كل حاجة اتشغلت على جهاز Windows واحد عليه حمل، على loopback. "المسافة" بتاعة الـ replication عبارة عن TCP delay proxy، يعني بديل للشبكة الحقيقية، والـ round trip الفعلي بتاعه متقاس ومكتوب جنب كل نتيجة. الـ latencies عبارة عن medians تقريبية (≈). الـ simulations بتستخدم PRNG بـ seed ووقت افتراضي، فالـ output بيطلع هو هو في كل run.</div>
+  </div>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Primary and replica <span class="lvl lvl-1">🟢 Basic</span><span class="ar-sub">الجزء 1 — الـ primary والـ replica</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>In single-leader replication one node, the <strong>primary</strong>, accepts all writes and streams its write-ahead log (WAL) to one or more <strong>standbys</strong>, which replay it. Standbys answer reads and refuse writes, so the read capacity grows with each one added. <code>pg_stat_replication</code> on the primary shows each standby's <code>state</code> and <code>sync_state</code>, and <code>pg_wal_lsn_diff(sent_lsn, replay_lsn)</code> gives the lag in bytes.</p>
+    <p>The experiment makes lag visible on purpose. <code>pg_wal_replay_pause()</code> stops the standby from applying WAL; it keeps receiving it. One <code>INSERT</code> on the primary gives the only result that matters here: the primary sees 1 row, the replica sees 0, with 424 bytes of lag between them. After resume the replica catches up. A replica is <em>not</em> the same data with a delay you can ignore: for that window it is a different database state.</p>
+    <p>Streaming versus logical replication, and how the application connects through a pool, are in <a href="../../09-Databases/lessons/23-replication-read-replicas.html">section 09</a>. In system-design terms, what you get is read scaling and a warm copy for failover. What you do not get is more write capacity: every standby still replays every write.</p>
+  </section>
+
+<pre data-file="setup.sh"><code class="language-bash"># نسخة primary مؤقتة على port صريح، وكل حاجة جوه الفولدر ده
+initdb -D primary -U app -A trust -E UTF8 --no-locale
+pg_ctl -D primary -o "-p 55432 -c listen_addresses=127.0.0.1" -l primary.log -w start
+
+# نسخة standby من backup للـ primary، والـ ⁦-R⁩ بيكتب primary_conninfo و standby.signal
+pg_basebackup -h 127.0.0.1 -p 55432 -U app -D s1 -R -X stream
+pg_ctl -D s1 -o "-p 55433 -c listen_addresses=127.0.0.1 -c cluster_name=s1" -l s1.log -w start
+</code></pre>
+  <div class="ar-note">الأوامر دي هي اللي الـ helper بيعملها. كل السكريبتات تحت بتستورد <code>pg-cluster.mjs</code>: بيجيب port فاضي، وبيرفض 5432 وأي port فاضي عشان متوصلش بالغلط للـ Postgres الحقيقي بتاعك، وبيعمل standbys كتير، وبيمسح كل حاجة في الآخر.</div>
+
+  <details><summary>Lab helper · الـ helper</summary>
+<pre data-file="pg-cluster.mjs"><code class="language-javascript">// ده helper لـ Postgres مؤقت: port فاضي، والفولدر بيتمسح في الآخر، ومفيش اتصال بأي port افتراضي
+// لازم stdio تبقى ignore في startNode، وإلا execFileSync هيعلق على الـ pipe
+import { execFileSync } from 'node:child_process';
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import net from 'node:net';
+import path from 'node:path';
+import pg from 'pg';
+
+// الحماية الأهم: port فاضي أو 0 معناه 5432، يعني الـ DB الحقيقية بتاعتك
+export function assertSafePort(port) {
+  const n = Number(port);
+  if (!/^\d+$/.test(String(port)) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) throw new Error('refusing port ' + port);
+  return n;
+}
+
+const BIN = 'C:/Program Files/PostgreSQL/18/bin';
+const freePort = () =&gt; new Promise((res, rej) =&gt; {
+  const s = net.createServer();
+  s.once('error', rej);
+  s.listen(0, '127.0.0.1', () =&gt; { const { port } = s.address(); s.close(() =&gt; res(port)); });
+});
+const run = (root, exe, args, timeout = 60000) =&gt; execFileSync(`${BIN}/${exe}.exe`, args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout });
+
+export async function connect(port, db = 'postgres') {
+  assertSafePort(port);
+  const c = new pg.Client({ connectionString: `postgres://app@127.0.0.1:${port}/${db}` });
+  c.on('error', () =&gt; {});
+  await c.connect();
+  return c;
+}
+
+export function stopNode(c, name, mode = 'fast') {
+  try { execFileSync(`${BIN}/pg_ctl.exe`, ['-D', name, 'stop', '-m', mode, '-w', '-t', '20'], { cwd: c.root, stdio: 'ignore', timeout: 40000 }); return true; } catch { return false; }
+}
+export function startNode(c, name) {
+  execFileSync(`${BIN}/pg_ctl.exe`, ['-D', name, '-l', `${name}.log`, '-w', '-t', '40', 'start'], { cwd: c.root, stdio: 'ignore', timeout: 60000 });
+}
+
+export async function createPrimary({ conf = '', fast = false } = {}) {
+  const root = mkdtempSync(path.resolve('pgc-'));
+  run(root, 'initdb', ['-D', 'primary', '-U', 'app', '-A', 'trust', '-E', 'UTF8', '--no-locale']);
+  const port = assertSafePort(await freePort());
+  const speed = fast ? 'fsync=off\nsynchronous_commit=off\nfull_page_writes=off\n' : '';
+  writeFileSync(path.join(root, 'primary', 'postgresql.auto.conf'), `port=${port}\nlisten_addresses='127.0.0.1'\nmax_connections=60\n${speed}${conf}\n`);
+  const c = { root, port, name: 'primary', nodes: ['primary'] };
+  startNode(c, 'primary');
+  return c;
+}
+
+export async function addStandby(c, { name = 's1', conf = '' } = {}) {
+  assertSafePort(c.port);
+  run(c.root, 'pg_basebackup', ['-h', '127.0.0.1', '-p', String(c.port), '-U', 'app', '-D', name, '-R', '-X', 'stream', '--no-sync']);
+  const port = assertSafePort(await freePort());
+  appendFileSync(path.join(c.root, name, 'postgresql.auto.conf'), `\nport=${port}\ncluster_name='${name}'\n${conf}\n`);
+  startNode(c, name);
+  c.nodes.push(name);
+  return { name, port };
+}
+
+export async function stopAll(c) {
+  for (const n of [...c.nodes].reverse()) {
+    if (existsSync(path.join(c.root, n, 'postmaster.pid')) &amp;&amp; !stopNode(c, n)) stopNode(c, n, 'immediate');
+  }
+  await new Promise((r) =&gt; setTimeout(r, 300));
+  rmSync(c.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+}</code></pre>
+    <div class="ar-note">الـ helper كله: <code>createPrimary</code> بيعمل cluster، <code>addStandby</code> بياخد <code>pg_basebackup</code> ويشغّل standby، <code>connect</code> و <code>stopNode</code> و <code>startNode</code>، و<code>stopAll</code> بيوقف كله ويمسح الفولدر. الـ durable settings هي الـ default، فأرقام الـ commit ليها معنى.</div>
+  </details>
+
+<pre data-file="src/e1-primary-replica.ts"><code class="language-typescript">import { addStandby, connect, createPrimary, stopAll } from "../pg-cluster.mjs";
+import { report, sleep } from "./lab.ts";
+
+// عندنا primary و standby حقيقيين، وكل واحد على port من اختيار الـ helper
+const c = await createPrimary();
+try {
+  const s = await addStandby(c, { name: "s1" });
+  const primary = await connect(c.port);
+  const replica = await connect(s.port);
+
+  await primary.query(`create table orders (id serial primary key, status text not null)`);
+  await sleep(500);
+
+  report("replica in recovery?", (await replica.query(`select pg_is_in_recovery() r`)).rows[0].r);
+  report("pg_stat_replication", (await primary.query(`select application_name, state, sync_state from pg_stat_replication`)).rows[0]);
+
+  // وقّف التطبيق على الـ replica، عشان الـ lag يبقى ظاهر وثابت قدامنا
+  await replica.query(`select pg_wal_replay_pause()`);
+  await sleep(100);
+  await primary.query(`insert into orders (status) values ('paid')`);
+  await sleep(200);
+
+  const count = `select count(*)::int n from orders`;
+  report("primary sees rows", (await primary.query(count)).rows[0].n);
+  report("replica sees rows", (await replica.query(count)).rows[0].n);
+  report("lag in bytes (sent - replay)", (await primary.query(
+    `select pg_wal_lsn_diff(sent_lsn, replay_lsn)::int b from pg_stat_replication`)).rows[0].b);
+
+  // الـ replica بتحاول تكتب: ده الفرق بين primary و standby
+  await replica.query(`insert into orders (status) values ('x')`).catch((e: Error) =&gt; report("write on replica", e.message));
+
+  await replica.query(`select pg_wal_replay_resume()`);
+  await sleep(500);
+  report("replica after resume", (await replica.query(count)).rows[0].n);
+  report("lag after resume", (await primary.query(
+    `select pg_wal_lsn_diff(sent_lsn, replay_lsn)::int b from pg_stat_replication`)).rows[0].b);
+
+  await replica.end();
+  await primary.end();
+} finally {
+  await stopAll(c);
+}
+process.exit(0);</code></pre>
+
+<pre><code class="language-plaintext">replica in recovery?                     true
+pg_stat_replication                      {"application_name":"s1","state":"streaming","sync_state":"async"}
+primary sees rows                        1
+replica sees rows                        0
+lag in bytes (sent - replay)             424
+write on replica                         cannot execute INSERT in a read-only transaction
+replica after resume                     1
+lag after resume                         0</code></pre>
+  <div class="ar-note">الـ replica <code>in recovery = true</code> يعني standby. الـ state بتاعها <code>streaming</code> و <code>async</code>. وأهم سطرين: الـ primary شايف 1 والـ replica شايفة 0، والفرق 424 byte. محاولة كتابة على الـ replica اترفضت بـ <code>read-only transaction</code>. بعد الـ resume الـ replica شافت الصف والـ lag رجع 0.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>في الـ single-leader replication فيه node واحدة، الـ <strong>primary</strong>، بتقبل كل الكتابة وبتبعت الـ WAL بتاعها لواحد أو أكتر من الـ <strong>standbys</strong> اللي بتعمله replay. الـ standbys بتجاوب قراءات وبترفض كتابة، فسعة القراية بتزيد مع كل واحد بتضيفه. <code>pg_stat_replication</code> على الـ primary بيوريك <code>state</code> و <code>sync_state</code> لكل standby، و<code>pg_wal_lsn_diff(sent_lsn, replay_lsn)</code> بيدّيك الـ lag بالـ bytes.</p>
+    <p>التجربة بتخلي الـ lag ظاهر عن قصد. <code>pg_wal_replay_pause()</code> بتوقف الـ standby عن تطبيق الـ WAL، بس هو لسه بيستلمه. <code>INSERT</code> واحد على الـ primary بيطلّع النتيجة المهمة: الـ primary شايف صف، والـ replica شايفة صفر، وبينهم 424 byte lag. بعد الـ resume الـ replica بتلحق. الـ replica <em>مش</em> نفس الـ data بتأخير تقدر تتجاهله: طول الفترة دي هي database في حالة تانية خالص.</p>
+    <p>الـ streaming مقابل logical، وإزاي الـ app بيتوصل من خلال pool، موجودين في <a href="../../09-Databases/lessons/23-replication-read-replicas.html">قسم 09</a>. من ناحية الـ system design بتكسب read scaling ونسخة جاهزة للـ failover، بس مش بتكسب write capacity أكتر: كل standby لسه بيعيد كل كتابة.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      صفحات القراية الكتير زي لستة الـ orders أو التقارير تروح على read replica، والكتابة والـ checkout على الـ primary. في Node ده معناه pool للـ primary و pool تاني للـ replica، وكل query بتختار. الغلطة الشائعة: تعتبر إن زيادة replicas بتحل مشكلة بطء الكتابة، وهي مش بتحلها: كل replica بتكتب نفس الكتابات.
+    </div>
+  </section>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Sync vs async <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ sync مقابل الـ async</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The trade-off is <strong>durability versus latency</strong>. With asynchronous replication the primary confirms a commit once its own WAL is flushed, and the standby catches up later. With synchronous replication (set with <code>synchronous_standby_names</code>) the commit waits for a standby, and <code>synchronous_commit</code> chooses for what: <code>off</code> doesn't even wait for the local flush; <code>local</code> waits only for the local flush; <code>on</code> waits for the standby to flush WAL to disk; <code>remote_write</code> for the standby to write it; <code>remote_apply</code> for the standby to replay it, which is the only level where a read on that standby is guaranteed to see the commit.</p>
+    <p>On localhost those differences are invisible, so the standby is connected through a delay proxy. I asked for 5 ms one way; the measured round trip through it is 31.1 ms, because Windows timers round up. That is the distance stand-in. With async replication a commit took about 0.2 ms. With a synchronous standby, <code>on</code> took about 31 ms: one round trip, measured directly. <code>synchronous_commit</code> can be set per transaction, so a payment can pay for the round trip while an analytics event sets <code>off</code> and skips it.</p>
+    <p>The surprise is the <strong>availability cost</strong>. Stop the only synchronous standby and every commit waits, in wait event <code>IPC/SyncRep</code>, indefinitely. <code>statement_timeout</code> at 800 ms did not end it: after 3 seconds it was still waiting. <code>pg_cancel_backend</code> did end it, and then the client received a <em>success</em> result with a warning: <code>canceling wait for synchronous replication</code>, "already committed locally, but might not have been replicated". So the client saw success for a transaction whose durability guarantee was just waived, and the row is on the primary.</p>
+    <p>The fix for one standby being a single point of failure is a quorum: <code>ANY 1 (s1, s2)</code> commits as soon as any one of the two confirms, so losing either changes nothing. Twenty commits with <code>s1</code> dead averaged about 1 ms. Lose both and it hangs again, by design: sync replication chooses to stop rather than lose the promise.</p>
+  </section>
+
+<pre class="diagram">
+ client              primary                     standby
+   |--- COMMIT -------&gt;|                            |
+   |                   |-- flush local WAL          |
+   |                   |-- send WAL ---------------&gt;|
+   |                   |                            |-- flush (on)
+   |                   |                            |-- apply (remote_apply)
+   |                   |&lt;--------- ack -------------|
+   |&lt;-- OK ------------|
+   \___________ commit latency includes 1 RTT ____________/
+</pre>
+  <div class="ar-note">الـ client بيبعت COMMIT. الـ primary بيعمل flush للـ WAL محليًا ويبعته للـ standby. الـ standby بيعمل flush (لو <code>on</code>) أو يطبّق (لو <code>remote_apply</code>)، وبعدين يبعت ack. الـ primary مش بيرد على الـ client غير بعد الـ ack ده، فزمن الـ commit بيتضاف عليه round trip كامل. ده معنى "durability مقابل latency".</div>
+
+<pre data-file="src/lab.ts"><code class="language-typescript">import net from "node:net";
+import { assertSafePort } from "../pg-cluster.mjs";
+
+export const sleep = (ms: number) =&gt; new Promise&lt;void&gt;((r) =&gt; setTimeout(r, ms));
+
+export function report(label: string, value: unknown): void {
+  console.log(`${label.padEnd(40)} ${typeof value === "string" ? value : JSON.stringify(value)}`);
+}
+
+// بروكسي TCP بيأخر كل اتجاه: بديل عن المسافة بين الـ data centers، مش شبكة حقيقية
+export function delayProxy(targetPort: number, oneWayMs: number) {
+  assertSafePort(targetPort);
+  const socks = new Set&lt;net.Socket&gt;();
+  const srv = net.createServer((a) =&gt; {
+    const b = net.connect(targetPort, "127.0.0.1");
+    socks.add(a); socks.add(b);
+    a.setNoDelay(true); b.setNoDelay(true);
+    const pipe = (from: net.Socket, to: net.Socket) =&gt;
+      from.on("data", (d) =&gt; setTimeout(() =&gt; { if (!to.destroyed) to.write(d); }, oneWayMs));
+    pipe(a, b); pipe(b, a);
+    const kill = () =&gt; { a.destroy(); b.destroy(); };
+    for (const s of [a, b]) { s.on("close", kill); s.on("error", kill); }
+  });
+  return new Promise&lt;{ port: number; close: () =&gt; void }&gt;((res) =&gt;
+    srv.listen(0, "127.0.0.1", () =&gt; {
+      const { port } = srv.address() as net.AddressInfo;
+      res({ port: assertSafePort(port), close: () =&gt; { socks.forEach((s) =&gt; s.destroy()); srv.close(); } });
+    }));
+}
+
+// قياس الـ RTT الفعلي عبر البروكسي: Windows timers بتزوّد عن الرقم المطلوب
+export async function measureProxyRtt(oneWayMs: number, samples = 30): Promise&lt;number&gt; {
+  const echo = net.createServer((s) =&gt; s.on("data", (d) =&gt; s.write(d)));
+  await new Promise&lt;void&gt;((r) =&gt; echo.listen(0, "127.0.0.1", () =&gt; r()));
+  const echoPort = (echo.address() as net.AddressInfo).port;
+  const proxy = await delayProxy(echoPort, oneWayMs);
+  const c = net.connect(proxy.port, "127.0.0.1");
+  c.setNoDelay(true);
+  await new Promise&lt;void&gt;((r) =&gt; c.once("connect", () =&gt; r()));
+  const xs: number[] = [];
+  for (let i = 0; i &lt; samples; i++) {
+    const t0 = performance.now();
+    c.write("x");
+    await new Promise&lt;void&gt;((r) =&gt; c.once("data", () =&gt; r()));
+    xs.push(performance.now() - t0);
+  }
+  c.destroy(); proxy.close(); echo.close();
+  xs.sort((a, b) =&gt; a - b);
+  return +xs[Math.floor(xs.length / 2)].toFixed(1);
+}</code></pre>
+
+<pre data-file="src/e2-sync-latency.ts"><code class="language-typescript">import { addStandby, connect, createPrimary, stopAll } from "../pg-cluster.mjs";
+import { delayProxy, measureProxyRtt, report, sleep } from "./lab.ts";
+
+// الـ standby متوصل عبر بروكسي بيأخر 5ms في كل اتجاه: بديل عن المسافة
+const ONE_WAY_MS = 5;
+const c = await createPrimary();
+const proxy = await delayProxy(c.port, ONE_WAY_MS);
+try {
+  report("proxy real RTT, median ms", await measureProxyRtt(ONE_WAY_MS));
+  await addStandby(c, {
+    name: "s1",
+    conf: `primary_conninfo='host=127.0.0.1 port=${proxy.port} user=app application_name=s1'`,
+  });
+  const db = await connect(c.port);
+  await db.query(`create table orders (id serial primary key, status text)`);
+  await sleep(800);
+
+  const commitMs = async (mode: string, n = 60) =&gt; {
+    await db.query(`set synchronous_commit = '${mode}'`);
+    const xs: number[] = [];
+    for (let i = 0; i &lt; n; i++) {
+      const t = performance.now();
+      await db.query(`insert into orders (status) values ('paid')`);
+      xs.push(performance.now() - t);
+    }
+    xs.sort((a, b) =&gt; a - b);
+    return +xs[Math.floor(n / 2)].toFixed(2);
+  };
+
+  // أول حالة: replication async، الـ COMMIT مش بيستنى الـ standby خالص
+  report("async standby, commit ms", {
+    off: await commitMs("off"), local: await commitMs("local"), on: await commitMs("on"),
+  });
+
+  // تاني حالة: sync، الـ COMMIT بيستنى الـ standby حسب الـ level
+  await db.query(`alter system set synchronous_standby_names = 'FIRST 1 (s1)'`);
+  await db.query(`select pg_reload_conf()`);
+  await sleep(1000);
+  report("sync_state", (await db.query(`select application_name, sync_state from pg_stat_replication`)).rows[0]);
+  report("sync standby, commit ms", {
+    off: await commitMs("off"), local: await commitMs("local"), on: await commitMs("on"),
+    remote_write: await commitMs("remote_write"), remote_apply: await commitMs("remote_apply"),
+  });
+  await db.end();
+} finally {
+  proxy.close();
+  await stopAll(c);
+}
+process.exit(0);</code></pre>
+
+<pre><code class="language-plaintext">proxy real RTT, median ms                31.1
+async standby, commit ms                 {"off":0.12,"local":0.18,"on":0.2}
+sync_state                               {"application_name":"s1","sync_state":"sync"}
+sync standby, commit ms                  {"off":0.06,"local":0.34,"on":31.06,"remote_write":31.41,"remote_apply":31.04}</code></pre>
+  <div class="ar-note">الـ RTT الفعلي عبر الـ proxy ‏31.1 ms مع إننا طلبنا 5 ms في كل اتجاه. مع standby async الـ commit كله أقل من 1 ms. مع sync: <code>on</code> ‏31.06 ms، و<code>remote_write</code> ‏31.41، و<code>remote_apply</code> ‏31.04، يعني كلهم round trip واحد. لكن <code>off</code> ‏0.06 ms و<code>local</code> ‏0.34 ms حتى مع وجود sync standby، لأن المستويين دول مش بيستنوا الـ standby أصلًا.</div>
+
+<pre data-file="src/e3-dead-standby.ts"><code class="language-typescript">import { addStandby, connect, createPrimary, stopAll, stopNode } from "../pg-cluster.mjs";
+import { report, sleep } from "./lab.ts";
+
+// الجزء الأول: sync standby واحد بيقع والـ COMMIT بيتعلق
+const c = await createPrimary();
+try {
+  await addStandby(c, { name: "s1" });
+  const admin = await connect(c.port);
+  await admin.query(`create table orders (id serial primary key, status text)`);
+  await admin.query(`alter system set synchronous_standby_names = 'FIRST 1 (s1)'`);
+  await admin.query(`select pg_reload_conf()`);
+  await sleep(800);
+  stopNode(c, "s1");
+  await sleep(300);
+
+  const app = await connect(c.port);
+  await app.query(`set statement_timeout = '800ms'`);
+  const pid = (await app.query(`select pg_backend_pid() p`)).rows[0].p;
+  const notices: string[] = [];
+  app.on("notice", (n) =&gt; notices.push(`${n.severity}: ${n.message} | ${n.detail ?? ""}`));
+
+  const t0 = performance.now();
+  let settled = false;
+  const insert = app.query(`insert into orders (status) values ('during-outage')`)
+    .then(() =&gt; "client got: success", (e: Error) =&gt; "client got error: " + e.message)
+    .finally(() =&gt; { settled = true; });
+
+  await sleep(3000);
+  report("still waiting after 3 s?", !settled);
+  await admin.query(`set synchronous_commit = 'local'`);
+  report("wait event", (await admin.query(
+    `select wait_event_type || '/' || wait_event w from pg_stat_activity where pid = $1`, [pid])).rows[0].w);
+
+  await admin.query(`select pg_cancel_backend($1)`, [pid]);
+  report("after pg_cancel_backend", await insert);
+  report("elapsed ms", Math.round(performance.now() - t0));
+  report("server notice", notices[0] ?? "(none)");
+  report("row visible on primary", (await admin.query(`select count(*)::int n from orders where status = 'during-outage'`)).rows[0].n);
+  await app.end();
+  await admin.end();
+} finally {
+  await stopAll(c);
+}</code></pre>
+
+<pre><code class="language-plaintext">still waiting after 3 s?                 true
+wait event                               IPC/SyncRep
+after pg_cancel_backend                  client got: success
+elapsed ms                               3021
+server notice                            WARNING: canceling wait for synchronous replication due to user request | The transaction has already committed locally, but might not have been replicated to the standby.
+row visible on primary                   1</code></pre>
+  <div class="ar-note">بعد 3 ثواني الـ <code>COMMIT</code> لسه واقف في <code>IPC/SyncRep</code>، والـ <code>statement_timeout</code> بتاع 800 ms مأثرش. بعد <code>pg_cancel_backend</code>، الـ client استلم <b>success</b>، والـ server بعت WARNING بيقول إن الـ transaction اتعملها commit محليًا بس ممكن متكونش وصلت للـ standby. والصف فعلًا موجود على الـ primary (1).</div>
+
+<pre data-file="src/e3-dead-standby.ts"><code class="language-typescript">// الجزء التاني: quorum بـ ⁦standby-⁩ين، وواحد بيقع والـ commits مكملة
+const q = await createPrimary();
+try {
+  await addStandby(q, { name: "s1" });
+  await addStandby(q, { name: "s2" });
+  const db = await connect(q.port);
+  await db.query(`create table orders (id serial primary key, status text)`);
+  await db.query(`alter system set synchronous_standby_names = 'ANY 1 (s1, s2)'`);
+  await db.query(`select pg_reload_conf()`);
+  await sleep(1000);
+  report("quorum sync_state", (await db.query(`select application_name, sync_state from pg_stat_replication order by 1`)).rows);
+
+  stopNode(q, "s1");
+  await sleep(300);
+  await db.query(`set statement_timeout = '4000ms'`);
+  const t = performance.now();
+  for (let i = 0; i &lt; 20; i++) await db.query(`insert into orders (status) values ('paid')`);
+  report("20 commits with s1 dead, mean ms", +((performance.now() - t) / 20).toFixed(2));
+  report("commits landed", (await db.query(`select count(*)::int n from orders`)).rows[0].n);
+
+  stopNode(q, "s2");
+  await sleep(300);
+  await db.query(`set statement_timeout = 0`);
+  await db.query(`set lock_timeout = 0`);
+  const stuck = db.query(`insert into orders (status) values ('both-standbys-dead')`).then(() =&gt; "committed", (e: Error) =&gt; "error: " + e.message);
+  const winner = await Promise.race([stuck, sleep(1500).then(() =&gt; "still hanging after 1.5 s")]);
+  report("both standbys dead", winner);
+  await db.end().catch(() =&gt; {});
+} finally {
+  await stopAll(q);
+}
+process.exit(0);</code></pre>
+
+<pre><code class="language-plaintext">quorum sync_state                        [{"application_name":"s1","sync_state":"quorum"},{"application_name":"s2","sync_state":"quorum"}]
+20 commits with s1 dead, mean ms         0.98
+commits landed                           20
+both standbys dead                       still hanging after 1.5 s</code></pre>
+  <div class="ar-note">مع <code>ANY 1 (s1, s2)</code> كل standby حالته <code>quorum</code>. وقّعنا s1: الـ 20 commit خلصوا بمتوسط حوالي 1 ms ووصلوا كلهم. لما s2 وقع كمان، أي commit جديد علّق تاني، لأن مبقاش فيه أي standby يأكّد.</div>
+
+  <table>
+    <thead><tr><th><code>synchronous_commit</code></th><th>Waits for</th><th>≈ commit (31 ms RTT)</th><th>Survives</th><th>Use it for</th></tr></thead>
+    <tbody>
+      <tr><td><code>off</code></td><td>Nothing on disk</td><td>0.06 ms</td><td>Nothing, a primary crash loses recent commits</td><td>Metrics, click events</td></tr>
+      <tr><td><code>local</code></td><td>Local WAL flush</td><td>0.34 ms</td><td>Primary crash, not primary loss</td><td>Most data with async standbys</td></tr>
+      <tr><td><code>on</code></td><td>Standby WAL flush</td><td>31.06 ms</td><td>Primary loss</td><td>Orders, payments</td></tr>
+      <tr><td><code>remote_write</code></td><td>Standby wrote to OS</td><td>31.41 ms</td><td>Primary loss, unless the standby OS crashes too</td><td>Slightly cheaper sync</td></tr>
+      <tr><td><code>remote_apply</code></td><td>Standby replayed</td><td>31.04 ms</td><td>Primary loss, and readers on the standby see it</td><td>Read-your-writes on a standby</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">صف صف: <b>off</b> مش بيستنى disk خالص (0.06 ms)، crash للـ primary بيضيّع آخر commits، للـ metrics والـ click events. <b>local</b> بيستنى flush الـ WAL محليًا (0.34 ms)، بيعدّي crash بس مش ضياع الـ primary كله. <b>on</b> بيستنى flush عند الـ standby (31.06 ms)، بيعدّي ضياع الـ primary، للـ orders والـ payments. <b>remote_write</b> بيستنى كتابة الـ OS عند الـ standby، أرخص شوية، وبيعدّي ضياع الـ primary إلا لو الـ OS بتاع الـ standby وقع كمان. <b>remote_apply</b> بيستنى الـ standby يطبّق، والقراية من الـ standby بتشوف الـ commit. فرق الـ 3 الأخيرين مش ظاهر هنا لأن الـ standby فاضي، وتحت حمل بيظهر.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الصفقة هي <strong>durability مقابل latency</strong>. في الـ async الـ primary بيأكّد الـ commit بعد ما WAL بتاعه يتعمله flush، والـ standby يلحق بعدين. في الـ sync (بـ <code>synchronous_standby_names</code>) الـ commit بيستنى standby، و<code>synchronous_commit</code> بيحدد بيستنى إيه: <code>off</code> مش بيستنى حتى الـ flush المحلي، <code>local</code> بيستنى الـ flush المحلي بس، <code>on</code> بيستنى الـ standby يعمل flush للـ WAL، <code>remote_write</code> يكتبه، و<code>remote_apply</code> يطبّقه، وده المستوى الوحيد اللي القراية من الـ standby مضمون تشوف الـ commit.</p>
+    <p>على localhost الفروق دي مش باينة، فالـ standby متوصل من خلال delay proxy. طلبت 5 ms في كل اتجاه، والـ round trip المتقاس 31.1 ms، لأن Windows timers بتقرّب لفوق. ده البديل بتاع المسافة. في الـ async الـ commit خد حوالي 0.2 ms. مع sync standby، <code>on</code> خد حوالي 31 ms: round trip واحد متقاس بالظبط. و<code>synchronous_commit</code> ممكن يتعمل per transaction، فالـ payment يدفع تمن الـ round trip، والـ analytics event يعمل <code>off</code> ويعدّيه.</p>
+    <p>المفاجأة في <strong>تمن الـ availability</strong>. وقّف الـ standby الـ sync الوحيد، وكل الـ commits بتستنى في wait event <code>IPC/SyncRep</code> للأبد. <code>statement_timeout</code> بتاع 800 ms منهاش: بعد 3 ثواني لسه واقف. <code>pg_cancel_backend</code> نهّاها، وبعدها الـ client استلم <em>success</em> ومعاها warning: <code>canceling wait for synchronous replication</code> و"already committed locally, but might not have been replicated". يعني الـ client شاف نجاح لـ transaction ضمان الـ durability بتاعها اتلغى، والصف موجود على الـ primary.</p>
+    <p>الحل إن standby واحد ميبقاش single point of failure هو quorum: <code>ANY 1 (s1, s2)</code> بيعمل commit أول ما أي واحد منهم يأكّد، فخسارة أي واحد مبتغيّرش حاجة. 20 commit و<code>s1</code> واقع متوسطهم حوالي 1 ms. ولو خسرت الاتنين هيعلّق تاني، وده مقصود: الـ sync replication بتفضل تقف على إنها تكسر وعدها.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو عندك standby في AZ تانية و<code>synchronous_standby_names</code> عليها standby واحد، أي maintenance على الـ standby ده بيوقف كل الـ checkout. استخدم <code>ANY 1 (s1, s2)</code> مع standby-ين. وحط <code>SET LOCAL synchronous_commit = off</code> في transactions الـ analytics عشان متدفعش الـ RTT. والغلطة الشائعة: تعتمد على <code>statement_timeout</code> إنه هيحميك من sync standby واقع، وهو مش بيعمل كده، وpool الـ connections بيتملي ويقع الـ API كله.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Your sync standby died and checkout is hanging. What is happening, and what do you do?" → Commits are waiting on <code>SyncRep</code> for an acknowledgement that will never come; <code>statement_timeout</code> won't help. Short term: clear or lower <code>synchronous_standby_names</code> and accept reduced durability, knowingly. Long term: a quorum such as <code>ANY 1 (s1, s2)</code>, so one standby is never a single point of failure.
+    <div class="ar-note">"الـ sync standby وقع والـ checkout معلّق. إيه اللي بيحصل وهتعمل إيه؟" ← الـ commits بتستنى في <code>SyncRep</code> لـ ack مش هييجي، و<code>statement_timeout</code> مش هيساعد. على المدى القصير: أفضّي أو أقلل <code>synchronous_standby_names</code> وأقبل durability أقل وأنا عارف. على المدى الطويل: quorum زي <code>ANY 1 (s1, s2)</code> عشان standby واحد ميبقاش single point of failure.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Multi-leader <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ multi-leader</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Multi-leader replication lets more than one node accept writes. The reasons are specific: several data centers where each region wants local write latency, and clients that must keep working offline. Calendars on phones and laptops behave this way, and collaborative editors do too. The price is <strong>write conflicts</strong>: two leaders can change the same record concurrently, and neither sees the other's change until later.</p>
+    <p>The simulation has two leaders change the same order while disconnected: support in Cairo changes the shipping address, and the warehouse in Frankfurt marks it shipped. <strong>Last-write-wins on the whole row</strong> keeps the newer version and silently loses the address change. <strong>LWW per field</strong> keeps both field updates but still loses one note. <strong>Application-level merge</strong> keeps everything: the status follows the state machine, the notes are a set union. And in the last line, a 10-tick clock skew makes LWW keep the Cairo version and lose the warehouse's <code>shipped</code> update entirely, with no error anywhere. A timestamp is not a causal order.</p>
+    <p>This simulation is deliberately small: it doesn't model replication topology, ordering across more than two leaders, or causality tracking. CRDTs and geo-replication are in <a href="./36-geo-distribution-crdts-residency.html">Geo-Distribution</a>. The trade-off to remember: you gain write availability in each region and pay for it with conflict handling in <em>every</em> feature that writes.</p>
+  </section>
+
+<pre data-file="src/e4-multileader.ts"><code class="language-typescript">// محاكاة وليست replication حقيقية: leaders اتنين، وrange وقت افتراضي، وناتج ثابت في كل run
+console.log("SIMULATION: two leaders, virtual clock, no real network or database");
+console.log("Not captured: replication topology, &gt;2 leaders, causality tracking, clock skew beyond the tick we set\n");
+
+interface Order { id: string; status: string; shippingAddress: string; notes: string[]; ts: Record&lt;string, number&gt; }
+
+const v0 = (): Order =&gt; ({ id: "o-1", status: "pending", shippingAddress: "Cairo", notes: [], ts: { status: 0, shippingAddress: 0, notes: 0 } });
+const clone = (o: Order): Order =&gt; structuredClone(o);
+
+// الـ leader بتاع القاهرة: موظف الدعم بيغيّر العنوان
+const edits = (o: Order, at: number) =&gt; { o.shippingAddress = "Alexandria"; o.ts.shippingAddress = at; o.notes.push("address changed by support"); o.ts.notes = at; };
+// الـ leader بتاع فرانكفورت: الـ warehouse بيقول إن الشحنة طلعت
+const ships = (o: Order, at: number) =&gt; { o.status = "shipped"; o.ts.status = at; o.notes.push("shipped from warehouse"); o.ts.notes = at; };
+
+function replicated() {
+  const cairo = clone(v0()), frankfurt = clone(v0());
+  edits(cairo, 100);   // القاهرة عند tick 100
+  ships(frankfurt, 105); // فرانكفورت بعدها بشوية، ومفيش اتصال بين الاتنين
+  return { cairo, frankfurt };
+}
+
+// (1) آخر كتابة تكسب: الـ row كله، يعني اللي عنده أكبر timestamp بياخد كل حاجة
+function lwwWholeRow(a: Order, b: Order): Order {
+  const newest = (o: Order) =&gt; Math.max(...Object.values(o.ts));
+  return clone(newest(a) &gt;= newest(b) ? a : b);
+}
+
+// (2) آخر كتابة تكسب لكل حقل لوحده: كده العنوان والحالة الاتنين بيعيشوا
+function lwwPerField(a: Order, b: Order): Order {
+  const out = clone(a);
+  for (const f of ["status", "shippingAddress"] as const) {
+    if (b.ts[f] &gt; a.ts[f]) { out[f] = b[f]; out.ts[f] = b.ts[f]; }
+  }
+  return out;
+}
+
+// (3) حل application-level: دمج الـ notes كـ set، والحالة بترتيب الـ state machine
+const statusRank: Record&lt;string, number&gt; = { pending: 0, paid: 1, shipped: 2, delivered: 3 };
+function appMerge(a: Order, b: Order): Order {
+  const out = lwwPerField(a, b);
+  out.notes = [...new Set([...a.notes, ...b.notes])].sort();
+  out.status = statusRank[a.status] &gt;= statusRank[b.status] ? a.status : b.status;
+  return out;
+}
+
+const show = (label: string, o: Order) =&gt;
+  console.log(`${label.padEnd(24)} status=${o.status.padEnd(8)} address=${o.shippingAddress.padEnd(11)} notes=${JSON.stringify(o.notes)}`);
+
+const { cairo, frankfurt } = replicated();
+show("cairo leader (before)", cairo);
+show("frankfurt leader (before)", frankfurt);
+console.log();
+show("LWW, whole row", lwwWholeRow(cairo, frankfurt));
+show("LWW, per field", lwwPerField(cairo, frankfurt));
+show("application merge", appMerge(cairo, frankfurt));
+
+// تأثير الـ clock skew: ساعة القاهرة قدّام بـ 10 ticks، فكتابتها القديمة بتكسب
+const skewed = clone(v0());
+edits(skewed, 100 + 10);
+const wrong = lwwWholeRow(skewed, frankfurt);
+console.log();
+show("LWW + 10-tick clock skew", wrong);
+console.log("  warehouse 'shipped' update silently lost:", wrong.status !== "shipped");</code></pre>
+
+<pre><code class="language-plaintext">SIMULATION: two leaders, virtual clock, no real network or database
+Not captured: replication topology, &gt;2 leaders, causality tracking, clock skew beyond the tick we set
+
+cairo leader (before)    status=pending  address=Alexandria  notes=["address changed by support"]
+frankfurt leader (before) status=shipped  address=Cairo       notes=["shipped from warehouse"]
+
+LWW, whole row           status=shipped  address=Cairo       notes=["shipped from warehouse"]
+LWW, per field           status=shipped  address=Alexandria  notes=["address changed by support"]
+application merge        status=shipped  address=Alexandria  notes=["address changed by support","shipped from warehouse"]
+
+LWW + 10-tick clock skew status=pending  address=Alexandria  notes=["address changed by support"]
+  warehouse 'shipped' update silently lost: true</code></pre>
+  <div class="ar-note">السطر الأول بيقول إنها simulation وإيه اللي مش بتغطيه. <b>LWW على الصف كله</b>: كسبت نسخة فرانكفورت وضاع تغيير العنوان (Cairo). <b>LWW لكل حقل</b>: العنوان والحالة الاتنين عاشوا، بس ضاعت note. <b>الـ application merge</b>: كل حاجة موجودة. وآخر سطرين: لما ساعة القاهرة تقدّم 10 ticks، LWW اختار القاهرة، وتحديث <code>shipped</code> ضاع ساكت.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>في الـ multi-leader أكتر من node بتقبل كتابة. والأسباب محددة: كذا data center وكل region عايز write latency محلية، و clients لازم تشتغل offline. الـ calendars على الموبايل واللابتوب بتشتغل كده، والـ collaborative editors كمان. التمن هو <strong>الـ write conflicts</strong>: اتنين leaders ممكن يغيّروا نفس السجل في نفس الوقت، ومحدش فيهم يشوف تغيير التاني إلا بعدين.</p>
+    <p>الـ simulation فيها 2 leaders بيغيّروا نفس الـ order وهما مقطوعين عن بعض: الـ support في القاهرة بيغيّر عنوان الشحن، والـ warehouse في فرانكفورت بيقول إن الشحنة طلعت. <strong>Last-write-wins على الصف كله</strong> بيحتفظ بالنسخة الأحدث وبيضيّع تغيير العنوان من غير ولا كلمة. <strong>LWW لكل حقل</strong> بيحافظ على تحديث الحقلين بس بيضيّع note. <strong>الـ application-level merge</strong> بيحافظ على كل حاجة: الـ status ماشي بالـ state machine، والـ notes عبارة عن set union. وفي السطر الأخير، clock skew بـ 10 ticks خلّى LWW يختار نسخة القاهرة ويضيّع تحديث <code>shipped</code> بتاع الـ warehouse خالص، ومن غير أي error. الـ timestamp مش ترتيب سببي.</p>
+    <p>الـ simulation دي صغيرة عن قصد: مش بتمثّل الـ replication topology، ولا الترتيب بين أكتر من leaderين، ولا تتبع الـ causality. الـ CRDTs والـ geo-replication موجودين في <a href="./36-geo-distribution-crdts-residency.html">درس الـ Geo-Distribution</a>. والصفقة اللي تفتكرها: بتكسب write availability في كل region، وبتدفع تمنها conflict handling في <em>كل</em> feature بتكتب.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو هتعمل offline mode لتطبيق موبايل (POS مثلًا) بيسجل orders من غير نت وبعدين يعمل sync، أنت عملت multi-leader، سواء سميتها كده أو لا. لازم تحدد لكل حقل: مين يكسب ولا يتدمج؟ الـ <code>status</code> ماشي في state machine، والـ notes تتجمع. الغلطة الشائعة: <code>updated_at</code> وآخر كتابة تكسب، وده بيضيّع تحديثات ساكت لأن ساعة كل device مختلفة.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off</b>
+    Multi-leader buys local writes per region and survival of an inter-region cut. It costs conflict resolution in the data model and application code. Single-leader with a far-away primary is slower for distant users, but needs none of that. Most systems should stay single-leader until there is a measured latency or offline requirement.
+    <div class="ar-note">الـ multi-leader بيدّيك كتابة محلية في كل region واستمرار لو الوصلة بين الـ regions اتقطعت، وتمنه conflict resolution في الـ data model وكود الـ application. الـ single-leader مع primary بعيد أبطأ للمستخدمين البعاد، بس مش محتاج ده كله. معظم الأنظمة تفضل single-leader لحد ما يبقى فيه latency متقاس أو offline requirement حقيقي.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Leaderless quorums <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ leaderless quorums</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>In a Dynamo-style store there is no leader. The client (or a coordinator) writes to <code>N</code> replicas and waits for <code>W</code> acknowledgements, and reads from <code>N</code> replicas waiting for <code>R</code> responses, taking the newest version. If <code>W + R &gt; N</code>, every read set overlaps every write set in at least one replica, so a read must include an up-to-date copy. That one line of arithmetic is what the name <em>quorum</em> means.</p>
+    <p>The simulation has N=3, 20,000 operations and a seeded PRNG. Without failures, <code>W=1, R=1</code> reads something stale a third of the time (33.1%) and <code>W=2, R=2</code> or <code>W=3, R=1</code> never do. With each replica down 10% of the time the price shows up: <code>W=3</code> fails 26.5% of writes, <code>W=2</code> fails 2.9%, and <code>W=1</code> fails 0.2% while still being stale 37.4% of the time. <code>W=2, R=2</code> is the common balance for N=3, tolerating one replica down on both paths.</p>
+    <p><strong>Read repair</strong> fixes old replicas as a read goes by. It only has something to compare when R &gt; 1: with <code>W=1, R=2</code> it took stale reads from 7.9% to 1.1%, while with <code>R=1</code> it changed nothing, because a single response has nothing to disagree with.</p>
+    <p><code>W + R &gt; N</code> is <strong>not</strong> linearizability. Four cases are at the end of the output: a write in flight can be seen by one reader and missed by a later one; a write that failed at the client (too few acks) can still be visible; concurrent writes leave replicas that disagree, so the store must order or merge them; and a <strong>sloppy quorum</strong> writes to substitute nodes when the home nodes are down, so the write and the following strict read may not overlap at all. A runnable version with real processes is in <a href="./48-case-key-value-store.html">the key-value store case</a>.</p>
+  </section>
+
+<pre class="diagram">
+   N = 3 replicas        W = 2 (write set)      R = 2 (read set)
+
+     [A]  [B]  [C]        [A]  [B]   .           .   [B]  [C]
+
+   write set and read set share at least one replica: B
+   W + R = 4 &gt; N = 3  =&gt;  overlap is guaranteed
+</pre>
+  <div class="ar-note">3 replicas. الكتابة نجحت على A و B (W=2). القراية سألت B و C (R=2). الاتنين مشتركين في B، فالقراية لازم تلاقي نسخة فيها آخر قيمة. الشرط: W + R = 4 أكبر من N = 3، فالتقاطع مضمون.</div>
+
+<pre data-file="src/e5-quorum.ts"><code class="language-typescript">// محاكاة: leaderless بأسلوب Dynamo، N=3، وقت افتراضي و PRNG بـ seed، ومفيش شبكة حقيقية
+console.log("SIMULATION: Dynamo-style leaderless store, N=3, seeded PRNG, virtual time");
+console.log("Not captured: hinted handoff timing, anti-entropy, real network, tombstones, vector clocks\n");
+
+function mulberry32(a: number) {
+  return () =&gt; {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a &gt;&gt;&gt; 15), 1 | a);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+interface Replica { version: number; down: boolean }
+const N = 3;
+
+// كل عملية: كتابة احتمالها writeProb، وبعدها قراية. نحسب كام قراية رجّعت قيمة أقدم من آخر ack
+function run(W: number, R: number, opts: { downProb: number; readRepair: boolean; seed: number; ops: number; writeProb: number }) {
+  const rnd = mulberry32(opts.seed);
+  const replicas: Replica[] = Array.from({ length: N }, () =&gt; ({ version: 0, down: false }));
+  let version = 0, acked = 0, stale = 0, reads = 0, writes = 0, failedWrites = 0;
+
+  for (let op = 0; op &lt; opts.ops; op++) {
+    // احتمال إن كل replica تبقى down اللحظة دي
+    for (const r of replicas) r.down = rnd() &lt; opts.downProb;
+
+    if (rnd() &lt; opts.writeProb) {
+      writes++;
+      const order = replicas.map((r) =&gt; ({ r, k: rnd() })).sort((a, b) =&gt; a.k - b.k).map((x) =&gt; x.r);
+      const alive = order.filter((r) =&gt; !r.down);
+      if (alive.length &gt;= W) {
+        version++;
+        // الـ W دول اتأكدوا. الباقيين الشغالين: نص الوقت الكتابة بتوصلهم، والنص لسه في الطريق
+        alive.slice(0, W).forEach((r) =&gt; (r.version = version));
+        alive.slice(W).forEach((r) =&gt; { if (rnd() &lt; 0.5) r.version = version; });
+        acked = version;
+      } else {
+        failedWrites++;
+      }
+    }
+
+    // القراية: R replicas عشوائي شغالين، وبناخد أعلى version منهم
+    const readSet = replicas.map((r) =&gt; ({ r, k: rnd() })).sort((a, b) =&gt; a.k - b.k).map((x) =&gt; x.r).filter((r) =&gt; !r.down).slice(0, R);
+    if (readSet.length === R &amp;&amp; acked &gt; 0) {
+      reads++;
+      const seen = Math.max(...readSet.map((r) =&gt; r.version));
+      if (seen &lt; acked) stale++;
+      if (opts.readRepair) readSet.forEach((r) =&gt; { r.version = Math.max(r.version, seen); });
+    }
+  }
+  return { reads, staleRate: reads ? +(stale / reads * 100).toFixed(1) : 0, failedWritePct: writes ? +(failedWrites / writes * 100).toFixed(1) : 0 };
+}
+
+const base = { seed: 42, ops: 20_000, writeProb: 0.1 };
+
+console.log("no failures, 20,000 ops, 1 write per 10 reads");
+for (const [W, R] of [[1, 1], [2, 1], [2, 2], [3, 1]] as const) {
+  const r = run(W, R, { ...base, downProb: 0, readRepair: false });
+  console.log(`  W=${W} R=${R} W+R&gt;N=${String(W + R &gt; N).padEnd(5)} stale ${String(r.staleRate).padStart(5)}%`);
+}
+
+console.log("\n10% chance each replica is down per op");
+for (const [W, R] of [[1, 1], [2, 2], [3, 1]] as const) {
+  const r = run(W, R, { ...base, downProb: 0.1, readRepair: false });
+  console.log(`  W=${W} R=${R} stale ${String(r.staleRate).padStart(5)}%  failed writes ${String(r.failedWritePct).padStart(5)}%`);
+}
+
+console.log("\nread repair effect, no failures");
+for (const [W, R, rr] of [[1, 1, false], [1, 1, true], [1, 2, false], [1, 2, true]] as const) {
+  const r = run(W, R, { ...base, downProb: 0, readRepair: rr });
+  console.log(`  W=${W} R=${R} read repair ${String(rr).padEnd(5)} stale ${String(r.staleRate).padStart(5)}%`);
+}
+
+// ليه W+R&gt;N مش ⁦linearizable (1)⁩: كتابة W=2 لسه في الطريق، ووصلت لـ replica واحدة
+function writeInFlight() {
+  const r = [0, 0, 0];
+  r[0] = 1;
+  const reader1 = Math.max(r[0], r[1]);
+  const reader2 = Math.max(r[1], r[2]);
+  return { reader1, reader2, laterReaderSawOlder: reader1 &gt; reader2 };
+}
+
+// ليه W+R&gt;N مش ⁦linearizable (2)⁩: كتابة فشلت عند العميل بس قيمتها فضلت على replica
+function failedWriteStillVisible() {
+  const r = [0, 0, 0];
+  r[0] = 1;
+  const clientGot = "error: only 1 of W=2 acks";
+  return { clientGot, valueVisibleToAReader: Math.max(r[0], r[1]) === 1 };
+}
+
+// ليه W+R&gt;N مش ⁦linearizable (3)⁩: كتابتين متزامنتين، وكل replica شافتهم بترتيب مختلف
+function concurrentWrites() {
+  const orderOnReplica = [["A", "B"], ["B", "A"], ["A", "B"]];
+  const finalValue = orderOnReplica.map((seq) =&gt; seq[seq.length - 1]);
+  return { finalValue, replicasDisagree: new Set(finalValue).size &gt; 1 };
+}
+
+// الـ sloppy quorum: الكتابة اتحطت على nodes بره الـ home set، فالقراية الـ strict مش بتقاطعها
+function sloppyQuorum() {
+  const home = { a: 0, b: 0, c: 0 };
+  const hint = { d: 0, e: 0 };
+  hint.d = 1; hint.e = 1;
+  const read = Math.max(home.a, home.b);
+  return { writeAckedOn: "d,e (sloppy)", readFrom: "a,b", valueRead: read, sawTheWrite: read === 1 };
+}
+
+console.log("\nW=2, R=2, N=3 and still not linearizable:");
+console.log("  write in flight:      ", JSON.stringify(writeInFlight()));
+console.log("  failed write visible: ", JSON.stringify(failedWriteStillVisible()));
+console.log("  concurrent writes:    ", JSON.stringify(concurrentWrites()));
+console.log("  sloppy quorum:        ", JSON.stringify(sloppyQuorum()));</code></pre>
+
+<pre><code class="language-plaintext">SIMULATION: Dynamo-style leaderless store, N=3, seeded PRNG, virtual time
+Not captured: hinted handoff timing, anti-entropy, real network, tombstones, vector clocks
+
+no failures, 20,000 ops, 1 write per 10 reads
+  W=1 R=1 W+R&gt;N=false stale  33.1%
+  W=2 R=1 W+R&gt;N=false stale  17.3%
+  W=2 R=2 W+R&gt;N=true  stale     0%
+  W=3 R=1 W+R&gt;N=true  stale     0%
+
+10% chance each replica is down per op
+  W=1 R=1 stale  37.4%  failed writes   0.2%
+  W=2 R=2 stale     0%  failed writes   2.9%
+  W=3 R=1 stale     0%  failed writes  26.5%
+
+read repair effect, no failures
+  W=1 R=1 read repair false stale  33.1%
+  W=1 R=1 read repair true  stale  33.1%
+  W=1 R=2 read repair false stale   7.9%
+  W=1 R=2 read repair true  stale   1.1%
+
+W=2, R=2, N=3 and still not linearizable:
+  write in flight:       {"reader1":1,"reader2":0,"laterReaderSawOlder":true}
+  failed write visible:  {"clientGot":"error: only 1 of W=2 acks","valueVisibleToAReader":true}
+  concurrent writes:     {"finalValue":["B","A","B"],"replicasDisagree":true}
+  sloppy quorum:         {"writeAckedOn":"d,e (sloppy)","readFrom":"a,b","valueRead":0,"sawTheWrite":false}</code></pre>
+  <div class="ar-note">سطر الـ SIMULATION بيقول اللي مش متغطي. <b>من غير failures</b>: (1,1) ‏33.1% قراية قديمة، (2,1) ‏17.3%، و(2,2) و(3,1) صفر. <b>مع 10% احتمال وقوع كل replica</b>: (3,1) فشل 26.5% من الكتابات، (2,2) ‏2.9%، (1,1) ‏0.2% بس stale 37.4%. <b>read repair</b>: مع R=1 ملوش تأثير، ومع R=2 نزّل stale من 7.9% لـ 1.1%. <b>الأربع سطور الأخيرة</b>: ليه W+R&gt;N مش معناها linearizable.</div>
+
+  <table>
+    <thead><tr><th>(W, R), N=3</th><th>Stale reads, no failures</th><th>Failed writes at 10% replica down</th><th>Reading it</th></tr></thead>
+    <tbody>
+      <tr><td>(1, 1)</td><td>33.1%</td><td>0.2%</td><td>Fast and available, reads go stale</td></tr>
+      <tr><td>(2, 2)</td><td>0%</td><td>2.9%</td><td>The usual balance, tolerates 1 down</td></tr>
+      <tr><td>(3, 1)</td><td>0%</td><td>26.5%</td><td>Read-optimised, one dead replica blocks writes</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">صف صف: <b>(1,1)</b> ‏33.1% قراية قديمة و0.2% كتابة فاشلة، سريع ومتاح بس بيقرا قديم. <b>(2,2)</b> صفر stale و2.9% كتابة فاشلة، التوازن المعتاد وبيستحمل replica واقعة. <b>(3,1)</b> صفر stale و26.5% كتابة فاشلة، القراية سريعة بس أي replica واقعة بتوقف الكتابة.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>في store بأسلوب Dynamo مفيش leader. الـ client (أو coordinator) بيكتب على <code>N</code> replicas ويستنى <code>W</code> acks، وبيقرا من <code>N</code> replicas ويستنى <code>R</code> ردود وياخد أحدث version. لو <code>W + R &gt; N</code>، كل read set بيتقاطع مع كل write set في replica واحدة على الأقل، فالقراية لازم تلاقي نسخة محدّثة. السطر الحسابي ده هو كل معنى كلمة <em>quorum</em>.</p>
+    <p>الـ simulation فيها N=3 و20 ألف عملية و PRNG بـ seed. من غير failures، <code>W=1, R=1</code> بيقرا حاجة قديمة تلت الوقت (33.1%)، و<code>W=2, R=2</code> أو <code>W=3, R=1</code> عمره ما بيقرا قديم. ولما كل replica تقع 10% من الوقت التمن بيبان: <code>W=3</code> بيفشل في 26.5% من الكتابات، و<code>W=2</code> في 2.9%، و<code>W=1</code> في 0.2% بس فضل stale 37.4% من الوقت. <code>W=2, R=2</code> هو التوازن الشائع لـ N=3، وبيستحمل replica واقعة في الناحيتين.</p>
+    <p><strong>الـ read repair</strong> بيصلّح النسخ القديمة وهو ماشي مع القراية. بس لازم R &gt; 1 عشان يبقى فيه حاجة يقارنها: مع <code>W=1, R=2</code> نزّل الـ stale من 7.9% لـ 1.1%، ومع <code>R=1</code> مغيّرش حاجة، لأن رد واحد مش هيختلف مع حد.</p>
+    <p>الـ <code>W + R &gt; N</code> <strong>مش</strong> linearizability. 4 حالات في آخر الـ output: كتابة لسه في الطريق ممكن قارئ يشوفها وقارئ بعده مايشوفهاش؛ كتابة فشلت عند الـ client (acks أقل من W) ممكن قيمتها تفضل ظاهرة؛ كتابتين متزامنتين بيخلوا الـ replicas مختلفة فلازم الـ store يرتبهم أو يدمجهم؛ والـ <strong>sloppy quorum</strong> بيكتب على nodes بديلة لما الـ home nodes تقع، فالكتابة والقراية الـ strict بعدها ممكن ميتقاطعوش خالص. نسخة شغالة بـ processes حقيقية في <a href="./48-case-key-value-store.html">حالة الـ key-value store</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو بتستخدم Cassandra أو ScyllaDB أو DynamoDB، إعدادات الـ consistency بتاعتك (<code>QUORUM</code>، <code>ONE</code>، <code>LOCAL_QUORUM</code>) هي W و R ده بالظبط. لو الـ write بـ <code>ONE</code> والـ read بـ <code>ONE</code> يبقى قراية ممكن ترجع قديمة (حوالي 33% في الـ simulation بتاعتنا)، و<code>QUORUM</code> في الناحيتين هو اللي بيضمن التقاطع. والغلطة الشائعة: تفتكر إن QUORUM يعني strong consistency، وهو مش بيحميك من الكتابات المتزامنة ولا الكتابات الفاشلة ولا الـ sloppy quorums.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "N=3, W=2, R=2. Is that linearizable?" → No. The overlap guarantees the read reaches one fresh replica, but a write still in flight can be seen by one reader and missed by a later one. A failed write can remain on a replica. Concurrent writes need a version order or a merge. With a sloppy quorum the overlap isn't even guaranteed. For linearizable reads you need a consensus protocol or leases, as in <a href="./32-consensus-raft-coordination.html">the consensus lesson</a>.
+    <div class="ar-note">"N=3 و W=2 و R=2، ده linearizable؟" ← لأ. التقاطع بيضمن إن القراية هتوصل لنسخة واحدة جديدة، بس كتابة لسه في الطريق ممكن يشوفها قارئ ويفوتها قارئ بعده، وكتابة فشلت ممكن تفضل على replica، والكتابات المتزامنة محتاجة ترتيب versions أو merge، ومع الـ sloppy quorum التقاطع نفسه مش مضمون. عشان linearizable reads لازم consensus protocol أو leases، زي اللي في <a href="./32-consensus-raft-coordination.html">درس الـ consensus</a>.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Failover and lost writes <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ failover والكتابات اللي بتضيع</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Failover has three steps and each can go wrong. <strong>Detect</strong> that the primary is dead, usually a timeout, so a slow primary and a dead one look the same. <strong>Choose</strong> a new primary, ideally the standby with the most received WAL. <strong>Reconfigure</strong> clients to send writes there, through a virtual IP, a proxy or the driver.</p>
+    <p>With asynchronous replication failover can lose data that the client was told is safe. The experiment shows the mechanism in two variations. In variation A only replay is paused, and the primary then dies: the promoted standby <em>still has</em> the row, because replay is separate from receipt and the WAL had already arrived. In variation B the replication link is cut first, then the client gets a success for order 2, then the primary dies. After promotion the new primary doesn't have order 2, and the LSN comparison (<code>0/302DA10</code> on the old primary vs <code>0/302D958</code> on the promoted node) shows exactly what was never received. That is <strong>RPO &gt; 0</strong> made visible: an acknowledged write gone.</p>
+    <p>Patroni is the common way to automate this. It keeps a leader key with a time limit in a distributed store such as etcd, Consul, ZooKeeper or Kubernetes; the node holding it is the primary, and a node that can't renew it demotes itself. Patroni also supports a watchdog to help fence a stuck node. <em>Not run here</em>: Patroni needs its store and processes that aren't part of this lab.</p>
+    <p>GitHub's October 2018 incident is the textbook case. A network partition between their US East Coast hub and data center lasted 43 seconds; Orchestrator moved the primaries to the US West Coast. The East Coast clusters held "several seconds of writes" not replicated west, and one of the busiest clusters had 954 writes in the affected window. Once writes landed on the West Coast, "the database clusters in both data centers now contained writes that were not present in the other data center", so they couldn't simply fail back. Degraded service lasted 24 hours and 11 minutes, and the sudden cross-country latency was a major contributor. Disaster-recovery planning continues in <a href="./26-redundancy-failover-disaster-recovery.html">Redundancy &amp; DR</a>.</p>
+  </section>
+
+<pre data-file="src/e6-failover.ts"><code class="language-typescript">import { addStandby, connect, createPrimary, stopAll, stopNode } from "../pg-cluster.mjs";
+import { delayProxy, report, sleep } from "./lab.ts";
+
+const rows = `select string_agg(status, ', ' order by id) s from orders`;
+
+// التجربة (أ⁦):⁩ وقّفنا الـ replay بس، الـ WAL لسه بيوصل للـ standby
+{
+  const c = await createPrimary();
+  try {
+    const s = await addStandby(c, { name: "s1" });
+    const primary = await connect(c.port);
+    const standby = await connect(s.port);
+    await primary.query(`create table orders (id serial primary key, status text)`);
+    await sleep(500);
+    await standby.query(`select pg_wal_replay_pause()`);
+    await primary.query(`insert into orders (status) values ('acked-while-replay-paused')`);
+    await sleep(300);
+    stopNode(c, "primary", "immediate");
+    await standby.query(`select pg_promote(true, 20)`);
+    report("(A) replay paused, promoted, rows", (await standby.query(rows)).rows[0].s ?? "(none)");
+    await standby.end();
+  } finally {
+    await stopAll(c);
+  }
+}
+
+// التجربة (ب⁦):⁩ الوصلة نفسها اتقطعت قبل الـ commit، فالـ WAL ماوصلش خالص
+{
+  const c = await createPrimary();
+  const proxy = await delayProxy(c.port, 0);
+  try {
+    const s = await addStandby(c, {
+      name: "s1",
+      conf: `primary_conninfo='host=127.0.0.1 port=${proxy.port} user=app application_name=s1'`,
+    });
+    const primary = await connect(c.port);
+    const standby = await connect(s.port);
+    await primary.query(`create table orders (id serial primary key, status text)`);
+    await primary.query(`insert into orders (status) values ('replicated-before-cut')`);
+    await sleep(600);
+    report("(B) standby before the cut", (await standby.query(rows)).rows[0].s);
+
+    // قطع الشبكة بين الـ primary والـ standby
+    proxy.close();
+    await sleep(300);
+
+    // الـ commit ده الـ client هياخد عليه success، والـ replication async
+    const ack = await primary.query(`insert into orders (status) values ('acked-after-cut') returning id`);
+    report("(B) client got ack for order id", ack.rows[0].id);
+    const lost = await primary.query(`select pg_current_wal_lsn() l`);
+
+    // الـ primary بيقع، والـ orchestrator بيرقّي الـ standby
+    stopNode(c, "primary", "immediate");
+    await standby.query(`select pg_promote(true, 20)`);
+    const got = (await standby.query(`select pg_last_wal_replay_lsn() r`)).rows[0].r;
+    report("(B) new primary has rows", (await standby.query(rows)).rows[0].s);
+    report("(B) acked row present?", (await standby.query(`select count(*)::int n from orders where status = 'acked-after-cut'`)).rows[0].n === 1);
+    report("(B) primary LSN at crash vs promoted", `${lost.rows[0].l} vs ${got}`);
+    await standby.end();
+  } finally {
+    await stopAll(c);
+  }
+}
+process.exit(0);</code></pre>
+
+<pre><code class="language-plaintext">(A) replay paused, promoted, rows        acked-while-replay-paused
+(B) standby before the cut               replicated-before-cut
+(B) client got ack for order id          2
+(B) new primary has rows                 replicated-before-cut
+(B) acked row present?                   false
+(B) primary LSN at crash vs promoted     0/302DA10 vs 0/302D958</code></pre>
+  <div class="ar-note">في (A) وقّفنا الـ replay بس: بعد الـ promote الصف موجود، لأن الـ WAL وصل واتطبّق وقت الـ promote. في (B) قطعنا الوصلة الأول: الـ client استلم ack على order رقم 2، وبعد الـ promote الصف مش موجود (<code>acked row present? false</code>)، والـ LSN على الـ primary الميت أكبر من الـ promoted. ده الـ RPO &gt; 0 بعينه.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ failover ليه 3 خطوات، وكل واحدة ممكن تغلط. <strong>Detect</strong> إن الـ primary مات، وده غالبًا timeout، فالـ primary البطيء والميت شكلهم واحد. <strong>Choose</strong> primary جديد، والأحسن الـ standby اللي عنده أكبر WAL مستلم. <strong>Reconfigure</strong> الـ clients عشان تكتب هناك، من خلال virtual IP أو proxy أو الـ driver.</p>
+    <p>مع الـ async replication الـ failover ممكن يضيّع data الـ client اتقال له إنها في أمان. التجربة بتوري الآلية في حالتين. في (A) الـ replay بس هو اللي واقف والـ primary مات: الـ standby لما يترقّى <em>لسه عنده</em> الصف، لأن الـ replay منفصل عن الاستلام والـ WAL كان وصل. في (B) الوصلة اتقطعت الأول، وبعدين الـ client خد success على order 2، وبعدين الـ primary مات. بعد الـ promote الـ primary الجديد مفيهوش order 2، ومقارنة الـ LSN (<code>0/302DA10</code> على القديم و<code>0/302D958</code> على الـ promoted) بتوريك بالظبط إيه اللي ماوصلش خالص. ده <strong>RPO &gt; 0</strong> ظاهر قدامك: write اتأكدت وضاعت.</p>
+    <p>الـ Patroni هو الطريقة الشائعة لأتمتة ده. بيحتفظ بـ leader key ليها وقت محدود في distributed store زي etcd أو Consul أو ZooKeeper أو Kubernetes، والـ node اللي ماسكاها هي الـ primary، واللي مش عارفة تجددها بتنزّل نفسها. وكمان بيدعم watchdog يساعد في عزل node واقفة. <em>Not run here</em> (ما اتشغلش هنا): الـ Patroni محتاج الـ store والـ processes بتاعته اللي مش جزء من الـ lab ده.</p>
+    <p>incident بتاع GitHub في أكتوبر 2018 هو المثال الكلاسيكي. network partition بين الـ hub والـ data center في الساحل الشرقي الأمريكي خد 43 ثانية، و Orchestrator نقل الـ primaries للساحل الغربي. الـ clusters في الشرق كان فيها "several seconds of writes" ماراحتش الغرب، وواحد من أكتر الـ clusters حملًا كان فيه 954 كتابة في الفترة دي. وبعد ما الكتابات نزلت في الغرب، كل data center بقى فيه كتابات مش موجودة في التاني، فمقدروش يرجعوا بسهولة. الخدمة فضلت متدهورة 24 ساعة و11 دقيقة، والـ cross-country latency المفاجئة كانت عامل كبير. التخطيط للـ disaster recovery مكمل في <a href="./26-redundancy-failover-disaster-recovery.html">درس الـ Redundancy و DR</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في RDS Multi-AZ أو أي managed Postgres، اسأل نفسك: الـ standby sync ولا async؟ لو async، الـ failover ممكن يضيّع آخر كام ثانية من الـ writes، ولازم الـ business يعرف ويوافق. في payments ده ممكن يبقى رسوم على عميل من غير order. لازم تعرف الـ RPO بتاعك رقم مش إحساس. والغلطة الشائعة: تفتكر إن "عندي standby" معناها "مفيش data هتضيع".
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: RPO vs commit latency</b>
+    Async replication keeps commits fast and can lose the recent writes on failover (RPO &gt; 0). Sync replication gets RPO close to 0 at the cost of one round trip per commit (≈31 ms through our proxy) and the hang from Part 2. Decide per data class: payments and ledgers pay for sync, activity feeds usually don't.
+    <div class="ar-note"><b>الـ trade-off بين الـ RPO وزمن الـ commit:</b> الـ async بيخلي الـ commit سريع وممكن يضيّع آخر كتابات في الـ failover (RPO &gt; 0). الـ sync بيقرّب الـ RPO من صفر، بس بتمن round trip لكل commit (حوالي 31 ms عبر الـ proxy بتاعنا) والتعليق اللي في الجزء 2. قرر لكل نوع data: الـ payments والـ ledgers يدفعوا تمن الـ sync، والـ activity feeds غالبًا لأ.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Split-brain <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ split-brain</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>Split-brain</strong> is two nodes that each believe they are the primary. It happens when the failure detector was wrong and the old primary is alive. The experiment promotes the standby with the old primary still running. Both report <code>pg_is_in_recovery() = false</code>, both accept writes, and they are now on different timelines (1 and 2). The order ids diverge as 2 and 34: the promoted node's sequence jumps ahead because Postgres logs sequences 32 values ahead in WAL, and a promoted standby resumes from the logged value. Nothing warns anyone. Clients get successes from both.</p>
+    <p>The fixes all answer "how does the old primary stop?": <strong>fencing or STONITH</strong> (shoot the other node in the head: cut its power or network, or revoke its storage access), <strong>leases</strong> (the primary may only act while it holds a time-limited lease, so an expired lease means stop), and a <strong>majority witness</strong> (a node can only be primary with agreement from a majority, so a minority side can't promote). Failure detection is in <a href="./28-fallacies-failure-detection-partitions.html">Fallacies &amp; Detection</a> and consensus in <a href="./32-consensus-raft-coordination.html">Consensus &amp; Raft</a>.</p>
+    <p>Rejoining the old primary needs <code>pg_rewind</code>. It rewinds the old node to the divergence point and copies what changed from the new primary. It requires data checksums or <code>wal_log_hints</code>, and data checksums are on by default since Postgres 18 (<code>data_checksums on</code> in the output). My first run failed: <code>could not find previous WAL record</code>, because <code>pg_rewind</code> needs the old primary's WAL from the last common checkpoint and it had been recycled. Keeping WAL with <code>wal_keep_size</code>, or an archive and <code>restore_command</code>, fixes that. After a successful rewind the old primary comes back as a standby, and <code>written-to-old</code> is gone: those writes were discarded, and that's the actual cost of split-brain.</p>
+  </section>
+
+<pre class="diagram">
+             network partition or false detection
+                       |
+   clients ---&gt; [ old primary ]     |     [ promoted standby ] &lt;--- clients
+                  id 2: written-to-old  |  id 34: written-to-new
+                  timeline 1            |  timeline 2
+                       |
+              pg_rewind: old primary rejoins, id 2 is discarded
+</pre>
+  <div class="ar-note">الـ primary القديم والـ standby اللي اترقى الاتنين شغالين، وكل واحد عنده clients بتكتب عليه. الأول كتب id 2 على timeline 1، والتاني كتب id 34 على timeline 2. لما نعمل <code>pg_rewind</code> عشان القديم يرجع، id 2 بيضيع.</div>
+
+<pre data-file="src/e7-split-brain.ts"><code class="language-typescript">import { execFileSync } from "node:child_process";
+import { appendFileSync } from "node:fs";
+import path from "node:path";
+import { addStandby, assertSafePort, connect, createPrimary, startNode, stopAll, stopNode } from "../pg-cluster.mjs";
+import { report, sleep } from "./lab.ts";
+
+const BIN = "C:/Program Files/PostgreSQL/18/bin";
+// الـ pg_rewind محتاج WAL الـ primary القديم من قبل نقطة الانفصال، فلازم يتحفظ
+const c = await createPrimary({ conf: process.argv[2] ?? "wal_keep_size='256MB'" });
+try {
+  const s = await addStandby(c, { name: "s1" });
+  const oldP = await connect(c.port);
+  const newP = await connect(s.port);
+  await oldP.query(`create table orders (id serial primary key, status text)`);
+  await oldP.query(`insert into orders (status) values ('before-split')`);
+  await sleep(500);
+  report("data_checksums", (await oldP.query(`show data_checksums`)).rows[0].data_checksums);
+
+  // الـ orchestrator ظن إن الـ primary مات فرقّى الـ standby، والـ primary لسه عايش
+  await newP.query(`select pg_promote(true, 20)`);
+  const recovery = `select pg_is_in_recovery() r`;
+  report("old primary in recovery?", (await oldP.query(recovery)).rows[0].r);
+  report("promoted node in recovery?", (await newP.query(recovery)).rows[0].r);
+
+  // الاتنين بيقبلوا كتابة، وكل واحد بيدّي id لوحده
+  const ins = (st: string) =&gt; `insert into orders (status) values ('${st}') returning id`;
+  report("write on old primary, id", (await oldP.query(ins("written-to-old"))).rows[0].id);
+  report("write on promoted node, id", (await newP.query(ins("written-to-new"))).rows[0].id);
+
+  const all = `select id, status from orders order by id`;
+  report("old primary rows", (await oldP.query(all)).rows);
+  report("promoted node rows", (await newP.query(all)).rows);
+  const tl = `select timeline_id t from pg_control_checkpoint()`;
+  await newP.query(`checkpoint`);
+  report("timelines old / promoted", `${(await oldP.query(tl)).rows[0].t} / ${(await newP.query(tl)).rows[0].t}`);
+  await oldP.end();
+
+  // الرجوع: نوقف الـ primary القديم ونعمل pg_rewind من الجديد
+  stopNode(c, "primary");
+  try {
+    const out = execFileSync(`${BIN}/pg_rewind.exe`, [
+      "--target-pgdata=primary",
+      `--source-server=host=127.0.0.1 port=${assertSafePort(s.port)} user=app dbname=postgres`,
+      "--write-recovery-conf",
+    ], { cwd: c.root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60000 });
+    report("pg_rewind", `ok ${out.trim()}`);
+  } catch (e) {
+    // الفشل هنا درس لوحده: الـ WAL القديم اتمسح فـ pg_rewind مش عارف يرجع
+    console.log(String((e as { stderr?: string }).stderr).trim());
+    await newP.end();
+    throw new Error("pg_rewind failed");
+  }
+
+  // الـ rewind نسخ config الـ source، فبنرجّع الـ port بتاع النسخة دي
+  appendFileSync(path.join(c.root, "primary", "postgresql.auto.conf"), `\nport=${assertSafePort(c.port)}\n`);
+  startNode(c, "primary");
+  await sleep(1200);
+
+  const back = await connect(c.port);
+  report("old primary back, in recovery?", (await back.query(recovery)).rows[0].r);
+  report("old primary rows after rewind", (await back.query(all)).rows);
+  report("written-to-old survived?", (await back.query(`select count(*)::int n from orders where status = 'written-to-old'`)).rows[0].n === 1);
+  report("replication state on new primary", (await newP.query(`select application_name, state from pg_stat_replication`)).rows);
+  await back.end();
+  await newP.end();
+} finally {
+  await stopAll(c);
+}
+process.exit(0);</code></pre>
+
+<pre><code class="language-plaintext">data_checksums                           on
+old primary in recovery?                 false
+promoted node in recovery?               false
+write on old primary, id                 2
+write on promoted node, id               34
+old primary rows                         [{"id":1,"status":"before-split"},{"id":2,"status":"written-to-old"}]
+promoted node rows                       [{"id":1,"status":"before-split"},{"id":34,"status":"written-to-new"}]
+timelines old / promoted                 1 / 2
+pg_rewind                                ok 
+old primary back, in recovery?           true
+old primary rows after rewind            [{"id":1,"status":"before-split"},{"id":34,"status":"written-to-new"}]
+written-to-old survived?                 false
+replication state on new primary         [{"application_name":"s1","state":"streaming"}]</code></pre>
+  <div class="ar-note">الاتنين <code>in recovery = false</code>، يعني الاتنين primary. id 2 على القديم و id 34 على الجديد، لأن الـ sequence بتتسجل 32 قيمة لقدام في الـ WAL. الـ timelines بقت 1 و 2. <code>pg_rewind</code> نجح، والقديم رجع standby (<code>in recovery = true</code>)، وصفوفه بقت زي الجديد بالظبط، و<code>written-to-old</code> اتمسحت. آخر سطر: الـ primary الجديد شايف الـ standby متوصل <code>streaming</code>.</div>
+
+<pre><code class="language-plaintext">pg_rewind: servers diverged at WAL location 0/302D948 on timeline 1
+pg_rewind: error: could not open file "primary/pg_wal/000000010000000000000002": No such file or directory
+pg_rewind: error: could not find previous WAL record at 0/2000120</code></pre>
+  <div class="ar-note">ده الفشل الحقيقي لأول run لما <code>wal_keep_size</code> ماكانش متظبط: <code>pg_rewind</code> عارف نقطة الانفصال، بس محتاج الـ WAL القديم من قبلها ومش لاقيه، فبيقول <code>could not find previous WAL record</code>. الحل: <code>wal_keep_size</code> أو archive مع <code>restore_command</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <strong>split-brain</strong> إن اتنين nodes كل واحدة فاكرة نفسها الـ primary. بيحصل لما الـ failure detector يبقى غلطان والـ primary القديم لسه عايش. التجربة بترقّي الـ standby والـ primary القديم شغال. الاتنين بيقولوا <code>pg_is_in_recovery() = false</code>، الاتنين بيقبلوا كتابة، وبقوا على timelines مختلفة (1 و 2). والـ order ids اختلفت: 2 و 34، لأن الـ sequence بتتسجل 32 قيمة لقدام في الـ WAL والـ standby المترقّي بيكمل من القيمة المتسجلة. محدش بيتحذر، والـ clients بتاخد success من الناحيتين.</p>
+    <p>الحلول كلها بتجاوب على "إزاي الـ primary القديم يقف؟": <strong>fencing أو STONITH</strong> (اضرب الـ node التانية: اقطع الكهربا أو الشبكة أو الوصول للـ storage)، <strong>leases</strong> (الـ primary مش مسموح يشتغل إلا وهو ماسك lease ليها وقت، فلو خلصت يقف)، و<strong>majority witness</strong> (مفيش node تبقى primary إلا بموافقة أغلبية، فالناحية الأقل مش هتقدر تترقّى). الـ failure detection في <a href="./28-fallacies-failure-detection-partitions.html">درس الـ Fallacies والـ Detection</a> والـ consensus في <a href="./32-consensus-raft-coordination.html">درس الـ Consensus والـ Raft</a>.</p>
+    <p>رجوع الـ primary القديم محتاج <code>pg_rewind</code>. بيرجّع الـ node القديمة لنقطة الانفصال وبينسخ اللي اتغير من الـ primary الجديد. محتاج data checksums أو <code>wal_log_hints</code>، والـ data checksums شغالة default من Postgres 18 (<code>data_checksums on</code> في الـ output). أول run عندي فشل: <code>could not find previous WAL record</code>، لأن <code>pg_rewind</code> محتاج WAL الـ primary القديم من آخر checkpoint مشترك وكان اتمسح. حفظ الـ WAL بـ <code>wal_keep_size</code>، أو archive مع <code>restore_command</code>، بيحل ده. وبعد rewind ناجح الـ primary القديم بيرجع standby، و<code>written-to-old</code> بتختفي: الكتابات دي اترمت، وده التمن الحقيقي للـ split-brain.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      أي مرة تكتب script يعمل promote لـ standby في حالة طوارئ، لازم أول خطوة تكون عزل القديم: إغلاق الـ security group، تنزيل الـ instance، أو على الأقل <code>default_transaction_read_only</code>. ولو الـ app بيوصل بـ DNS، الـ connections القديمة لسه رايحة للـ primary القديم. الغلطة الشائعة: تعمل promote يدوي لأن "الـ primary شكله مات"، من غير ما تتأكد إنه فعلًا واقف.
+    </div>
+  </section>
+
+  <!-- ===================== PART 7 ===================== -->
+  <h2 id="p7">Part 7 — Reads after writes in the app <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 7 — القراية بعد الكتابة في الـ app</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The most common production symptom of replication lag is a user who saves something, the next page reloads, and the item is missing. The simple fix: after a user writes, send that user's reads to the primary for N seconds. N must be larger than the lag you are willing to tolerate. Reads from everyone else stay on replicas.</p>
+    <p>The experiment runs with replication paused, so the lag is real and fixed, and with <em>two</em> API instances, because that's what production looks like. A POST goes to instance A and the following GET to instance B, as a load balancer would do. With no routing: 404 from the replica. With an in-process <code>Map</code> marking recent writers: still 404, because A set the mark and B never saw it. With a mark in Redis (<code>SET lastwrite:u PX 2000</code>): 200 from the primary. Once the TTL expires and the replica has caught up, reads go back to the replica and the row is there.</p>
+    <p>Lag belongs on your dashboards. <code>pg_stat_replication</code> gives lag as bytes (<code>pg_wal_lsn_diff</code>) and as time (<code>replay_lag</code>). Alert when it exceeds the N you chose, because beyond that the sticky window no longer covers it. One trap in the docs: on a fully caught-up idle system the lag columns revert to NULL, so treat NULL as no measurement rather than as zero, and watch the byte difference as well. A stronger approach using LSN tokens is in <a href="./14-consistency-models-cap-pacelc.html">Consistency &amp; CAP</a>, and the driver side is in <a href="../../09-Databases/lessons/23-replication-read-replicas.html">section 09</a>.</p>
+  </section>
+
+<pre data-file="src/e8-read-your-writes.ts"><code class="language-typescript">import { readFileSync } from "node:fs";
+import type { AddressInfo } from "node:net";
+import express from "express";
+import { Redis } from "ioredis";
+import type pg from "pg";
+import { addStandby, assertSafePort, connect, createPrimary, stopAll } from "../pg-cluster.mjs";
+import { report, sleep } from "./lab.ts";
+
+// كام ثانية بعد الكتابة نقرا فيها من الـ primary: لازم تبقى أكبر من الـ lag اللي بتستحمله
+const STICKY_MS = 2000;
+
+interface WriteMarks { mark(user: string): Promise&lt;void&gt;; recent(user: string): Promise&lt;boolean&gt; }
+
+// في الذاكرة: كل instance من الـ API ليها Map لوحدها
+class InProcessMarks implements WriteMarks {
+  private until = new Map&lt;string, number&gt;();
+  async mark(user: string) { this.until.set(user, Date.now() + STICKY_MS); }
+  async recent(user: string) { return (this.until.get(user) ?? 0) &gt; Date.now(); }
+}
+
+// في Redis: كل الـ instances بتشوف نفس الـ mark، والـ TTL بيمسحه لوحده
+class RedisMarks implements WriteMarks {
+  private redis: Redis;
+  constructor(redis: Redis) { this.redis = redis; }
+  async mark(user: string) { await this.redis.set(`lastwrite:${user}`, "1", "PX", STICKY_MS); }
+  async recent(user: string) { return (await this.redis.exists(`lastwrite:${user}`)) === 1; }
+}
+
+function api(primary: pg.Client, replica: pg.Client, marks: WriteMarks | null) {
+  const app = express();
+  app.use(express.json());
+  app.post("/orders", async (req, res) =&gt; {
+    const user = String(req.headers["x-user"]);
+    const { rows } = await primary.query(`insert into orders (user_id, status) values ($1, 'paid') returning id`, [user]);
+    await marks?.mark(user);
+    res.status(201).json(rows[0]);
+  });
+  app.get("/orders/:id", async (req, res) =&gt; {
+    const user = String(req.headers["x-user"]);
+    // الـ middleware كله في السطر ده: لو كتب من شوية يقرا من الـ primary
+    const usePrimary = (await marks?.recent(user)) ?? false;
+    const db = usePrimary ? primary : replica;
+    const { rows } = await db.query(`select id, status from orders where id = $1`, [req.params.id]);
+    res.set("x-read-from", usePrimary ? "primary" : "replica").status(rows[0] ? 200 : 404).json(rows[0] ?? { error: "not found" });
+  });
+  return new Promise&lt;{ url: string; close: () =&gt; void }&gt;((resolve) =&gt; {
+    const s = app.listen(0, "127.0.0.1", () =&gt; resolve({ url: `http://127.0.0.1:${(s.address() as AddressInfo).port}`, close: () =&gt; s.close() }));
+  });
+}
+
+// الـ client بيكتب على instance ويقرا من instance تانية، زي load balancer عادي
+async function scenario(label: string, primary: pg.Client, replica: pg.Client, marks: () =&gt; WriteMarks | null) {
+  const a = await api(primary, replica, marks());
+  const b = await api(primary, replica, marks());
+  const headers = { "content-type": "application/json", "x-user": "u-42" };
+  const created = await (await fetch(`${a.url}/orders`, { method: "POST", headers, body: "{}" })).json() as { id: number };
+  const read = await fetch(`${b.url}/orders/${created.id}`, { headers });
+  report(label, `status ${read.status}, read from ${read.headers.get("x-read-from")}`);
+  a.close(); b.close();
+}
+
+const c = await createPrimary();
+const rawPort = readFileSync("redis.port", "utf8").trim();
+const redis = new Redis({ host: "127.0.0.1", port: assertSafePort(rawPort), lazyConnect: true });
+try {
+  await redis.connect();
+  const s = await addStandby(c, { name: "s1" });
+  const primary = await connect(c.port);
+  const replica = await connect(s.port);
+  await primary.query(`create table orders (id serial primary key, user_id text not null, status text not null)`);
+  await sleep(500);
+
+  // نثبّت الـ lag: الـ replica بتتأخر طول التجربة
+  await replica.query(`select pg_wal_replay_pause()`);
+
+  await scenario("no routing (always replica)", primary, replica, () =&gt; null);
+  await scenario("in-process Map, two API instances", primary, replica, () =&gt; new InProcessMarks());
+  const shared = new RedisMarks(redis);
+  await scenario("Redis mark, two API instances", primary, replica, () =&gt; shared);
+
+  // الـ metric: حجم الـ lag بالـ bytes والوقت، زي ما الـ alert هيشوفه
+  await sleep(300);
+  report("lag while paused", (await primary.query(`
+    select application_name,
+           pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)::int as bytes,
+           replay_lag::text as replay_lag
+    from pg_stat_replication`)).rows[0]);
+
+  // بعد ما الـ mark يخلص والـ replica تلحق، القراية ترجع للـ replica تاني
+  await replica.query(`select pg_wal_replay_resume()`);
+  await sleep(STICKY_MS + 300);
+  const a = await api(primary, replica, shared);
+  const headers = { "x-user": "u-42" };
+  const again = await fetch(`${a.url}/orders/1`, { headers });
+  report("after TTL and catch-up", `status ${again.status}, read from ${again.headers.get("x-read-from")}`);
+  a.close();
+  await sleep(200);
+  report("lag after catch-up", (await primary.query(`
+    select pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)::int as bytes from pg_stat_replication`)).rows[0]);
+  await replica.end();
+  await primary.end();
+} finally {
+  redis.disconnect();
+  await stopAll(c);
+}
+process.exit(0);</code></pre>
+
+<pre><code class="language-plaintext">no routing (always replica)              status 404, read from replica
+in-process Map, two API instances        status 404, read from replica
+Redis mark, two API instances            status 200, read from primary
+lag while paused                         {"application_name":"s1","bytes":808,"replay_lag":"00:00:00.036173"}
+after TTL and catch-up                   status 200, read from replica
+lag after catch-up                       {"bytes":0}</code></pre>
+  <div class="ar-note">كل سطر عبارة عن POST على instance A و GET على instance B. <b>من غير routing</b>: 404 من الـ replica. <b>Map في الذاكرة</b>: 404 لأن الـ instance التانية مشافتش الـ mark. <b>Redis</b>: 200 من الـ primary. بعدها الـ lag وقت الـ pause: 808 byte. وبعد ما الـ TTL خلص والـ replica لحقت، القراية رجعت من الـ replica بـ 200 والـ lag بقى 0.</div>
+
+<pre class="diagram">
+  POST /orders --&gt; [API A] --&gt; primary  (commit)
+                     |
+                     +--&gt; SET lastwrite:u-42 PX 2000 (Redis)
+
+  GET /orders/7 --&gt; [API B] --&gt; EXISTS lastwrite:u-42 ?
+                                  yes --&gt; primary  (fresh)
+                                  no  --&gt; replica  (cheap)
+</pre>
+  <div class="ar-note">الـ POST بيروح لـ API A: يكتب في الـ primary ويحط mark في Redis ليه TTL 2 ثانية. الـ GET بيروح لـ API B: يسأل Redis، لو الـ mark موجود يقرا من الـ primary (بيانات طازة)، ولو لأ يقرا من الـ replica (أرخص). كون الـ mark في Redis هو اللي بيخلي الـ instance التانية تعرف.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>أشهر عرض لـ replication lag في production: الـ user يحفظ حاجة، الصفحة تعمل reload، والحاجة مش موجودة. الحل البسيط: بعد ما الـ user يكتب، ابعت قرايته للـ primary لمدة N ثانية. لازم N تبقى أكبر من الـ lag اللي بتستحمله. وقراية باقي الناس تفضل على الـ replicas.</p>
+    <p>التجربة شغالة والـ replication واقفة، فالـ lag حقيقي وثابت، ومعاها instance-ين من الـ API، لأن ده شكل الـ production. الـ POST بيروح لـ instance A والـ GET بعده لـ instance B، زي ما الـ load balancer بيعمل. من غير routing: 404 من الـ replica. بـ <code>Map</code> في الذاكرة بتعلّم اللي كتب: لسه 404، لأن A حطت الـ mark و B ما شافتهوش. بـ mark في Redis (<code>SET lastwrite:u PX 2000</code>): 200 من الـ primary. ولما الـ TTL يخلص والـ replica تلحق، القراية بترجع للـ replica والصف موجود.</p>
+    <p>الـ lag لازم يبقى على الـ dashboards بتاعتك. <code>pg_stat_replication</code> بيدّيك الـ lag بالـ bytes (<code>pg_wal_lsn_diff</code>) وبالوقت (<code>replay_lag</code>). اعمل alert لما يعدّي الـ N اللي اخترتها، لأن بعدها الـ sticky window مبقتش مغطية. وفيه فخ في الـ docs: على نظام idle لحق خالص، عواميد الـ lag بترجع NULL، فاعتبر NULL "مفيش قياس" مش "صفر"، وراقب فرق الـ bytes كمان. وفيه طريقة أقوى بـ LSN tokens في <a href="./14-consistency-models-cap-pacelc.html">درس الـ Consistency و CAP</a>، وجانب الـ driver في <a href="../../09-Databases/lessons/23-replication-read-replicas.html">قسم 09</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      بعد <code>POST /orders</code> أو حفظ الـ profile، middleware بيحط <code>lastwrite:{userId}</code> في Redis بـ TTL حوالي 5–10 ثواني، وأي <code>GET</code> بيعمل <code>EXISTS</code> قبل ما يختار الـ pool. لو عندك autoscaling لازم الـ mark يبقى shared. والـ alert: replica lag أكبر من الـ N لمدة 5 دقايق. الغلطة الشائعة: تحط الـ mark في memory الـ Node process وهو شغال كويس عند واحد dev، ويفضل stale في production لأن عندك 8 instances.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks this pattern</b>
+    Lag longer than N: the sticky window closes and the reader lands on a replica that still doesn't have the row. Lag for one user's write that reaches a different service: the mark is per user, not per entity. And if Redis is down, the safe default is to read from the primary, not the replica, since that trades load for correctness.
+    <div class="ar-note"><b>إيه اللي بيكسر الـ pattern ده:</b> lag أطول من N، فالـ sticky window تقفل والقارئ يقع على replica لسه ما عندهاش الصف. كتابة user توصل لـ service تانية: الـ mark لكل user مش لكل entity. ولو Redis واقع، الـ default الآمن تقرا من الـ primary مش الـ replica، عشان بتبدّل load بصحة البيانات.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Users complain that after creating an order, the list sometimes doesn't show it. Why, and how do you fix it?" → Reads hit a replica that hasn't applied the write. Route that user's reads to the primary for N seconds after a write, with the mark in shared storage such as Redis, because the next request can land on another instance. Alert when lag exceeds N. For a stronger guarantee, pass the commit's LSN and wait for the replica to reach it.
+    <div class="ar-note">"الناس بتشتكي إن بعد ما تعمل order اللستة أحيانًا مش بتظهره. ليه؟ وهتصلحها إزاي؟" ← القراية بتيجي من replica لسه ماطبّقتش الكتابة. أبعت قراية الـ user ده للـ primary لمدة N ثانية بعد الكتابة، والـ mark في storage مشترك زي Redis لأن الـ request الجاي ممكن يقع على instance تانية. وأعمل alert لما الـ lag يعدّي N. ولو عايز ضمان أقوى، أبعت LSN بتاع الـ commit وأستنى الـ replica توصل له.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ One sync standby, timeout as a safety net</b>
+<pre><code class="language-sql">-- ده بيعمل تعليق لو الـ standby وقع
+ALTER SYSTEM SET synchronous_standby_names = 'FIRST 1 (s1)';
+SET statement_timeout = '800ms';
+-- الـ statement_timeout مش بيوقف انتظار الـ SyncRep</code></pre></div>
+    <div class="good"><b>✅ Quorum, so no single standby can stop commits</b>
+<pre><code class="language-sql">-- أي واحد من الاتنين يأكّد يكفي
+ALTER SYSTEM SET synchronous_standby_names = 'ANY 1 (s1, s2)';
+SELECT pg_reload_conf();</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>statement_timeout</code> مش بيوقف انتظار الـ SyncRep: قست 3 ثواني والـ COMMIT لسه واقف، وكل connection واقفة بتاكل مكان من الـ pool. ✅ <code>ANY 1 (s1, s2)</code> بيخلي الـ commit يكمل لو واحد من الاتنين وقع: 20 commit بمتوسط حوالي 1 ms و<code>s1</code> واقع.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Read-your-writes state inside one process</b>
+<pre><code class="language-typescript">// كل instance ليها Map لوحدها
+const until = new Map&lt;string, number&gt;();
+until.set(userId, Date.now() + 2000);
+// الـ GET على instance تانية: 404</code></pre></div>
+    <div class="good"><b>✅ Shared mark with a TTL</b>
+<pre><code class="language-typescript">// كل الـ instances بتشوف نفس الـ key
+await redis.set(`lastwrite:${userId}`, "1", "PX", 2000);
+const fresh = (await redis.exists(`lastwrite:${userId}`)) === 1;
+// الـ GET على أي instance: 200 من الـ primary</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>Map</code> في الـ memory شغال عند واحد dev بـ instance واحدة، وفي production بيطلّع 404 زي ما شفنا. ✅ الـ mark في Redis بـ TTL كل الـ instances بتشوفه، وبيتمسح لوحده، و200 من الـ primary.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Promote without fencing</b>
+<pre><code class="language-sql">-- الـ primary القديم لسه شغال وبيقبل كتابة
+SELECT pg_promote(true, 20);
+-- بقى عندنا ids 2 و 34، و written-to-old هتتمسح</code></pre></div>
+    <div class="good"><b>✅ Fence first, then promote</b>
+<pre><code class="language-sql">-- على الـ primary القديم الأول
+ALTER SYSTEM SET default_transaction_read_only = on;
+SELECT pg_reload_conf();
+-- بعد التأكد إنه بيرفض الكتابة، بعدين:
+SELECT pg_promote(true, 20);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ promote من غير عزل معناه الاتنين primary، و<code>written-to-old</code> بتتمسح بعد الـ <code>pg_rewind</code>. ✅ اعزل القديم الأول، و<code>default_transaction_read_only</code> دي أبسط طريقة، بس superuser يقدر يكسرها، والعزل الحقيقي هو قطع الشبكة أو تنزيل الـ instance. وده لو الـ primary القديم وصلت له أصلًا، لأن الـ partition ممكن تمنع وصولك ليه.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Lag alert only on <code>replay_lag</code></b>
+<pre><code class="language-sql">-- الـ NULL هنا مش معناها صفر
+SELECT 1 FROM pg_stat_replication
+WHERE replay_lag &gt; interval '10 seconds';</code></pre></div>
+    <div class="good"><b>✅ Bytes and time, and no replica is also an alert</b>
+<pre><code class="language-sql">-- الـ bytes بتتحسب من الـ primary حتى لو الـ replica ساكتة
+SELECT application_name,
+       pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) AS bytes,
+       replay_lag
+FROM pg_stat_replication;
+-- ولو الـ query رجّعت 0 صفوف: replica وقعت ⁦= alert⁩</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>replay_lag</code> بيبقى NULL لما النظام idle ولاحق، و<code>NULL &gt; interval</code> نتيجتها NULL فمفيش صفوف ومفيش alert. والأخطر: لو الـ replica وقعت خالص، الجدول فاضي والـ alert ساكت. ✅ راقب الـ bytes بـ <code>pg_wal_lsn_diff</code> كمان، وخلي "مفيش صفوف" نفسها alert.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Quorums for N=5 <span class="lvl lvl-1">🟢 easy</span></b>
+    List every smallest <code>(W, R)</code> for N=5 that still guarantees overlap, and how many failures each path survives. Which pair would you pick for a read-heavy system?
+    <div class="ar-note">اكتب كل أصغر <code>(W, R)</code> لـ N=5 لسه بتضمن التقاطع، وكل مسار بيستحمل كام فشل. وأنهي زوج هتختاره لنظام read-heavy؟</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-solutions.ts"><code class="language-typescript">// تمرين 1: كل (W, R) لـ N=5 الأصغر اللي بتضمن التقاطع، وكام فشل كل واحدة بتستحمله
+const N = 5;
+for (let W = 1; W &lt;= N; W++) {
+  const R = N - W + 1;
+  console.log(`N=${N} W=${W} R=${R}: overlap by ${W + R - N}, survives ${N - W} write failures and ${N - R} read failures`);
+}</code></pre>
+<pre><code class="language-plaintext">N=5 W=1 R=5: overlap by 1, survives 4 write failures and 0 read failures
+N=5 W=2 R=4: overlap by 1, survives 3 write failures and 1 read failures
+N=5 W=3 R=3: overlap by 1, survives 2 write failures and 2 read failures
+N=5 W=4 R=2: overlap by 1, survives 1 write failures and 3 read failures
+N=5 W=5 R=1: overlap by 1, survives 0 write failures and 4 read failures</code></pre>
+      <div class="ar-note">الشرط W + R = N + 1. لنظام read-heavy الزوج W=3, R=3 متوازن، أو W=4, R=2 لو القراية هي اللي لازم تستحمل فشل أكتر، وده بيقلل تمن القراية بس الكتابة بتستحمل فشل واحد بس.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. FIRST vs ANY <span class="lvl lvl-2">🟡 medium</span></b>
+    Repeat the quorum experiment with <code>FIRST 1 (s1, s2)</code> instead of <code>ANY 1</code>. Print <code>sync_state</code> for each standby before and after stopping <code>s1</code>, and check whether commits continue.
+    <div class="ar-note">عيد تجربة الـ quorum بـ <code>FIRST 1 (s1, s2)</code> بدل <code>ANY 1</code>. اطبع <code>sync_state</code> لكل standby قبل وبعد ما توقف <code>s1</code>، وشوف الـ commits هتكمل ولا لأ.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-solutions.ts"><code class="language-typescript">import { addStandby, connect, createPrimary, stopAll, stopNode } from "../pg-cluster.mjs";
+import { report, sleep } from "./lab.ts";
+
+// تمرين 2: الـ FIRST بيستنى s1 بالاسم، ولو وقع الـ s2 بياخد مكانه
+{
+  const c = await createPrimary();
+  try {
+    await addStandby(c, { name: "s1" });
+    await addStandby(c, { name: "s2" });
+    const db = await connect(c.port);
+    await db.query(`create table orders (id serial primary key, status text)`);
+    await db.query(`alter system set synchronous_standby_names = 'FIRST 1 (s1, s2)'`);
+    await db.query(`select pg_reload_conf()`);
+    await sleep(1000);
+    const state = `select application_name, sync_state from pg_stat_replication order by 1`;
+    report("before", (await db.query(state)).rows);
+    stopNode(c, "s1");
+    await sleep(1000);
+    report("s1 dead", (await db.query(state)).rows);
+    await db.query(`set statement_timeout = '5000ms'`);
+    report("commit after s1 died", (await db.query(`insert into orders (status) values ('paid') returning id`)).rows[0]);
+    await db.end();
+  } finally {
+    await stopAll(c);
+  }
+}</code></pre>
+<pre><code class="language-plaintext">before                                   [{"application_name":"s1","sync_state":"sync"},{"application_name":"s2","sync_state":"potential"}]
+s1 dead                                  [{"application_name":"s2","sync_state":"sync"}]
+commit after s1 died                     {"id":1}</code></pre>
+      <div class="ar-note">الـ <code>FIRST 1</code> بيختار s1 sync و s2 <code>potential</code>. لما s1 وقع، s2 بقى sync والـ commit كمل. الفرق عن <code>ANY 1</code>: الـ FIRST بيستنى standby معين بالترتيب، والـ ANY أسرع واحد يرد، وده غالبًا أقل latency.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Fence before you promote <span class="lvl lvl-3">🔴 hard</span></b>
+    Write the failover script that fences the old primary with <code>default_transaction_read_only</code>, proves a write is refused, and only then promotes the standby. Think about which step fails during a network partition.
+    <div class="ar-note">اكتب failover script بيعزل الـ primary القديم بـ <code>default_transaction_read_only</code>، ويثبت إن الكتابة بتترفض، وبعدها بس يعمل promote للـ standby. وفكّر أنهي خطوة هتفشل وقت الـ network partition.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-solutions.ts"><code class="language-typescript">import { addStandby, connect, createPrimary, stopAll, stopNode } from "../pg-cluster.mjs";
+import { report, sleep } from "./lab.ts";
+
+// تمرين 3: fencing للـ primary القديم قبل الـ promote: كتابة جديدة لازم تترفض
+{
+  const c = await createPrimary();
+  try {
+    const s = await addStandby(c, { name: "s1" });
+    const admin = await connect(c.port);
+    const app = await connect(c.port);
+    app.on("error", () =&gt; {});
+    await admin.query(`create table orders (id serial primary key, status text)`);
+    await sleep(400);
+
+    await admin.query(`alter system set default_transaction_read_only = on`);
+    await admin.query(`select pg_reload_conf()`);
+    await sleep(300);
+    const write = (db: typeof app) =&gt; db.query(`insert into orders (status) values ('after-fence')`).then(() =&gt; "accepted", (e: Error) =&gt; "refused: " + e.message);
+    report("connection opened before the fence", await write(app));
+
+    const standby = await connect(s.port);
+    await standby.query(`select pg_promote(true, 20)`);
+    report("standby promoted, in recovery?", (await standby.query(`select pg_is_in_recovery() r`)).rows[0].r);
+    report("write on promoted node", (await standby.query(`insert into orders (status) values ('after-promote') returning id`)).rows[0]);
+    report("rows on old primary", (await admin.query(`select count(*)::int n from orders`)).rows[0].n);
+    await standby.end();
+    await app.end().catch(() =&gt; {});
+    await admin.end();
+  } finally {
+    await stopAll(c);
+  }
+}
+process.exit(0);</code></pre>
+<pre><code class="language-plaintext">connection opened before the fence       refused: cannot execute INSERT in a read-only transaction
+standby promoted, in recovery?           false
+write on promoted node                   {"id":1}
+rows on old primary                      0</code></pre>
+      <div class="ar-note">الـ connection المفتوحة قبل الـ fence كمان اترفضت، لأن الـ reload بيطبّق القيمة الجديدة على الـ sessions الموجودة. عدد صفوف الـ primary القديم بقى 0 بعد الـ promote، فمفيش كتابة ضاعت. وقت الـ partition أول خطوة نفسها مش هتوصل للـ primary القديم، وعشان كده العزل الحقيقي لازم يتم من طبقة تانية: الشبكة أو الـ storage أو الـ lease.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project / at work <span class="lvl lvl-3">🔴 project</span></b>
+    In your side project or at work, list the endpoints where a user reads something right after writing it. Add the read-after-write route to one of them, return <code>x-read-from</code> as a header, and write a test that fails without it. Then write down your RPO for the orders table as a number with its reason.
+    <div class="ar-note">في مشروعك الجانبي أو في الشغل، اكتب الـ endpoints اللي الـ user بيقرا فيها حاجة بعد ما كتبها على طول. ضيف الـ read-after-write route لواحد منهم، ورجّع <code>x-read-from</code> كـ header، واكتب test بيفشل من غيره. وبعدين اكتب الـ RPO بتاعك لجدول الـ orders كرقم وسببه.</div>
+    <details><summary>Hint · تلميح</summary>
+      Testing it needs a replica that is really behind: pause replay with <code>pg_wal_replay_pause()</code> in the test setup, or stub the replica's pool to return an empty result.
+      <div class="ar-note">عشان تختبره لازم replica متأخرة بجد: وقّف الـ replay بـ <code>pg_wal_replay_pause()</code> في الـ test setup، أو اعمل stub للـ pool بتاع الـ replica يرجّع نتيجة فاضية.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Replicas scale reads, not writes: every standby replays every write. A replica is a different state until it has applied the WAL.</li>
+    <li>Sync vs async is durability vs latency: a sync commit costs one round trip (≈31 ms with our proxy). <code>synchronous_commit</code> is per-transaction.</li>
+    <li>Only <code>remote_apply</code> guarantees a read on that standby sees the commit.</li>
+    <li>A dead sync standby hangs COMMIT in <code>IPC/SyncRep</code>. <code>statement_timeout</code> doesn't end it. <code>ANY 1 (s1, s2)</code> does.</li>
+    <li>Multi-leader buys local writes, and costs conflict handling in every writing feature. LWW silently loses updates, and clock skew makes it worse.</li>
+    <li>Quorum: <code>W + R &gt; N</code> overlaps read and write sets. Stale rate for N=3 went 33.1% at (1,1) to 0% at (2,2), with 2.9% failed writes at 10% replica failure.</li>
+    <li><code>W + R &gt; N</code> is not linearizable: in-flight writes, failed writes, concurrent writes and sloppy quorums all break it.</li>
+    <li>Failover loses what was never received, not what wasn't applied. RPO &gt; 0 is real with async replication: an acknowledged order disappeared.</li>
+    <li>Split-brain: two primaries, both accepting writes. Fence with STONITH, leases or a majority, and never promote without stopping the old one.</li>
+    <li><code>pg_rewind</code> needs WAL from the last common checkpoint (<code>wal_keep_size</code> or an archive), and discards the old primary's divergent writes.</li>
+    <li>Read-your-writes: send a user to the primary for N seconds after writing, with the mark in shared storage, and alert when lag exceeds N.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ replicas بتزوّد القراية مش الكتابة: كل standby بيعيد كل كتابة. والـ replica حالتها مختلفة لحد ما تطبّق الـ WAL.</li>
+      <li>الـ sync مقابل الـ async هو durability مقابل latency: الـ sync commit بياخد round trip (≈31 ms مع الـ proxy بتاعنا). و<code>synchronous_commit</code> per-transaction.</li>
+      <li><code>remote_apply</code> بس هو اللي بيضمن إن القراية من الـ standby ده تشوف الـ commit.</li>
+      <li>الـ sync standby الميت بيعلّق الـ COMMIT في <code>IPC/SyncRep</code>. و<code>statement_timeout</code> مش بينهيه. <code>ANY 1 (s1, s2)</code> هو الحل.</li>
+      <li>الـ multi-leader بيدّيك كتابة محلية، وتمنه conflict handling في كل feature بتكتب. الـ LWW بيضيّع تحديثات ساكت، والـ clock skew بيزوّدها.</li>
+      <li>الـ quorum: <code>W + R &gt; N</code> بيخلي الـ read والـ write sets يتقاطعوا. نسبة الـ stale لـ N=3 من 33.1% عند (1,1) لـ 0% عند (2,2)، مع 2.9% كتابات فاشلة لو كل replica بتقع 10%.</li>
+      <li><code>W + R &gt; N</code> مش linearizable: الكتابات اللي في الطريق، الفاشلة، المتزامنة، والـ sloppy quorums كلهم بيكسروها.</li>
+      <li>الـ failover بيضيّع اللي ماتوصلش، مش اللي ماتطبقش. والـ RPO &gt; 0 حقيقي مع الـ async: order اتأكد وضاع.</li>
+      <li>الـ split-brain: اتنين primary، الاتنين بيقبلوا كتابة. الحل fencing أو STONITH أو leases أو أغلبية، وعمرك ما تعمل promote من غير ما توقف القديم.</li>
+      <li><code>pg_rewind</code> محتاج WAL من آخر checkpoint مشترك (<code>wal_keep_size</code> أو archive)، وبيرمي الكتابات المختلفة بتاعة الـ primary القديم.</li>
+      <li>الـ read-your-writes: ابعت الـ user للـ primary لمدة N ثانية بعد الكتابة، والـ mark في storage مشترك، واعمل alert لما الـ lag يعدّي N.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 12 · 1.5 — Replication كمفهوم: primary/replica، reads من الـ replicas</label>
+    <label><input type="checkbox" data-key="r2"> 12 · 2.2 — Replication بعمق: leader-follower، multi-leader، leaderless (W + R &gt; N)، sync vs async، failover و split-brain</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.postgresql.org/docs/current/warm-standby.html">PostgreSQL docs — Log-shipping standby servers</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/runtime-config-replication.html">PostgreSQL docs — Replication settings (synchronous_commit, synchronous_standby_names)</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/monitoring-stats.html">PostgreSQL docs — pg_stat_replication and lag columns</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/app-pgrewind.html">PostgreSQL docs — pg_rewind</a></li>
+    <li><a href="https://github.blog/news-insights/company-news/oct21-post-incident-analysis/">GitHub — October 21 post-incident analysis</a></li>
+    <li><a href="https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf">DeCandia et al. — Dynamo: Amazon's Highly Available Key-value Store (SOSP 2007)</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./11-sql-nosql-indexes-denormalization.html"><small>← Previous</small>11 · Choosing a Store</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./13-partitioning-consistent-hashing.html"><small>Next →</small>13 · Sharding</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

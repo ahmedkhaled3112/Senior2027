@@ -1,0 +1,1475 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Idempotency in Depth — 12 System Design</title>
+<meta name="section" content="12-System-Design">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">12 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 30 / 63</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <header>
+    <h1>Idempotency in Depth</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 30 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">Node 22 · TypeScript · Postgres 18</span>
+      <span class="chip">Prereq: 04 REST API Design</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>12 · 2.6 — Idempotency بعمق: idempotency keys (client-generated)، storage والـ TTL، response replay، على مستوى الـ API والـ consumers</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — The timeout that charges twice</a></li>
+      <li><a href="#p2">Part 2 — Key design</a></li>
+      <li><a href="#p3">Part 3 — Concurrent duplicates</a></li>
+      <li><a href="#p4">Part 4 — Crash in the middle</a></li>
+      <li><a href="#p5">Part 5 — Replay and TTL</a></li>
+      <li><a href="#p6">Part 6 — Consumers and natural idempotency</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Retries are the only honest answer to an unreliable network, and retries are only safe if repeating the operation changes nothing. Every payment API, webhook consumer and queue worker lives on this. It is also a favourite interview probe, because the naive answer ("check if the key exists") has a race, and the follow-ups go straight to crashes between the database and the payment provider. This lesson builds the design step by step on real Postgres, kills a real process at each step, and counts charges.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ retries هي الإجابة الوحيدة الأمينة على شبكة مش مضمونة، والـ retries مش آمنة غير لو تكرار العملية مش بيغيّر حاجة. كل payment API وكل webhook consumer وكل queue worker عايش على ده. وكمان سؤال مشهور في الـ interviews، لأن الإجابة الساذجة ("بشوف الـ key موجود ولا لأ") فيها race، والأسئلة اللي بعدها بتروح على طول للـ crashes بين الـ database والـ payment provider. الدرس ده بيبني الـ design خطوة بخطوة على Postgres حقيقي، وبيقتل process حقيقي عند كل خطوة، ويعد الخصومات.</p>
+  </section>
+
+  <h2 id="p1">Part 1 — The timeout that charges twice <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الـ timeout اللي بيخصم مرتين</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A remote call has three outcomes: it succeeded, it failed, or you don't know. A timeout is the third one. The client gave up waiting, but the server may be mid-way through the work or already finished. Retrying without protection turns "I don't know" into a second charge, and the customer only pressed Pay once.</p>
+    <p>HTTP already says GET, PUT and DELETE are idempotent and POST isn't (the basics are in <a href="../../06-NodeJS/lessons/14-rest-api-design.html">REST API design</a>). Backoff and timeouts as code are in <a href="../../10-Design-Patterns/lessons/22-retry-timeout-fallback.html">Retry, Timeout &amp; Fallback</a>, and the reusable middleware is in <a href="../../10-Design-Patterns/lessons/24-rate-limiter-idempotent-receiver.html">Idempotent Receiver as code</a>. This lesson is about the design decisions and the failure cases behind that code.</p>
+    <p>Below, the fake PSP takes 300 ms, the client's first attempt times out at 100 ms, and it retries. Everything is real HTTP on real sockets.</p>
+  </section>
+
+<pre class="diagram">
+ client            API              PSP
+   │── POST ───────&gt;│── charge ──────&gt;│  charges = 1
+   │   (100 ms)     │                 │
+   ✗ timeout        │   still working │
+   │── POST again ─&gt;│── charge ──────&gt;│  charges = 2
+   │&lt;──── 201 ──────│&lt;────────────────│
+</pre>
+  <div class="ar-note">الـ client بعت POST والـ API كلّم الـ PSP فالخصم الأول حصل. بعد 100ms الـ client زهق وعمل timeout، بس الـ API لسه شغال. الـ client بعت POST تاني، فالـ API كلّم الـ PSP تاني، وده خصم تاني لنفس الضغطة على زرار الدفع.</div>
+
+<pre data-file="src/psp.ts"><code class="language-typescript">import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+
+// بنك وهمي بيعد الخصومات، ولو وصله Idempotency-Key قبل كده بيرجع نفس الـ charge
+export async function startFakePsp(delayMs = 0) {
+  const byKey = new Map&lt;string, string&gt;();
+  let charges = 0;
+  const server = createServer((req, res) =&gt; {
+    req.resume();
+    req.on("end", async () =&gt; {
+      const key = req.headers["idempotency-key"];
+      let id = typeof key === "string" ? byKey.get(key) : undefined;
+      if (!id) {
+        charges++;
+        id = `ch_${charges}`;
+        if (typeof key === "string") byKey.set(key, id);
+      }
+      await sleep(delayMs);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id, status: "succeeded" }));
+    });
+  });
+  await new Promise&lt;void&gt;((resolve) =&gt; server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    charges: () =&gt; charges,
+    forgetKeys: () =&gt; byKey.clear(),
+    close: () =&gt; new Promise((resolve) =&gt; { server.closeAllConnections(); server.close(resolve); }),
+  };
+}
+export type Psp = Awaited&lt;ReturnType&lt;typeof startFakePsp&gt;&gt;;
+
+export async function pspCharge(pspUrl: string, amount: number, key?: string): Promise&lt;{ id: string }&gt; {
+  const res = await fetch(`${pspUrl}/v1/charges`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(key ? { "idempotency-key": key } : {}) },
+    body: JSON.stringify({ amount }),
+  });
+  return (await res.json()) as { id: string };
+}</code></pre>
+<pre data-file="src/double-charge.ts"><code class="language-typescript">import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+import { startFakePsp, pspCharge } from "./psp.ts";
+
+const psp = await startFakePsp(300);
+
+// الـ API الساذج: كل POST بيخصم، من غير أي key
+const api = createServer((req, res) =&gt; {
+  req.resume();
+  req.on("end", async () =&gt; {
+    const charge = await pspCharge(psp.url, 4200);
+    res.writeHead(201, { "content-type": "application/json" });
+    res.end(JSON.stringify(charge));
+  });
+});
+await new Promise&lt;void&gt;((resolve) =&gt; api.listen(0, "127.0.0.1", resolve));
+const { port } = api.address() as AddressInfo;
+
+// الـ client عنده timeout أقصر من وقت البنك، فبيعيد المحاولة
+async function clientPay(): Promise&lt;void&gt; {
+  for (let attempt = 1; attempt &lt;= 3; attempt++) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/charges`, { method: "POST", signal: AbortSignal.timeout(attempt === 1 ? 100 : 2000) });
+      console.log(`attempt ${attempt}: HTTP ${res.status}`, await res.text());
+      return;
+    } catch (err) {
+      console.log(`attempt ${attempt}: ${(err as Error).name} (client gave up, server keeps working)`);
+    }
+  }
+}
+
+await clientPay();
+await sleep(400);
+console.log("customer pressed Pay once. PSP charges:", psp.charges());
+
+api.closeAllConnections();
+api.close();
+await psp.close();</code></pre>
+<pre><code class="language-plaintext">attempt 1: TimeoutError (client gave up, server keeps working)
+attempt 2: HTTP 201 {"id":"ch_2","status":"succeeded"}
+customer pressed Pay once. PSP charges: 2</code></pre>
+  <div class="ar-note">المحاولة الأولى خلصت بـ <code>TimeoutError</code>، والتانية رجعت 201. الـ PSP عدّ خصمين. لاحظ إن الـ server معرفش إن الـ client مشي، وكمّل شغله عادي.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>أي remote call ليه 3 نتايج: نجح، فشل، أو مش عارف. الـ timeout هو التالتة. الـ client زهق من الانتظار، بس الـ server ممكن يكون في نص الشغل أو خلص فعلًا. لو عملت retry من غير حماية، الـ "مش عارف" بتتحول لخصم تاني، والعميل داس Pay مرة واحدة.</p>
+    <p>الـ HTTP نفسه بيقول إن GET وPUT وDELETE idempotent وPOST لأ (الأساسيات في <a href="../../06-NodeJS/lessons/14-rest-api-design.html">REST API design</a>). الـ backoff والـ timeouts ككود في <a href="../../10-Design-Patterns/lessons/22-retry-timeout-fallback.html">Retry, Timeout &amp; Fallback</a>، والـ middleware القابل لإعادة الاستخدام في <a href="../../10-Design-Patterns/lessons/24-rate-limiter-idempotent-receiver.html">Idempotent Receiver ككود</a>. الدرس ده عن قرارات الـ design وحالات الفشل اللي ورا الكود ده.</p>
+    <p>في الكود: الـ PSP الوهمي بياخد 300ms، والمحاولة الأولى بتعمل timeout عند 100ms، وبعدين retry. كله HTTP حقيقي على sockets حقيقية.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      تطبيق موبايل بيعمل <code>POST /orders</code> على شبكة ضعيفة، أو frontend عنده retry في الـ fetch wrapper، أو load balancer بيعيد الـ request لو الـ upstream قفل. في كل حالة دي الـ request ممكن يتنفذ مرتين. أول سؤال تسأله في أي code review لـ endpoint بيعمل حاجة ليها أثر: "لو الـ request ده اتكرر، إيه اللي هيحصل؟"
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Why can't the client just not retry on timeout?" → Then a transient network blip becomes a failed payment the customer sees, even though the money may have moved. Without a retry you can't tell success from failure at all. Reliability comes from retrying plus making the retry harmless.
+    <div class="ar-note">"ليه الـ client ميعملش retry لما يحصل timeout؟" ← كده أي مشكلة شبكة بسيطة هتبان للعميل كدفعة فاشلة، مع إن الفلوس ممكن تكون اتخصمت. من غير retry إنت مش قادر تفرّق بين النجاح والفشل أصلًا. الـ reliability بتيجي من الـ retry مع إن الـ retry نفسه ميضرش.</div>
+  </div>
+
+  <h2 id="p2">Part 2 — Key design <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — تصميم الـ key</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The <b>client</b> generates the key, one per logical operation, and reuses it on every retry of that operation. The server can't generate it, because a retry looks like a new request to the server. <a href="https://docs.stripe.com/api/idempotent_requests">Stripe's docs</a> suggest V4 UUIDs or another high-entropy string, cap keys at 255 characters, and warn against putting personal data in them.</p>
+    <p><b>Scope</b> the key by tenant and endpoint: the primary key is <code>(tenant_id, endpoint, key)</code>, so one tenant's key can never collide with another's and a key can't be replayed against a different operation.</p>
+    <p>Store a <b>fingerprint</b> of the request (method, path, canonical body) and compare it on every retry. Same key with a different body means a client bug, and replaying the old response would hide it. The body is canonicalised by sorting object keys, so a re-serialised payload still matches, while array order still counts because it carries meaning.</p>
+    <p>On status codes, the IETF <a href="https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/">Idempotency-Key header draft</a> says a server SHOULD answer 400 when a required key is missing, 422 when a key is reused with a different payload, and 409 while the first request is still running. It treats the fingerprint as optional. I checked the datatracker: it is draft 08, dated 22 October 2026, an active Internet-Draft of the httpapi working group that expires on 25 April 2027. It is <b>not an RFC</b>, so treat it as the best available convention.</p>
+  </section>
+
+<pre data-file="src/idem.ts"><code class="language-typescript">import { createHash } from "node:crypto";
+import type { Pool } from "pg";
+
+export const DDL = `
+CREATE TABLE idempotency_keys (
+  tenant_id      text        NOT NULL,
+  endpoint       text        NOT NULL,
+  key            text        NOT NULL CHECK (length(key) BETWEEN 16 AND 255),
+  request_hash   text        NOT NULL,
+  status         text        NOT NULL DEFAULT 'started' CHECK (status IN ('started', 'finished')),
+  recovery_point text        NOT NULL DEFAULT 'started',
+  response_code  int,
+  response_body  text,
+  locked_at      timestamptz,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  expires_at     timestamptz NOT NULL,
+  PRIMARY KEY (tenant_id, endpoint, key)
+);
+CREATE INDEX idempotency_keys_expires_idx ON idempotency_keys (expires_at);
+`;
+
+const sortKeys = (v: unknown): unknown =&gt;
+  Array.isArray(v)
+    ? v.map(sortKeys)
+    : v !== null &amp;&amp; typeof v === "object"
+      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) =&gt; (a &lt; b ? -1 : 1)).map(([k, x]) =&gt; [k, sortKeys(x)]))
+      : v;
+
+// البصمة: نفس المحتوى بأي ترتيب للـ keys لازم يدّي نفس الـ hash
+export const requestHash = (method: string, path: string, body: unknown): string =&gt;
+  createHash("sha256").update(`${method} ${path}\n${JSON.stringify(sortKeys(body))}`).digest("hex");
+
+export type Scope = { tenantId: string; endpoint: string; key: string };
+export type Claim =
+  | { kind: "won" }
+  | { kind: "replay"; code: number; body: string }
+  | { kind: "body_mismatch" }
+  | { kind: "in_progress" };
+
+// الـ unique constraint هو الحَكَم: صف واحد بس هيدخل مهما كان عدد الـ requests
+export async function claim(db: Pool, s: Scope, hash: string, ttlHours = 24): Promise&lt;Claim&gt; {
+  const inserted = await db.query(
+    `INSERT INTO idempotency_keys (tenant_id, endpoint, key, request_hash, locked_at, expires_at)
+     VALUES ($1, $2, $3, $4, now(), now() + make_interval(hours =&gt; $5))
+     ON CONFLICT (tenant_id, endpoint, key) DO NOTHING
+     RETURNING key`,
+    [s.tenantId, s.endpoint, s.key, hash, ttlHours],
+  );
+  if (inserted.rowCount === 1) return { kind: "won" };
+
+  const { rows } = await db.query(
+    `SELECT request_hash, status, response_code, response_body FROM idempotency_keys
+      WHERE tenant_id = $1 AND endpoint = $2 AND key = $3`,
+    [s.tenantId, s.endpoint, s.key],
+  );
+  const row = rows[0];
+  if (!row) return { kind: "in_progress" };
+  if (row.request_hash !== hash) return { kind: "body_mismatch" };
+  if (row.status === "finished") return { kind: "replay", code: row.response_code, body: row.response_body };
+  return { kind: "in_progress" };
+}
+
+export async function finish(db: Pool, s: Scope, code: number, body: string): Promise&lt;void&gt; {
+  await db.query(
+    `UPDATE idempotency_keys
+        SET status = 'finished', recovery_point = 'finished', response_code = $4, response_body = $5, locked_at = NULL
+      WHERE tenant_id = $1 AND endpoint = $2 AND key = $3`,
+    [s.tenantId, s.endpoint, s.key, code, body],
+  );
+}</code></pre>
+<pre data-file="src/key-design.ts"><code class="language-typescript">import { randomUUID } from "node:crypto";
+import { labPool } from "./lab.ts";
+import { DDL, claim, finish, requestHash, type Scope } from "./idem.ts";
+import { startFakePsp, pspCharge } from "./psp.ts";
+
+const db = labPool();
+const psp = await startFakePsp();
+await db.query("DROP TABLE IF EXISTS idempotency_keys");
+await db.query(DDL);
+
+type Req = { tenantId: string; key: string | undefined; body: { amount: number; currency: string } };
+
+async function handle({ tenantId, key, body }: Req): Promise&lt;{ code: number; body: string }&gt; {
+  // الـ key لازم ييجي من الـ client، ولو ناقص بنرفض بدل ما نخصم من غير حماية
+  if (!key || key.length &lt; 16 || key.length &gt; 255) return { code: 400, body: '{"error":"idempotency_key_required"}' };
+
+  const scope: Scope = { tenantId, endpoint: "POST /charges", key };
+  const c = await claim(db, scope, requestHash("POST", "/charges", body));
+  if (c.kind === "replay") return { code: c.code, body: c.body };
+  if (c.kind === "body_mismatch") return { code: 422, body: '{"error":"idempotency_key_reused_with_different_body"}' };
+  if (c.kind === "in_progress") return { code: 409, body: '{"error":"request_in_progress"}' };
+
+  const charge = await pspCharge(psp.url, body.amount, `${tenantId}:${key}`);
+  const response = JSON.stringify({ chargeId: charge.id, amount: body.amount, currency: body.currency });
+  await finish(db, scope, 201, response);
+  return { code: 201, body: response };
+}
+
+const key = randomUUID();
+const body = { amount: 4200, currency: "EGP" };
+
+const show = (label: string, r: { code: number; body: string }) =&gt; console.log(label.padEnd(30), r.code, r.body);
+
+show("first request", await handle({ tenantId: "t_acme", key, body }));
+show("same key, same body (retry)", await handle({ tenantId: "t_acme", key, body }));
+show("same key, keys reordered", await handle({ tenantId: "t_acme", key, body: { currency: "EGP", amount: 4200 } }));
+show("same key, amount changed", await handle({ tenantId: "t_acme", key, body: { amount: 9900, currency: "EGP" } }));
+show("same key, other tenant", await handle({ tenantId: "t_globex", key, body }));
+show("no key at all", await handle({ tenantId: "t_acme", key: undefined, body }));
+console.log("PSP charges:", psp.charges());
+
+const { rows } = await db.query("SELECT tenant_id, endpoint, left(key, 8) AS key, left(request_hash, 12) AS hash, status, response_code FROM idempotency_keys ORDER BY tenant_id");
+console.table(rows);
+
+await psp.close();
+await db.end();</code></pre>
+<pre><code class="language-plaintext">first request                  201 {"chargeId":"ch_1","amount":4200,"currency":"EGP"}
+same key, same body (retry)    201 {"chargeId":"ch_1","amount":4200,"currency":"EGP"}
+same key, keys reordered       201 {"chargeId":"ch_1","amount":4200,"currency":"EGP"}
+same key, amount changed       422 {"error":"idempotency_key_reused_with_different_body"}
+same key, other tenant         201 {"chargeId":"ch_2","amount":4200,"currency":"EGP"}
+no key at all                  400 {"error":"idempotency_key_required"}
+PSP charges: 2
+┌─────────┬────────────┬─────────────────┬────────────┬────────────────┬────────────┬───────────────┐
+│ (index) │ tenant_id  │ endpoint        │ key        │ hash           │ status     │ response_code │
+├─────────┼────────────┼─────────────────┼────────────┼────────────────┼────────────┼───────────────┤
+│ 0       │ 't_acme'   │ 'POST /charges' │ '93b233b2' │ 'e23ccf0521f9' │ 'finished' │ 201           │
+│ 1       │ 't_globex' │ 'POST /charges' │ '93b233b2' │ 'e23ccf0521f9' │ 'finished' │ 201           │
+└─────────┴────────────┴─────────────────┴────────────┴────────────────┴────────────┴───────────────┘</code></pre>
+  <div class="ar-note">run حقيقي على Postgres. الطلب الأول خصم وخد 201. الـ retry بنفس الـ body رجع نفس الرد من غير خصم. نفس الـ body بترتيب keys مختلف اتعرف إنه نفس الطلب. تغيير الـ amount بنفس الـ key رجع 422. نفس الـ key من tenant تاني بقى طلب جديد (<code>ch_2</code>)، لأن الـ scope جزء من المفتاح. من غير key خالص رجع 400. المجموع خصمين: واحد لكل tenant. الجدول تحت بيوريك صفين بنفس الـ key والـ hash وtenant مختلف.</div>
+
+  <table>
+    <tr><th>Column</th><th>Why it exists</th></tr>
+    <tr><td><code>tenant_id, endpoint, key</code></td><td>Primary key: the scope, and the thing that makes a duplicate impossible</td></tr>
+    <tr><td><code>request_hash</code></td><td>Detects a reused key with a different body</td></tr>
+    <tr><td><code>status</code>, <code>recovery_point</code></td><td>Started or finished, and how far the work got (Part 4)</td></tr>
+    <tr><td><code>response_code</code>, <code>response_body</code></td><td>What a retry gets back (Part 5)</td></tr>
+    <tr><td><code>locked_at</code></td><td>Tells a live request from a dead one</td></tr>
+    <tr><td><code>expires_at</code></td><td>Drives cleanup (Part 5)</td></tr>
+  </table>
+  <div class="ar-note">الأعمدة بالترتيب: <code>tenant_id, endpoint, key</code> هي الـ primary key وده اللي بيمنع التكرار. <code>request_hash</code> بيكشف الـ key المعاد استخدامه بـ body مختلف. <code>status</code> و<code>recovery_point</code> بيقولوا الشغل خلص ولا لأ ووصل لفين. <code>response_code</code> و<code>response_body</code> هما اللي الـ retry بياخدهم. <code>locked_at</code> بيفرّق بين request عايش وواحد مات. <code>expires_at</code> هو اللي بيحرك التنضيف.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>client</b> هو اللي بيولّد الـ key، واحد لكل عملية منطقية، وبيستخدمه تاني في كل retry لنفس العملية. الـ server ميقدرش يولّده لأن الـ retry بالنسبة له شكله request جديد. الـ docs بتاعة Stripe بتقترح UUID v4 أو أي string فيه entropy عالي، وأقصى طول 255 حرف، وبتحذر من إنك تحط بيانات شخصية جوه الـ key.</p>
+    <p>لازم تعمل <b>scope</b> للـ key بالـ tenant والـ endpoint: الـ primary key هو <code>(tenant_id, endpoint, key)</code>، فـ key بتاع tenant عمره ما يتصادم مع واحد تاني، ومينفعش يتعمله replay على عملية مختلفة.</p>
+    <p>خزّن <b>fingerprint</b> للطلب (الـ method والـ path والـ body بشكل canonical) وقارنه مع كل retry. نفس الـ key بـ body مختلف معناه bug في الـ client، ولو رجعت الرد القديم هتخبّي الـ bug. بنعمل sort لـ keys الـ object، فالـ payload اللي اتعمله serialize تاني لسه بيطابق، بس ترتيب الـ array بيفرق لأنه جزء من المعنى.</p>
+    <p>بالنسبة للـ status codes، الـ IETF draft بتاع الـ Idempotency-Key header بيقول الـ server لازم (SHOULD) يرد 400 لو الـ key مطلوب ومش موجود، و422 لو الـ key اتعاد استخدامه بـ payload مختلف، و409 طول ما الطلب الأول لسه شغال. والـ fingerprint عنده اختياري. أنا راجعت الـ datatracker: ده draft 08 بتاريخ 22 أكتوبر 2026، Internet-Draft نشط من الـ httpapi working group وبينتهي في 25 أبريل 2027. <b>لسه مش RFC</b>، فتعامل معاه كأحسن عُرف متاح.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في الـ frontend بتاع Next: لما المستخدم يفتح صفحة الـ checkout تولّد <code>crypto.randomUUID()</code> وتحطه في الـ state، وتبعته في header <code>Idempotency-Key</code> مع كل محاولة. الـ key يتغير بس لما يبدأ checkout جديد. لو ولّدته جوه الـ fetch، كل retry هياخد key جديد والحماية كلها راحت.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off</b>
+    Stripe's API v1 saves the status and body once the endpoint starts executing, and replays them, "including <code>500</code> errors". Its API v2 instead retries failed work to completion when it can. Replaying errors is simpler and predictable; retrying them is friendlier but needs resumable work like Part 4.
+    <div class="ar-note">الـ API v1 بتاع Stripe بيحفظ الـ status والـ body أول ما الـ endpoint يبدأ ينفذ، وبيعمل replay ليهم حتى لو كانوا <code>500</code>. أما API v2 فبيعيد الشغل الفاشل لحد ما يكمله لو قدر. الـ replay للأخطاء أبسط ومتوقع، والإعادة أحسن للعميل بس محتاجة شغل يكمل من حيث وقف زي الجزء 4.</div>
+  </div>
+
+  <h2 id="p3">Part 3 — Concurrent duplicates <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ duplicates المتزامنة</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The obvious code is "select the key, and if it isn't there, do the work and insert it". Between the select and the insert there is a window as long as your slowest step. A double click, a retrying gateway or a mobile client on a flaky link sends the duplicates inside that window, and they all see no row.</p>
+    <p>The fix moves the decision into the database: <code>INSERT ... ON CONFLICT DO NOTHING RETURNING</code> before any work. Exactly one request gets a row back and owns the operation. The losers read the row and either replay the finished response or answer 409, or wait and poll. The unique constraint is the source of truth: everything else is just reading what it decided.</p>
+    <p>The bad version below even has the primary key. It doesn't help, because the insert comes <em>after</em> the charge: the constraint fires on money that already moved.</p>
+  </section>
+
+<pre data-file="src/concurrent.ts"><code class="language-typescript">import { randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
+import { labPool } from "./lab.ts";
+import { DDL, claim, finish, requestHash, type Scope } from "./idem.ts";
+import { startFakePsp, pspCharge } from "./psp.ts";
+
+const db = labPool(60);
+const body = { amount: 4200, currency: "EGP" };
+const hash = requestHash("POST", "/charges", body);
+
+async function reset() {
+  await db.query("DROP TABLE IF EXISTS idempotency_keys");
+  await db.query(DDL);
+}
+const summary = (codes: number[]) =&gt; Object.fromEntries([...new Set(codes)].sort().map((c) =&gt; [c, codes.filter((x) =&gt; x === c).length]));
+
+// ❌ الغلط: بنبص الأول، نخصم، وبعدين نسجل. الـ 50 request كلهم هيلاقوا مفيش صف
+async function badHandler(psp: { url: string }, s: Scope): Promise&lt;number&gt; {
+  const { rowCount } = await db.query("SELECT 1 FROM idempotency_keys WHERE tenant_id=$1 AND endpoint=$2 AND key=$3", [s.tenantId, s.endpoint, s.key]);
+  if (rowCount) return 200;
+  await pspCharge(psp.url, body.amount);
+  try {
+    await db.query(
+      `INSERT INTO idempotency_keys (tenant_id, endpoint, key, request_hash, expires_at) VALUES ($1,$2,$3,$4, now() + interval '24 hours')`,
+      [s.tenantId, s.endpoint, s.key, hash],
+    );
+    return 201;
+  } catch {
+    // الفلوس اتخصمت خلاص، والـ unique violation جه متأخر
+    return 500;
+  }
+}
+
+// ✅ الصح: نحجز الـ key الأول بـ ON CONFLICT، واللي يخسر ميوصلش للبنك
+async function goodHandler(psp: { url: string }, s: Scope): Promise&lt;{ code: number; body?: string }&gt; {
+  const c = await claim(db, s, hash);
+  if (c.kind === "in_progress") return { code: 409 };
+  if (c.kind === "replay") return { code: c.code, body: c.body };
+  if (c.kind === "body_mismatch") return { code: 422 };
+  const charge = await pspCharge(psp.url, body.amount, `${s.tenantId}:${s.key}`);
+  const response = JSON.stringify({ chargeId: charge.id });
+  await finish(db, s, 201, response);
+  return { code: 201, body: response };
+}
+
+// الخاسر ممكن يستنى بدل 409: بيعيد القراءة لحد ما الكسبان يخلص أو الوقت يخلص
+async function waitingHandler(psp: { url: string }, s: Scope): Promise&lt;{ code: number; body?: string }&gt; {
+  const deadline = performance.now() + 2000;
+  while (performance.now() &lt; deadline) {
+    const r = await goodHandler(psp, s);
+    if (r.code !== 409) return r;
+    await sleep(25);
+  }
+  return { code: 409 };
+}
+
+const N = 50;
+
+await reset();
+let psp = await startFakePsp(30);
+let scope: Scope = { tenantId: "t_acme", endpoint: "POST /charges", key: randomUUID() };
+const bad = await Promise.all(Array.from({ length: N }, () =&gt; badHandler(psp, scope)));
+console.log(`check-then-insert: PSP charges = ${psp.charges()}, responses =`, summary(bad));
+await psp.close();
+
+await reset();
+psp = await startFakePsp(30);
+scope = { ...scope, key: randomUUID() };
+const good = await Promise.all(Array.from({ length: N }, () =&gt; goodHandler(psp, scope)));
+console.log(`claim first, 409 : PSP charges = ${psp.charges()}, responses =`, summary(good.map((r) =&gt; r.code)));
+await psp.close();
+
+await reset();
+psp = await startFakePsp(30);
+scope = { ...scope, key: randomUUID() };
+const waited = await Promise.all(Array.from({ length: N }, () =&gt; waitingHandler(psp, scope)));
+console.log(`claim first, wait: PSP charges = ${psp.charges()}, responses =`, summary(waited.map((r) =&gt; r.code)), "distinct bodies =", new Set(waited.map((r) =&gt; r.body)).size);
+await psp.close();
+
+const { rows } = await db.query("SELECT count(*)::int AS n FROM idempotency_keys");
+console.log("rows for that key:", rows[0].n);
+await db.end();</code></pre>
+<pre><code class="language-plaintext">check-then-insert: PSP charges = 9, responses = { '200': 41, '201': 1, '500': 8 }
+claim first, 409 : PSP charges = 1, responses = { '201': 3, '409': 47 }
+claim first, wait: PSP charges = 1, responses = { '201': 50 } distinct bodies = 1
+rows for that key: 1</code></pre>
+  <div class="ar-note">run حقيقي: 50 request متوازي بنفس الـ key. أول سطر: الـ check-then-insert عمل 9 خصومات في الـ run ده، والرقم بيتغير من run للتاني حسب توقيت الـ connections. الـ 41 رد <code>200</code> وصلوا بعد ما الصف اتكتب، والـ 8 ردود <code>500</code> خصموا الفلوس وبعدين اتضربوا بالـ unique violation. السطر التاني بعد الحل: خصم واحد. الـ 3 ردود <code>201</code> هم الكسبان واتنين وصلوا بعد ما خلص فخدوا replay، والـ 47 التانيين خدوا <code>409</code>. السطر التالت بوضع الانتظار: خصم واحد و50 رد بنفس الـ body بالظبط.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الكود البديهي: "اعمل select للـ key، ولو مش موجود اشتغل واعمل insert". بين الـ select والـ insert فيه شباك وقت طويل قد أبطأ خطوة عندك. دبل كليك، أو gateway بيعيد، أو موبايل على شبكة بايظة، كلهم بيبعتوا الـ duplicates جوه الشباك ده، وكلهم بيلاقوا مفيش صف.</p>
+    <p>الحل إن القرار يتنقل جوه الـ database: <code>INSERT ... ON CONFLICT DO NOTHING RETURNING</code> قبل أي شغل. request واحد بس هياخد صف راجع وده اللي بيملك العملية. الباقيين بيقروا الصف، ويا إما يعملوا replay للرد لو خلص، يا إما يردوا 409، يا إما يستنوا ويعيدوا القراءة. الـ unique constraint هو مصدر الحقيقة، وكل حاجة تانية بتقرا اللي هو قرره.</p>
+    <p>النسخة الغلط اللي فوق فيها primary key كمان، ومفادتش، لأن الـ insert بييجي <em>بعد</em> الخصم: الـ constraint بيشتغل على فلوس اتحركت خلاص.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      زرار "Place order" اللي اتداس مرتين، أو webhook من Stripe وصل مرتين في نفس اللحظة على instances مختلفة. أي "أنا هشوف الأول" في الكود بتاعك وبعدها شغل قبل الـ write هي race محتملة. في الـ code review دوّر على <code>findOne</code> وبعدها <code>create</code> على نفس الـ key.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: 409 or wait</b>
+    A 409 with <code>Retry-After</code> frees the connection at once and pushes the waiting to the client. Waiting on the server gives a cleaner response but ties up a connection per duplicate: under a burst that can exhaust the pool, so cap it with a short deadline, and return 409 after it.
+    <div class="ar-note">الـ 409 مع <code>Retry-After</code> بيحرر الـ connection على طول وبيخلي الـ client هو اللي يستنى. الانتظار على الـ server بيدي رد أنضف بس بيمسك connection لكل duplicate: وقت الضغط ده ممكن يخلّص الـ pool، فحط deadline قصير وبعده رجّع 409.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Two identical requests arrive at the same millisecond on two different servers. How do you guarantee one charge?" → A unique constraint on the key, claimed with an atomic insert before any side effect. Application-level checks can't do it, since both servers can read "no row" at the same moment. Only the database can pick one winner.
+    <div class="ar-note">"اتنين requests متطابقين وصلوا في نفس الـ millisecond على اتنين servers. تضمن خصم واحد إزاي؟" ← unique constraint على الـ key، وتحجزه بـ insert ذري قبل أي side effect. الـ checks في الـ application مش هتنفع لأن الاتنين ممكن يقروا "مفيش صف" في نفس اللحظة. الـ database بس هي اللي تقدر تختار كسبان واحد.</div>
+  </div>
+
+  <h2 id="p4">Part 4 — Crash in the middle <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ crash في النص</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The hard case: the PSP charged the card and the process died before saving that fact. Your database says nothing happened, the money moved, and no transaction can span both systems. <a href="https://brandur.org/idempotency-keys">Brandur Leach's write-up</a> gives the vocabulary. An <b>atomic phase</b> is "a set of local state mutations that occur in transactions <em>between</em> foreign state mutations". A <b>recovery point</b> is a named checkpoint reached after a phase, saved in the same transaction as the phase's writes.</p>
+    <p>The flow below has three parts. Phase 1 inserts the key and a pending charge together. The PSP call is the foreign mutation. Phase 2 records the result and moves the recovery point, and the final phase writes the receipt to an outbox and marks the key finished. Any process can resume from the saved recovery point, so the request handler and the recovery job run <em>the same code</em>.</p>
+    <p>Resuming means calling the PSP again, which is safe only if you <b>send your own key to the PSP</b>. That is the whole trick: your idempotency key becomes theirs. If a downstream has no such feature, you must look the operation up by a reference you sent before you retry, or park it for a human.</p>
+  </section>
+
+<pre class="diagram">
+  claim + charge row      PSP call        save result       receipt + finish
+ ┌───────────────────┐   ┌────────┐   ┌───────────────┐   ┌────────────────┐
+ │ tx: charge_created│──&gt;│ foreign│──&gt;│ tx: psp_done  │──&gt;│ tx: finished   │
+ └───────────────────┘   └────────┘   └───────────────┘   └────────────────┘
+        ▲        ▲          ▲     ▲            ▲                  ▲
+  mid_phase1  after_phase1 before after_psp  after_psp        after_finish
+                           _psp   _before_save _saved
+</pre>
+  <div class="ar-note">الصناديق هي الخطوات بالترتيب: transaction فيها حجز الـ key وصف الـ charge، بعدين مكالمة الـ PSP، بعدين transaction بتحفظ النتيجة، بعدين transaction أخيرة فيها الـ receipt وعلامة الانتهاء. الأسهم من تحت هي نقط القتل الست اللي هنجرّبها. الأخطر <code>after_psp_before_save</code>: الفلوس اتخصمت والـ DB لسه معندهاش خبر.</div>
+
+<pre data-file="src/phases.ts"><code class="language-typescript">import type { Pool, PoolClient } from "pg";
+import { pspCharge } from "./psp.ts";
+
+export const SCHEMA = `
+CREATE TABLE charges (id bigserial PRIMARY KEY, idem_key text NOT NULL UNIQUE, amount int NOT NULL, status text NOT NULL, psp_id text);
+CREATE TABLE receipt_outbox (charge_id bigint PRIMARY KEY REFERENCES charges(id));
+`;
+
+// نقطة قتل: لو الـ env طالبة النقطة دي، الـ process بيموت فورًا من غير أي تنضيف
+export function crashPoint(name: string): void {
+  if (process.env.KILL_AT === name) process.kill(process.pid, "SIGKILL");
+}
+
+export async function tx&lt;T&gt;(db: Pool, fn: (c: PoolClient) =&gt; Promise&lt;T&gt;): Promise&lt;T&gt; {
+  const c = await db.connect();
+  try {
+    await c.query("BEGIN");
+    const out = await fn(c);
+    await c.query("COMMIT");
+    return out;
+  } catch (e) {
+    await c.query("ROLLBACK");
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+export type Job = { tenantId: string; key: string; amount: number; pspUrl: string; sendKeyToPsp: boolean };
+const where = "tenant_id = $1 AND endpoint = 'POST /charges' AND key = $2";
+
+// مرحلة 1: الـ key وصف الـ charge في transaction واحدة، قبل أي مكالمة بره
+export async function phaseOne(db: Pool, job: Job): Promise&lt;boolean&gt; {
+  return tx(db, async (c) =&gt; {
+    const r = await c.query(
+      `INSERT INTO idempotency_keys (tenant_id, endpoint, key, request_hash, locked_at, expires_at, recovery_point)
+       VALUES ($1, 'POST /charges', $2, 'h', now(), now() + interval '24 hours', 'charge_created')
+       ON CONFLICT DO NOTHING RETURNING key`,
+      [job.tenantId, job.key],
+    );
+    if (r.rowCount !== 1) return false;
+    await c.query("INSERT INTO charges (idem_key, amount, status) VALUES ($1, $2, 'pending')", [job.key, job.amount]);
+    crashPoint("mid_phase1");
+    return true;
+  });
+}
+
+// بيكمّل من آخر recovery point، فالـ request الأصلي والـ recovery job بيستخدموا نفس الكود
+export async function advance(db: Pool, job: Job): Promise&lt;void&gt; {
+  const { rows } = await db.query(`SELECT recovery_point FROM idempotency_keys WHERE ${where}`, [job.tenantId, job.key]);
+  let point: string = rows[0].recovery_point;
+
+  if (point === "charge_created") {
+    crashPoint("before_psp");
+    // نفس الـ key بيروح للبنك، ده اللي بيخلي الإعادة آمنة لو متنا بعد ما البنك خصم
+    const pspKey = job.sendKeyToPsp ? `${job.tenantId}:${job.key}` : undefined;
+    const charge = await pspCharge(job.pspUrl, job.amount, pspKey);
+    crashPoint("after_psp_before_save");
+    await tx(db, async (c) =&gt; {
+      await c.query("UPDATE charges SET status = 'succeeded', psp_id = $2 WHERE idem_key = $1", [job.key, charge.id]);
+      await c.query(`UPDATE idempotency_keys SET recovery_point = 'psp_done' WHERE ${where}`, [job.tenantId, job.key]);
+    });
+    crashPoint("after_psp_saved");
+    point = "psp_done";
+  }
+
+  if (point === "psp_done") {
+    await tx(db, async (c) =&gt; {
+      const { rows: [ch] } = await c.query("SELECT id, psp_id FROM charges WHERE idem_key = $1", [job.key]);
+      await c.query("INSERT INTO receipt_outbox (charge_id) VALUES ($1) ON CONFLICT DO NOTHING", [ch.id]);
+      await c.query(
+        `UPDATE idempotency_keys SET status = 'finished', recovery_point = 'finished', locked_at = NULL,
+                response_code = 201, response_body = $3 WHERE ${where}`,
+        [job.tenantId, job.key, JSON.stringify({ chargeId: ch.psp_id })],
+      );
+    });
+    crashPoint("after_finish");
+  }
+}
+
+// الـ recovery job: أي key لسه started والـ lock بتاعه قديم بيتكمّل
+export async function recoverStale(db: Pool, pspUrl: string, staleMs: number, sendKeyToPsp: boolean): Promise&lt;number&gt; {
+  const { rows } = await db.query(
+    `SELECT tenant_id, key FROM idempotency_keys
+      WHERE status = 'started' AND locked_at &lt; now() - make_interval(secs =&gt; $1)`,
+    [staleMs / 1000],
+  );
+  for (const r of rows) {
+    const { rows: [ch] } = await db.query("SELECT amount FROM charges WHERE idem_key = $1", [r.key]);
+    await advance(db, { tenantId: r.tenant_id, key: r.key, amount: ch.amount, pspUrl, sendKeyToPsp });
+  }
+  return rows.length;
+}</code></pre>
+<pre data-file="src/worker.ts"><code class="language-typescript">import { labPool } from "./lab.ts";
+import { advance, phaseOne, crashPoint, type Job } from "./phases.ts";
+
+// الـ request نفسه، شغال في process لوحده عشان نقدر نقتله في نص الشغل
+const db = labPool(5);
+const job: Job = {
+  tenantId: "t_acme",
+  key: process.env.JOB_KEY!,
+  amount: 4200,
+  pspUrl: new URL(process.env.PSP_URL!).origin,
+  sendKeyToPsp: process.env.SEND_KEY !== "0",
+};
+const won = await phaseOne(db, job);
+crashPoint("after_phase1");
+if (won) await advance(db, job);
+await db.end();</code></pre>
+<pre data-file="src/crash-matrix.ts"><code class="language-typescript">import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { randomUUID } from "node:crypto";
+import { labPool } from "./lab.ts";
+import { DDL } from "./idem.ts";
+import { SCHEMA, advance, phaseOne, recoverStale, type Job } from "./phases.ts";
+import { startFakePsp } from "./psp.ts";
+
+const db = labPool(10);
+const POINTS = ["mid_phase1", "after_phase1", "before_psp", "after_psp_before_save", "after_psp_saved", "after_finish"];
+
+async function scenario(killAt: string, sendKey: boolean) {
+  await db.query("DROP TABLE IF EXISTS receipt_outbox, charges, idempotency_keys");
+  await db.query(DDL + SCHEMA);
+  const psp = await startFakePsp();
+  const key = randomUUID();
+
+  // اقتل الـ request في النقطة دي، process حقيقي بيموت بجد
+  const child = spawn(process.execPath, ["worker.ts"], {
+    env: { ...process.env, JOB_KEY: key, KILL_AT: killAt, PSP_URL: psp.url, SEND_KEY: sendKey ? "1" : "0" },
+    stdio: "inherit",
+    timeout: 20000,
+  });
+  await once(child, "exit");
+  const pspAtKill = psp.charges();
+
+  // الـ recovery job بيكمّل اللي وقف
+  const recovered = await recoverStale(db, psp.url, 0, sendKey);
+
+  // الـ client معاد المحاولة بنفس الـ key لأنه ماخدش رد
+  const job: Job = { tenantId: "t_acme", key, amount: 4200, pspUrl: psp.url, sendKeyToPsp: sendKey };
+  if (await phaseOne(db, job)) await advance(db, job);
+
+  const { rows: [r] } = await db.query(`
+    SELECT (SELECT count(*)::int FROM charges) AS local_rows,
+           (SELECT count(*)::int FROM charges WHERE status='succeeded') AS succeeded,
+           (SELECT count(*)::int FROM receipt_outbox) AS receipts,
+           (SELECT status FROM idempotency_keys WHERE key = $1) AS key_status`, [key]);
+  const pspCharges = psp.charges();
+  await psp.close();
+  const killed = child.exitCode !== 0;
+  const ok = pspCharges === 1 &amp;&amp; r.succeeded === 1 &amp;&amp; r.receipts === 1 &amp;&amp; r.key_status === "finished";
+  console.log(killAt.padEnd(22), `killed=${String(killed).padEnd(5)} pspAtKill=${pspAtKill} recovered=${recovered} psp=${pspCharges} local=${r.local_rows} succeeded=${r.succeeded} receipts=${r.receipts} key=${r.key_status} ${ok ? "OK" : "VIOLATED"}`);
+  return ok;
+}
+
+console.log("with our key sent to the PSP:");
+const results: boolean[] = [];
+for (const p of POINTS) results.push(await scenario(p, true));
+console.log(`invariant held at ${results.filter(Boolean).length}/${POINTS.length} kill points\n`);
+
+console.log("without sending the key to the PSP:");
+await scenario("after_psp_before_save", false);
+
+await db.end();</code></pre>
+<pre><code class="language-plaintext">with our key sent to the PSP:
+mid_phase1             killed=true  pspAtKill=0 recovered=0 psp=1 local=1 succeeded=1 receipts=1 key=finished OK
+after_phase1           killed=true  pspAtKill=0 recovered=1 psp=1 local=1 succeeded=1 receipts=1 key=finished OK
+before_psp             killed=true  pspAtKill=0 recovered=1 psp=1 local=1 succeeded=1 receipts=1 key=finished OK
+after_psp_before_save  killed=true  pspAtKill=1 recovered=1 psp=1 local=1 succeeded=1 receipts=1 key=finished OK
+after_psp_saved        killed=true  pspAtKill=1 recovered=1 psp=1 local=1 succeeded=1 receipts=1 key=finished OK
+after_finish           killed=true  pspAtKill=1 recovered=0 psp=1 local=1 succeeded=1 receipts=1 key=finished OK
+invariant held at 6/6 kill points
+
+without sending the key to the PSP:
+after_psp_before_save  killed=true  pspAtKill=1 recovered=1 psp=2 local=1 succeeded=1 receipts=1 key=finished VIOLATED</code></pre>
+  <div class="ar-note">كل سطر سيناريو حقيقي: process بيتقتل بـ <code>SIGKILL</code> عند النقطة دي، بعدين الـ recovery job، بعدين الـ client يعيد بنفس الـ key. <code>pspAtKill</code> بيأكد القتل حصل فين: 0 قبل مكالمة الـ PSP و1 بعدها. في الستة، الـ PSP عدّ خصم واحد وفيه receipt واحد والـ key بقى <code>finished</code>. عند <code>mid_phase1</code> الـ recovery ملقاش حاجة (<code>recovered=0</code>) لأن الـ transaction اترجعت، والـ retry هو اللي عمل الشغل. عند <code>after_finish</code> كمان 0 لأن الشغل خلص. السطر الأخير: نفس أخطر نقطة بس من غير ما نبعت الـ key للـ PSP، فالخصومات بقت 2 والـ invariant اتكسر.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الحالة الصعبة: الـ PSP خصم من الكارت والـ process مات قبل ما يحفظ ده. الـ database بتاعتك بتقول مفيش حاجة حصلت، والفلوس اتحركت، ومفيش transaction تقدر تغطي النظامين. مقالة Brandur Leach بتدينا المصطلحات. الـ <b>atomic phase</b> هي مجموعة تعديلات محلية في transaction بين كل تعديلين على نظام خارجي. الـ <b>recovery point</b> هو اسم checkpoint بتوصله بعد كل phase، وبيتحفظ في نفس transaction الـ phase.</p>
+    <p>الـ flow فيه 3 حاجات. Phase 1 بتكتب الـ key وcharge بحالة pending مع بعض. مكالمة الـ PSP هي التعديل الخارجي. Phase 2 بتسجل النتيجة وتحرك الـ recovery point، والـ phase الأخيرة بتكتب الـ receipt في الـ outbox وتعلّم الـ key إنه خلص. أي process يقدر يكمّل من الـ recovery point المحفوظ، فالـ request handler والـ recovery job بيشغلوا <em>نفس الكود</em>.</p>
+    <p>الإكمال معناه تكلّم الـ PSP تاني، وده آمن بس لو <b>بتبعت الـ key بتاعك للـ PSP</b>. دي الخدعة كلها: الـ idempotency key بتاعك بيبقى بتاعه هو كمان. لو الـ downstream مفيهوش الميزة دي، لازم تدور على العملية بـ reference إنت بعته قبل ما تعيد، أو تركنها لبني آدم يراجعها.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      أي endpoint بيعمل حاجة في Stripe أو يبعت SMS أو يكلم API بتاع شركة شحن وبعدها يكتب في الـ DB. الـ deploy اللي بيقتل الـ pods في نص request، أو الـ OOM، هيعمل بالظبط الحالة دي. اسأل نفسك: لو الـ process مات بعد السطر ده، مين هيكمّل؟ لو الإجابة "محدش"، محتاج recovery job.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks at scale</b>
+    The lab uses a stale threshold of 0 so recovery runs immediately. In production it must be longer than your slowest request, or the recovery job will race a live request. The PSP key makes that race harmless for money, but set the threshold deliberately and alert on keys stuck in <code>started</code>.
+    <div class="ar-note">في المعمل الـ threshold صفر عشان الـ recovery يشتغل فورًا. في الـ production لازم يبقى أطول من أبطأ request عندك، وإلا الـ recovery job هيتسابق مع request لسه عايش. الـ key اللي بيروح للـ PSP بيخلي السباق ده مش مضر في الفلوس، بس حدد الـ threshold بقصد، واعمل alert على أي key واقف في <code>started</code>.</div>
+  </div>
+
+  <h2 id="p5">Part 5 — Replay and TTL <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ replay والـ TTL</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A retry must receive what the first attempt would have received, so store the status, the body and the headers the client relies on (<code>Content-Type</code>, <code>Location</code>), and return them byte for byte, with an extra header that says it's a replay. Keep the body in <code>text</code>, not <code>jsonb</code>: <code>jsonb</code> reorders keys and changes whitespace, as the run shows.</p>
+    <p><b>Don't store sensitive fields.</b> Card numbers, CVCs and one-time secrets don't belong in a table that keeps responses for days. Best is an endpoint that never returns them; otherwise strip them and accept that the replay differs from the original on those fields only.</p>
+    <p><b>Sizing:</b> keys per day = POST QPS × 86,400, times about 2 KB per row. That is raw payload: indexes, row headers and dead tuples come on top. Clean up with a job that deletes expired rows <b>in small batches</b>, so one giant delete doesn't hold locks or flood the WAL. Partitioning by day and dropping old partitions is the alternative at high volume.</p>
+    <p><b>TTL is a promise with an end.</b> After expiry, a retry is a new request. Stripe's API v1 docs say keys can be removed "after they're at least 24 hours old" and that "we generate a new request if a key is reused after the original is pruned"; Brandur suggests about 72 hours. So the client rule is: stop retrying with the same key before the TTL ends, then reconcile by reading the resource instead of writing again. A business constraint, such as one charge per order, is your second line of defence after the key is gone.</p>
+  </section>
+
+<pre data-file="src/replay-ttl.ts"><code class="language-typescript">import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { labPool } from "./lab.ts";
+import { DDL, requestHash } from "./idem.ts";
+import { startFakePsp, pspCharge } from "./psp.ts";
+
+const db = labPool();
+const psp = await startFakePsp();
+await db.query("DROP TABLE IF EXISTS idempotency_keys");
+await db.query(DDL);
+await db.query("ALTER TABLE idempotency_keys ADD COLUMN response_headers text");
+
+// بنخزن الـ headers اللي الـ client محتاجها بس، مش كل حاجة
+const REPLAY_HEADERS = ["content-type", "location"];
+const SENSITIVE = ["card_number", "cvc", "client_secret"];
+
+const redact = (json: string): { stored: string; redacted: boolean } =&gt; {
+  const obj = JSON.parse(json) as Record&lt;string, unknown&gt;;
+  const hit = SENSITIVE.filter((f) =&gt; f in obj);
+  for (const f of hit) delete obj[f];
+  return hit.length ? { stored: JSON.stringify(obj), redacted: true } : { stored: json, redacted: false };
+};
+
+const api = createServer((req, res) =&gt; {
+  let raw = "";
+  req.setEncoding("utf8");
+  req.on("data", (d) =&gt; (raw += d));
+  req.on("end", async () =&gt; {
+    const key = String(req.headers["idempotency-key"]);
+    const tenant = "t_acme";
+    const body = JSON.parse(raw);
+    const hash = requestHash("POST", "/charges", body);
+
+    const { rows: [saved] } = await db.query(
+      `SELECT response_code, response_headers, response_body FROM idempotency_keys
+        WHERE tenant_id = $1 AND endpoint = 'POST /charges' AND key = $2 AND status = 'finished'`,
+      [tenant, key],
+    );
+    if (saved) {
+      res.writeHead(saved.response_code, { ...JSON.parse(saved.response_headers), "x-idempotent-replay": "true" });
+      res.end(saved.response_body);
+      return;
+    }
+
+    const charge = await pspCharge(psp.url, body.amount, `${tenant}:${key}`);
+    // ترتيب الـ fields مقصود: الـ replay لازم يرجّع نفس الـ bytes بالظبط
+    const payload = JSON.stringify({ zip: "11511", amount: body.amount, id: charge.id, note: "paid" });
+    const headers = { "content-type": "application/json; charset=utf-8", location: `/charges/${charge.id}` };
+    await db.query(
+      `INSERT INTO idempotency_keys (tenant_id, endpoint, key, request_hash, status, response_code, response_headers, response_body, expires_at)
+       VALUES ($1, 'POST /charges', $2, $3, 'finished', 201, $4, $5, now() + interval '24 hours')`,
+      [tenant, key, hash, JSON.stringify(Object.fromEntries(REPLAY_HEADERS.map((h) =&gt; [h, headers[h as keyof typeof headers]]))), payload],
+    );
+    res.writeHead(201, headers);
+    res.end(payload);
+  });
+});
+await new Promise&lt;void&gt;((resolve) =&gt; api.listen(0, "127.0.0.1", resolve));
+const url = `http://127.0.0.1:${(api.address() as AddressInfo).port}/charges`;
+
+const key = randomUUID();
+const send = () =&gt; fetch(url, { method: "POST", headers: { "idempotency-key": key, "content-type": "application/json" }, body: '{"amount":4200}' });
+
+const first = await send();
+const firstBytes = Buffer.from(await first.arrayBuffer());
+const second = await send();
+const secondBytes = Buffer.from(await second.arrayBuffer());
+console.log("first :", first.status, first.headers.get("location"), firstBytes.toString());
+console.log("replay:", second.status, second.headers.get("location"), secondBytes.toString(), "| x-idempotent-replay:", second.headers.get("x-idempotent-replay"));
+console.log("byte-identical:", Buffer.compare(firstBytes, secondBytes) === 0, "| PSP charges:", psp.charges());
+
+// فخ jsonb: بيرتب الـ keys وبيغير المسافات، فالـ bytes مش هترجع زي ما كانت
+const sample = '{"zip":"11511","amount":4200,"id":"ch_1"}';
+const { rows: [j] } = await db.query(`SELECT $1::jsonb::text AS as_jsonb, $2::text AS as_text`, [sample, sample]);
+console.log("\njsonb column returns:", j.as_jsonb);
+console.log("text  column returns:", j.as_text);
+
+console.log("\nredact:", JSON.stringify(redact('{"id":"ch_1","client_secret":"pi_secret_abc","amount":4200}')));
+
+// بعد الـ TTL: الصف اتمسح، والبنك كمان نسي، فالـ retry بقى request جديد
+await db.query("UPDATE idempotency_keys SET expires_at = now() - interval '1 second'");
+const del = await db.query("DELETE FROM idempotency_keys WHERE expires_at &lt; now()");
+psp.forgetKeys();
+const third = await send();
+await third.arrayBuffer();
+console.log(`\nafter TTL: deleted ${del.rowCount} key, retry -&gt; HTTP ${third.status}, PSP charges: ${psp.charges()}`);
+
+api.closeAllConnections();
+api.close();
+await psp.close();
+
+// تنضيف على دفعات صغيرة عشان منمسكش locks كتير ومنخنقش الـ WAL
+await db.query(`INSERT INTO idempotency_keys (tenant_id, endpoint, key, request_hash, status, expires_at)
+  SELECT 't_acme', 'POST /charges', 'expired-key-0000-' || g, 'h', 'finished', now() - interval '1 hour' FROM generate_series(1, 20000) g`);
+let total = 0, batches = 0;
+for (;;) {
+  const r = await db.query(`DELETE FROM idempotency_keys WHERE (tenant_id, endpoint, key) IN (
+    SELECT tenant_id, endpoint, key FROM idempotency_keys WHERE expires_at &lt; now() ORDER BY expires_at LIMIT 2000)`);
+  if (!r.rowCount) break;
+  total += r.rowCount;
+  batches++;
+}
+console.log(`cleanup: ${total} rows in ${batches} batches`);
+await db.end();</code></pre>
+<pre><code class="language-plaintext">first : 201 /charges/ch_1 {"zip":"11511","amount":4200,"id":"ch_1","note":"paid"}
+replay: 201 /charges/ch_1 {"zip":"11511","amount":4200,"id":"ch_1","note":"paid"} | x-idempotent-replay: true
+byte-identical: true | PSP charges: 1
+
+jsonb column returns: {"id": "ch_1", "zip": "11511", "amount": 4200}
+text  column returns: {"zip":"11511","amount":4200,"id":"ch_1"}
+
+redact: {"stored":"{\"id\":\"ch_1\",\"amount\":4200}","redacted":true}
+
+after TTL: deleted 1 key, retry -&gt; HTTP 201, PSP charges: 2
+cleanup: 20000 rows in 10 batches</code></pre>
+  <div class="ar-note">run حقيقي: الرد الأول والـ replay متطابقين byte بـ byte، و<code>Location</code> رجع كمان، والـ PSP خصم مرة. سطور jsonb: نفس الـ JSON طلع من عمود <code>jsonb</code> بترتيب keys مختلف ومسافات زيادة، ومن عمود <code>text</code> زي ما دخل. سطر <code>redact</code>: الـ <code>client_secret</code> اتشال قبل التخزين. سطر الـ TTL: بعد ما الصف اتمسح (والـ PSP كمان نسي الـ key) نفس الـ retry عمل خصم تاني، فالعدد بقى 2. آخر سطر: 20,000 صف منتهي اتمسحوا في 10 دفعات.</div>
+
+<pre data-file="src/sizing.ts"><code class="language-typescript">// حاسبة: مساحة جدول الـ ⁦keys = QPS ×⁩ الثواني في الـ ⁦TTL ×⁩ حجم الصف
+const KB = 1024;
+const GB = 1024 ** 3;
+const rowBytes = 2 * KB;
+
+console.log("POST QPS   TTL 24h      TTL 72h");
+for (const qps of [10, 100, 1000, 5000]) {
+  const size = (hours: number) =&gt; ((qps * hours * 3600 * rowBytes) / GB).toFixed(1).padStart(8) + " GB";
+  console.log(String(qps).padStart(8), size(24), size(72));
+}</code></pre>
+<pre><code class="language-plaintext">POST QPS   TTL 24h      TTL 72h
+      10      1.6 GB      4.9 GB
+     100     16.5 GB     49.4 GB
+    1000    164.8 GB    494.4 GB
+    5000    824.0 GB   2471.9 GB</code></pre>
+  <div class="ar-note">حاسبة بسيطة: عند 100 POST في الثانية و2 KB للصف، 24 ساعة تساوي ≈16.5 GB و72 ساعة ≈49.4 GB. ده حجم الـ data الخام بس، والـ indexes وrow headers والـ dead tuples فوقيه.</div>
+
+  <table>
+    <tr><th></th><th>Postgres</th><th>Redis</th></tr>
+    <tr><td>Atomic with the business write</td><td>Yes, same transaction</td><td>No, two systems, a crash leaves them disagreeing</td></tr>
+    <tr><td>Claim</td><td><code>INSERT ... ON CONFLICT DO NOTHING</code></td><td><code>SET key value NX EX ttl</code></td></tr>
+    <tr><td>Expiry</td><td>Cleanup job</td><td>Built in</td></tr>
+    <tr><td>Durability</td><td>WAL and fsync</td><td>Depends on persistence settings; failover can lose a key, see <a href="./33-distributed-locks-fencing.html">lesson 33</a></td></tr>
+    <tr><td>Cost per key</td><td>Disk, WAL, vacuum</td><td>RAM</td></tr>
+    <tr><td>Use for</td><td>Money, and anything where the key and the effect must commit together</td><td>High-volume, low-stakes dedupe in front of a real constraint</td></tr>
+  </table>
+  <div class="ar-note">صف بصف: Postgres بيكتب الـ key والأثر في نفس الـ transaction، وRedis نظامين منفصلين فأي crash بينهم يسيبهم مختلفين. الحجز في Postgres بـ <code>INSERT ... ON CONFLICT DO NOTHING</code> وفي Redis بـ <code>SET NX EX</code>. الانتهاء في Postgres بـ job وفي Redis جاهز. الـ durability في Postgres بالـ WAL وfsync، وفي Redis حسب إعدادات الـ persistence والـ failover ممكن يضيّع key (الدرس 33). التكلفة: disk وvacuum مقابل RAM. الاستخدام: Postgres للفلوس وأي حاجة لازم الـ key والأثر يتعملوا commit مع بعض، وRedis لـ dedupe كتير وقليل الخطورة قدام constraint حقيقي.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ retry لازم ياخد نفس اللي كان هياخده أول مرة، فخزّن الـ status والـ body والـ headers اللي الـ client معتمد عليها (<code>Content-Type</code> و<code>Location</code>)، ورجّعهم byte بـ byte مع header زيادة يقول إن ده replay. خلّي الـ body في <code>text</code> مش <code>jsonb</code>: الـ <code>jsonb</code> بيغيّر ترتيب الـ keys والمسافات زي ما شفت في الـ run.</p>
+    <p><b>متخزنش الحقول الحساسة.</b> أرقام الكروت والـ CVC والـ secrets اللي بتستخدم مرة واحدة مكانها مش جدول بيحتفظ بالردود أيام. الأحسن endpoint مبيرجعهاش أصلًا، وإلا شيلها قبل التخزين واقبل إن الـ replay هيختلف عن الأصل في الحقول دي بس.</p>
+    <p><b>الحجم:</b> عدد الـ keys في اليوم = POST QPS × 86,400، مضروب في حوالي 2 KB للصف. ده الـ payload الخام، والـ indexes وrow headers والـ dead tuples فوقيه. التنضيف بـ job بيمسح الصفوف المنتهية <b>على دفعات صغيرة</b>، عشان delete ضخم واحد ميمسكش locks كتير ويغرق الـ WAL. والبديل لو الحجم كبير: partition لكل يوم وتعمل drop للقديم.</p>
+    <p><b>الـ TTL وعد ليه نهاية.</b> بعد ما ينتهي، الـ retry بقى request جديد. الـ docs بتاعة Stripe (API v1) بتقول إن الـ keys ممكن تتشال بعد ما تعدي 24 ساعة على الأقل، وإن إعادة استخدام key بعد ما يتشال بتعمل request جديد. وBrandur بيقترح حوالي 72 ساعة. فالقاعدة للـ client: وقّف الـ retry بنفس الـ key قبل ما الـ TTL يخلص، وبعد كده اعمل reconcile بقراءة الـ resource بدل ما تكتب تاني. والـ constraint بتاع الـ business (زي charge واحد لكل order) هو خط الدفاع التاني بعد ما الـ key يروح.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو عندك queue بتعيد المحاولة لمدة 7 أيام والـ TTL بتاع الـ keys 24 ساعة، يبقى اليوم التاني كله خصم جديد مستخبي: اظبط الاتنين مع بعض وخلّي الـ retry window أقصر من الـ TTL. وفي الجدول اعمل partial index أو index على <code>expires_at</code> عشان الـ cleanup job ميعملش seq scan كل مرة.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Where do you store idempotency keys: Redis or the database?" → In the same database as the data they protect, when the effect is local, because the key and the effect must commit atomically. Redis is fine as a fast pre-filter, but a crash between Redis and the database leaves a key with no effect or an effect with no key, so it can't be the only guard.
+    <div class="ar-note">"تخزن الـ idempotency keys فين: Redis ولا الـ database؟" ← في نفس الـ database بتاعة الـ data اللي بتحميها، لو الأثر محلي، لأن الـ key والأثر لازم يتعملوا commit مع بعض. Redis كويس كفلتر سريع قدام، بس أي crash بين Redis والـ database يسيب key من غير أثر أو أثر من غير key، فميصلحش يكون الحماية الوحيدة.</div>
+  </div>
+
+  <h2 id="p6">Part 6 — Consumers and natural idempotency <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ consumers والـ idempotency الطبيعية</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Brokers deliver at least once, so a consumer will see duplicates (see <a href="./20-delivery-ordering-consumer-groups.html">delivery and consumer groups</a>). The rule is one transaction: insert a row in <code>processed_messages</code> with <code>ON CONFLICT DO NOTHING</code>, apply the effect, commit. A crash before commit rolls back both, and the redelivery applies once. Put them in separate transactions and a crash between them applies the effect twice. The outbox side of this is in the <a href="../../09-Databases/lessons/41-outbox-cdc-idempotency.html">outbox lesson</a>.</p>
+    <p>Better still is an operation that doesn't need a key. <b>Natural idempotency</b> comes from the shape of the write: a conditional update (<code>WHERE status = 'pending'</code>) affects 0 rows the second time, an upsert with an absolute value lands on the same state, and adding to a set changes nothing the second time. A delta (<code>qty = qty + 1</code>) is the opposite: every delivery adds up.</p>
+    <p>Not everything needs a key. The table below maps operations to the cheapest method that works.</p>
+  </section>
+
+<pre data-file="src/consumer.ts"><code class="language-typescript">import { labPool } from "./lab.ts";
+
+const db = labPool(10);
+
+await db.query("DROP TABLE IF EXISTS processed_messages, wallets, orders, inventory, order_tags");
+await db.query(`
+  CREATE TABLE processed_messages (consumer text, message_id text, processed_at timestamptz DEFAULT now(), PRIMARY KEY (consumer, message_id));
+  CREATE TABLE wallets (user_id text PRIMARY KEY, balance int NOT NULL);
+  CREATE TABLE orders (id text PRIMARY KEY, status text NOT NULL);
+  CREATE TABLE inventory (sku text PRIMARY KEY, qty int NOT NULL);
+  CREATE TABLE order_tags (order_id text, tag text, PRIMARY KEY (order_id, tag));
+  INSERT INTO wallets VALUES ('u_1', 0);
+  INSERT INTO orders VALUES ('ord_1', 'pending');
+`);
+
+type Msg = { id: string; userId: string; amount: number };
+
+// الصح: صف الـ dedupe والأثر نفسه في transaction واحدة
+async function creditOnce(m: Msg, crashBeforeCommit = false): Promise&lt;"applied" | "duplicate"&gt; {
+  const c = await db.connect();
+  try {
+    await c.query("BEGIN");
+    const r = await c.query(
+      "INSERT INTO processed_messages (consumer, message_id) VALUES ('wallet', $1) ON CONFLICT DO NOTHING RETURNING message_id",
+      [m.id],
+    );
+    if (r.rowCount === 0) { await c.query("ROLLBACK"); return "duplicate"; }
+    await c.query("UPDATE wallets SET balance = balance + $2 WHERE user_id = $1", [m.userId, m.amount]);
+    if (crashBeforeCommit) throw new Error("worker died before commit");
+    await c.query("COMMIT");
+    return "applied";
+  } catch (e) {
+    await c.query("ROLLBACK");
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+// الغلط: الأثر في transaction والتسجيل في transaction تانية
+async function creditNonAtomic(m: Msg, crashBetween: boolean): Promise&lt;void&gt; {
+  const seen = await db.query("SELECT 1 FROM processed_messages WHERE consumer='wallet-bad' AND message_id=$1", [m.id]);
+  if (seen.rowCount) return;
+  await db.query("UPDATE wallets SET balance = balance + $2 WHERE user_id = $1", [m.userId, m.amount]);
+  if (crashBetween) throw new Error("worker died between the two writes");
+  await db.query("INSERT INTO processed_messages (consumer, message_id) VALUES ('wallet-bad', $1)", [m.id]);
+}
+
+const balance = async () =&gt; (await db.query("SELECT balance FROM wallets WHERE user_id='u_1'")).rows[0].balance;
+
+const m1: Msg = { id: "evt_100", userId: "u_1", amount: 100 };
+console.log("delivery 1 crashes before commit:", await creditOnce(m1, true).catch((e: Error) =&gt; e.message), "| balance", await balance());
+for (let i = 2; i &lt;= 6; i++) console.log(`delivery ${i}:`, await creditOnce(m1), "| balance", await balance());
+
+await db.query("UPDATE wallets SET balance = 0");
+const m2: Msg = { id: "evt_200", userId: "u_1", amount: 100 };
+await creditNonAtomic(m2, true).catch(() =&gt; {});
+await creditNonAtomic(m2, false);
+console.log("\nnon-atomic, crash between writes then redelivery: balance", await balance(), "(expected 100)");
+
+// حالة مبنية جوه الـ UPDATE: التكرار rowCount بتاعه صفر
+const pay = () =&gt; db.query("UPDATE orders SET status = 'paid' WHERE id = 'ord_1' AND status = 'pending'");
+console.log("\nconditional update:", (await pay()).rowCount, (await pay()).rowCount, (await pay()).rowCount);
+
+// قيمة مطلقة تتكرر عادي، إنما delta بتتراكم
+const setAbsolute = () =&gt; db.query("INSERT INTO inventory VALUES ('sku_1', 7) ON CONFLICT (sku) DO UPDATE SET qty = EXCLUDED.qty");
+const addDelta = () =&gt; db.query("INSERT INTO inventory VALUES ('sku_2', 1) ON CONFLICT (sku) DO UPDATE SET qty = inventory.qty + 1");
+for (let i = 0; i &lt; 3; i++) { await setAbsolute(); await addDelta(); }
+const { rows } = await db.query("SELECT sku, qty FROM inventory ORDER BY sku");
+console.log("upsert absolute vs delta after 3 deliveries:", JSON.stringify(rows));
+
+// الـ set semantics: نفس الـ tag مرتين بيبقى صف واحد
+for (let i = 0; i &lt; 3; i++) await db.query("INSERT INTO order_tags VALUES ('ord_1', 'vip') ON CONFLICT DO NOTHING");
+console.log("tags after 3 deliveries:", (await db.query("SELECT count(*)::int n FROM order_tags")).rows[0].n);
+
+await db.end();</code></pre>
+<pre><code class="language-plaintext">delivery 1 crashes before commit: worker died before commit | balance 0
+delivery 2: applied | balance 100
+delivery 3: duplicate | balance 100
+delivery 4: duplicate | balance 100
+delivery 5: duplicate | balance 100
+delivery 6: duplicate | balance 100
+
+non-atomic, crash between writes then redelivery: balance 200 (expected 100)
+
+conditional update: 1 0 0
+upsert absolute vs delta after 3 deliveries: [{"sku":"sku_1","qty":7},{"sku":"sku_2","qty":3}]
+tags after 3 deliveries: 1</code></pre>
+  <div class="ar-note">run حقيقي. التسليم الأول مات قبل الـ commit فالرصيد فضل 0 (الصف والأثر رجعوا مع بعض). التسليم التاني اتطبق، والأربعة اللي بعده <code>duplicate</code> والرصيد 100. النسخة الغلط (transactions منفصلة): مات بين الكتابتين، فالتسليم التاني طبّق تاني والرصيد بقى 200 بدل 100. الـ conditional update: 1 ثم 0 ثم 0. الـ upsert بقيمة مطلقة فضل 7، والـ delta وصل 3 بعد 3 تسليمات. الـ tags فضلت صف واحد.</div>
+
+  <table>
+    <tr><th>Operation</th><th>Method</th></tr>
+    <tr><td>Create a charge or order</td><td>Idempotency key, and pass it to the PSP</td></tr>
+    <tr><td>State transition</td><td>Conditional <code>UPDATE ... WHERE status = expected</code></td></tr>
+    <tr><td>Set an absolute value</td><td>Plain update or upsert</td></tr>
+    <tr><td>Change a balance or stock count</td><td><code>processed_messages</code>, or a ledger row with a unique reference</td></tr>
+    <tr><td>Add to a set (tags, roles)</td><td><code>INSERT ... ON CONFLICT DO NOTHING</code></td></tr>
+    <tr><td>Delete</td><td>Already idempotent</td></tr>
+    <tr><td>Send an email or SMS</td><td>Dedupe row first, provider key if there is one, accept a rare duplicate</td></tr>
+    <tr><td>Read</td><td>Nothing</td></tr>
+  </table>
+  <div class="ar-note">
+    <ul>
+      <li>إنشاء charge أو order: idempotency key، وابعته للـ PSP.</li>
+      <li>تغيير حالة: <code>UPDATE ... WHERE status = expected</code> مشروط.</li>
+      <li>تحديد قيمة مطلقة: update أو upsert عادي.</li>
+      <li>تغيير رصيد أو مخزون: <code>processed_messages</code>، أو صف ledger بـ reference فريد.</li>
+      <li>إضافة لمجموعة (tags أو roles): <code>INSERT ... ON CONFLICT DO NOTHING</code>.</li>
+      <li>الحذف: idempotent أصلًا.</li>
+      <li>إرسال email أو SMS: صف dedupe الأول، وkey بتاع الـ provider لو موجود، واقبل تكرار نادر.</li>
+      <li>القراءة: مفيش حاجة.</li>
+    </ul>
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ brokers بتوصّل at-least-once، فالـ consumer هيشوف duplicates (شوف <a href="./20-delivery-ordering-consumer-groups.html">الدرس 20</a>). القاعدة transaction واحدة: اعمل insert في <code>processed_messages</code> بـ <code>ON CONFLICT DO NOTHING</code>، وطبّق الأثر، وcommit. لو مات قبل الـ commit الاتنين بيرجعوا مع بعض، والتسليم التاني بيطبّق مرة واحدة. لو حطيتهم في transactions منفصلة، أي crash بينهم بيطبّق الأثر مرتين. ناحية الـ outbox موجودة في <a href="../../09-Databases/lessons/41-outbox-cdc-idempotency.html">درس الـ outbox</a>.</p>
+    <p>والأحسن عملية مش محتاجة key أصلًا. الـ <b>natural idempotency</b> بتيجي من شكل الكتابة نفسها: conditional update (<code>WHERE status = 'pending'</code>) بيأثر على 0 صفوف تاني مرة، والـ upsert بقيمة مطلقة بيوصل لنفس الحالة، والإضافة لمجموعة مش بتغيّر حاجة تاني مرة. الـ delta (<code>qty = qty + 1</code>) هو العكس: كل تسليم بيتجمع.</p>
+    <p>مش كل حاجة محتاجة key. الجدول اللي فوق بيربط كل عملية بأرخص طريقة بتنفع.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      webhook <code>payment.succeeded</code> من Stripe: بدل جدول dedupe اكتب <code>UPDATE orders SET status='paid' WHERE id=$1 AND status='pending'</code>، ولو <code>rowCount</code> بصفر تجاهله ورجّع 200. أما لو الـ handler بيزوّد رصيد wallet، هنا لازم <code>processed_messages</code> لأن الـ delta مش idempotent.
+    </div>
+  </section>
+
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A new key on every retry</b>
+<pre><code class="language-typescript">async function pay(body: unknown) {
+  // كل محاولة بتاخد key جديد فالحماية راحت
+  return retry(() =&gt; post("/charges", body, {
+    "idempotency-key": crypto.randomUUID(),
+  }));
+}</code></pre></div>
+    <div class="good"><b>✅ One key per logical operation</b>
+<pre><code class="language-typescript">async function pay(body: unknown) {
+  // الـ key بيتولد مرة واحدة برة الـ retry
+  const key = crypto.randomUUID();
+  return retry(() =&gt; post("/charges", body, {
+    "idempotency-key": key,
+  }));
+}</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ لو الـ key اتولد جوه الـ retry، كل محاولة بالنسبة للـ server عملية جديدة، وده بيرجعنا لخصمين. ✅ الـ key بيتولد مرة واحدة لكل عملية منطقية، وكل المحاولات بتبعت نفسه.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Check, then charge, then insert</b>
+<pre><code class="language-typescript">const row = await findKey(key);
+if (!row) {
+  await psp.charge(amount);
+  // الـ constraint هنا متأخر، الفلوس اتخصمت
+  await insertKey(key);
+}</code></pre></div>
+    <div class="good"><b>✅ Claim first with the constraint</b>
+<pre><code class="language-typescript">const claimed = await insertOnConflictDoNothing(key);
+// واحد بس هيوصل للسطر اللي بعد الـ if
+if (claimed.rowCount === 0) return replayOr409(key);
+await psp.charge(amount, { idempotencyKey: key });</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ requests المتزامنة كلها بتلاقي مفيش صف وكلهم بيخصموا، وفي الـ run اتعمل 9 خصومات. ✅ الحجز الأول بالـ <code>ON CONFLICT</code> بيخلي واحد بس يوصل للبنك، وفي الـ run اتعمل خصم واحد.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Save the response in jsonb</b>
+<pre><code class="language-sql">-- بيغيّر ترتيب الـ keys والمسافات
+response_body jsonb</code></pre></div>
+    <div class="good"><b>✅ Save the exact bytes</b>
+<pre><code class="language-sql">-- بيرجع زي ما اتكتب بالظبط
+response_body text</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>jsonb</code> بيعيد ترتيب الـ keys ويغيّر المسافات، فالـ replay مش هيطابق الرد الأصلي، وده بيكسر أي client بيعمل signature أو hash على الـ body. ✅ الـ <code>text</code> بيرجّع نفس الـ bytes.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Not passing the key downstream</b>
+<pre><code class="language-typescript">// لو متنا بعد السطر ده، الإعادة هتخصم تاني
+const charge = await psp.charge(amount);
+await saveResult(charge);</code></pre></div>
+    <div class="good"><b>✅ Your key becomes their key</b>
+<pre><code class="language-typescript">// الإعادة بنفس الـ key بترجع نفس الـ charge
+const charge = await psp.charge(amount, {
+  idempotencyKey: `${tenantId}:${key}`,
+});
+await saveResult(charge);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ لو الـ process مات بعد الخصم وقبل الحفظ، الإعادة هتعمل خصم تاني: ده السطر الأخير في الـ crash matrix (<code>psp=2</code>). ✅ لما تبعت الـ key بتاعك للـ PSP، الإعادة بترجع نفس الخصم، والـ invariant اتحقق في الـ 6 نقط.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Dedupe row in another transaction</b>
+<pre><code class="language-typescript">await db.query("UPDATE wallets SET balance = balance + $1", [amount]);
+// لو مات هنا، التسليم الجاي هيطبّق تاني
+await db.query("INSERT INTO processed_messages VALUES ($1)", [id]);</code></pre></div>
+    <div class="good"><b>✅ Effect and dedupe in one transaction</b>
+<pre><code class="language-typescript">await tx(db, async (c) =&gt; {
+  const r = await c.query(insertDedupeSql, [id]);
+  // الصف موجود معناه اتطبق قبل كده
+  if (r.rowCount === 0) return;
+  await c.query(updateBalanceSql, [amount]);
+});</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الأثر والتسجيل في transactions مختلفة، فأي crash بينهم بيطبّق مرتين، والرصيد في الـ run بقى 200 بدل 100. ✅ في transaction واحدة، الاتنين بيتعملوا commit مع بعض أو بيرجعوا مع بعض.</p>
+  </section>
+
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Attack the fingerprint <span class="lvl lvl-1">🟢 easy</span></b>
+    Using <code>requestHash</code>, show that reordered object keys give the same hash, a reordered array gives a different one, and a changed amount gives a different one.
+    <div class="ar-note">باستخدام <code>requestHash</code>، أثبت إن ترتيب keys الـ object مش بيغيّر الـ hash، وإن ترتيب الـ array بيغيّره، وإن تغيير المبلغ بيغيّره.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-hash.ts"><code class="language-typescript">import { requestHash } from "./idem.ts";
+
+const h = (body: unknown) =&gt; requestHash("POST", "/orders", body).slice(0, 12);
+
+// ترتيب الـ keys مش بيفرق، إنما ترتيب الـ array بيفرق لأنه جزء من المعنى
+console.log("same keys, other order :", h({ a: 1, b: { c: 2, d: 3 } }) === h({ b: { d: 3, c: 2 }, a: 1 }));
+console.log("array order matters    :", h({ items: ["sku_1", "sku_2"] }) === h({ items: ["sku_2", "sku_1"] }));
+console.log("amount change detected :", h({ amount: 100 }) === h({ amount: 101 }));</code></pre>
+<pre><code class="language-plaintext">same keys, other order : true
+array order matters    : false
+amount change detected : false</code></pre>
+      <div class="ar-note">السطر الأول <code>true</code> يعني نفس الـ hash. السطرين التانيين <code>false</code> يعني الـ hash اتغير، وده المطلوب.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Take over a stale lock safely <span class="lvl lvl-2">🟡 medium</span></b>
+    A key has been stuck in <code>started</code> for ten minutes. Write one statement that takes over its lock and prove that with 20 concurrent callers exactly one wins.
+    <div class="ar-note">فيه key واقف في <code>started</code> من عشر دقايق. اكتب statement واحد يستولي على الـ lock بتاعه، وأثبت إن مع 20 caller متزامنين واحد بس بيكسب.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-takeover.ts"><code class="language-typescript">import { labPool } from "./lab.ts";
+import { DDL } from "./idem.ts";
+
+const db = labPool(30);
+await db.query("DROP TABLE IF EXISTS idempotency_keys");
+await db.query(DDL);
+await db.query(`INSERT INTO idempotency_keys (tenant_id, endpoint, key, request_hash, locked_at, expires_at)
+  VALUES ('t_acme', 'POST /charges', 'stale-key-000000001', 'h', now() - interval '10 minutes', now() + interval '1 day')`);
+
+// الاستيلاء على الـ lock القديم بـ UPDATE واحد، فواحد بس هيكسب
+const takeover = () =&gt; db.query(
+  `UPDATE idempotency_keys SET locked_at = now()
+    WHERE key = 'stale-key-000000001' AND status = 'started' AND locked_at &lt; now() - interval '60 seconds'
+    RETURNING key`,
+);
+
+const results = await Promise.all(Array.from({ length: 20 }, takeover));
+console.log("winners:", results.filter((r) =&gt; r.rowCount === 1).length, "of", results.length);
+await db.end();</code></pre>
+<pre><code class="language-plaintext">winners: 1 of 20</code></pre>
+      <div class="ar-note">الشرط <code>locked_at &lt; now() - interval '60 seconds'</code> جوه نفس الـ <code>UPDATE</code>: أول واحد بياخد الـ row lock ويغيّر <code>locked_at</code>، والباقيين بعد ما يستنوا بيعيدوا فحص الشرط على النسخة الجديدة ومبيلاقوش حاجة. عشان كده كسبان واحد بس.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Crash the recovery job too <span class="lvl lvl-3">🔴 hard</span></b>
+    Extend the crash matrix so the recovery job is itself killed at <code>after_psp_before_save</code>, then a second recovery runs. The invariant must still hold: exactly one PSP charge.
+    <div class="ar-note">طوّر الـ crash matrix بحيث الـ recovery job نفسه يتقتل عند <code>after_psp_before_save</code>، وبعدين recovery تاني يشتغل. الـ invariant لازم يفضل: خصم واحد بالظبط عند الـ PSP.</div>
+    <details><summary>Hint · تلميح</summary>
+      Run recovery in its own process with <code>KILL_AT</code> set, as <code>worker.ts</code> does. Nothing in <code>advance</code> should need to change, and if something does, your phases aren't really resumable.
+      <div class="ar-note">شغّل الـ recovery في process لوحده مع <code>KILL_AT</code> زي <code>worker.ts</code>. المفروض مفيش حاجة في <code>advance</code> تتغير، ولو احتجت تغيّر، يبقى الـ phases بتاعتك مش بتكمل من مكانها بجد.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    Add idempotency keys to the side project's POST endpoints: the table from Part 2, a middleware with claim, fingerprint, replay and 409, and a cleanup job. Add a test that sends 50 parallel requests with one key and asserts one row and one side effect.
+    <div class="ar-note">ضيف idempotency keys على الـ POST endpoints في المشروع الجانبي: جدول الجزء 2، وmiddleware فيه claim وfingerprint وreplay و409، وcleanup job. واكتب test بيبعت 50 request متوازي بـ key واحد ويتأكد من صف واحد وأثر واحد.</div>
+    <details><summary>Hint · تلميح</summary>
+      Start from <code>idem.ts</code>. Decide per endpoint whether a retry during processing gets 409 or waits, write the decision in an ADR, and make the failing-then-passing test your first commit.
+      <div class="ar-note">ابدأ من <code>idem.ts</code>. قرر لكل endpoint هل الـ retry وقت التنفيذ ياخد 409 ولا يستنى، واكتب القرار في ADR، وخلّي الـ test اللي بيفشل وبعدين ينجح أول commit ليك.</div>
+    </details>
+  </div>
+
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Timeout means "unknown". Retries are required, so the operation must be safe to repeat.</li>
+    <li>Client generates one key per logical operation and reuses it on every retry.</li>
+    <li>Primary key is <code>(tenant, endpoint, key)</code>. Store a fingerprint; same key with a different body returns 422.</li>
+    <li>Claim with <code>INSERT ... ON CONFLICT DO NOTHING RETURNING</code> before any side effect. The unique constraint decides.</li>
+    <li>Losers replay the finished response, or get 409, or wait with a deadline.</li>
+    <li>Atomic phases between foreign calls, a saved recovery point, one code path for handler and recovery job.</li>
+    <li>Send your key to the PSP. Without it, a crash after the charge means a second charge.</li>
+    <li>Store status, body and needed headers; body in <code>text</code>, not <code>jsonb</code>. Never store secrets.</li>
+    <li>Size = QPS × 86,400 × 2 KB per day of TTL, plus indexes. Clean up in batches.</li>
+    <li>After TTL a retry is a new request: client retry window must be shorter than the TTL.</li>
+    <li>Consumers: dedupe row and effect in one transaction. Prefer natural idempotency when the write allows it.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ timeout معناه "مش عارف". الـ retries لازمة، فالعملية لازم تبقى آمنة في التكرار.</li>
+      <li>الـ client بيولّد key واحد لكل عملية منطقية ويستخدمه تاني في كل retry.</li>
+      <li>الـ primary key هو <code>(tenant, endpoint, key)</code>. خزّن fingerprint، ونفس الـ key بـ body مختلف يرجع 422.</li>
+      <li>احجز بـ <code>INSERT ... ON CONFLICT DO NOTHING RETURNING</code> قبل أي side effect، والـ unique constraint هو اللي بيقرر.</li>
+      <li>الخاسرين يا إما replay للرد لو خلص، يا إما 409، يا إما انتظار بـ deadline.</li>
+      <li>Atomic phases بين المكالمات الخارجية، وrecovery point محفوظ، ومسار كود واحد للـ handler والـ recovery job.</li>
+      <li>ابعت الـ key بتاعك للـ PSP. من غيره، أي crash بعد الخصم معناه خصم تاني.</li>
+      <li>خزّن الـ status والـ body والـ headers المطلوبة، والـ body في <code>text</code> مش <code>jsonb</code>، وعمرك ما تخزن secrets.</li>
+      <li>الحجم = QPS × 86,400 × 2 KB لكل يوم TTL، فوقيهم الـ indexes، والتنضيف على دفعات.</li>
+      <li>بعد الـ TTL الـ retry بقى request جديد: الـ retry window عند الـ client لازم يبقى أقصر من الـ TTL.</li>
+      <li>الـ consumers: صف الـ dedupe والأثر في transaction واحدة، وفضّل الـ natural idempotency لو الكتابة تسمح.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 12 · 2.6 — Idempotency بعمق: idempotency keys (client-generated)، storage والـ TTL، response replay، على مستوى الـ API والـ consumers</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://docs.stripe.com/api/idempotent_requests">Stripe docs — Idempotent requests</a></li>
+    <li><a href="https://stripe.com/blog/idempotency">Stripe blog — Designing robust and predictable APIs with idempotency</a></li>
+    <li><a href="https://brandur.org/idempotency-keys">Brandur Leach — Implementing Stripe-like Idempotency Keys in Postgres</a></li>
+    <li><a href="https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/">IETF draft — The Idempotency-Key HTTP Header Field</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/sql-insert.html">PostgreSQL docs — INSERT and ON CONFLICT</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./29-time-clocks-ordering.html"><small>← Previous</small>29 · Time &amp; Clocks</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./31-unique-id-generation.html"><small>Next →</small>31 · Unique IDs</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

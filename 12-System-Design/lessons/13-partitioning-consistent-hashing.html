@@ -1,0 +1,1717 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Partitioning &amp; Sharding: Hot Spots, Rebalancing, Cross-Shard Queries — 12 System Design</title>
+<meta name="section" content="12-System-Design">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">12 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 13 / 63</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <header>
+    <h1>Partitioning &amp; Sharding: Hot Spots, Rebalancing, Cross-Shard Queries</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 13 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Postgres 18 · Node 22 · TypeScript 7</span>
+      <span class="chip">Prereq: 12 Replication</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>12 · 2.2 — Partitioning/sharding: by key range (hot spots لو sequential)، by hash (توزيع أحسن، range queries صعبة)، consistent hashing (rebalancing أقل، virtual nodes)، hot spots والحلول (key salting)، rebalancing strategies، cross-shard queries (scatter-gather)، secondary indexes في sharded DBs (local vs global)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Range vs hash, on real databases</a></li>
+      <li><a href="#p2">Part 2 — Consistent hashing, measured</a></li>
+      <li><a href="#p3">Part 3 — Hot spots and salting</a></li>
+      <li><a href="#p4">Part 4 — Rebalancing and a live move</a></li>
+      <li><a href="#p5">Part 5 — Cross-shard queries</a></li>
+      <li><a href="#p6">Part 6 — Secondary indexes</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Sharding is the step you can't quietly undo. Pick the wrong key and every query fans out, one shard melts while the others idle, and moving data later means a live migration under traffic. In interviews, "how would you shard this?" is rarely about the word <em>hash</em>: it's about which queries stay cheap, what happens to the biggest tenant, and how you add a node without losing writes. This lesson measures each of those on real databases, so you can quote numbers instead of slogans.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ sharding هي الخطوة اللي مش بترجع منها بسهولة. لو اخترت key غلط، كل query هتبقى fan-out، وshard واحد هيولّع والباقي قاعد فاضي، ونقل الـ data بعد كده هيبقى live migration تحت الـ traffic. وفي الـ interviews، سؤال "هتعمل sharding إزاي؟" نادرًا ما بيبقى عن كلمة hash: بيبقى عن أنهي queries هتفضل رخيصة، والـ tenant الكبير هيحصل له إيه، وإزاي تضيف node من غير ما تضيّع writes. الدرس ده بيقيس كل ده على databases حقيقية، عشان تتكلم بأرقام مش شعارات.</p>
+  </section>
+
+  <h2 id="p1">Part 1 — Range vs hash, on real databases <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الـ range مقابل الـ hash على databases حقيقية</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A shard key decides two things at once: <strong>where writes land</strong> and <strong>which queries can be answered by one shard</strong>. Range sharding keeps neighbouring keys together, so range scans are cheap, but any key that grows with time sends every new write to the last shard. Hash sharding scatters keys evenly, but a range over the original key now touches every shard.</p>
+    <p>The experiment routes 300,000 orders across three real Postgres databases, twice: by <code>created_at</code> range (30 days each) and by a hash of <code>user_id</code>. These are three databases inside one local cluster, so they share CPU and disk: the row counts and shards touched are the result, not the milliseconds. Orders arrive in time order over 90 days, as they do in production.</p>
+    <p>Watch the totals. Under range sharding each shard ends with exactly 100,000 rows, so a dashboard of row counts looks perfectly balanced, while in every 30-day window one shard took 100% of the writes. Balance of stored data and balance of write load are different questions. Query cost flips with the key: one day of orders is 1 shard under range and 3 under hash; one user's orders is 3 shards under range and 1 under hash.</p>
+    <p>Before you shard at all, read <a href="../../09-Databases/lessons/30-sharding-consistency.html">when sharding is worth it and how to choose the shard key</a>, and <a href="../../09-Databases/lessons/24-partitioning.html">partitioning inside one Postgres</a>, which solves many of these problems without a second server.</p>
+  </section>
+
+<pre class="diagram">
+  RANGE by created_at                     HASH by user_id
+
+  new order (today)                       new order (user 4242)
+        |                                       |
+        v                                       v  hash(user) % 3
+  +---------+---------+---------+         +---------+---------+---------+
+  | shard 0 | shard 1 | shard 2 |         | shard 0 | shard 1 | shard 2 |
+  | days    | days    | days    |         | ~1/3 of | ~1/3 of | ~1/3 of |
+  | 0-30    | 30-60   | 60+     |         | writes  | writes  | writes  |
+  |         |         | ALL NEW |         |         |         |         |
+  +---------+---------+---------+         +---------+---------+---------+
+  range scan: 1 shard                     range scan: every shard
+</pre>
+  <div class="ar-note">على الشمال الـ range: كل order جديد تاريخه النهارده، فلازم يروح لآخر shard، والـ shards القديمة مش بتكتب حاجة. على اليمين الـ hash: الـ router بيحسب <code>hash(user) % 3</code> فالكتابات بتتوزع تلت لكل shard. وتحت الفرق في القراية: الـ range scan بيروح لـ shard واحد مع الـ range، ولكل الـ shards مع الـ hash.</div>
+
+<pre data-file="src/lab.ts"><code class="language-typescript">import pg from "pg";
+import { createHash } from "node:crypto";
+
+// حماية: الـ port الفاضي معناه الـ default بتاع Postgres الحقيقي عندك، فبنرفضه صراحةً
+export function labPort(raw = process.env.LAB_PG_PORT): number {
+  const n = Number(raw);
+  if (!/^\d+$/.test(String(raw)) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) {
+    throw new Error(`refusing port ${raw}`);
+  }
+  return n;
+}
+
+export const newPool = (port: number, database: string, max = 6): pg.Pool =&gt;
+  new pg.Pool({ host: "127.0.0.1", port, user: "app", database, max });
+
+// إنشاء databases منفصلة جوه نفس الـ ⁦cluster (⁩مش منفصلين فعليًا على hardware مختلف)
+export async function createDatabases(port: number, names: string[]): Promise&lt;void&gt; {
+  const admin = newPool(port, "postgres", 1);
+  for (const name of names) await admin.query(`CREATE DATABASE ${name}`);
+  await admin.end();
+}
+
+// الـ hash ثابت وبيدّي 32 bit، فنفس المفتاح يروح لنفس المكان في كل run
+export const hash32 = (key: string): number =&gt;
+  createHash("md5").update(key).digest().readUInt32BE(0);
+
+// الـ PRNG ده seeded عشان الـ output يتكرر بالظبط ونقدر نقتبسه في الدرس
+export function mulberry32(seed: number): () =&gt; number {
+  let a = seed &gt;&gt;&gt; 0;
+  return () =&gt; {
+    a = (a + 0x6d2b79f5) &gt;&gt;&gt; 0;
+    let t = Math.imul(a ^ (a &gt;&gt;&gt; 15), 1 | a);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+export const percentile = (xs: number[], p: number): number =&gt; {
+  const sorted = [...xs].sort((a, b) =&gt; a - b);
+  return sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)]!;
+};
+
+export const sleep = (ms: number): Promise&lt;void&gt; =&gt; new Promise((r) =&gt; setTimeout(r, ms));</code></pre>
+
+<pre data-file="src/p1-range-vs-hash.ts"><code class="language-typescript">import { labPort, newPool, createDatabases, hash32, mulberry32 } from "./lab.ts";
+
+const port = labPort();
+const DAY = 86_400_000;
+const START = Date.UTC(2026, 0, 1);
+const TOTAL = 300_000;
+const SHARDS = ["0", "1", "2"];
+
+type Order = { id: number; userId: number; createdAt: number; totalCents: number };
+
+// الخطة بتاعت الـ range: كل shard ماسك 30 يوم، والأخير مفتوح لأي حاجة جديدة
+const byRange = (o: Order): number =&gt; Math.min(2, Math.floor((o.createdAt - START) / (30 * DAY)));
+// الخطة بتاعت الـ hash: الـ shard متحدد من الـ user id بس
+const byHash = (o: Order): number =&gt; hash32(`user:${o.userId}`) % 3;
+
+// الـ orders بتيجي بترتيب الوقت على مدار 90 يوم، زي الـ production بالظبط
+const rand = mulberry32(42);
+const orders: Order[] = Array.from({ length: TOTAL }, (_, i) =&gt; ({
+  id: i + 1,
+  userId: 1 + Math.floor(rand() * 20_000),
+  createdAt: START + Math.floor((i / TOTAL) * 90 * DAY),
+  totalCents: 100 + Math.floor(rand() * 90_000),
+}));
+
+const ddl = `CREATE TABLE orders (
+  id bigint PRIMARY KEY, user_id int NOT NULL, created_at timestamptz NOT NULL, total_cents int NOT NULL);
+CREATE INDEX ON orders (created_at); CREATE INDEX ON orders (user_id)`;
+
+async function load(prefix: string, route: (o: Order) =&gt; number) {
+  await createDatabases(port, SHARDS.map((s) =&gt; `${prefix}${s}`));
+  const pools = SHARDS.map((s) =&gt; newPool(port, `${prefix}${s}`, 2));
+  for (const p of pools) await p.query(ddl);
+  const buckets: Order[][] = SHARDS.map(() =&gt; []);
+  const flush = async (i: number) =&gt; {
+    const b = buckets[i]!;
+    if (!b.length) return;
+    await pools[i]!.query(
+      `INSERT INTO orders SELECT * FROM unnest($1::bigint[], $2::int[], $3::timestamptz[], $4::int[])`,
+      [b.map((o) =&gt; o.id), b.map((o) =&gt; o.userId), b.map((o) =&gt; new Date(o.createdAt).toISOString()), b.map((o) =&gt; o.totalCents)],
+    );
+    buckets[i] = [];
+  };
+  for (const o of orders) {
+    const i = route(o);
+    buckets[i]!.push(o);
+    if (buckets[i]!.length === 5000) await flush(i);
+  }
+  await Promise.all(SHARDS.map((_, i) =&gt; flush(i)));
+  return pools;
+}
+
+const range = await load("range_s", byRange);
+const hashed = await load("hash_s", byHash);
+
+// عدّ حقيقي من الـ databases: كل 30 يوم راحوا فين
+async function report(label: string, pools: typeof range) {
+  console.log(`\n${label}          window1   window2   window3     total`);
+  for (let s = 0; s &lt; 3; s++) {
+    const { rows } = await pools[s]!.query&lt;{ w: number; n: number }&gt;(
+      `SELECT least(2, floor(extract(epoch FROM created_at - $1::timestamptz) / (30*86400)))::int w,
+              count(*)::int n FROM orders GROUP BY 1`, [new Date(START).toISOString()]);
+    const c = [0, 1, 2].map((w) =&gt; rows.find((r) =&gt; r.w === w)?.n ?? 0);
+    console.log(`  shard${s}     ${c.map((x) =&gt; String(x).padStart(9)).join(" ")} ${String(c[0]! + c[1]! + c[2]!).padStart(9)}`);
+  }
+}
+await report("RANGE by created_at", range);
+await report("HASH by user_id   ", hashed);
+
+// تكلفة الـ query: الـ router بيقرر كام shard لازم يسأل
+async function run(pools: typeof range, targets: number[], sql: string, params: unknown[]) {
+  const t0 = performance.now();
+  const res = await Promise.all(targets.map((i) =&gt; pools[i]!.query(sql, params)));
+  const rows = res.reduce((a, r) =&gt; a + r.rowCount!, 0);
+  return `shards=${targets.length} rows=${rows} ms≈${(performance.now() - t0).toFixed(1)}`;
+}
+const from = new Date(START + 40 * DAY).toISOString();
+const to = new Date(START + 41 * DAY).toISOString();
+const dateSql = `SELECT id FROM orders WHERE created_at &gt;= $1 AND created_at &lt; $2`;
+const userSql = `SELECT id FROM orders WHERE user_id = $1`;
+const USER = 4242;
+
+console.log("\nquery                    RANGE                                HASH");
+console.log(`one day (day 40)         ${await run(range, [1], dateSql, [from, to])}    ${await run(hashed, [0, 1, 2], dateSql, [from, to])}`);
+console.log(`one user (${USER})        ${await run(range, [0, 1, 2], userSql, [USER])}    ${await run(hashed, [hash32(`user:${USER}`) % 3], userSql, [USER])}`);
+
+await Promise.all([...range, ...hashed].map((p) =&gt; p.end()));</code></pre>
+
+<pre data-file="output.txt"><code class="language-plaintext">
+RANGE by created_at          window1   window2   window3     total
+  shard0        100000         0         0    100000
+  shard1             0    100000         0    100000
+  shard2             0         0    100000    100000
+
+HASH by user_id             window1   window2   window3     total
+  shard0         33788     33712     33815    101315
+  shard1         33221     33380     33401    100002
+  shard2         32991     32908     32784     98683
+
+query                    RANGE                                HASH
+one day (day 40)         shards=1 rows=3333 ms≈9.1    shards=3 rows=3333 ms≈17.1
+one user (4242)        shards=3 rows=22 ms≈0.9    shards=1 rows=22 ms≈0.5</code></pre>
+  <div class="ar-note">الجدول الأول (الـ range): كل نافذة 30 يوم راحت كلها لـ shard واحد، والـ total في الآخر 100,000 لكل shard. الجدول التاني (الـ hash): كل نافذة متقسمة تقريبًا 33 ألف على كل shard. آخر جدول: query يوم واحد لمست shard واحد في الـ range و3 في الـ hash، وquery مستخدم واحد العكس بالظبط. الـ milliseconds هنا ضوضاء لأن الـ machine عليها ضغط من شغل تاني، فاعتمد على عدد الـ shards.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ shard key بيحدد حاجتين مع بعض: <strong>الكتابات هتنزل فين</strong>، و<strong>أنهي queries هيرد عليها shard واحد</strong>. الـ range بيخلي المفاتيح القريبة جنب بعض، فالـ range scan رخيص، بس أي key بيزيد مع الوقت بيبعت كل كتابة جديدة لآخر shard. الـ hash بيفرّق المفاتيح بالتساوي، بس أي range على المفتاح الأصلي بقى لازم يلف على كل الـ shards.</p>
+    <p>التجربة بتوزع 300,000 order على 3 databases Postgres حقيقية مرتين: مرة بالـ range على <code>created_at</code> (30 يوم لكل shard)، ومرة بـ hash الـ <code>user_id</code>. دول 3 databases جوه cluster واحد على نفس الجهاز، يعني مشتركين في الـ CPU والـ disk: النتيجة هي عدد الصفوف وعدد الـ shards، مش الـ milliseconds. والـ orders بتيجي بترتيب الوقت على مدار 90 يوم زي الـ production.</p>
+    <p>بص على الـ totals كويس. في الـ range كل shard خلص بـ 100,000 صف بالظبط، يعني dashboard بتعد الصفوف هيقولك كله متوازن، وفي نفس الوقت كل نافذة 30 يوم shard واحد شال 100% من الكتابات. توازن الـ data المتخزنة حاجة، وتوازن ضغط الكتابة حاجة تانية خالص. وتمن الـ query بيتقلب مع الـ key: يوم واحد يعني 1 shard في الـ range و3 في الـ hash، ومستخدم واحد يعني 3 في الـ range و1 في الـ hash.</p>
+    <p>قبل ما تعمل sharding أصلًا، اقرا <a href="../../09-Databases/lessons/30-sharding-consistency.html">إمتى الـ sharding يستاهل وإزاي تختار الـ shard key</a>، و<a href="../../09-Databases/lessons/24-partitioning.html">الـ partitioning جوه Postgres واحد</a>، لأنه بيحل مشاكل كتير من غير server تاني.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      جدول <code>orders</code> في backend بتاعك وصل لـ 400 مليون صف. لو عملت shard بالـ <code>created_at</code> عشان "التقارير بتقرا بالتاريخ"، الـ shard الجديد هيستقبل كل الـ checkout traffic لوحده، وهتلاقي الـ CPU عنده 90% والباقي 5%. الأسئلة الصح في الـ design review: أكتر query بتتنفذ في الـ API إيه؟ لو "orders بتاعة user" يبقى hash على <code>user_id</code>، والتقارير تروح لـ read model أو warehouse منفصل.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: hash the tenant or user, range inside the shard</b>
+    Many real schemas combine both: hash the partition key to pick the shard, then keep a sorted key such as <code>(user_id, created_at)</code> inside it. You get even writes and cheap "latest orders of this user", and you give up cheap global time ranges, which you serve from a read model or a warehouse.
+    <div class="ar-note">schemas كتير حقيقية بتجمع الاتنين: <code>hash</code> على الـ partition key عشان تختار الـ shard، وبعدين مفتاح مرتب زي <code>(user_id, created_at)</code> جوه الـ shard. كده بتاخد كتابات متوزعة كويس، و"آخر orders للمستخدم ده" بتبقى رخيصة، وبتتنازل عن الـ time ranges الـ global الرخيصة، ودي بتتخدم من read model أو warehouse.</div>
+  </div>
+
+  <h2 id="p2">Part 2 — Consistent hashing, measured <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ consistent hashing بالقياس</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The ring itself is built step by step in <a href="../../03-CS-Fundamentals/lessons/10-ds-for-system-design.html#p3">the data structures lesson, parts 3 and 4</a>: don't rebuild it from zero. What's new here are the measurements, on 200,000 keys.</p>
+    <p>Adding a fifth node to <code>hash % N</code> moves 80.2% of keys, and that's arithmetic: a key stays only if its remainder happens to match in both, so <code>N/(N+1)</code> move. A ring moves only what the new node takes over. With 100 virtual nodes that was 16.2%, not the textbook 20%, because the moved fraction <em>is</em> the new node's real share and its 100 points landed unevenly. At 1,000 virtual nodes it's 19.9%. So "consistent hashing moves 1/(N+1) of keys" is true on average, and the number of vnodes decides how close you get.</p>
+    <p>Virtual nodes buy balance with memory and rebalancing work. Standard deviation of load falls from 48% with one point per node to 2.25% with 1,000, while the ring grows from 24 bytes to 24 KB. Lookup time barely changes (≈1.3 µs, mostly the MD5 of the key; binary search over 4,000 entries is cheap). Each tenfold increase cut the deviation by about 2.5 to 3.1 times, close to the ideal √10 ≈ 3.2. In exchange, more vnodes means more distinct ranges to stream when a node joins, and Cassandra's docs add another cost: "the more tokens you have", the higher the probability of an outage.</p>
+    <p><strong>Rendezvous hashing</strong> (highest random weight) drops the ring entirely: for each key, score every node with <code>hash(node, key)</code> and take the winner. On the same keys it moved exactly 20.0%, balanced to 0.54% deviation, and used no memory. The price is a lookup that hashes once per node: ≈6.3 µs here for 4 nodes, and it grows linearly with the node count, which is fine for tens of nodes and poor for thousands.</p>
+  </section>
+
+<pre data-file="src/p2-ring-measured.ts"><code class="language-typescript">import { hash32 } from "./lab.ts";
+
+const KEYS = Array.from({ length: 200_000 }, (_, i) =&gt; `order:${i}`);
+const hv = KEYS.map(hash32);
+const nodesOf = (n: number) =&gt; Array.from({ length: n }, (_, i) =&gt; `db-${i}`);
+
+// الـ ring في typed arrays: الـ memory هنا رقم مظبوط مش تقدير
+class Ring {
+  readonly positions: Uint32Array;
+  readonly owners: Uint16Array;
+  constructor(nodes: string[], vnodes: number) {
+    const points: Array&lt;[number, number]&gt; = [];
+    nodes.forEach((node, idx) =&gt; {
+      for (let v = 0; v &lt; vnodes; v++) points.push([hash32(`${node}#${v}`), idx]);
+    });
+    points.sort((a, b) =&gt; a[0] - b[0]);
+    this.positions = Uint32Array.from(points, (p) =&gt; p[0]);
+    this.owners = Uint16Array.from(points, (p) =&gt; p[1]);
+  }
+  get bytes(): number {
+    return this.positions.byteLength + this.owners.byteLength;
+  }
+  // البحث binary search: أول نقطة بعد الـ hash، ولو عدّينا الآخر نلف لأول الـ ring
+  ownerIndex(h: number): number {
+    let lo = 0;
+    let hi = this.positions.length;
+    while (lo &lt; hi) {
+      const mid = (lo + hi) &gt;&gt;&gt; 1;
+      if (this.positions[mid]! &lt; h) lo = mid + 1;
+      else hi = mid;
+    }
+    return this.owners[lo === this.positions.length ? 0 : lo]!;
+  }
+}
+
+// الـ rendezvous: كل مفتاح بيحسب score مع كل node، وأعلى score هو المالك
+function rendezvousOwner(key: string, nodes: string[]): number {
+  let best = -1;
+  let winner = 0;
+  nodes.forEach((node, idx) =&gt; {
+    const score = hash32(`${node}|${key}`);
+    if (score &gt; best) {
+      best = score;
+      winner = idx;
+    }
+  });
+  return winner;
+}
+
+const assign = (fn: (i: number) =&gt; number) =&gt; Int32Array.from(KEYS, (_, i) =&gt; fn(i));
+
+const stats = (owners: Int32Array, n: number) =&gt; {
+  const load = new Array&lt;number&gt;(n).fill(0);
+  for (const o of owners) load[o]!++;
+  const mean = owners.length / n;
+  const sd = Math.sqrt(load.reduce((a, x) =&gt; a + (x - mean) ** 2, 0) / n);
+  return { sdPct: (sd / mean) * 100, maxOverMean: Math.max(...load) / mean };
+};
+
+const movedPct = (a: Int32Array, b: Int32Array) =&gt; {
+  let moved = 0;
+  for (let i = 0; i &lt; a.length; i++) if (a[i] !== b[i]) moved++;
+  return ((moved / a.length) * 100).toFixed(1) + "%";
+};
+
+const sample = KEYS.slice(0, 20_000);
+const four = nodesOf(4);
+const five = nodesOf(5);
+
+// (أ) كام مفتاح بيتنقل لما نضيف node خامس؟
+const m4 = assign((i) =&gt; hv[i]! % 4);
+const m5 = assign((i) =&gt; hv[i]! % 5);
+const r4 = new Ring(four, 100);
+const r5 = new Ring(five, 100);
+const c4 = assign((i) =&gt; r4.ownerIndex(hv[i]!));
+const c5 = assign((i) =&gt; r5.ownerIndex(hv[i]!));
+const r4k = new Ring(four, 1000);
+const r5k = new Ring(five, 1000);
+const c4k = assign((i) =&gt; r4k.ownerIndex(hv[i]!));
+const c5k = assign((i) =&gt; r5k.ownerIndex(hv[i]!));
+const h4 = assign((i) =&gt; rendezvousOwner(KEYS[i]!, four));
+const h5 = assign((i) =&gt; rendezvousOwner(KEYS[i]!, five));
+console.log("keys moved adding a 5th node (200,000 keys)");
+console.log(`  hash mod N          ${movedPct(m4, m5)}`);
+console.log(`  ring, 100 vnodes    ${movedPct(c4, c5)}`);
+console.log(`  ring, 1000 vnodes   ${movedPct(c4k, c5k)}`);
+console.log(`  rendezvous          ${movedPct(h4, h5)}`);
+
+// (ب) أثر عدد الـ vnodes على الـ balance والـ memory
+console.log("\nvnodes  ring entries  ring bytes  load sd %  max/mean  lookup ns≈");
+for (const v of [1, 10, 100, 1000]) {
+  const ring = new Ring(four, v);
+  const s = stats(assign((i) =&gt; ring.ownerIndex(hv[i]!)), 4);
+  // القياس بيشمل hash المفتاح نفسه، عشان المقارنة مع الـ rendezvous تبقى عادلة
+  const t0 = performance.now();
+  let sink = 0;
+  for (const k of sample) sink += ring.ownerIndex(hash32(k));
+  const ns = ((performance.now() - t0) * 1e6) / sample.length;
+  if (sink &lt; 0) throw new Error("unreachable");
+  console.log(
+    `${String(v).padStart(6)}  ${String(ring.positions.length).padStart(12)}  ${String(ring.bytes).padStart(10)}  ${s.sdPct.toFixed(2).padStart(9)}  ${s.maxOverMean.toFixed(3).padStart(8)}  ${ns.toFixed(0).padStart(10)}`,
+  );
+}
+
+// (ج) الـ rendezvous على نفس المفاتيح: مفيش ring خالص
+const s = stats(h4, 4);
+const t0 = performance.now();
+for (const k of sample) rendezvousOwner(k, four);
+const ns = ((performance.now() - t0) * 1e6) / sample.length;
+console.log(`\nrendezvous  ring bytes 0  load sd ${s.sdPct.toFixed(2)}%  max/mean ${s.maxOverMean.toFixed(3)}  lookup ns≈${ns.toFixed(0)}`);</code></pre>
+
+<pre data-file="output.txt"><code class="language-plaintext">keys moved adding a 5th node (200,000 keys)
+  hash mod N          80.2%
+  ring, 100 vnodes    16.2%
+  ring, 1000 vnodes   19.9%
+  rendezvous          20.0%
+
+vnodes  ring entries  ring bytes  load sd %  max/mean  lookup ns≈
+     1             4          24      47.99     1.736        1305
+    10            40         240      15.40     1.207        1251
+   100           400        2400       6.04     1.099        1379
+  1000          4000       24000       2.25     1.017        1678
+
+rendezvous  ring bytes 0  load sd 0.54%  max/mean 1.009  lookup ns≈6346</code></pre>
+  <div class="ar-note">أول جدول: لما ضيفنا node خامس، الـ <code>hash % N</code> نقل 80.2% من المفاتيح، والـ ring بـ 100 vnodes نقل 16.2%، وبـ 1000 نقل 19.9%، والـ rendezvous نقل 20.0%. الجدول التاني بيقرا صف صف: كل ما الـ vnodes تزيد الـ load sd % بيقل (يعني التوزيع أعدل) و<code>max/mean</code> بيقرب من 1، والـ ring bytes بتكبر، والـ lookup شبه ثابت لأن أغلب وقته في MD5. آخر سطر الـ rendezvous: مفيش ring خالص، أعدل توزيع، بس الـ lookup أبطأ تقريبًا 5 مرات لأنه بيعمل hash لكل node.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ ring نفسه مشروح خطوة بخطوة في <a href="../../03-CS-Fundamentals/lessons/10-ds-for-system-design.html#p3">درس الـ data structures، الجزء 3 و4</a>، فمش هنعيده. الجديد هنا القياس على 200,000 مفتاح.</p>
+    <p>لما تضيف node خامس لـ <code>hash % N</code>، 80.2% من المفاتيح بتتنقل، وده حساب مش صدفة: المفتاح بيفضل مكانه بس لو باقي القسمة اتفق في الحالتين، فالنسبة <code>N/(N+1)</code>. الـ ring بينقل بس اللي الـ node الجديد واخده. بـ 100 vnode النسبة كانت 16.2% مش الـ 20% بتاعة الكتب، لأن اللي بيتنقل هو بالظبط نصيب الـ node الجديد الحقيقي، ونقطه الـ 100 نزلت مش متساوية. بـ 1000 vnode وصلنا 19.9%. يعني "الـ consistent hashing بينقل <code>1/(N+1)</code>" صح كمتوسط، وعدد الـ vnodes هو اللي بيحدد إنت قريب منه قد إيه.</p>
+    <p>الـ virtual nodes بتشتري توازن بـ memory وشغل rebalancing. الـ standard deviation بتاع الحمل نزل من 48% بنقطة واحدة لكل node لـ 2.25% بـ 1000، والـ ring كبر من 24 byte لـ 24 KB. وقت الـ lookup تقريبًا ماتغيرش (≈1.3 µs، أغلبه MD5 بتاع المفتاح، والـ binary search على 4000 entry رخيص). كل ما تضرب في 10 الـ deviation بيقل حوالي 2.5 لـ 3.1 مرة، قريب من الـ √10 ≈ 3.2 النظري. وفي المقابل، vnodes أكتر يعني ranges أكتر لازم تتنقل لما node يدخل، وdocs بتاعة Cassandra بتضيف تمن تاني: كل ما الـ tokens تزيد، احتمال الـ outage بيزيد.</p>
+    <p><strong>الـ Rendezvous hashing</strong> (highest random weight) بيلغي الـ ring خالص: لكل مفتاح بتحسب <code>hash(node, key)</code> لكل node وتاخد الأعلى. على نفس المفاتيح نقل 20.0% بالظبط، وتوازن 0.54% بس، ومن غير أي memory. التمن إن الـ lookup بيعمل hash لكل node: ≈6.3 µs هنا مع 4 nodes، وبيكبر خطيًا مع عدد الـ nodes، فكويس لعشرات الـ nodes ومش كويس للآلاف.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عندك Redis cache من 4 nodes والـ client بيعمل <code>key % 4</code>. ضفت node خامس في peak: 80% من المفاتيح بقت cache miss في لحظة، والـ DB استقبل طوفان. بـ consistent hashing الـ miss هيبقى حوالي 20%. ولو عندك 6 nodes وعايز حاجة بسيطة من غير ring، الـ rendezvous أبسط 20 سطر تكتبهم وتختبرهم.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question (exit test Q2): explain consistent hashing and why virtual nodes.</b>
+    Place nodes and keys on the same hash ring; a key belongs to the next node clockwise. When a node joins, only keys in its new arcs move, about 1/(N+1), versus N/(N+1) with mod N (measured 16-20% vs 80%). One point per node gives very uneven arcs (48% load deviation here), so each physical node gets many virtual points; more points improve balance (2.25% at 1,000) at the cost of ring memory and more ranges to move on membership changes.
+    <div class="ar-note"><b>السؤال:</b> اشرح الـ consistent hashing وليه الـ virtual nodes. <b>الإجابة:</b> بنحط الـ nodes والمفاتيح على نفس الـ hash ring، والمفتاح بيروح لأول node في اتجاه عقارب الساعة. لما node يدخل، المفاتيح اللي في الأجزاء الجديدة بس هي اللي بتتنقل، حوالي <code>1/(N+1)</code> مقابل <code>N/(N+1)</code> مع الـ mod (قسناها 16–20% مقابل 80%). نقطة واحدة لكل node بتدي أجزاء مش متساوية خالص (48% انحراف في الحمل هنا)، فكل node حقيقي بياخد نقط كتير؛ كل ما تزيد التوزيع يتحسن (2.25% عند 1000) بتمن memory للـ ring وranges أكتر تتنقل لما الـ membership يتغير.</div>
+  </div>
+
+  <h2 id="p3">Part 3 — Hot spots and salting <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ hot spots والـ salting</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A perfect hash still can't split one key: if one tenant is 16% of your traffic, all 16% lands on one shard. Real tenant traffic is close to Zipf. In this simulation of 1,000,000 orders over 5,000 tenants (labelled in the output, seeded so it repeats), the biggest tenant, id 7, is 15.8% of all orders, and the table of shard load tells a less obvious story: the hottest shard isn't the whale's own shard, because the second and third tenants landed somewhere too.</p>
+    <p><strong>Key salting</strong> splits one logical key into several physical ones, <code>tenant:7#0</code> to <code>tenant:7#9</code>, so its writes spread. The measured result is surprising: salting only the whale made the hottest shard <em>worse</em>, 1.47× the mean against 1.28× with no salting. Ten buckets hashed onto four shards landed 3, 4, 0 and 3, and shard 3, already the hottest, took another 30% of the whale. Salting works when applied to the top tenants together: salting the top 20 reached 1.10×. Check the load table after salting, because the assumption that "it spreads" isn't a measurement.</p>
+    <p>The cost is on the read side, measured on real Postgres. One shard answers "latest 50 orders of the whale" with one query and 50 rows (p50 ≈0.38 ms). Salted and gathered naively, it's 10 queries and 500 rows (≈1.26 ms). Grouping buckets by shard brings it to 3 queries and 150 rows (≈0.50 ms). This depends on the right index: earlier runs with an index that didn't match the query took ≈10 ms for the single-shard read, and the grouped query took ≈5.3 ms until <code>ANALYZE</code> ran after the bulk load. Choose the salt from the order id, not at random, or finding one order by id becomes a fan-out over all buckets.</p>
+    <p>The operational alternative is a <strong>dedicated shard</strong> for the whale, kept in a small override table the router checks first. It doesn't improve balance by itself (1.60× here, because the other shards keep their old load and the average now includes a shard holding only the whale), and it does give isolation: a separate blast radius, its own capacity plan and maintenance window, and reads that stay single-shard. For a paying enterprise tenant, that's often the better trade.</p>
+  </section>
+
+<pre data-file="src/p3-hot-tenant.ts"><code class="language-typescript">import { hash32, mulberry32, labPort, newPool, createDatabases } from "./lab.ts";
+
+console.log("SIMULATION of write load (seeded PRNG, 1,000,000 orders). The read side below runs on real Postgres.");
+console.log("Not captured by the simulation: per-shard CPU, lock contention, connection limits.\n");
+
+const SHARDS = 4;
+const TENANTS = 5000;
+const ORDERS = 1_000_000;
+const WHALE = 7;
+const BUCKETS = 10;
+
+// توزيع Zipf: أول tenant في الترتيب بياخد أكبر نصيب والباقي بيقل بسرعة
+function zipfSampler(n: number, s: number, rand: () =&gt; number) {
+  const cdf = new Float64Array(n);
+  let sum = 0;
+  for (let k = 1; k &lt;= n; k++) {
+    sum += 1 / k ** s;
+    cdf[k - 1] = sum;
+  }
+  return () =&gt; {
+    const u = rand() * sum;
+    let lo = 0;
+    let hi = n - 1;
+    while (lo &lt; hi) {
+      const m = (lo + hi) &gt;&gt;&gt; 1;
+      if (cdf[m]! &lt; u) lo = m + 1;
+      else hi = m;
+    }
+    return lo + 1;
+  };
+}
+
+// الأول في الترتيب هو الـ whale، وبنسمّيه tenant 7 عشان الـ id ملوش علاقة بالحجم
+const tenantOf = (rank: number) =&gt; (rank === 1 ? WHALE : rank === 7 ? 1 : rank);
+const shardOf = (key: string, n = SHARDS) =&gt; hash32(key) % n;
+
+function simulate(place: (tenant: number, orderNo: number) =&gt; number, shards = SHARDS) {
+  const rand = mulberry32(2026);
+  const next = zipfSampler(TENANTS, 1.1, rand);
+  const load = new Array&lt;number&gt;(shards).fill(0);
+  let whale = 0;
+  for (let i = 0; i &lt; ORDERS; i++) {
+    const t = tenantOf(next());
+    if (t === WHALE) whale++;
+    load[place(t, i)]!++;
+  }
+  return { load, whale };
+}
+
+const plain = simulate((t) =&gt; shardOf(`tenant:${t}`));
+// الـ salt جاي من رقم الـ order مش عشوائي، عشان نلاقي الـ order بعدين من غير fan-out
+const salted = simulate((t, i) =&gt; shardOf(t === WHALE ? `tenant:${t}#${i % BUCKETS}` : `tenant:${t}`));
+const salted100 = simulate((t, i) =&gt; shardOf(t === WHALE ? `tenant:${t}#${i % 100}` : `tenant:${t}`));
+// الأفضل: نفرّق أكبر 20 tenant مش الـ whale بس، عشان التاني والتالت كمان بيعملوا hot shard
+const hot = new Set(Array.from({ length: 20 }, (_, r) =&gt; tenantOf(r + 1)));
+const saltedTop = simulate((t, i) =&gt; shardOf(hot.has(t) ? `tenant:${t}#${i % BUCKETS}` : `tenant:${t}`));
+// البديل التشغيلي: الـ whale لوحده في shard زيادة وكل الباقي زي ما هو
+const dedicated = simulate((t) =&gt; (t === WHALE ? SHARDS : shardOf(`tenant:${t}`)), SHARDS + 1);
+
+const show = (label: string, load: number[]) =&gt; {
+  const mean = ORDERS / load.length;
+  const cells = load.map((x) =&gt; String(x).padStart(7)).join(" ");
+  console.log(`${label.padEnd(20)} ${cells}   max/mean ${(Math.max(...load) / mean).toFixed(2)}`);
+};
+const whaleBuckets = Array.from({ length: BUCKETS }, (_, b) =&gt; shardOf(`tenant:${WHALE}#${b}`));
+console.log(`whale share of all orders: ${((plain.whale / ORDERS) * 100).toFixed(1)}%`);
+console.log(`whale buckets per shard (of 4): ${[0, 1, 2, 3].map((s) =&gt; whaleBuckets.filter((x) =&gt; x === s).length).join(" ")}`);
+show("no salting", plain.load);
+show("whale x10", salted.load);
+show("whale x100", salted100.load);
+show("top 20 x10", saltedTop.load);
+show("dedicated 5th shard", dedicated.load);
+
+// الجزء ده حقيقي: تمن القراية على 3 databases فعلًا
+const port = labPort();
+const names = ["hot0", "hot1", "hot2"];
+await createDatabases(port, names);
+const pools = names.map((n) =&gt; newPool(port, n, 12));
+for (const p of pools) {
+  await p.query(`CREATE TABLE orders (
+    tenant_id int, bucket int, id bigint, created_at timestamptz, total_cents int,
+    PRIMARY KEY (tenant_id, bucket, id));
+    CREATE INDEX ON orders (tenant_id, bucket, created_at DESC);
+    CREATE INDEX ON orders (tenant_id, created_at DESC)`);
+}
+
+const WHALE_ROWS = 60_000;
+const T0 = Date.UTC(2026, 5, 1);
+const rand = mulberry32(99);
+const rows = Array.from({ length: WHALE_ROWS }, (_, i) =&gt; ({
+  id: i + 1,
+  bucket: i % BUCKETS,
+  at: new Date(T0 + i * 1000).toISOString(),
+  cents: 100 + Math.floor(rand() * 5000),
+}));
+type R = (typeof rows)[number];
+
+const bucketShard = (b: number) =&gt; hash32(`tenant:7#${b}`) % names.length;
+
+// نفس الـ data متخزنة مرتين: مرة كلها في shard واحد ومرة متفرقة على الـ buckets
+await pools[0]!.query(`CREATE TABLE orders_plain (LIKE orders INCLUDING ALL)`);
+await pools[0]!.query(
+  `INSERT INTO orders_plain SELECT 7, 0, i, a::timestamptz, c
+   FROM unnest($1::bigint[], $2::text[], $3::int[]) t(i, a, c)`,
+  [rows.map((r) =&gt; r.id), rows.map((r) =&gt; r.at), rows.map((r) =&gt; r.cents)],
+);
+await Promise.all(
+  names.map((_, s) =&gt; {
+    const part: R[] = rows.filter((r) =&gt; bucketShard(r.bucket) === s);
+    return pools[s]!.query(
+      `INSERT INTO orders SELECT 7, b, i, a::timestamptz, c
+       FROM unnest($1::int[], $2::bigint[], $3::text[], $4::int[]) t(b, i, a, c)`,
+      [part.map((r) =&gt; r.bucket), part.map((r) =&gt; r.id), part.map((r) =&gt; r.at), part.map((r) =&gt; r.cents)],
+    );
+  }),
+);
+
+// الـ ANALYZE ضروري بعد bulk load، من غيره الـ planner بيختار plan غلط
+for (const p of pools) await p.query("ANALYZE");
+
+const LIMIT = 50;
+type Row = { id: string; created_at: Date };
+const perBucket = `SELECT id, created_at FROM orders WHERE tenant_id = 7 AND bucket = $1 ORDER BY created_at DESC LIMIT ${LIMIT}`;
+const perShardSql = `SELECT id, created_at FROM orders WHERE tenant_id = 7 AND bucket = ANY($1) ORDER BY created_at DESC LIMIT ${LIMIT}`;
+const merge = (lists: Row[][]) =&gt;
+  lists.flat().sort((a, b) =&gt; b.created_at.getTime() - a.created_at.getTime()).slice(0, LIMIT);
+
+async function timed(fn: () =&gt; Promise&lt;{ queries: number; fetched: number; first: string }&gt;) {
+  const samples: number[] = [];
+  let last = { queries: 0, fetched: 0, first: "" };
+  for (let i = 0; i &lt; 100; i++) {
+    const t = performance.now();
+    last = await fn();
+    samples.push(performance.now() - t);
+  }
+  samples.sort((a, b) =&gt; a - b);
+  return { ...last, p50: samples[50]!.toFixed(2) };
+}
+
+const plainRead = await timed(async () =&gt; {
+  const r = await pools[0]!.query&lt;Row&gt;(
+    `SELECT id, created_at FROM orders_plain WHERE tenant_id = 7 ORDER BY created_at DESC LIMIT ${LIMIT}`,
+  );
+  return { queries: 1, fetched: r.rowCount!, first: r.rows[0]!.id };
+});
+const fanoutRead = await timed(async () =&gt; {
+  const lists = await Promise.all(
+    Array.from({ length: BUCKETS }, (_, b) =&gt; pools[bucketShard(b)]!.query&lt;Row&gt;(perBucket, [b]).then((r) =&gt; r.rows)),
+  );
+  return { queries: BUCKETS, fetched: lists.flat().length, first: merge(lists)[0]!.id };
+});
+
+// بدل query لكل bucket، نجمّع الـ buckets بتاعة كل shard في query واحدة
+const grouped = names.map((_, s) =&gt; Array.from({ length: BUCKETS }, (_, b) =&gt; b).filter((b) =&gt; bucketShard(b) === s));
+const groupedRead = await timed(async () =&gt; {
+  const lists = await Promise.all(grouped.map((bs, s) =&gt; pools[s]!.query&lt;Row&gt;(perShardSql, [bs]).then((r) =&gt; r.rows)));
+  return { queries: grouped.filter((g) =&gt; g.length).length, fetched: lists.flat().length, first: merge(lists)[0]!.id };
+});
+
+console.log("\nreal Postgres, latest 50 orders of the whale (60,000 rows, 100 runs)");
+console.log(`  one shard, no salt   queries=${plainRead.queries}   rows fetched=${plainRead.fetched}   newest id=${plainRead.first}  p50 ms≈${plainRead.p50}`);
+console.log(`  salted, gather 10    queries=${fanoutRead.queries}  rows fetched=${fanoutRead.fetched}  newest id=${fanoutRead.first}  p50 ms≈${fanoutRead.p50}`);
+console.log(`  salted, grouped       queries=${groupedRead.queries}   rows fetched=${groupedRead.fetched}  newest id=${groupedRead.first}  p50 ms≈${groupedRead.p50}`);
+console.log(`  whale rows per real shard after salting: ${names.map((_, s) =&gt; rows.filter((r) =&gt; bucketShard(r.bucket) === s).length).join(" ")}`);
+await Promise.all(pools.map((p) =&gt; p.end()));</code></pre>
+
+<pre data-file="output.txt"><code class="language-plaintext">SIMULATION of write load (seeded PRNG, 1,000,000 orders). The read side below runs on real Postgres.
+Not captured by the simulation: per-shard CPU, lock contention, connection limits.
+
+whale share of all orders: 15.8%
+whale buckets per shard (of 4): 3 4 0 3
+no salting            192065  183796  303860  320279   max/mean 1.28
+whale x10             239483  246998  145442  368077   max/mean 1.47
+whale x100            242841  224968  178824  353367   max/mean 1.41
+top 20 x10            273787  254213  225388  246612   max/mean 1.10
+dedicated 5th shard   192065  183796  145442  320279  158418   max/mean 1.60
+
+real Postgres, latest 50 orders of the whale (60,000 rows, 100 runs)
+  one shard, no salt   queries=1   rows fetched=50   newest id=60000  p50 ms≈0.38
+  salted, gather 10    queries=10  rows fetched=500  newest id=60000  p50 ms≈1.26
+  salted, grouped       queries=3   rows fetched=150  newest id=60000  p50 ms≈0.50
+  whale rows per real shard after salting: 12000 30000 18000</code></pre>
+  <div class="ar-note">أول سطر بيقولك إن كتابات الـ shards simulation بـ seed ثابت، وجزء القراية على Postgres حقيقي. الجدول: كل صف طريقة، وكل عمود shard، وآخره <code>max/mean</code>. من غير salting الرقم 1.28. الـ whale لوحده ×10 طلعت 1.47 يعني أسوأ. ×100 طلعت 1.41. أكبر 20 tenant مع بعض ×10 طلعت 1.10 وده الكسب الحقيقي. الـ shard الخامس المخصص 1.60 لأن الباقي زي ما هو. تحت: القراية من shard واحد query واحدة، والـ salted 10 queries و500 صف، ولما جمّعنا الـ buckets بقوا 3 queries و150 صف.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>حتى أحسن hash مش هيقسم مفتاح واحد: لو tenant واحد عامل 16% من الـ traffic، الـ 16% دول كلهم هينزلوا على shard واحد. والـ traffic الحقيقي بتاع الـ tenants قريب من Zipf. في الـ simulation دي من 1,000,000 order على 5000 tenant (مكتوب في الـ output إنها simulation وبـ seed ثابت)، أكبر tenant، رقم 7، عامل 15.8% من الـ orders، والجدول بيقول حاجة مش واضحة من الأول: أسخن shard مش الـ shard بتاع الـ whale، لأن التاني والتالت كمان نزلوا في مكان ما.</p>
+    <p><strong>الـ Key salting</strong> بيقسم المفتاح المنطقي الواحد لكذا مفتاح فعلي، من <code>tenant:7#0</code> لـ <code>tenant:7#9</code>، فالكتابات تتفرق. والنتيجة المقاسة مفاجأة: لما تعمل salting للـ whale لوحده، أسخن shard بقى <em>أسوأ</em>، 1.47× المتوسط مقابل 1.28× من غير salting. العشر buckets لما اتعمل لهم hash على 4 shards نزلوا 3 و4 و0 و3، والـ shard رقم 3 اللي كان أصلًا الأسخن خد 30% زيادة من الـ whale. الـ salting بينجح لما تطبقه على أكبر tenants مع بعض: أكبر 20 وصلوا 1.10×. لازم تبص على جدول الحمل بعد الـ salting، لأن افتراض "هيتوزع" مش قياس.</p>
+    <p>التمن في القراية، وقسناه على Postgres حقيقي. shard واحد بيرد على "آخر 50 order للـ whale" بـ query واحدة و50 صف (p50 ≈0.38 ms). مع الـ salting من غير تفكير: 10 queries و500 صف (≈1.26 ms). ولو جمّعت الـ buckets حسب الـ shard: 3 queries و150 صف (≈0.50 ms). وده معتمد على الـ index الصح: في runs قبل كده بـ index مش ماشي مع الـ query، القراية من shard واحد خدت ≈10 ms، والـ query المجمّعة خدت ≈5.3 ms لحد ما شغّلنا <code>ANALYZE</code> بعد الـ bulk load. واختار الـ salt من الـ order id مش عشوائي، وإلا لقّي order واحد بالـ id هيبقى fan-out على كل الـ buckets.</p>
+    <p>البديل التشغيلي <strong>shard مخصص</strong> للـ whale، متسجل في جدول override صغير الـ router بيقراه الأول. ده لوحده مش بيحسن التوازن (1.60× هنا، لأن الباقيين زي ما هم والمتوسط بقى داخل فيه shard شايل الـ whale بس)، بس بيدي عزل: blast radius منفصل، capacity plan وmaintenance window خاصين بيه، وقرايات تفضل على shard واحد. ولـ tenant enterprise بيدفع، ده غالبًا الاختيار الأحسن.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      SaaS multi-tenant فيه tenant واحد بيعمل imports ضخمة كل ليلة، والـ shard بتاعه الـ p99 عنده بيبوظ لكل الـ tenants التانيين اللي شايلهم نفس الـ shard. الخطوة الأولى: اطلع top tenants بالحمل من <code>pg_stat_statements</code> أو الـ metrics. بعدها قرّر: <code>tenant:7#N</code> لو الكتابة هي المشكلة والقراية شوية، أو shard لوحده وتسجله في جدول routing لو عايز عزل وعقد SLA.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: read fan-out vs even load</b>
+    Salting trades read cost for write spread: more buckets flatten writes and multiply the work to read the tenant's data back. Use the smallest bucket count that clears the hot shard, apply it only to the tenants that need it, and group buckets by shard on the read path.
+    <div class="ar-note">الـ salting بيبدّل تمن القراية بتوزيع الكتابة: buckets أكتر تعدّل الكتابات وتضاعف شغل قراية data الـ tenant ده. استخدم أقل عدد buckets يبرّد الـ shard السخن، وطبّقه بس على الـ tenants اللي محتاجة، وجمّع الـ buckets حسب الـ shard وإنت بتقرا.</div>
+  </div>
+
+  <h2 id="p4">Part 4 — Rebalancing and a live move <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ rebalancing والنقل وهو شغال</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Three families of strategy, with real numbers for adding a fifth node to 400 GB over 4 nodes:</p>
+    <ul>
+      <li><strong>Fixed slots.</strong> Many more slots than nodes, decided up front: Redis Cluster uses 16,384 and moves whole slots between nodes. Adding a node moves 3,276 slots, 80 GB. Keys with the same <code>{hashtag}</code> share a slot, as <code>{tenant:7}:orders</code> and <code>{tenant:7}:users</code> do below (both slot 2624, from <code>cluster-key-slot</code>, which uses Redis's CRC16). The output shows real slot numbers only: this is client-side routing standing in for a cluster. Real Redis Cluster commands are <strong>not run here</strong>, because the private Redis in this lab runs without cluster mode.</li>
+      <li><strong>Dynamic splitting.</strong> A partition splits at a size limit, as in HBase regions or MongoDB chunks. Here 63 splits produce 64 partitions of 6.25 GB; a fifth node takes about 13, 81 GB. It adapts to data size, but a brand-new table starts with one partition, so all early writes hit one node unless you pre-split.</li>
+      <li><strong>Per-node proportional.</strong> Each node holds a fixed number of partitions, as with Cassandra's tokens. 16 per node gives 64 partitions; a new node splits 16 and takes half of each, about 50 GB at the average partition size. Random picks are uneven, which is why Cassandra 3.x and later added a token allocator.</li>
+    </ul>
+    <p>Moving data is the dangerous part. The experiment moves one slot between two real databases while 4 workers write and read. The bad version copies a snapshot, flips the routing table, and deletes the source: <strong>4,464 of 10,016 acknowledged writes were lost and 1,275 reads missed rows, with zero errors raised</strong>. Nothing in the logs says anything went wrong. The versioned version adds an <code>epoch</code> on every shard and a double-write window: it copied, fenced the source, then flipped. Result: 0 lost, 0 misrouted, 8 stale-route retries, a worst write pause of ≈37 ms, at the cost of a move that took ≈951 ms instead of ≈353 ms.</p>
+    <p>The fence is the part to copy. A write carries the epoch it read from the routing table, and the shard checks it with <code>SELECT … FOR SHARE</code> on the <code>slot_state</code> row inside the write's own statement. The flip's <code>UPDATE slot_state</code> waits for in-flight writers holding that row lock, so after it commits, no write with the old epoch can succeed. Stale clients get a rejected write, refresh, and retry instead of silently writing to a shard that's about to be emptied. Production systems usually replace double-write with CDC or logical replication for catch-up, because a double-write can land on one side and fail on the other: that code lives with <a href="../../09-Databases/lessons/27-backups-pitr-upgrades.html">logical replication</a> in section 09.</p>
+  </section>
+
+<pre class="diagram">
+  versioned slot move (epoch fences every write)
+
+  epoch 1   writes -> A only
+            |
+  epoch 2   open double write: writes -> A and B   (old clients rejected, refresh)
+            |  backfill A -> B in batches, DO NOTHING keeps newer rows
+            |
+  epoch 3   fence A (waits for in-flight writers), then B, then routing table
+            |  stale clients: rejected -> refresh -> retry on B
+            v
+            delete copied rows on A
+</pre>
+  <div class="ar-note">بنقرا من فوق لتحت: في epoch 1 الكتابة على A بس. في epoch 2 بنفتح الـ double-write فالكتابات تروح على A وB، وأي client قديم بيترفض ويحدّث الـ route، وبعدين بننسخ القديم من A لـ B على batches، و<code>DO NOTHING</code> بتسيب الصف الأحدث اللي الـ double-write كتبه. في epoch 3 بنعمل fence لـ A (بيستنى الكتابات الشغالة)، وبعدين B، وبعدين الـ routing table. أي client معاه route قديم بيترفض ويحدّث ويعيد المحاولة على B. وفي الآخر بنمسح الصفوف اللي اتنسخت من A.</div>
+
+<pre data-file="src/p4-slots.ts"><code class="language-typescript">import calculateSlot from "cluster-key-slot";
+
+// أرقام slots حقيقية من نفس الـ CRC16 اللي Redis Cluster بيستخدمه
+for (const key of ["user:1", "{tenant:7}:orders", "{tenant:7}:users", "order:1001", "order:1002"]) {
+  console.log(`${key.padEnd(20)} slot ${calculateSlot(key)}`);
+}
+
+// الـ calculator: 3 استراتيجيات، 4 nodes فيهم 400 GB، وبنضيف node خامس
+const TOTAL_GB = 400;
+const NODES = 4;
+
+// (1) عدد slots ثابت: الـ node الجديد بياخد نصيبه من كل node قديم
+const SLOTS = 16384;
+const perNodeAfter = Math.floor(SLOTS / (NODES + 1));
+const slotsMoved = perNodeAfter;
+console.log(`\nfixed slots       moved ${slotsMoved} of ${SLOTS} slots = ${((slotsMoved / SLOTS) * TOTAL_GB).toFixed(1)} GB`);
+
+// (2) تقسيم ديناميكي: الـ partition بيتقسم نصين لما يوصل الحد الأقصى
+const MAX_GB = 10;
+let parts = [TOTAL_GB];
+let splits = 0;
+while (parts.some((p) =&gt; p &gt; MAX_GB)) {
+  parts = parts.flatMap((p) =&gt; {
+    if (p &lt;= MAX_GB) return [p];
+    splits++;
+    return [p / 2, p / 2];
+  });
+}
+console.log(`dynamic splitting ${parts.length} partitions of ${parts[0]} GB after ${splits} splits; a 5th node takes ${Math.round(parts.length / 5)} partitions = ${(Math.round(parts.length / 5) * parts[0]!).toFixed(1)} GB`);
+
+// (3) متناسب مع عدد الـ nodes: كل node عنده عدد ثابت من الـ partitions
+const PER_NODE = 16;
+const partitionSize = TOTAL_GB / (NODES * PER_NODE);
+console.log(`per-node (${PER_NODE} each)  ${NODES * PER_NODE} partitions of ${partitionSize} GB; a new node splits ${PER_NODE} random ones and takes half of each = ${(PER_NODE * partitionSize * 0.5).toFixed(1)} GB`);</code></pre>
+
+<pre data-file="output.txt"><code class="language-plaintext">user:1               slot 10778
+{tenant:7}:orders    slot 2624
+{tenant:7}:users     slot 2624
+order:1001           slot 241
+order:1002           slot 12434
+
+fixed slots       moved 3276 of 16384 slots = 80.0 GB
+dynamic splitting 64 partitions of 6.25 GB after 63 splits; a 5th node takes 13 partitions = 81.3 GB
+per-node (16 each)  64 partitions of 6.25 GB; a new node splits 16 random ones and takes half of each = 50.0 GB</code></pre>
+  <div class="ar-note">أول 5 سطور أرقام slots حقيقية: <code>{tenant:7}:orders</code> و<code>{tenant:7}:users</code> نفس الـ slot 2624 بسبب الـ hashtag. تحت: الـ fixed slots بتنقل 3276 slot يعني 80 GB. الـ dynamic splitting عمل 63 split ووصل 64 partition بحجم 6.25 GB، والـ node الخامس بياخد 13 partition يعني حوالي 81 GB. الـ per-node بيقسم 16 partition ويأخد نص كل واحدة، حوالي 50 GB بحساب متوسط حجم الـ partition.</div>
+
+<pre data-file="src/p4-live-move.ts"><code class="language-typescript">import { labPort, newPool, createDatabases, mulberry32, sleep } from "./lab.ts";
+import type pg from "pg";
+
+const port = labPort();
+const SLOT = 7;
+const SEED_ROWS = 20_000;
+const WRITERS = 4;
+const CACHE_TTL_MS = 150;
+
+type ShardName = "a" | "b";
+type Route = { shard: ShardName; epoch: number; dual: ShardName | null };
+type Counters = { acked: number; failed: number; staleRetries: number; misroutedReads: number; reads: number; maxPauseMs: number };
+
+async function setup(tag: string) {
+  const names = [`${tag}_a`, `${tag}_b`, `${tag}_meta`];
+  await createDatabases(port, names);
+  const a = newPool(port, names[0]!, 8);
+  const b = newPool(port, names[1]!, 8);
+  const meta = newPool(port, names[2]!, 4);
+  for (const p of [a, b]) {
+    await p.query(`CREATE TABLE orders (id bigint PRIMARY KEY, slot int NOT NULL, total_cents int NOT NULL);
+      CREATE TABLE slot_state (slot int PRIMARY KEY, epoch int NOT NULL, accepting boolean NOT NULL)`);
+  }
+  await a.query(`INSERT INTO slot_state VALUES ($1, 1, true)`, [SLOT]);
+  await b.query(`INSERT INTO slot_state VALUES ($1, 1, false)`, [SLOT]);
+  await a.query(`INSERT INTO orders SELECT g, $1, 1000 FROM generate_series(1, $2::int) g`, [SLOT, SEED_ROWS]);
+  await meta.query(`CREATE TABLE slot_map (slot int PRIMARY KEY, shard text NOT NULL, epoch int NOT NULL, dual text)`);
+  await meta.query(`INSERT INTO slot_map VALUES ($1, 'a', 1, NULL)`, [SLOT]);
+  return { pools: { a, b } as Record&lt;ShardName, pg.Pool&gt;, meta };
+}
+
+async function loadRoute(meta: pg.Pool): Promise&lt;Route&gt; {
+  const { rows } = await meta.query(`SELECT shard, epoch, dual FROM slot_map WHERE slot = $1`, [SLOT]);
+  return rows[0] as Route;
+}
+
+// الكتابة المحمية: الـ FOR SHARE بيقفل صف الـ epoch، فالـ flip لازم يستنى الكتابات اللي شغالة
+const FENCED_UPSERT = `
+  WITH fence AS (SELECT 1 FROM slot_state WHERE slot = $2 AND epoch = $4 AND accepting FOR SHARE)
+  INSERT INTO orders (id, slot, total_cents) SELECT $1, $2, $3 FROM fence
+  ON CONFLICT (id) DO UPDATE SET total_cents = EXCLUDED.total_cents`;
+const FENCED_READ = `
+  SELECT o.id FROM slot_state s LEFT JOIN orders o ON o.id = $1
+  WHERE s.slot = $2 AND s.epoch = $3 AND s.accepting`;
+
+class StaleRoute extends Error {}
+
+function client(pools: Record&lt;ShardName, pg.Pool&gt;, meta: pg.Pool, c: Counters, fenced: boolean) {
+  let cached: Route | null = null;
+  let fetchedAt = 0;
+  const route = async (force = false) =&gt; {
+    if (force || !cached || performance.now() - fetchedAt &gt; CACHE_TTL_MS) {
+      cached = await loadRoute(meta);
+      fetchedAt = performance.now();
+    }
+    return cached;
+  };
+
+  async function withRetry&lt;T&gt;(fn: (r: Route) =&gt; Promise&lt;T&gt;): Promise&lt;T&gt; {
+    const t0 = performance.now();
+    for (let attempt = 0; attempt &lt; 40; attempt++) {
+      try {
+        const out = await fn(await route(attempt &gt; 0));
+        if (attempt &gt; 0) c.maxPauseMs = Math.max(c.maxPauseMs, performance.now() - t0);
+        return out;
+      } catch (e) {
+        if (!(e instanceof StaleRoute)) throw e;
+        c.staleRetries++;
+        await sleep(2);
+      }
+    }
+    throw new Error("route never settled");
+  }
+
+  return {
+    write: (id: number) =&gt;
+      withRetry(async (r) =&gt; {
+        if (!fenced) {
+          await pools[r.shard].query(`INSERT INTO orders VALUES ($1, $2, 2000) ON CONFLICT (id) DO UPDATE SET total_cents = 2000`, [id, SLOT]);
+          return;
+        }
+        // الترتيب: المصدر الأول وبعدين الوجهة، والـ ack بس لو الاتنين نجحوا
+        for (const shard of r.dual ? [r.shard, r.dual] : [r.shard]) {
+          const res = await pools[shard].query(FENCED_UPSERT, [id, SLOT, 2000, r.epoch]);
+          if (res.rowCount === 0) throw new StaleRoute();
+        }
+      }),
+    read: (id: number) =&gt;
+      withRetry(async (r) =&gt; {
+        if (!fenced) return (await pools[r.shard].query(`SELECT id FROM orders WHERE id = $1`, [id])).rowCount! &gt; 0;
+        const res = await pools[r.shard].query(FENCED_READ, [id, SLOT, r.epoch]);
+        if (res.rowCount === 0) throw new StaleRoute();
+        return res.rows[0].id !== null;
+      }),
+  };
+}
+
+// ❌ النقل الساذج: snapshot، نسخ، flip، مسح. أي كتابة بعد الـ snapshot بتضيع
+async function badMove(pools: Record&lt;ShardName, pg.Pool&gt;, meta: pg.Pool) {
+  const { rows } = await pools.a.query(`SELECT id, slot, total_cents FROM orders WHERE slot = $1`, [SLOT]);
+  for (let i = 0; i &lt; rows.length; i += 500) {
+    const part = rows.slice(i, i + 500);
+    await pools.b.query(`INSERT INTO orders SELECT * FROM unnest($1::bigint[], $2::int[], $3::int[]) ON CONFLICT DO NOTHING`,
+      [part.map((r) =&gt; r.id), part.map((r) =&gt; r.slot), part.map((r) =&gt; r.total_cents)]);
+    await sleep(5);
+  }
+  await meta.query(`UPDATE slot_map SET shard = 'b', epoch = epoch + 1 WHERE slot = $1`, [SLOT]);
+  await pools.a.query(`DELETE FROM orders WHERE slot = $1`, [SLOT]);
+}
+
+// ✅ النقل بالـ version: double-write، نسخ، تأكيد، flip محمي بالـ epoch
+async function versionedMove(pools: Record&lt;ShardName, pg.Pool&gt;, meta: pg.Pool) {
+  // (1) فتح الـ double-write: الـ epoch بيزيد فكل client قديم بيترفض ويعرف الـ route الجديد
+  await pools.b.query(`UPDATE slot_state SET epoch = 2, accepting = true WHERE slot = $1`, [SLOT]);
+  await pools.a.query(`UPDATE slot_state SET epoch = 2 WHERE slot = $1`, [SLOT]);
+  await meta.query(`UPDATE slot_map SET epoch = 2, dual = 'b' WHERE slot = $1`, [SLOT]);
+
+  // (2) النسخ بـ batches بالـ id: الـ DO NOTHING بيسيب الصف الأحدث اللي الـ double-write كتبه
+  let lastId = 0;
+  for (;;) {
+    const { rows } = await pools.a.query(`SELECT id, slot, total_cents FROM orders WHERE slot = $1 AND id &gt; $2 ORDER BY id LIMIT 500`, [SLOT, lastId]);
+    if (!rows.length) break;
+    await pools.b.query(`INSERT INTO orders SELECT * FROM unnest($1::bigint[], $2::int[], $3::int[]) ON CONFLICT DO NOTHING`,
+      [rows.map((r) =&gt; r.id), rows.map((r) =&gt; r.slot), rows.map((r) =&gt; r.total_cents)]);
+    lastId = Number(rows.at(-1).id);
+    await sleep(5);
+  }
+
+  // (3) الـ flip: نقفل المصدر الأول (بيستنى الكتابات الشغالة)، وبعدها الوجهة، وبعدها الـ routing table
+  await pools.a.query(`UPDATE slot_state SET epoch = 3, accepting = false WHERE slot = $1`, [SLOT]);
+  await pools.b.query(`UPDATE slot_state SET epoch = 3 WHERE slot = $1`, [SLOT]);
+  await meta.query(`UPDATE slot_map SET shard = 'b', epoch = 3, dual = NULL WHERE slot = $1`, [SLOT]);
+
+  // (4) المسح بييجي بعد الـ flip، ولو اتأخر مفيش مشكلة لأن المصدر بيرفض
+  await pools.a.query(`DELETE FROM orders WHERE slot = $1`, [SLOT]);
+}
+
+async function experiment(tag: string, fenced: boolean, move: typeof badMove) {
+  const { pools, meta } = await setup(tag);
+  const c: Counters = { acked: 0, failed: 0, staleRetries: 0, misroutedReads: 0, reads: 0, maxPauseMs: 0 };
+  const acked = new Set&lt;number&gt;();
+  let done = false;
+
+  const worker = async (w: number) =&gt; {
+    const rand = mulberry32(1000 + w);
+    const api = client(pools, meta, c, fenced);
+    let nextId = 1_000_000 * (w + 1);
+    while (!done) {
+      try {
+        if (rand() &lt; 0.7 || acked.size === 0) {
+          const id = nextId++;
+          await api.write(id);
+          acked.add(id);
+          c.acked++;
+        } else {
+          // القراية بتاعة order اتأكد قبل كده: لو ملقيناهوش يبقى الـ route غلط
+          const ids = [...acked];
+          const id = ids[Math.floor(rand() * Math.min(ids.length, 2000))]!;
+          c.reads++;
+          if (!(await api.read(id))) c.misroutedReads++;
+        }
+      } catch {
+        c.failed++;
+      }
+    }
+  };
+
+  const workers = Array.from({ length: WRITERS }, (_, w) =&gt; worker(w));
+  await sleep(100);
+  const t0 = performance.now();
+  await move(pools, meta);
+  const moveMs = performance.now() - t0;
+  // الـ workers بتكمّل شوية بعد الـ flip عشان نشوف الـ clients اللي معاها route قديم
+  await sleep(CACHE_TTL_MS * 2);
+  done = true;
+  await Promise.all(workers);
+
+  const final = await pools.b.query(`SELECT id FROM orders WHERE slot = $1 AND id = ANY($2::bigint[])`, [SLOT, [...acked]]);
+  const lost = acked.size - final.rowCount!;
+  const seedLeft = await pools.b.query(`SELECT count(*)::int n FROM orders WHERE id &lt;= $1`, [SEED_ROWS]);
+  console.log(`${tag.padEnd(10)} moveMs≈${moveMs.toFixed(0).padStart(5)}  acked=${String(c.acked).padStart(5)}  failed=${c.failed}  reads=${String(c.reads).padStart(5)}  misrouted=${String(c.misroutedReads).padStart(4)}  LOST=${String(lost).padStart(4)}  staleRetries=${String(c.staleRetries).padStart(4)}  maxPauseMs≈${c.maxPauseMs.toFixed(0)}  seedRowsOnB=${seedLeft.rows[0].n}`);
+  await Promise.all([pools.a.end(), pools.b.end(), meta.end()]);
+}
+
+await experiment("bad_flip", false, badMove);
+await experiment("versioned", true, versionedMove);</code></pre>
+
+<pre data-file="output.txt"><code class="language-plaintext">bad_flip   moveMs≈  353  acked=10016  failed=0  reads= 4369  misrouted=1275  LOST=4464  staleRetries=   0  maxPauseMs≈0  seedRowsOnB=20000
+versioned  moveMs≈  951  acked= 9697  failed=0  reads= 4295  misrouted=   0  LOST=   0  staleRetries=   8  maxPauseMs≈37  seedRowsOnB=20000</code></pre>
+  <div class="ar-note">كل سطر run كامل على databases حقيقية. سطر <code>bad_flip</code>: الـ <code>acked</code> الكتابات اللي اتأكدت للـ client، و<code>LOST</code> اللي منهم مش موجود على الـ shard الجديد (4464)، و<code>misrouted</code> قرايات ملقتش صف كان اتأكد (1275)، و<code>failed=0</code> يعني ولا error ظهر. سطر <code>versioned</code>: صفر ضياع، صفر misrouted، 8 retries بس بسبب route قديم، وأطول توقف ≈37 ms.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>3 عائلات من الاستراتيجيات، بأرقام لإضافة node خامس لـ 400 GB على 4 nodes:</p>
+    <ul>
+      <li><strong>Fixed slots:</strong> عدد slots أكبر بكتير من الـ nodes متحدد من الأول: Redis Cluster بيستخدم 16,384 وبينقل slots كاملة بين الـ nodes. إضافة node بتنقل 3276 slot، يعني 80 GB. المفاتيح اللي ليها نفس الـ <code>{hashtag}</code> بتقعد في نفس الـ slot، زي <code>{tenant:7}:orders</code> و<code>{tenant:7}:users</code> (الاتنين slot 2624 من <code>cluster-key-slot</code> اللي بيستخدم نفس CRC16 بتاع Redis). الـ output فيه أرقام slots حقيقية بس: ده client-side routing بديل عن cluster. أوامر Redis Cluster الحقيقية <strong>not run here</strong> لأن الـ Redis الخاص باللاب ده شغال من غير cluster mode.</li>
+      <li><strong>Dynamic splitting:</strong> الـ partition بيتقسم لما يوصل لحد معين، زي الـ regions في HBase والـ chunks في MongoDB. هنا 63 split عملوا 64 partition حجم الواحد 6.25 GB، والـ node الخامس بياخد حوالي 13 يعني 81 GB. بيتكيف مع حجم الـ data، بس جدول جديد بيبدأ بـ partition واحد، فكل الكتابات الأولى بتروح لـ node واحد إلا لو عملت pre-split.</li>
+      <li><strong>Per-node proportional:</strong> كل node شايل عدد ثابت من الـ partitions، زي الـ tokens في Cassandra. 16 لكل node يعني 64 partition، والـ node الجديد بيقسم 16 ويأخد نص كل واحدة، حوالي 50 GB بحساب متوسط الحجم. الاختيار العشوائي بيطلع مش متساوي، وعشان كده Cassandra 3.x وبعدها ضافت token allocator.</li>
+    </ul>
+    <p>نقل الـ data هو الجزء الخطر. التجربة بتنقل slot واحد بين 2 databases حقيقيين و4 workers بيكتبوا ويقروا. النسخة السيئة بتاخد snapshot، وتقلب الـ routing table، وتمسح المصدر: <strong>4,464 من 10,016 كتابة اتأكدت ضاعوا، و1,275 قراية ملقتش صفوف، ومن غير ولا error</strong>. مفيش حاجة في الـ logs بتقول إن فيه مشكلة. النسخة بالـ version بتزود <code>epoch</code> على كل shard وفترة double-write: نسخت، وقفلت المصدر، وبعدين قلبت. النتيجة: 0 ضياع، 0 misrouted، و8 retries بسبب route قديم، وأسوأ توقف كتابة ≈37 ms، والتمن إن النقل خد ≈951 ms بدل ≈353 ms.</p>
+    <p>الـ fence هو الجزء اللي لازم تنقله. كل كتابة معاها الـ epoch اللي قرتها من الـ routing table، والـ shard بيتأكد منه بـ <code>SELECT … FOR SHARE</code> على صف <code>slot_state</code> جوه نفس الـ statement. والـ <code>UPDATE slot_state</code> بتاع الـ flip بيستنى الكتابات اللي ماسكة الـ row lock ده، فبعد ما يعمل commit مفيش كتابة بالـ epoch القديم تعدي. الـ client القديم بيترفض ويحدّث ويعيد المحاولة، بدل ما يكتب في صمت على shard هيتفضّى. في الـ production غالبًا الـ CDC أو الـ logical replication بيحلوا محل الـ double-write في الـ catch-up، لأن الكتابة الدبل ممكن تنجح على ناحية وتفشل على التانية: الكود ده مع <a href="../../09-Databases/lessons/27-backups-pitr-upgrades.html">الـ logical replication</a> في قسم 07.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      بتعمل migration لجدول <code>invoices</code> لـ shards جديدة. الـ plan الـ junior: "نعمل dump، ننقل، نقلب الـ config، نمسح القديم في الليل". في الـ design review اسأل: الكتابات اللي بتحصل بعد الـ dump هتروح فين؟ الـ clients اللي معاهم config قديم بيعملوا إيه؟ الجواب الناضج: double-write أو CDC للـ catch-up، <code>epoch</code> على كل كتابة، verification بالـ count/checksum قبل الـ flip، والمسح آخر خطوة وبعد فترة مراقبة.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks at scale</b>
+    Double-write has no atomic commit: if the write to the source succeeds and the destination fails, they diverge, and neither side knows. Treat any failure on the second write as a failed request and retry idempotently, verify with count and checksum before the flip, and prefer CDC for tables with heavy traffic.
+    <div class="ar-note">الـ double-write مفيهوش atomic commit: لو الكتابة على المصدر نجحت وعلى الوجهة فشلت، هيبقوا مختلفين ومحدش عارف. اعتبر أي فشل في الكتابة التانية request فشل وأعد المحاولة بشكل idempotent، واتأكد بـ count وchecksum قبل الـ flip، وفضّل CDC للجداول اللي عليها traffic تقيل.</div>
+  </div>
+
+  <h2 id="p5">Part 5 — Cross-shard queries <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ queries اللي بتلف على كذا shard</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A query with no shard key has to ask everyone: <strong>scatter-gather</strong>. For "latest 20 orders", each shard returns its own sorted top 20, and merging them gives the true global top 20, because the global top 20 can't contain a row outside some shard's top 20. In the run that's 60 rows fetched to answer from 50,000. The merging itself is the <a href="../../03-CS-Fundamentals/lessons/06-heaps-priority-queues-tries.html#p5">k-way merge from the heaps lesson</a>; with 3 lists a sort is fine, and with hundreds of shards use the heap.</p>
+    <p>Latency is where it hurts. <code>Promise.all</code> waits for the slowest shard, so the p99 of the fan-out tracks the p99 of the worst shard. Here shard 2 sleeps 80 ms on 5% of its queries (a stand-in for a checkpoint or a noisy neighbour): the healthy shard's p99 stays ≈0.8 ms, the sick shard's p99 is ≈93 ms, and the fan-out p99 is also ≈93 ms. The chance a fan-out hits at least one slow shard is <code>1 - (1 - p)^n</code>. At p = 1% and 100 shards that's 63.4%, so a problem affecting 1% of requests on one shard becomes the common case for fan-out queries. Hedged requests, per-shard timeouts with partial results, and avoiding fan-out on hot paths are the real responses.</p>
+    <p>Offset pagination is wrong across shards. Each shard's <code>OFFSET 20</code> skips <em>that shard's</em> first 20 rows, but the global page 2 may need rows from inside those first 20 on an emptier shard. With orders uneven across shards, 20 out of 20 rows were wrong on every page from 2 onward. The correct offset version asks every shard for <code>offset + limit</code> rows and merges them in the app, so its cost grows with depth: 40,020 rows fetched to return page 1,001. A <strong>cursor</strong> (keyset) stays at 60 rows per page and was correct on all 5 pages, because each shard resumes strictly after the last row the client saw. Transactions that span shards are a different problem: see <a href="./34-transactions-2pc-saga-exactly-once.html">distributed transactions</a>.</p>
+  </section>
+
+<pre class="diagram">
+  scatter-gather: "latest 20 orders"
+
+              +--> shard 0: top 20 sorted -->+
+  API --------+--> shard 1: top 20 sorted -->+---> merge ---> global top 20
+              +--> shard 2: top 20 sorted -->+
+                     ^
+                     latency of the whole request = slowest shard
+</pre>
+  <div class="ar-note">الـ API بيبعت نفس الـ query لكل shard بالتوازي، وكل shard بيرجع أحسن 20 عنده مرتبين، وبعدين الـ merge بيطلّع الـ top 20 الحقيقي. السهم تحت بيقول إن وقت الـ request كله هو وقت أبطأ shard.</div>
+
+<pre data-file="src/p5-scatter-gather.ts"><code class="language-typescript">import { labPort, newPool, createDatabases, mulberry32, percentile } from "./lab.ts";
+
+const port = labPort();
+const names = ["sg0", "sg1", "sg2"];
+await createDatabases(port, names);
+const pools = names.map((n) =&gt; newPool(port, n, 8));
+
+type Row = { id: string; created_at: Date };
+const T0 = Date.UTC(2026, 9, 1);
+const rand = mulberry32(7);
+
+// التوزيع مش متساوي: shard 0 عليه 3 أضعاف الـ orders، وده الطبيعي مع أي tenant كبير
+for (const [s, pool] of pools.entries()) {
+  await pool.query(`CREATE TABLE orders (id bigint PRIMARY KEY, created_at timestamptz NOT NULL, total_cents int NOT NULL);
+    CREATE INDEX ON orders (created_at DESC, id DESC)`);
+  const count = s === 0 ? 30_000 : 10_000;
+  const ids = Array.from({ length: count }, (_, i) =&gt; s * 1_000_000 + i + 1);
+  const at = ids.map(() =&gt; new Date(T0 + Math.floor(rand() * 86_400_000)).toISOString());
+  await pool.query(`INSERT INTO orders SELECT i, a::timestamptz, 500 FROM unnest($1::bigint[], $2::text[]) t(i, a)`, [ids, at]);
+  await pool.query("ANALYZE");
+}
+
+const byNewest = (a: Row, b: Row) =&gt; b.created_at.getTime() - a.created_at.getTime() || Number(BigInt(b.id) - BigInt(a.id));
+const LATEST = `SELECT id, created_at FROM orders ORDER BY created_at DESC, id DESC LIMIT $1`;
+
+// (أ) الـ scatter-gather: نسأل الكل بالتوازي وندمج النتايج المرتبة
+async function latest(n: number): Promise&lt;Row[]&gt; {
+  const lists = await Promise.all(pools.map((p) =&gt; p.query&lt;Row&gt;(LATEST, [n]).then((r) =&gt; r.rows)));
+  return lists.flat().sort(byNewest).slice(0, n);
+}
+const everyRow = (await Promise.all(pools.map((p) =&gt; p.query&lt;Row&gt;(`SELECT id, created_at FROM orders`).then((r) =&gt; r.rows))))
+  .flat().sort(byNewest);
+const top = await latest(20);
+console.log(`latest 20: merged correctly = ${top.every((r, i) =&gt; r.id === everyRow[i]!.id)}, rows fetched = ${pools.length * 20}, rows in the system = ${everyRow.length}`);
+
+// (ب) الـ latency: shard واحد مريض في 5% من الـ queries
+const sick = mulberry32(11);
+const query = async (s: number, slow: boolean) =&gt; {
+  const t = performance.now();
+  await pools[s]!.query(slow ? `SELECT pg_sleep(0.08), 1 FROM orders LIMIT 1` : LATEST, slow ? [] : [20]);
+  return performance.now() - t;
+};
+const healthy: number[] = [], sickShard: number[] = [], fanout: number[] = [];
+let slowedFanouts = 0;
+const ROUNDS = 300;
+for (let i = 0; i &lt; ROUNDS; i++) {
+  const slow = sick() &lt; 0.05;
+  const t = performance.now();
+  const [a, , c] = await Promise.all([query(0, false), query(1, false), query(2, slow)]);
+  fanout.push(performance.now() - t);
+  healthy.push(a!);
+  sickShard.push(c!);
+  if (slow) slowedFanouts++;
+}
+const row = (label: string, xs: number[]) =&gt;
+  console.log(`${label.padEnd(22)} p50≈${percentile(xs, 50).toFixed(1).padStart(6)}  p95≈${percentile(xs, 95).toFixed(1).padStart(6)}  p99≈${percentile(xs, 99).toFixed(1).padStart(6)} ms`);
+console.log(`\n${ROUNDS} rounds, shard 2 sleeps 80 ms in ${slowedFanouts} of them (Windows timers, loaded machine)`);
+row("healthy shard 0", healthy);
+row("sick shard 2", sickShard);
+row("scatter-gather", fanout);
+
+// (ج) الـ OFFSET الغلط: كل shard بيعمل offset لوحده
+async function pageNaive(page: number, size: number): Promise&lt;{ rows: Row[]; fetched: number }&gt; {
+  const lists = await Promise.all(pools.map((p) =&gt;
+    p.query&lt;Row&gt;(`SELECT id, created_at FROM orders ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2`, [size, page * size]).then((r) =&gt; r.rows)));
+  return { rows: lists.flat().sort(byNewest).slice(0, size), fetched: lists.flat().length };
+}
+// الصح لو لازم offset: كل shard يرجّع offset + limit، والدمج في الـ app. غالي جدًا في الصفحات البعيدة
+async function pageCorrectOffset(page: number, size: number) {
+  const need = (page + 1) * size;
+  const lists = await Promise.all(pools.map((p) =&gt; p.query&lt;Row&gt;(LATEST, [need]).then((r) =&gt; r.rows)));
+  return { rows: lists.flat().sort(byNewest).slice(page * size, need), fetched: lists.flat().length };
+}
+// الأحسن: cursor بياخد آخر صف شفناه، وكل shard يبدأ من بعده
+async function pageCursor(cursor: Row | null, size: number) {
+  const sql = cursor
+    ? `SELECT id, created_at FROM orders WHERE (created_at, id) &lt; ($2, $3) ORDER BY created_at DESC, id DESC LIMIT $1`
+    : LATEST;
+  const lists = await Promise.all(pools.map((p) =&gt;
+    p.query&lt;Row&gt;(sql, cursor ? [size, cursor.created_at, cursor.id] : [size]).then((r) =&gt; r.rows)));
+  return { rows: lists.flat().sort(byNewest).slice(0, size), fetched: lists.flat().length };
+}
+
+const SIZE = 20;
+console.log("\npage  naive OFFSET wrong rows  correct OFFSET rows fetched  cursor rows fetched");
+let cursor: Row | null = null;
+const seen = new Set&lt;string&gt;();
+let cursorWrong = 0;
+for (let page = 0; page &lt; 5; page++) {
+  const truth = everyRow.slice(page * SIZE, (page + 1) * SIZE);
+  const naive = await pageNaive(page, SIZE);
+  const right = await pageCorrectOffset(page, SIZE);
+  const cur = await pageCursor(cursor, SIZE);
+  cursor = cur.rows.at(-1)!;
+  const wrong = naive.rows.filter((r, i) =&gt; r.id !== truth[i]!.id).length;
+  cur.rows.forEach((r, i) =&gt; { if (r.id !== truth[i]!.id || seen.has(r.id)) cursorWrong++; seen.add(r.id); });
+  console.log(`${String(page + 1).padStart(4)}  ${String(wrong).padStart(16)}/20  ${String(right.fetched).padStart(27)}  ${String(cur.fetched).padStart(19)}`);
+}
+console.log(`cursor pagination over 5 pages: wrong or duplicate rows = ${cursorWrong}`);
+const deep = await pageCorrectOffset(1000, SIZE);
+console.log(`correct OFFSET at page 1001 fetches ${deep.fetched} rows to return ${deep.rows.length}; a cursor still fetches ${pools.length * SIZE}`);
+
+await Promise.all(pools.map((p) =&gt; p.end()));</code></pre>
+
+<pre data-file="output.txt"><code class="language-plaintext">latest 20: merged correctly = true, rows fetched = 60, rows in the system = 50000
+
+300 rounds, shard 2 sleeps 80 ms in 10 of them (Windows timers, loaded machine)
+healthy shard 0        p50≈   0.3  p95≈   0.6  p99≈   0.8 ms
+sick shard 2           p50≈   0.4  p95≈   0.9  p99≈  93.0 ms
+scatter-gather         p50≈   0.4  p95≈   1.1  p99≈  93.0 ms
+
+page  naive OFFSET wrong rows  correct OFFSET rows fetched  cursor rows fetched
+   1                 0/20                           60                   60
+   2                20/20                          120                   60
+   3                20/20                          180                   60
+   4                20/20                          240                   60
+   5                20/20                          300                   60
+cursor pagination over 5 pages: wrong or duplicate rows = 0
+correct OFFSET at page 1001 fetches 40020 rows to return 20; a cursor still fetches 60</code></pre>
+  <div class="ar-note">أول سطر: الدمج طلع صح تمامًا، بـ 60 صف من 50,000. الجدول التاني: الـ p99 بتاع الـ scatter-gather هو نفسه بتاع الـ shard المريض (≈93 ms)، مع إن الـ shard السليم ≈0.8 ms. الجدول التالت: الـ OFFSET الغلط 20 من 20 صف غلط من الصفحة 2 لغاية 5. الـ OFFSET الصح بيسحب صفوف أكتر كل صفحة، والـ cursor ثابت على 60. آخر سطر: الـ OFFSET الصح في صفحة 1001 بيسحب 40,020 صف عشان يرجع 20، والرقم أقل من 3×20,020 لأن الـ shards الأصغر عندها 10,000 صف بس، والـ cursor لسه 60.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ query اللي من غير shard key لازم تسأل الكل: ده <strong>الـ scatter-gather</strong>. لو عايز "آخر 20 order"، كل shard بيرجع أحسن 20 عنده مرتبين، ولما تدمجهم بتاخد الـ top 20 الحقيقي، لأن الـ top 20 الـ global مستحيل يكون فيه صف بره الـ top 20 بتاع الـ shard بتاعه. في التجربة دي 60 صف بس عشان نرد من 50,000. الدمج نفسه هو <a href="../../03-CS-Fundamentals/lessons/06-heaps-priority-queues-tries.html#p5">الـ k-way merge من درس الـ heaps</a>؛ مع 3 lists الـ sort كفاية، ومع مئات الـ shards استخدم الـ heap.</p>
+    <p>الوجع في الـ latency. <code>Promise.all</code> بيستنى أبطأ shard، فالـ p99 بتاع الـ fan-out ماشي ورا p99 أسوأ shard. هنا shard 2 بينام 80 ms في 5% من الـ queries (بديل عن checkpoint أو جار دوشة): الـ shard السليم p99 ≈0.8 ms، والمريض ≈93 ms، والـ fan-out ≈93 ms. احتمال إن الـ fan-out يقابل shard بطيء واحد على الأقل هو <code>1 - (1 - p)^n</code>. عند p = 1% و100 shard ده 63.4%، يعني مشكلة بتأثر على 1% من الـ requests على shard واحد بتبقى الوضع الطبيعي للـ fan-out. الحلول الحقيقية: hedged requests، وper-shard timeouts مع partial results، وتجنب الـ fan-out في المسارات السخنة.</p>
+    <p>الـ OFFSET pagination غلط عبر الـ shards. الـ <code>OFFSET 20</code> على كل shard بيتخطى أول 20 صف عنده هو، بس الصفحة 2 الـ global ممكن تحتاج صفوف من جوه الـ 20 دول على shard فاضي أكتر. ومع إن الـ orders مش متساوية على الـ shards، 20 من 20 صف طلعوا غلط في كل صفحة من 2 لقدام. نسخة الـ offset الصح بتطلب <code>offset + limit</code> صف من كل shard وتدمجهم في الـ app، فالتكلفة بتكبر مع العمق: 40,020 صف عشان ترجع صفحة 1001. الـ <strong>cursor</strong> (keyset) ثابت على 60 صف لكل صفحة وطلع صح في الـ 5 صفحات كلهم، لأن كل shard بيكمّل بالظبط بعد آخر صف الـ client شافه. والـ transactions اللي بتعدي على كذا shard موضوع تاني: شوف <a href="./34-transactions-2pc-saga-exactly-once.html">الـ distributed transactions</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      شاشة admin فيها "كل الـ orders" بـ pagination، والـ orders متقسمة على 8 shards. لو الـ frontend بيبعت <code>?page=37</code> هيطلع نتايج غلط أو query تقيلة جدًا. غيّر الـ API لـ <code>?after=&lt;createdAt,id&gt;</code> زي ما هتشوف في التمرين، وفي الـ UI استخدم "Load more" بدل أرقام الصفحات. وأي query تحتاج fan-out ومتكررة، خد لها read model بدل ما تسيبها على المسار السخن.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: your API does a Promise.all across 20 shards and p99 got terrible, though every shard looks healthy on its own dashboard. Why?</b>
+    Fan-out p99 is near the worst shard's tail, and the chance of hitting any slow shard is <code>1-(1-p)^20</code>, about 18% at p = 1%. Per-shard p99 hides it. Fix by reducing fan-out with a better shard key or a read model, adding per-shard timeouts with partial results, and hedging the slowest shard. Show the per-request maximum across shards, not the averages.
+    <div class="ar-note"><b>السؤال:</b> الـ API بيعمل <code>Promise.all</code> على 20 shard والـ p99 بقى وحش، مع إن كل shard لوحده شكله سليم على الـ dashboard. ليه؟ <b>الإجابة:</b> الـ p99 بتاع الـ fan-out قريب من ذيل أسوأ shard، واحتمال تقابل shard بطيء هو <code>1-(1-p)^20</code>، حوالي 18% عند p = 1%. الـ p99 لكل shard لوحده بيخبي ده. الحل: تقلل الـ fan-out بـ shard key أحسن أو read model، وتحط per-shard timeouts مع partial results، وتعمل hedge لأبطأ shard. واعرض الـ max لكل request عبر الـ shards، مش المتوسطات.</div>
+  </div>
+
+  <h2 id="p6">Part 6 — Secondary indexes <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ secondary indexes</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>You sharded by <code>user_id</code>, and now support asks for "all orders containing SKU-123". The shard key can't help. There are two designs.</p>
+    <p>A <strong>local index</strong> lives on each shard and indexes that shard's rows. Writes stay in one place and one transaction, so the index is always consistent with its rows: 150 out of 150 new orders were visible at once. Reads must scatter across every shard, 3 queries here, 64 on a 64-shard system.</p>
+    <p>A <strong>global index</strong> is a separate table partitioned by the indexed value (<code>orders_by_sku</code>, shard chosen by <code>hash(sku)</code>). A read goes to one index shard. Writes now touch two shards, so the index is updated asynchronously; here that's an outbox row in the same transaction as the order and a poller that writes it across. That gap is real: only 2 of 150 new orders were visible at once, with lag p50 ≈46 ms and p99 ≈62 ms at a 40 ms poll, and with the updater down for 800 ms the lag reached ≈839 ms while the writes kept succeeding. The system looks healthy while the index quietly freezes, so monitor the outbox depth and the lag.</p>
+    <p>One thing the numbers correct: a global index isn't automatically fewer queries. Fetching the full orders back took 1 index query plus 3 shard fetches, 4 queries against the local index's 3, because this SKU's orders are spread across all shards. The win appears when the index <em>covers</em> the read (the fields you need are stored in the index, 1 query), or when the shard count is much larger than the number of shards a value's rows live on. Cloud databases expose this exact choice as attribute projection.</p>
+    <p>From the docs: DynamoDB global secondary indexes are global and eventually consistent, and strongly consistent reads are "only supported on tables and local secondary indexes". Cassandra's Storage-Attached Indexes are written per SSTable on each node, so they're local, and a read that spans the cluster goes through token ranges across many nodes.</p>
+  </section>
+
+<pre data-file="src/p6-secondary-index.ts"><code class="language-typescript">import { labPort, newPool, createDatabases, hash32, mulberry32, percentile, sleep } from "./lab.ts";
+
+const port = labPort();
+const names = ["si0", "si1", "si2"];
+await createDatabases(port, names);
+const pools = names.map((n) =&gt; newPool(port, n, 8));
+
+const shardOfUser = (userId: number) =&gt; hash32(`user:${userId}`) % names.length;
+const shardOfSku = (sku: string) =&gt; hash32(`sku:${sku}`) % names.length;
+
+for (const p of pools) {
+  await p.query(`CREATE TABLE orders (id bigint PRIMARY KEY, user_id int NOT NULL, sku text NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+    CREATE INDEX orders_sku_local ON orders (sku);
+    CREATE TABLE index_outbox (seq bigserial PRIMARY KEY, order_id bigint NOT NULL, sku text NOT NULL, source_shard int NOT NULL);
+    CREATE TABLE orders_by_sku (sku text NOT NULL, order_id bigint NOT NULL, source_shard int NOT NULL, PRIMARY KEY (sku, order_id))`);
+}
+
+// الكتابة: الـ order والـ outbox في transaction واحدة على shard المستخدم
+async function placeOrder(id: number, userId: number, sku: string): Promise&lt;number&gt; {
+  const s = shardOfUser(userId);
+  await pools[s]!.query(
+    `WITH o AS (INSERT INTO orders (id, user_id, sku) VALUES ($1, $2, $3))
+     INSERT INTO index_outbox (order_id, sku, source_shard) VALUES ($1, $3, $4)`,
+    [id, userId, sku, s],
+  );
+  return s;
+}
+
+// الـ updater الـ async: بيقرا الـ outbox ويكتب في الـ global index، وده مصدر الـ stale window
+let updaterOn = true;
+let stop = false;
+const POLL_MS = 40;
+async function updater(): Promise&lt;void&gt; {
+  while (!stop) {
+    if (updaterOn) {
+      for (const p of pools) {
+        const { rows } = await p.query(`DELETE FROM index_outbox WHERE seq IN (SELECT seq FROM index_outbox ORDER BY seq LIMIT 200) RETURNING order_id, sku, source_shard`);
+        for (const r of rows) {
+          await pools[shardOfSku(r.sku)]!.query(`INSERT INTO orders_by_sku VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [r.sku, r.order_id, r.source_shard]);
+        }
+      }
+    }
+    await sleep(POLL_MS);
+  }
+}
+const updaterTask = updater();
+
+// تحميل بيانات أولية: 3000 order على 40 SKU
+const rand = mulberry32(5);
+const skuOf = () =&gt; `SKU-${String(Math.floor(rand() * 40)).padStart(3, "0")}`;
+for (let i = 1; i &lt;= 3000; i++) await placeOrder(i, 1 + Math.floor(rand() * 2000), skuOf());
+await sleep(600);
+
+// قراية بالـ local index: لازم نسأل كل الـ shards
+async function byLocal(sku: string) {
+  const res = await Promise.all(pools.map((p) =&gt; p.query(`SELECT id FROM orders WHERE sku = $1`, [sku])));
+  return { queries: pools.length, shardsTouched: pools.length, rows: res.reduce((a, r) =&gt; a + r.rowCount!, 0) };
+}
+// قراية بالـ global index: shard واحد بيقول الـ orders فين، وبعدين نجيبها من أماكنها
+async function byGlobal(sku: string) {
+  const idx = await pools[shardOfSku(sku)]!.query(`SELECT order_id, source_shard FROM orders_by_sku WHERE sku = $1`, [sku]);
+  const groups = new Map&lt;number, string[]&gt;();
+  for (const r of idx.rows) groups.set(r.source_shard, [...(groups.get(r.source_shard) ?? []), r.order_id]);
+  const res = await Promise.all([...groups].map(([s, ids]) =&gt; pools[s]!.query(`SELECT id FROM orders WHERE id = ANY($1::bigint[])`, [ids])));
+  return { queries: 1 + groups.size, shardsTouched: 1 + groups.size, rows: res.reduce((a, r) =&gt; a + r.rowCount!, 0) };
+}
+// الـ covering: الـ index نفسه فيه الأعمدة اللي محتاجها، فمفيش رجوع للـ shards
+async function byGlobalCovering(sku: string) {
+  const idx = await pools[shardOfSku(sku)]!.query(`SELECT order_id, source_shard FROM orders_by_sku WHERE sku = $1`, [sku]);
+  return { queries: 1, shardsTouched: 1, rows: idx.rowCount! };
+}
+const avg = async (fn: (s: string) =&gt; Promise&lt;{ queries: number; rows: number }&gt;) =&gt; {
+  let q = 0, r = 0;
+  for (let i = 0; i &lt; 40; i++) {
+    const out = await fn(`SKU-${String(i).padStart(3, "0")}`);
+    q += out.queries; r += out.rows;
+  }
+  return `queries per read = ${(q / 40).toFixed(2)}  rows per read = ${(r / 40).toFixed(1)}`;
+};
+console.log(`local index:             ${await avg(byLocal)}`);
+console.log(`global index, then fetch: ${await avg(byGlobal)}`);
+console.log(`global index, covering:  ${await avg(byGlobalCovering)}`);
+
+// الـ stale window: بعد الـ commit، إمتى الـ order يبان في الـ global index؟
+async function measureLag(rounds: number, startId: number) {
+  const lags: number[] = [];
+  let visibleImmediately = 0;
+  let localImmediately = 0;
+  for (let i = 0; i &lt; rounds; i++) {
+    const id = startId + i, sku = `SKU-LAG-${i % 5}`, user = 1 + Math.floor(rand() * 2000);
+    const s = await placeOrder(id, user, sku);
+    const t0 = performance.now();
+    const local = await pools[s]!.query(`SELECT 1 FROM orders WHERE sku = $1 AND id = $2`, [sku, id]);
+    if (local.rowCount) localImmediately++;
+    for (let tries = 0; ; tries++) {
+      const r = await pools[shardOfSku(sku)]!.query(`SELECT 1 FROM orders_by_sku WHERE sku = $1 AND order_id = $2`, [sku, id]);
+      if (r.rowCount) {
+        if (tries === 0) visibleImmediately++;
+        lags.push(performance.now() - t0);
+        break;
+      }
+      await sleep(1);
+    }
+  }
+  console.log(`  visible at once: global ${visibleImmediately}/${rounds}, local ${localImmediately}/${rounds}   lag ms p50≈${percentile(lags, 50).toFixed(0)} p99≈${percentile(lags, 99).toFixed(0)} max≈${Math.max(...lags).toFixed(0)}`);
+}
+console.log(`\nasync updater polling every ${POLL_MS} ms, then with the updater down for 800 ms`);
+await measureLag(150, 500_000);
+
+// الـ updater وقع: الكتابة شغالة عادي، بس الـ global index متجمّد
+updaterOn = false;
+const stalled = measureLag(20, 600_000);
+await sleep(800);
+updaterOn = true;
+await stalled;
+
+stop = true;
+await updaterTask;
+await Promise.all(pools.map((p) =&gt; p.end()));</code></pre>
+
+<pre data-file="output.txt"><code class="language-plaintext">local index:             queries per read = 3.00  rows per read = 75.0
+global index, then fetch: queries per read = 4.00  rows per read = 75.0
+global index, covering:  queries per read = 1.00  rows per read = 75.0
+
+async updater polling every 40 ms, then with the updater down for 800 ms
+  visible at once: global 2/150, local 150/150   lag ms p50≈46 p99≈62 max≈63
+  visible at once: global 0/20, local 20/20   lag ms p50≈46 p99≈839 max≈839</code></pre>
+  <div class="ar-note">أول 3 سطور: الـ local بيحتاج 3 queries لكل قراية، والـ global لما ترجع تجيب الـ orders بيحتاج 4، والـ global الـ covering بيحتاج 1 بس. تحت: السطر الأول، الـ updater شغال، والـ global شاف 2 من 150 فورًا والـ local شاف 150 من 150، واللاج p50 ≈46 ms. السطر التاني، الـ updater وقف 800 ms، واللاج وصل ≈839 ms.</div>
+
+<table>
+  <tr><th></th><th>Local index</th><th>Global index</th></tr>
+  <tr><td>Write cost</td><td>One shard, one transaction</td><td>Two shards; async or distributed transaction</td></tr>
+  <tr><td>Read cost</td><td>All shards (3 here, N in general)</td><td>1 index shard, plus fetches unless the index covers the read</td></tr>
+  <tr><td>Consistency</td><td>Read-your-writes on that shard</td><td>Stale window (46–839 ms here); eventual</td></tr>
+  <tr><td>Who does it</td><td>Cassandra SAI, Postgres indexes on each shard</td><td>DynamoDB GSIs</td></tr>
+</table>
+  <div class="ar-note">صف "Write cost": الـ local shard واحد وtransaction واحدة، والـ global 2 shards وasync أو distributed transaction. صف "Read cost": الـ local لازم كل الـ shards (3 هنا، N عمومًا)، والـ global بياخد index shard واحد وبعدين fetches إلا لو الـ index بيغطي القراية. صف "Consistency": الـ local بيدي read-your-writes على الـ shard ده، والـ global فيه stale window (46 لـ 839 ms هنا) وeventual. صف "Who does it": الـ local زي SAI في Cassandra والـ indexes العادية على كل shard في Postgres، والـ global زي الـ GSIs في DynamoDB.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>عملت shard بالـ <code>user_id</code>، ودلوقتي الـ support عايز "كل الـ orders اللي فيها SKU-123". الـ shard key مش هيساعد. عندك تصميمين.</p>
+    <p><strong>الـ local index</strong> موجود على كل shard وبيعمل index لصفوف الـ shard ده بس. الكتابات بتفضل في مكان واحد وtransaction واحدة، فالـ index دايمًا متوافق مع صفوفه: 150 من 150 order جديد بانوا فورًا. القراية لازم تلف على كل الـ shards: 3 queries هنا، و64 على نظام فيه 64 shard.</p>
+    <p><strong>الـ global index</strong> جدول منفصل متقسم بالقيمة المتعمل لها index (<code>orders_by_sku</code>، والـ shard بيتحدد بـ <code>hash(sku)</code>). القراية بتروح لـ index shard واحد. الكتابات بقت بتلمس 2 shards، فالـ index بيتحدث async؛ هنا عن طريق صف outbox في نفس transaction الـ order، وpoller بينقله. الفجوة دي حقيقية: 2 بس من 150 order بانوا فورًا، واللاج p50 ≈46 ms وp99 ≈62 ms مع poll كل 40 ms، ولما الـ updater وقف 800 ms اللاج وصل ≈839 ms والكتابات شغالة عادي. النظام شكله سليم والـ index متجمّد في صمت، فلازم تراقب حجم الـ outbox والـ lag.</p>
+    <p>حاجة الأرقام صلّحتها: الـ global index مش أوتوماتيك معناه queries أقل. لما رجعنا نجيب الـ orders كاملة، احتجنا index query واحدة + 3 shard fetches، يعني 4 مقابل 3 بتاعة الـ local، لأن orders الـ SKU ده متفرقة على كل الـ shards. المكسب بيظهر لما الـ index <em>يغطي</em> القراية (الحقول اللي محتاجها متخزنة في الـ index، query واحدة)، أو لما عدد الـ shards يبقى أكبر بكتير من عدد الـ shards اللي صفوف القيمة دي موجودة عليها. والـ cloud databases بتعرض الاختيار ده بالظبط تحت اسم attribute projection.</p>
+    <p>من الـ docs: الـ global secondary indexes في DynamoDB هي global وeventually consistent، والـ strongly consistent reads مدعومة بس على الـ tables والـ local secondary indexes. والـ Storage-Attached Indexes في Cassandra بتتكتب لكل SSTable على كل node فهي local، والقراية اللي بتعدي على الـ cluster كله بتلف على token ranges في nodes كتير.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      شاشة support بتدور بـ <code>email</code>، والـ users متقسمين بـ hash على الـ id. لو الـ endpoint بيتطلب 1000 مرة في الثانية، الـ local index معناه 16 query لكل طلب على 16 shard: اعمل جدول global صغير <code>users_by_email</code> بيخزن الـ shard والـ id. ولو العميل بيغيّر الإيميل وبيدخل فورًا، اختبر الـ stale window: بعد الـ update الـ login الجديد ممكن يفشل لثواني، فاقرا من مصدر الحقيقة في الـ flow ده أو اعمل الكتابة sync في الحالة دي بالذات.
+    </div>
+  </section>
+
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+  <div class="compare">
+    <div class="bad"><b>❌ Shard key that grows with time</b>
+<pre><code class="language-typescript">// كل order جديد بيروح لآخر shard
+const shard = monthIndex(order.createdAt);</code></pre></div>
+    <div class="good"><b>✅ Hash the entity that owns the row</b>
+<pre><code class="language-typescript">// الكتابات بتتوزع، وأوامر كل مستخدم في shard واحد
+const shard = hash32(`user:${order.userId}`) % shardCount;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ لو الـ shard key بيزيد مع الوقت (<code>created_at</code>، id متسلسل)، كل الكتابات الجديدة بتنزل على آخر shard، وعدد الصفوف النهائي بيفضل شكله متوازن فبيخدعك. ✅ اعمل hash للكيان اللي بيملك الصف، زي الـ user أو الـ tenant، عشان الكتابات تتوزع وقراية بيانات الكيان ده تفضل على shard واحد.</p>
+  </section>
+  <div class="compare">
+    <div class="bad"><b>❌ Trusting the modulus in code</b>
+<pre><code class="language-typescript">// لو عدد الـ shards اتغير، 80% من المفاتيح مكانها بيتغير
+const shard = hash32(key) % shards.length;</code></pre></div>
+    <div class="good"><b>✅ Slots + a routing table</b>
+<pre><code class="language-typescript">// مفيش حساب بيتغير: الـ slot ثابت، والجدول اللي بيتغير
+const slot = hash32(key) % 16384;
+const shard = routing.lookup(slot);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>hash % length</code> بينقل 80% من المفاتيح لو N زاد واحد. ✅ عدد slots ثابت وكبير، والـ routing table بيقول كل slot فين، فإضافة node معناها نقل slots بس وتعديل الجدول، والمعادلة نفسها ماتتغيرش.</p>
+  </section>
+  <div class="compare">
+    <div class="bad"><b>❌ <code>OFFSET</code> pushed to each shard</b>
+<pre><code class="language-typescript">// كل shard بيتخطى أول صفوفه هو، فالصفحة بتطلع غلط
+await Promise.all(shards.map(s =&gt; s.query(
+  `... ORDER BY created_at DESC LIMIT 20 OFFSET 20`)));</code></pre></div>
+    <div class="good"><b>✅ Cursor on (created_at, id)</b>
+<pre><code class="language-typescript">// كل shard بيكمّل بالظبط بعد آخر صف العميل شافه
+await Promise.all(shards.map(s =&gt; s.query(
+  `... WHERE (created_at, id) &lt; ($1, $2)
+   ORDER BY created_at DESC, id DESC LIMIT 20`, cursor)));</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>OFFSET</code> لوحده على كل shard طلّع 20 من 20 صف غلط في التجربة، لأنه بيتخطى صفوف الـ shard ده بس. ✅ الـ cursor على <code>(created_at, id)</code> بياخد الصفحة صح وبتكلفة ثابتة؛ والـ <code>id</code> لازم يكون موجود عشان الـ ties (في التمرين 3 هتشوف الـ cursor بالوقت لوحده بيضيّع صفوف).</p>
+  </section>
+  <div class="compare">
+    <div class="bad"><b>❌ Random salt per write</b>
+<pre><code class="language-typescript">// مفيش طريقة تعرف الـ order ده في أنهي bucket
+const bucket = Math.floor(Math.random() * 10);
+const key = `tenant:7#${bucket}`;</code></pre></div>
+    <div class="good"><b>✅ Salt derived from the row</b>
+<pre><code class="language-typescript">// الـ bucket معروف من الـ id، والقراية بالـ id بتروح لمكان واحد
+const bucket = hash32(orderId) % 10;
+const key = `tenant:7#${bucket}`;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ salt العشوائي بيخلي قراية order واحد بالـ id تبقى fan-out على كل الـ buckets. ✅ لو الـ bucket طالع من الـ order id نفسه، تقدر تحسبه وقت القراية وتروح لـ bucket واحد؛ والتوزيع برضه متساوي طالما الـ hash كويس.</p>
+  </section>
+  <div class="compare">
+    <div class="bad"><b>❌ Flip the routing table and hope</b>
+<pre><code class="language-typescript">// الـ snapshot قبل الـ flip، وأي كتابة بعدها بتضيع
+await copyRows(a, b, slot);
+await updateRouting(slot, "b");
+await deleteRows(a, slot);</code></pre></div>
+    <div class="good"><b>✅ Epoch fence + double write</b>
+<pre><code class="language-typescript">// كل كتابة بتتأكد من الـ epoch جوه نفس الـ statement
+await openDoubleWrite(slot);
+await backfill(a, b, slot);
+await fenceAndFlip(slot);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ flip من غير حماية ضيّع 4,464 كتابة متأكدة ومن غير ولا error. ✅ كل كتابة معاها <code>epoch</code> بيتراجع على الـ shard نفسه، والـ double-write بيغطي الوقت اللي النسخ شغال فيه، فالـ client القديم بيترفض ويحدّث بدل ما يضيّع كتابته في صمت.</p>
+  </section>
+
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Prove the formula <span class="lvl lvl-1">🟢 easy</span></b>
+    Write a loop over 2,000,000 integers that counts how many change bucket between <code>% N</code> and <code>% (N+1)</code> for N = 3, 4, 9, 19, and compare with <code>N/(N+1)</code>.
+    <div class="ar-note">اكتب loop على 2,000,000 رقم بتعد كام واحد بيغير الـ bucket بين <code>% N</code> و<code>% (N+1)</code> لقيم N = 3 و4 و9 و19، وقارن بالمعادلة <code>N/(N+1)</code>.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="sol/s13-1.ts"><code class="language-typescript">// التحقق بالعدّ: كام مفتاح مكانه اتغير لما N بيزيد واحد؟
+const KEYS = 2_000_000;
+console.log("N -&gt; N+1   measured moved   formula N/(N+1)");
+for (const n of [3, 4, 9, 19]) {
+  let moved = 0;
+  for (let h = 0; h &lt; KEYS; h++) if (h % n !== h % (n + 1)) moved++;
+  console.log(`${String(n).padStart(2)} -&gt; ${String(n + 1).padEnd(4)} ${((moved / KEYS) * 100).toFixed(2).padStart(10)}%  ${((n / (n + 1)) * 100).toFixed(2).padStart(14)}%`);
+}</code></pre>
+<pre data-file="output.txt"><code class="language-plaintext">N -&gt; N+1   measured moved   formula N/(N+1)
+ 3 -&gt; 4         75.00%           75.00%
+ 4 -&gt; 5         80.00%           80.00%
+ 9 -&gt; 10        90.00%           90.00%
+19 -&gt; 20        95.00%           95.00%</code></pre>
+      <div class="ar-note">النتيجة بتوافق المعادلة بالظبط: 75% و80% و90% و95%. الـ formula صحيحة لأن المفتاح بيفضل مكانه بس لما الباقيين يتفقوا، وده بيحصل في <code>1/(N+1)</code> من الحالات.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. Group buckets by shard <span class="lvl lvl-2">🟡 medium</span></b>
+    Write <code>bucketsByShard(tenant, buckets, shards)</code> that returns which buckets live on which shard, so the read path sends one query per shard. Check it for tenant 7, 10 buckets, 4 shards.
+    <div class="ar-note">اكتب <code>bucketsByShard(tenant, buckets, shards)</code> بترجع أنهي buckets قاعدين على أنهي shard، عشان القراية تبعت query واحدة لكل shard. جربها على tenant 7 بـ 10 buckets و4 shards.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="sol/s13-2.ts"><code class="language-typescript">import { createHash } from "node:crypto";
+
+const hash32 = (key: string) =&gt; createHash("md5").update(key).digest().readUInt32BE(0);
+
+// كل bucket بيروح لـ shard واحد، فبنجمّعهم عشان query واحدة لكل shard
+export function bucketsByShard(tenant: number, buckets: number, shards: number): Map&lt;number, number[]&gt; {
+  const out = new Map&lt;number, number[]&gt;();
+  for (let b = 0; b &lt; buckets; b++) {
+    const s = hash32(`tenant:${tenant}#${b}`) % shards;
+    out.set(s, [...(out.get(s) ?? []), b]);
+  }
+  return out;
+}
+
+const groups = bucketsByShard(7, 10, 4);
+console.log([...groups].sort((a, b) =&gt; a[0] - b[0]).map(([s, bs]) =&gt; `shard ${s}: [${bs.join(",")}]`).join("  "));
+console.log(`queries needed: ${groups.size} instead of 10`);</code></pre>
+<pre data-file="output.txt"><code class="language-plaintext">shard 0: [2,4,9]  shard 1: [0,1,5,7]  shard 3: [3,6,8]
+queries needed: 3 instead of 10</code></pre>
+      <div class="ar-note">الـ buckets العشرة نزلوا على 3 shards بس، فالقراية 3 queries بدل 10. ولاحظ إن shard رقم 2 مفيهوش buckets خالص: توزيع الـ hash على عدد قليل من الـ buckets مش بيدي توازن تلقائي.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. Cursor with ties <span class="lvl lvl-2">🟡 medium</span></b>
+    Three in-memory shards contain orders with identical <code>createdAt</code> values. Page through them with a cursor on <code>createdAt</code> only, then with <code>(createdAt, id)</code>, and print which ids go missing.
+    <div class="ar-note">عندك 3 shards في الـ memory فيها orders بنفس قيمة <code>createdAt</code>. اعمل pagination بـ cursor على <code>createdAt</code> بس، وبعدين على <code>(createdAt, id)</code>، واطبع أنهي ids ضاعت.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="sol/s13-3.ts"><code class="language-typescript">type Order = { id: number; createdAt: number };
+
+// كل الـ orders ليها نفس الوقت أحيانًا: الـ tie-break على الـ id هو اللي بيفرق
+const shards: Order[][] = [
+  [{ id: 9, createdAt: 100 }, { id: 8, createdAt: 100 }, { id: 3, createdAt: 90 }],
+  [{ id: 7, createdAt: 100 }, { id: 5, createdAt: 95 }, { id: 2, createdAt: 90 }],
+  [{ id: 6, createdAt: 100 }, { id: 4, createdAt: 95 }, { id: 1, createdAt: 90 }],
+];
+const newestFirst = (a: Order, b: Order) =&gt; b.createdAt - a.createdAt || b.id - a.id;
+const truth = shards.flat().sort(newestFirst);
+
+function page(cursor: Order | null, size: number, withTieBreak: boolean): Order[] {
+  const after = (o: Order) =&gt;
+    cursor === null ||
+    (withTieBreak
+      ? o.createdAt &lt; cursor.createdAt || (o.createdAt === cursor.createdAt &amp;&amp; o.id &lt; cursor.id)
+      : o.createdAt &lt; cursor.createdAt);
+  return shards.flatMap((s) =&gt; s.filter(after).sort(newestFirst).slice(0, size)).sort(newestFirst).slice(0, size);
+}
+
+function walk(withTieBreak: boolean): number[] {
+  const seen: number[] = [];
+  let cursor: Order | null = null;
+  for (;;) {
+    const rows = page(cursor, 2, withTieBreak);
+    if (!rows.length) return seen;
+    seen.push(...rows.map((r) =&gt; r.id));
+    cursor = rows.at(-1)!;
+  }
+}
+const missing = (ids: number[]) =&gt; truth.filter((o) =&gt; !ids.includes(o.id)).map((o) =&gt; o.id);
+console.log(`cursor on createdAt only:   ${walk(false).join(",")}  missing=[${missing(walk(false)).join(",")}]`);
+console.log(`cursor on (createdAt, id):  ${walk(true).join(",")}  missing=[${missing(walk(true)).join(",")}]`);</code></pre>
+<pre data-file="output.txt"><code class="language-plaintext">cursor on createdAt only:   9,8,5,4,3,2  missing=[7,6,1]
+cursor on (createdAt, id):  9,8,7,6,5,4,3,2,1  missing=[]</code></pre>
+      <div class="ar-note">الـ cursor على الوقت لوحده ضيّع الـ ids رقم 7 و6 و1، لأنها بنفس timestamp بتاع آخر صف في صفحة سابقة. لما أضفنا الـ <code>id</code> كـ tie-break، الـ 9 صفوف ظهروا كلهم مرة واحدة بالظبط.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project: a slot map with an epoch <span class="lvl lvl-3">🔴 project</span></b>
+    In your side project's order store, add a <code>slot_map(slot, shard, epoch)</code> table and route writes through it with the epoch fence from Part 4. Then run the live-move drill against two local databases and confirm your counters show 0 lost writes while a load script runs.
+    <div class="ar-note">في الـ order store بتاع مشروعك الجانبي، ضيف جدول <code>slot_map(slot, shard, epoch)</code> ووجّه الكتابات من خلاله بالـ epoch fence من الجزء 4. وبعدين اعمل live-move بين 2 databases محليين، واتأكد إن العدادات عندك بتقول 0 lost writes وإنت شغّال load script.</div>
+    <details><summary>Hint · تلميح</summary>
+      Start from <code>FENCED_UPSERT</code> in <code>p4-live-move.ts</code>. Run the bad flip first so you can see your counters catch it.
+      <div class="ar-note">ابدأ من <code>FENCED_UPSERT</code> في <code>p4-live-move.ts</code>. وشغّل الـ bad flip الأول عشان تتأكد إن العدادات بتاعتك بتمسك المشكلة فعلًا.</div>
+    </details>
+  </div>
+
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Range: cheap scans, sequential keys send 100% of writes to the last shard. Hash: even writes, range queries hit every shard.</li>
+    <li>Row-count balance isn't write balance: all three shards ended at 100,000 rows while each took 100% of one window.</li>
+    <li>Adding a node: <code>% N</code> moves <code>N/(N+1)</code> (80.2%); a ring moves the new node's real share (16.2% at 100 vnodes, 19.9% at 1,000).</li>
+    <li>Vnodes trade memory and rebalancing work for balance: deviation 48% → 2.25%. Rendezvous: no ring, 0.54%, lookup O(N).</li>
+    <li>Salting spreads writes and multiplies reads. Hash placement on few shards can make the hottest shard worse (1.28× → 1.47×); salt the top tenants together and re-measure.</li>
+    <li>Group salted buckets by shard (3 queries, not 10) and pick the salt from the row id, not at random.</li>
+    <li>Rebalancing: fixed slots, dynamic split, or per-node proportional. A live move needs double-write or CDC, a verified copy, and an epoch fence on each write.</li>
+    <li>A bad flip loses acknowledged writes with zero errors (4,464 of 10,016). A fenced flip: 0 lost, 8 retries, ≈37 ms pause.</li>
+    <li>Scatter-gather latency is the slowest shard; <code>1-(1-p)^n</code> is your tail exposure. Per-shard <code>OFFSET</code> is wrong: use a cursor on <code>(created_at, id)</code>.</li>
+    <li>Local index: consistent, read scatters. Global index: one-place read, async write, stale window. It wins when it covers the read.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ range: الـ scans رخيصة، والمفاتيح المتسلسلة بتبعت 100% من الكتابات لآخر shard. الـ hash: كتابات متوزعة، والـ range queries بتلمس كل الـ shards.</li>
+      <li>توازن عدد الصفوف مش توازن الكتابة: الـ 3 shards خلصوا 100,000 صف، وكل واحد شال 100% من نافذة كاملة.</li>
+      <li>إضافة node: <code>% N</code> بينقل <code>N/(N+1)</code> (80.2%)، والـ ring بينقل نصيب الـ node الجديد الحقيقي (16.2% عند 100 vnode و19.9% عند 1000).</li>
+      <li>الـ vnodes بتبدّل memory وشغل rebalancing بتوازن: الانحراف من 48% لـ 2.25%. والـ Rendezvous: من غير ring، 0.54%، بس الـ lookup <code>O(N)</code>.</li>
+      <li>الـ salting بيوزع الكتابات ويضاعف القرايات. الـ hash على shards قليلة ممكن يخلي أسخن shard أسوأ (من 1.28× لـ 1.47×)؛ طبّقه على أكبر tenants مع بعض وقيس تاني.</li>
+      <li>جمّع الـ salted buckets حسب الـ shard (3 queries مش 10)، واختار الـ salt من الـ row id مش عشوائي.</li>
+      <li>الـ Rebalancing: fixed slots، أو dynamic split، أو per-node proportional. والنقل وهو شغال محتاج double-write أو CDC، ونسخة متأكد منها، وepoch fence على كل كتابة.</li>
+      <li>الـ flip السيء بيضيّع كتابات متأكدة ومن غير errors (4,464 من 10,016). والـ flip بالـ fence: 0 ضياع، 8 retries، وتوقف ≈37 ms.</li>
+      <li>latency الـ scatter-gather هو أبطأ shard، و<code>1-(1-p)^n</code> هو تعرّضك للذيل. الـ <code>OFFSET</code> لكل shard غلط: استخدم cursor على <code>(created_at, id)</code>.</li>
+      <li>الـ local index: متسق، والقراية بتنتشر. الـ global index: القراية من مكان واحد، الكتابة async، وفيه stale window. بيكسب لما يغطي القراية.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 12 · 2.2 — Partitioning/sharding: by key range (hot spots لو sequential)، by hash، consistent hashing، hot spots و key salting، rebalancing strategies، cross-shard queries (scatter-gather)، secondary indexes (local vs global)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/">Redis Cluster specification — slots and key hashing</a></li>
+    <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html">DynamoDB — read consistency and GSIs</a></li>
+    <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/GSI.html">DynamoDB — global secondary indexes</a></li>
+    <li><a href="https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html">Apache Cassandra — Dynamo architecture, tokens and vnodes</a></li>
+    <li><a href="https://cassandra.apache.org/doc/latest/cassandra/developing/cql/indexing/sai/sai-concepts.html">Apache Cassandra — Storage-Attached Indexing concepts</a></li>
+    <li><a href="https://www.citusdata.com/blog/2017/08/09/principles-of-sharding-for-relational-databases/">Citus — principles of sharding for relational databases</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./12-replication-failover-split-brain.html"><small>← Previous</small>12 · Replication</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./14-consistency-models-cap-pacelc.html"><small>Next →</small>14 · Consistency &amp; CAP</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

@@ -1,0 +1,1476 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case Study: Distributed Rate Limiter — 12 System Design</title>
+<meta name="section" content="12-System-Design">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="45 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">12 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 47 / 63</span>
+    <span>·</span>
+    <span>~45 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <header>
+    <h1>Case Study: Distributed Rate Limiter</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 47 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 45 min</span>
+      <span class="chip">Node 22 · Redis 8 · Fastify</span>
+      <span class="chip">Prereq: 25 Rate Limiting</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>12 · 3.2 — 2. Rate limiter — algorithms، Redis، distributed consistency، where to put it (gateway vs service)، response headers</li>
+      </ul>
+    </div>
+  </header>
+
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — The exercise</a></li>
+      <li><a href="#p2">Part 2 — Where it lives</a></li>
+      <li><a href="#p3">Part 3 — Headers</a></li>
+      <li><a href="#p4">Part 4 — The mechanism, real</a></li>
+      <li><a href="#p5">Part 5 — Trade-offs &amp; review</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>"Design a rate limiter" is one of the most common design questions, and it's also a feature you will ship: an API without limits gets scraped, abused or taken down by one buggy client. This lesson doesn't re-teach the algorithms. <a href="./25-rate-limiting-algorithms-distributed.html">Lesson 25</a> compared them. Here you design the whole system on the clock: requirements, memory, where it runs, what the client sees, and what happens the moment Redis dies.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>"صمّم rate limiter" من أكتر أسئلة الـ design اللي بتتسأل، وكمان feature هتشحنها فعلًا: أي API من غير limits بيتعمله scraping وabuse، أو client واحد فيه bug يوقّعه. الدرس ده مش هيعيد شرح الـ algorithms، <a href="./25-rate-limiting-algorithms-distributed.html">درس 25</a> قارنهم. هنا هتصمم النظام كله بتوقيت: المتطلبات، الـ memory، بيتحط فين، الـ client بيشوف إيه، وإيه اللي بيحصل في اللحظة اللي Redis يقع فيها.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — The exercise <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — التمرين</span></h2>
+
+  <div class="callout warn">
+    <b>⏱ Stop here. Set a 45-minute timer, talk out loud, design on paper, and only then read on.</b>
+    <p><b>The prompt:</b> Design rate limiting for a public API. 10 million daily users. Limits per user and per IP. The limiter may add less than 5 ms to a request. Decide the algorithm, where it runs, what it stores, what the client sees and what happens when its storage fails.</p>
+    <div class="ar-note">
+      <p><b>وقف هنا. اظبط تايمر 45 دقيقة، اتكلم بصوت عالي، صمّم على ورق، وبعدين بس كمّل قراءة.</b></p>
+      <p><b>السؤال:</b> صمّم rate limiting لـ public API. عندنا 10 مليون يوزر يوميًا. الحدود لكل user ولكل IP. الـ limiter مسموح يزوّد أقل من 5 ms على الـ request. قرّر الـ algorithm، وبيشتغل فين، وبيخزّن إيه، والـ client بيشوف إيه، وإيه اللي بيحصل لما الـ storage بتاعه يقع.</p>
+    </div>
+  </div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>Requirements.</strong> Functional: limit per user and per IP, several rules per endpoint, return <code>429</code> with useful headers, change rules without a deploy. Non-functional, with numbers: 10M daily users, under 5 ms added per request, a small overshoot is acceptable, and a Redis outage must not take the API down.</p>
+    <p><strong>Estimates.</strong> Assume 40 API calls per user per day and a 3× peak: about 13.9k requests per second at peak. Two checks per request gives about 27.8k Redis script calls per second. The number of live keys isn't 10M. A key only exists for users active inside its window, so we assume 3% of daily users are active in the same minute, plus 0.7 IPs per active user: 510k keys. Measured per-key memory from real Redis: 92 bytes for a fixed counter, 125 for a token bucket, 2,893 for a sliding log holding 100 entries. That is 64 MB for token buckets against 1.48 GB for sliding logs.</p>
+    <p><strong>Algorithm, with a reason.</strong> Token bucket. It's two fields per key, it allows short bursts, which real API clients have, it has no fixed-window edge problem, and weighted costs are one argument. The sliding log is exact but costs 23× the memory. Details and the alternatives are in <a href="./25-rate-limiting-algorithms-distributed.html">lesson 25</a>.</p>
+    <p><strong>API contract.</strong> The limiter is a middleware with one call: <code>check(key, rule, cost)</code> returns a <code>Decision</code> with <code>allowed</code>, <code>limit</code>, <code>remaining</code>, <code>retryAfterMs</code>, <code>resetMs</code> and <code>source</code>. <strong>Data model:</strong> one Redis hash per bucket, <code>rl:{user:42}:rpm</code>, with fields <code>tokens</code> and <code>ts</code> and a TTL equal to the time to refill, plus one config key, <code>rl:config</code>.</p>
+  </section>
+
+<pre data-file="calc.ts"><code class="language-typescript">// الـ calculator ده نسخة مختصرة من اللي بنيناه في درس 02، بس بأرقام الـ limiter
+const SECONDS_PER_DAY = 86_400;
+
+function qps(input: { dau: number; actionsPerUser: number; peakFactor: number }) {
+  const avg = (input.dau * input.actionsPerUser) / SECONDS_PER_DAY;
+  return { avg, peak: avg * input.peakFactor };
+}
+
+const human = (b: number) =&gt; (b &gt;= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${(b / 1e6).toFixed(1)} MB`);
+
+const dau = 10_000_000;
+const { avg, peak } = qps({ dau, actionsPerUser: 40, peakFactor: 3 });
+console.log(`API traffic: avg ${avg.toFixed(0)} req/s, peak ${peak.toFixed(0)} req/s`);
+
+// كل request بيعمل check للـ user وللـ IP، يعني مكالمتين Lua
+const checksPerRequest = 2;
+const redisOps = peak * checksPerRequest;
+console.log(`Redis script calls at peak: ${redisOps.toFixed(0)} /s`);
+
+// الـ keys اللي عايشة هي بتاعة الناس النشطة في نفس الـ window، مش كل الـ DAU
+const activeShare = 0.03;
+const ipsPerUser = 0.7;
+const keysUser = dau * activeShare;
+const keysIp = keysUser * ipsPerUser;
+const keys = keysUser + keysIp;
+console.log(`live keys at peak: ${keysUser.toFixed(0)} users + ${keysIp.toFixed(0)} IPs = ${keys.toFixed(0)}`);
+
+// الأرقام دي من p1-memory.ts، متقاسة على Redis حقيقي بفرق used_memory
+const measured = { "fixed counter": 92, "token bucket": 125, "sliding log (100 entries)": 2893 } as const;
+for (const [name, bytes] of Object.entries(measured)) {
+  console.log(`${name.padEnd(26)} ${String(bytes).padStart(5)} B/key -&gt; ${human(keys * bytes).padStart(9)}`);
+}
+
+// لو الميزانية 5 ms، و الشبكة + الـ Lua بياخدوا ⁦~1 ms⁩، ده باقي الميزانية بعد مكالمتين
+const rttMs = 0.5;
+const scriptMs = 0.05;
+const addedPerRequest = checksPerRequest * (rttMs + scriptMs);
+console.log(`added latency if both checks run in series: ${addedPerRequest.toFixed(2)} ms (budget 5 ms)`);</code></pre>
+<pre><code class="language-plaintext">API traffic: avg 4630 req/s, peak 13889 req/s
+Redis script calls at peak: 27778 /s
+live keys at peak: 300000 users + 210000 IPs = 510000
+fixed counter                 92 B/key -&gt;   46.9 MB
+token bucket                 125 B/key -&gt;   63.8 MB
+sliding log (100 entries)   2893 B/key -&gt;   1.48 GB
+added latency if both checks run in series: 1.10 ms (budget 5 ms)</code></pre>
+  <div class="ar-note">الناتج ده تقدير بالحساب: 13,889 request في الثانية وقت الـ peak، و27,778 مكالمة Lua في الثانية عشان كل request بيعمل check مرتين. الـ keys الحية 510,000 مش 10 مليون. وتحت ده الـ memory لكل algorithm: الـ fixed counter حوالي 47 MB، والـ token bucket حوالي 64 MB، والـ sliding log بـ 100 entry حوالي 1.48 GB. وآخر سطر: مكالمتين Lua ورا بعض بياخدوا حوالي 1.1 ms من ميزانية الـ 5 ms، ودي أرقام مفترضة مش مقاسة.</div>
+
+<pre data-file="p1-memory.ts"><code class="language-typescript">// الملف ده بيقيس الـ bytes الحقيقية لكل نوع key بدل التخمين
+import { client, safePort } from "./redis-common.ts";
+
+const r = client(safePort());
+const used = async () =&gt; Number(/used_memory:(\d+)/.exec(await r.info("memory"))![1]);
+
+async function measure(name: string, count: number, fill: (i: number, p: ReturnType&lt;typeof r.pipeline&gt;) =&gt; void) {
+  await r.flushall();
+  const before = await used();
+  for (let i = 0; i &lt; count; i += 2000) {
+    const p = r.pipeline();
+    for (let j = i; j &lt; Math.min(i + 2000, count); j++) fill(j, p);
+    await p.exec();
+  }
+  const after = await used();
+  console.log(`${name.padEnd(27)} ${((after - before) / count).toFixed(0).padStart(5)} B/key`);
+}
+
+await measure("fixed counter", 50_000, (i, p) =&gt; p.set(`rl:u:${i}`, "42", "PX", 60000));
+await measure("token bucket", 50_000, (i, p) =&gt;
+  p.hset(`rl:u:${i}`, "tokens", "57.25", "ts", "1794200000123").pexpire(`rl:u:${i}`, 60000),
+);
+await measure("sliding log (100 entries)", 3_000, (i, p) =&gt; {
+  for (let e = 0; e &lt; 100; e++) p.zadd(`rl:u:${i}`, 1794200000000 + e * 137, `${1794200000000 + e * 137}:${e}`);
+  p.pexpire(`rl:u:${i}`, 60000);
+});
+console.log(`encoding of the log key: ${await r.object("ENCODING", "rl:u:0")}`);
+console.log(`redis version: ${/redis_version:(\S+)/.exec(await r.info("server"))![1]}`);
+
+// بنشوف سرعة EVALSHA نفسها، والنتيجة من ويندوز على جهاز عليه شغل تاني فهي تقريبية
+const sha = (await r.script("LOAD", `return redis.call('INCR', KEYS[1])`)) as string;
+const t0 = performance.now();
+for (let round = 0; round &lt; 40; round++) {
+  const p = r.pipeline();
+  for (let i = 0; i &lt; 1000; i++) p.evalsha(sha, 1, `rl:speed:${i}`);
+  await p.exec();
+}
+console.log(`pipelined EVALSHA on this machine: ~${Math.round(40_000 / ((performance.now() - t0) / 1000))} /s`);
+r.disconnect();</code></pre>
+<pre><code class="language-plaintext">fixed counter                  92 B/key
+token bucket                  125 B/key
+sliding log (100 entries)    2893 B/key
+encoding of the log key: listpack
+redis version: 8.10.3
+pipelined EVALSHA on this machine: ~151197 /s</code></pre>
+  <div class="ar-note">ده القياس الحقيقي من Redis 8.10.3 على الجهاز ده: 92 byte للـ counter، 125 byte للـ token bucket، 2,893 byte للـ sliding log بـ 100 entry، والنوع بتاعه <code>listpack</code>. وسطر الآخر: حوالي 151 ألف <code>EVALSHA</code> في الثانية بـ pipeline، بس ده ويندوز وعلى جهاز عليه شغل تاني، فالرقم تقريبي، وتعتبره سقف مش ميزانية.</div>
+
+<pre data-file="redis-common.ts"><code class="language-typescript">// الملف ده بيفتح Redis بتاعك إنت، والـ port لازم ييجي صريح: لو فاضي، الـ driver هيروح للـ default وده Redis حقيقي
+import { readFileSync } from "node:fs";
+import { Redis } from "ioredis";
+
+export function safePort(file = "redis.port"): number {
+  const raw = (process.env.REDIS_PORT ?? readFileSync(file, "utf8")).trim();
+  const n = Number(raw);
+  if (!/^\d+$/.test(raw) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) {
+    throw new Error("refusing port " + raw);
+  }
+  return n;
+}
+
+export const sleep = (ms: number) =&gt; new Promise&lt;void&gt;((r) =&gt; setTimeout(r, ms));
+
+export function client(port: number, opts: Record&lt;string, unknown&gt; = {}) {
+  return new Redis({ port, host: "127.0.0.1", ...opts });
+}</code></pre>
+<pre data-file="limiter.ts"><code class="language-typescript">// ده الـ limiter اللي بيتحط في أي service، والـ Lua هو نفس الـ token bucket من درس 25
+import type { Redis } from "ioredis";
+
+// السكربت بيقرا الـ bucket ويحسب الـ refill ويخصم، وكله خطوة واحدة atomic جوه Redis
+export const TOKEN_BUCKET_LUA = `
+local t = redis.call('TIME')
+local now = t[1] * 1000 + math.floor(t[2] / 1000)
+local cap = tonumber(ARGV[1])
+local perMs = tonumber(ARGV[2])
+local cost = tonumber(ARGV[3])
+local d = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+local tokens = tonumber(d[1]) or cap
+local ts = tonumber(d[2]) or now
+tokens = math.min(cap, tokens + math.max(0, now - ts) * perMs)
+local allowed = 0
+if tokens &gt;= cost then tokens = tokens - cost; allowed = 1 end
+redis.call('HSET', KEYS[1], 'tokens', tostring(tokens), 'ts', now)
+redis.call('PEXPIRE', KEYS[1], math.ceil(cap / perMs))
+local retry = 0
+if allowed == 0 then retry = math.ceil((cost - tokens) / perMs) end
+return { allowed, math.floor(tokens), retry, math.ceil((cap - tokens) / perMs) }
+`;
+
+export interface Rule {
+  name: string;
+  capacity: number;
+  refillPerSec: number;
+}
+
+export interface Decision {
+  allowed: boolean;
+  limit: number;
+  remaining: number;
+  retryAfterMs: number;
+  resetMs: number;
+  source: "redis" | "local" | "open";
+}
+
+export interface RateLimiter {
+  check(key: string, rule: Rule, cost?: number): Promise&lt;Decision&gt;;
+}
+
+// اللي بيحصل لما Redis يقع: open يعدّي كله، closed يرفض كله، insurance يكمل بـ bucket محلي
+export type OnFailure = "open" | "closed" | "insurance";
+
+interface Local {
+  tokens: number;
+  ts: number;
+}
+
+export class RedisLimiter implements RateLimiter {
+  private sha = "";
+  private breakerUntil = 0;
+  private local = new Map&lt;string, Local&gt;();
+  metrics = { redis: 0, local: 0, open: 0, errors: 0, redisMs: [] as number[] };
+
+  private redis: Redis;
+  private onFailure: OnFailure;
+  private instances: number;
+  private breakerMs: number;
+
+  constructor(redis: Redis, onFailure: OnFailure, instances = 1, breakerMs = 1000) {
+    this.redis = redis;
+    this.onFailure = onFailure;
+    this.instances = instances;
+    this.breakerMs = breakerMs;
+  }
+
+  async load() {
+    this.sha = (await this.redis.script("LOAD", TOKEN_BUCKET_LUA)) as string;
+  }
+
+  async check(key: string, rule: Rule, cost = 1): Promise&lt;Decision&gt; {
+    // لو الـ breaker مفتوح منستناش timeout على كل request
+    if (Date.now() &lt; this.breakerUntil) return this.fallback(key, rule, cost);
+    const started = performance.now();
+    try {
+      const perMs = rule.refillPerSec / 1000;
+      const raw = (await this.redis.evalsha(this.sha, 1, key, rule.capacity, perMs, cost)) as number[];
+      this.metrics.redis++;
+      this.metrics.redisMs.push(performance.now() - started);
+      return {
+        allowed: raw[0] === 1,
+        limit: rule.capacity,
+        remaining: raw[1],
+        retryAfterMs: raw[2],
+        resetMs: raw[3],
+        source: "redis",
+      };
+    } catch {
+      this.metrics.errors++;
+      this.breakerUntil = Date.now() + this.breakerMs;
+      return this.fallback(key, rule, cost);
+    }
+  }
+
+  private fallback(key: string, rule: Rule, cost: number): Decision {
+    if (this.onFailure === "closed") {
+      return { allowed: false, limit: rule.capacity, remaining: 0, retryAfterMs: this.breakerMs, resetMs: this.breakerMs, source: "local" };
+    }
+    if (this.onFailure === "open") {
+      this.metrics.open++;
+      return { allowed: true, limit: rule.capacity, remaining: rule.capacity, retryAfterMs: 0, resetMs: 0, source: "open" };
+    }
+    // الـ insurance: كل instance بياخد نصيبه من الحد، فالمجموع ميعدّيش الـ limit الأصلي
+    this.metrics.local++;
+    const share = Math.max(1, Math.floor(rule.capacity / this.instances));
+    const perMs = rule.refillPerSec / 1000 / this.instances;
+    const now = Date.now();
+    const b = this.local.get(key) ?? { tokens: share, ts: now };
+    b.tokens = Math.min(share, b.tokens + (now - b.ts) * perMs);
+    b.ts = now;
+    const allowed = b.tokens &gt;= cost;
+    if (allowed) b.tokens -= cost;
+    this.local.set(key, b);
+    return {
+      allowed,
+      limit: share,
+      remaining: Math.floor(b.tokens),
+      retryAfterMs: allowed ? 0 : Math.ceil((cost - b.tokens) / perMs),
+      resetMs: Math.ceil((share - b.tokens) / perMs),
+      source: "local",
+    };
+  }
+}</code></pre>
+
+<pre class="diagram">
+  Client
+    |
+    v
+  CDN / WAF            coarse per-IP, DDoS
+    |
+    v
+  API Gateway          per-API-key, coarse per-route
+    |
+    v
+  API service x N  --EVALSHA-->  Redis (limiter)
+   limiter middleware           rl:{user:42}:rpm  hash + TTL
+    |                           rl:config         JSON
+    v
+  Business logic
+</pre>
+  <div class="ar-note">الرسمة دي الطبقات من فوق لتحت: الـ client، بعده الـ CDN أو الـ WAF للـ IP والـ DDoS، بعده الـ gateway لحدود الـ API key، وبعدين الـ service نفسه فيه الـ limiter اللي بيكلم Redis، وRedis شايل bucket لكل user وkey واحد للإعدادات. وبعد كل ده الـ business logic.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><strong>المتطلبات.</strong> الـ functional: حد لكل user ولكل IP، أكتر من rule لكل endpoint، ترجع <code>429</code> بـ headers مفيدة، وتغيّر الـ rules من غير deploy. الـ non-functional بالأرقام: 10 مليون يوزر يوميًا، أقل من 5 ms زيادة على الـ request، الـ overshoot الصغير مقبول، ووقوع Redis ميوقّعش الـ API.</p>
+    <p><strong>التقديرات.</strong> افترض 40 API call لكل user في اليوم و peak بـ 3 أضعاف: يعني حوالي 13.9 ألف request في الثانية وقت الـ peak. مرتين check على كل request يعني حوالي 27.8 ألف مكالمة Lua في الثانية. وعدد الـ keys الحية مش 10 مليون: الـ key موجود بس للي نشط جوه الـ window بتاعه، فبنفترض إن 3% من الـ DAU نشطين في نفس الدقيقة، وكمان 0.7 IP لكل user نشط، يبقى 510 ألف key. الـ memory المقاسة على Redis حقيقي: 92 byte للـ fixed counter، 125 للـ token bucket، و2,893 للـ sliding log اللي فيه 100 entry. يعني 64 MB للـ token buckets مقابل 1.48 GB للـ sliding logs.</p>
+    <p><strong>الـ algorithm بسبب.</strong> token bucket. حقلين بس لكل key، بيسمح بـ bursts قصيرة زي اللي الـ clients الحقيقيين بيعملوها، ومفيش عنده مشكلة الـ edge بتاعة الـ fixed window، والتكلفة بوزن أكبر بقت argument واحد. الـ sliding log دقيق بس بياكل memory 23 مرة أكتر. التفاصيل والبدايل في <a href="./25-rate-limiting-algorithms-distributed.html">درس 25</a>.</p>
+    <p><strong>الـ API contract.</strong> الـ limiter عبارة عن middleware فيه call واحدة: <code>check(key, rule, cost)</code> بترجع <code>Decision</code> فيه <code>allowed</code> و<code>limit</code> و<code>remaining</code> و<code>retryAfterMs</code> و<code>resetMs</code> و<code>source</code>. <strong>الـ data model:</strong> hash واحد في Redis لكل bucket، <code>rl:{user:42}:rpm</code>، فيه الحقول <code>tokens</code> و<code>ts</code> و TTL بقد وقت إعادة الملء، وكمان key واحد للـ config اسمه <code>rl:config</code>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما تبدأ API عام أو حتى خدمة داخلية متعددة الـ tenants، احسب نفس الورقة دي قبل ما تشتري Redis أكبر: غالبًا هتكتشف إن 64 MB كفاية وإن الموضوع مش قصة memory خالص، قصة عدد ops في الثانية وإيه اللي يحصل لو Redis وقع. وفي الـ code review لو حد اقترح sliding log لأنه "أدق"، اسأله عايز تدفع 23 ضعف الـ memory ليه.
+    </div>
+  </section>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Where it lives <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ limiter بيتحط فين</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Each layer sees different things, so each one is good at a different limit. The rule that decides placement: <strong>coarse at the edge, business limits in the service</strong>. Don't enforce the same limit twice. If the gateway and the service both count the same rule against the same key, every request costs two tokens and the user quietly gets half the quota they paid for. In the real run below, a rule of 20 requests gave the user 10.</p>
+    <p>The fix is that each layer owns a different key and a different question. The gateway, a stand-in in this run, enforces a coarse per-IP limit: 1,000 per minute, which never bothers a legitimate user. The service enforces what only it can know: per-user quota, per-endpoint business limits such as 5 new orders, and costs such as an export charging 10 tokens.</p>
+  </section>
+
+<pre data-file="p2-placement.ts"><code class="language-typescript">// الـ gateway هنا stand-in بـ node:http، مش Kong ولا nginx، بس الـ Redis والـ Lua حقيقيين
+import { createServer, request as httpRequest, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import Fastify from "fastify";
+import { client, safePort } from "./redis-common.ts";
+import { RedisLimiter, type Rule } from "./limiter.ts";
+
+const redis = client(safePort());
+const limiter = new RedisLimiter(redis, "open");
+await limiter.load();
+
+const PER_USER: Rule = { name: "per-user", capacity: 20, refillPerSec: 20 / 3600 };
+const PER_IP: Rule = { name: "per-ip", capacity: 1000, refillPerSec: 1000 / 60 };
+const ORDERS: Rule = { name: "create-order", capacity: 5, refillPerSec: 5 / 3600 };
+
+type Mode = "same-key" | "split";
+
+async function run(mode: Mode) {
+  await redis.flushall();
+  const calls = { gateway: 0, service: 0 };
+
+  const service = Fastify();
+  service.addHook("onRequest", async (req, reply) =&gt; {
+    const user = String(req.headers["x-user-id"]);
+    calls.service++;
+    const d = await limiter.check(`rl:user:${user}`, PER_USER);
+    if (!d.allowed) return reply.code(429).send({ error: "user limit" });
+    // الحد ده business rule محتاج يعرف الـ endpoint، فمكانه الـ service
+    if (mode === "split" &amp;&amp; req.method === "POST" &amp;&amp; req.url === "/orders") {
+      const o = await limiter.check(`rl:create-order:${user}`, ORDERS);
+      if (!o.allowed) return reply.code(429).send({ error: "orders limit" });
+    }
+  });
+  service.get("/orders", async () =&gt; ({ ok: true }));
+  service.post("/orders", async () =&gt; ({ ok: true }));
+  // الـ export تقيل، فبيتكلف 10 tokens مرة واحدة: حاجة الـ gateway مش عارفها
+  service.get("/reports/export", async () =&gt; {
+    const d = await limiter.check("rl:user:ahmed", PER_USER, 10);
+    return { remaining: d.remaining };
+  });
+  await service.listen({ port: 0, host: "127.0.0.1" });
+  const servicePort = (service.server.address() as AddressInfo).port;
+
+  const gateway: Server = createServer(async (req, res) =&gt; {
+    const user = String(req.headers["x-user-id"]);
+    calls.gateway++;
+    // ❌ الوضع الغلط: نفس الـ key ونفس الحد في الـ service والـ gateway
+    const key = mode === "same-key" ? `rl:user:${user}` : `rl:ip:${req.socket.remoteAddress}`;
+    const rule = mode === "same-key" ? PER_USER : PER_IP;
+    const d = await limiter.check(key, rule);
+    if (!d.allowed) {
+      res.writeHead(429).end('{"error":"gateway limit"}');
+      return;
+    }
+    const up = httpRequest({ port: servicePort, host: "127.0.0.1", path: req.url, method: req.method, headers: req.headers }, (r) =&gt; {
+      res.writeHead(r.statusCode!, r.headers);
+      r.pipe(res);
+    });
+    req.pipe(up);
+  });
+  await new Promise&lt;void&gt;((r) =&gt; gateway.listen(0, "127.0.0.1", r));
+  const gatewayPort = (gateway.address() as AddressInfo).port;
+
+  const call = (path: string, method = "GET") =&gt;
+    fetch(`http://127.0.0.1:${gatewayPort}${path}`, { method, headers: { "x-user-id": "ahmed" } }).then((r) =&gt; r.status);
+
+  const statuses: number[] = [];
+  for (let i = 0; i &lt; 40; i++) statuses.push(await call("/orders"));
+  const ok = statuses.filter((s) =&gt; s === 200).length;
+  console.log(`mode=${mode.padEnd(8)} GET /orders sent=40 ok=${ok} (rule says 20) gateway checks=${calls.gateway} service checks=${calls.service}`);
+
+  if (mode === "split") {
+    await redis.flushall();
+    const create = [];
+    for (let i = 0; i &lt; 8; i++) create.push(await call("/orders", "POST"));
+    console.log(`  POST /orders x8 -&gt; ${create.join(" ")}  (business limit 5)`);
+    await redis.flushall();
+    const r = await fetch(`http://127.0.0.1:${gatewayPort}/reports/export`, { headers: { "x-user-id": "ahmed" } });
+    console.log(`  GET /reports/export -&gt; remaining after cost-10 export: ${JSON.stringify(await r.json())}`);
+  }
+  await new Promise&lt;void&gt;((r) =&gt; gateway.close(() =&gt; r()));
+  await service.close();
+}
+
+await run("same-key");
+await run("split");
+redis.disconnect();</code></pre>
+<pre><code class="language-plaintext">mode=same-key GET /orders sent=40 ok=10 (rule says 20) gateway checks=40 service checks=10
+mode=split    GET /orders sent=40 ok=20 (rule says 20) gateway checks=40 service checks=40
+  POST /orders x8 -&gt; 200 200 200 200 200 429 429 429  (business limit 5)
+  GET /reports/export -&gt; remaining after cost-10 export: {"remaining":9}</code></pre>
+  <div class="ar-note">في الوضع الغلط <code>same-key</code> اليوزر طلع له 10 requests بس بدل 20، لأن كل request بياخد token مرتين: مرة في الـ gateway (الـ gateway checks 40) ومرة في الـ service (10 بس عدّوا). في الوضع الصح <code>split</code> اليوزر خد الـ 20 بالظبط، والـ <code>POST /orders</code> طلع منه 5 ناجحين و3 اترفضوا لأن الـ business limit 5. والـ export خصم 10 tokens فمرة واحدة، فـ <code>remaining</code> بقى 9: لأن الـ hook نفسه خصم token، والـ export خصم 10 من 20.</div>
+
+  <table>
+    <thead><tr><th>Layer</th><th>Sees</th><th>Cannot see</th><th>Enforce here</th></tr></thead>
+    <tbody>
+      <tr><td>Client</td><td>Its own requests</td><td>Anyone else's</td><td>Backoff and <code>Retry-After</code> only. Never trust it</td></tr>
+      <tr><td>CDN / WAF</td><td>IP, path, geo, request rate</td><td>User identity, plan, cost</td><td>Coarse per-IP, bot and DDoS rules</td></tr>
+      <tr><td>Gateway</td><td>API key, authenticated user, route</td><td>Business state, the cost of this request</td><td>Per-API-key quotas, per-route ceilings</td></tr>
+      <tr><td>Service</td><td>Everything: user, plan, payload, database</td><td>Traffic already dropped upstream</td><td>Per-user quotas, business limits, weighted costs</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">كل صف هنا طبقة. الـ <b>client</b> شايف نفسه بس، فمفيش ثقة فيه، وآخره backoff واحترام <code>Retry-After</code>. الـ <b>CDN/WAF</b> شايف الـ IP والمسار والبلد والمعدل، بس مش شايف اليوزر ولا الباقة ولا التكلفة، فمكانه الحدود الخشنة بالـ IP ومنع البوتات والـ DDoS. الـ <b>gateway</b> شايف الـ API key واليوزر المصدّق والـ route، بس مش شايف حالة الـ business ولا تكلفة الـ request ده بالذات، فمكانه quota كل API key وأسقف الـ routes. الـ <b>service</b> شايف كل حاجة: اليوزر والباقة والـ payload والـ database، بس مش شايف اللي اتمنع قبل ما يوصله، فمكانه quota كل user والحدود الـ business والتكلفة بالوزن.</div>
+
+  <div class="callout warn">
+    <b>Not run here: nginx is not installed on this machine, so this config never ran.</b>
+    It follows the <a href="https://nginx.org/en/docs/http/ngx_http_limit_req_module.html">official module docs</a>. Note that <code>limit_req_status</code> defaults to 503, so a coarse edge limit needs <code>429</code> set by hand.
+    <div class="ar-note">مش متشغّل هنا: nginx مش موجود على الجهاز ده، فالإعداد ده متشغّلش. هو ماشي على الـ docs الرسمية للـ module. خد بالك إن <code>limit_req_status</code> الـ default بتاعه 503، فلو عايز 429 لازم تكتبها بإيدك.</div>
+  </div>
+
+<pre data-file="nginx.conf"><code class="language-nginx"># مش متشغّل على الجهاز ده، الإعداد مأخوذ من الـ docs الرسمية
+http {
+    # المنطقة دي 10 MB، وكل 1 MB بيشيل حوالي 16 ألف IP
+    limit_req_zone $binary_remote_addr zone=per_ip:10m rate=50r/s;
+    limit_req_status 429;
+
+    server {
+        location /api/ {
+            # بنسمح بـ burst 100 من غير ما نأخّر الـ requests
+            limit_req zone=per_ip burst=100 nodelay;
+            proxy_pass http://api_upstream;
+        }
+    }
+}</code></pre>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>كل طبقة شايفة حاجات مختلفة، فكل واحدة شاطرة في نوع حد. قاعدة المكان: <strong>الخشن عند الـ edge، والـ business limits جوه الـ service</strong>. ومتطبّقش نفس الحد مرتين. لو الـ gateway والـ service الاتنين بيعدّوا نفس الـ rule على نفس الـ key، كل request بياخد tokenين واليوزر من غير ما يعرف بياخد نص الـ quota اللي دفع تمنها. في التجربة الحقيقية فوق، rule بتقول 20 إدت اليوزر 10.</p>
+    <p>الحل إن كل طبقة ليها key مختلف وسؤال مختلف. الـ gateway، وهو stand-in في التجربة دي، بيطبّق حد خشن بالـ IP: 1,000 في الدقيقة، ده عمره ما هيضايق يوزر عادي. والـ service بيطبّق اللي هو بس يعرفه: quota كل user، والحدود الـ business على كل endpoint زي 5 orders جديدة، والتكلفة زي الـ export اللي بياخد 10 tokens.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في شركة فيها Kong أو API Gateway و Express أو Fastify وراهم، راجع الـ rules في الاتنين. لو اتنين فرق كتبوا "100 في الدقيقة" لوحدهم، هيطلع اليوزر بياخد 50 ومحدش فاهم ليه. الحل: الـ gateway لحد الـ API key وأسقف الـ route، والـ service للـ per-user والـ business limits زي 5 orders أو 3 password resets.
+    </div>
+    <p>والغلطة الشائعة هنا عدّ نفس الـ rule في طبقتين، أو حط الـ business limit في الـ gateway وهو أصلًا مش عارف الـ plan ولا تكلفة الـ request.</p>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: gateway or service?</b>
+    Both, for different limits. Coarse, volumetric, per-API-key limits at the edge so abuse dies before it costs money. Per-user quotas and business limits in the service, because that's where the plan, the endpoint's cost and the database state live. The same rule on the same key in both places halves the quota.
+    <div class="ar-note">السؤال: gateway ولا service؟ الاتنين، بس كل واحد لحد مختلف. الحدود الخشنة والـ volumetric وحدود الـ API key عند الـ edge عشان الـ abuse يموت قبل ما يكلّفك فلوس. والـ per-user والـ business limits جوه الـ service لأن الباقة وتكلفة الـ endpoint وحالة الـ database موجودين هناك. ونفس الـ rule على نفس الـ key في المكانين بتنصّف الـ quota.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Headers <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ response headers</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A rejected request needs <code>429 Too Many Requests</code> and, when you know it, <code>Retry-After</code>: delay-seconds or an HTTP date. The two families of quota headers have different standing. <code>X-RateLimit-Limit</code>, <code>X-RateLimit-Remaining</code> and <code>X-RateLimit-Reset</code> are a common convention with no standard behind them, and <code>Reset</code> is an epoch timestamp on some APIs and a number of seconds on others.</p>
+    <p>The IETF fields are <code>RateLimit-Policy</code> and <code>RateLimit</code>, and they are <strong>still a draft</strong>: draft-ietf-httpapi-ratelimit-headers-11, May 2026, not an RFC. Today's syntax is a Structured Field: <code>RateLimit-Policy: "default";q=100;w=60</code> (quota and window) and <code>RateLimit: "default";r=50;t=30</code> (remaining and time left), tied together by the policy name. Earlier drafts and blog posts show different formats, so read the draft you implement. It also says a positive <code>r</code> is no promise that the next request will succeed, and that <code>Retry-After</code> takes precedence if both appear.</p>
+    <p>The token bucket doesn't map perfectly onto the draft's <code>t</code>, which means time within which the client can use no more than the available quota. A bucket keeps refilling inside that time. This lesson sends the time to full refill and says so in the API docs: an approximation, not a contract.</p>
+    <p>The obedient client below gets a 93.8% success rate with 32 requests. The client that ignores <code>Retry-After</code> sends 2,991 requests and gets the same 30 successes in about the same time. It gets nothing for the extra load: about 93× more requests, and 93× more Redis checks that you pay for.</p>
+  </section>
+
+<pre data-file="p3-headers.ts"><code class="language-typescript">// السيرفر هنا بيرجع الهيدرز التلاتة، ومشغّلين عميل بيحترم Retry-After وعميل تاني بيضرب على طول
+import type { AddressInfo } from "node:net";
+import Fastify from "fastify";
+import { client, safePort, sleep } from "./redis-common.ts";
+import { RedisLimiter, type Rule } from "./limiter.ts";
+
+const redis = client(safePort());
+await redis.flushall();
+const limiter = new RedisLimiter(redis, "open");
+await limiter.load();
+const RULE: Rule = { name: "default", capacity: 10, refillPerSec: 10 };
+const stats = new Map&lt;string, number&gt;();
+
+const app = Fastify();
+app.addHook("onRequest", async (req, reply) =&gt; {
+  const user = String(req.headers["x-user-id"]);
+  stats.set(user, (stats.get(user) ?? 0) + 1);
+  const d = await limiter.check(`rl:${user}`, RULE);
+  const t = Math.ceil(d.resetMs / 1000);
+  // الاسم في الاتنين لازم يطابق، ده اللي بيربط الـ RateLimit بالـ policy بتاعته
+  reply.header("RateLimit-Policy", `"${RULE.name}";q=${RULE.capacity};w=1`);
+  reply.header("RateLimit", `"${RULE.name}";r=${d.remaining};t=${t}`);
+  // الأسماء القديمة، و X-RateLimit-Reset هنا عدد ثواني من دلوقتي
+  reply.header("X-RateLimit-Limit", d.limit);
+  reply.header("X-RateLimit-Remaining", d.remaining);
+  reply.header("X-RateLimit-Reset", t);
+  if (!d.allowed) {
+    reply.header("Retry-After", Math.ceil(d.retryAfterMs / 1000));
+    return reply.code(429).send({ error: "rate_limited" });
+  }
+});
+app.get("/orders", async () =&gt; ({ orders: [] }));
+await app.listen({ port: 0, host: "127.0.0.1" });
+const port = (app.server.address() as AddressInfo).port;
+const url = `http://127.0.0.1:${port}/orders`;
+
+const show = (r: Response) =&gt; {
+  const names = ["ratelimit-policy", "ratelimit", "x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset", "retry-after"];
+  console.log(`HTTP ${r.status}`);
+  for (const n of names) if (r.headers.has(n)) console.log(`  ${n}: ${r.headers.get(n)}`);
+};
+
+let last: Response | undefined;
+for (let i = 0; i &lt; 12; i++) {
+  last = await fetch(url, { headers: { "x-user-id": "ahmed" } });
+  await last.arrayBuffer();
+  if (i === 0) show(last);
+}
+show(last!);
+
+const GOAL = 30;
+
+async function hammer(user: string) {
+  let ok = 0;
+  let sent = 0;
+  const t0 = performance.now();
+  while (ok &lt; GOAL) {
+    const r = await fetch(url, { headers: { "x-user-id": user } });
+    await r.arrayBuffer();
+    sent++;
+    if (r.status === 200) ok++;
+  }
+  return { sent, ok, ms: performance.now() - t0 };
+}
+
+async function obey(user: string) {
+  let ok = 0;
+  let sent = 0;
+  const t0 = performance.now();
+  while (ok &lt; GOAL) {
+    const r = await fetch(url, { headers: { "x-user-id": user } });
+    await r.arrayBuffer();
+    sent++;
+    if (r.status === 200) {
+      ok++;
+      continue;
+    }
+    const wait = Number(r.headers.get("retry-after") ?? 1) * 1000;
+    // الـ jitter عشان 1000 client ميرجعوش كلهم في نفس الملي ثانية
+    await sleep(wait + Math.random() * 100);
+  }
+  return { sent, ok, ms: performance.now() - t0 };
+}
+
+await redis.flushall();
+const h = await hammer("hammer");
+await redis.flushall();
+const o = await obey("obeyer");
+const row = (name: string, r: { sent: number; ok: number; ms: number }, calls: number) =&gt;
+  console.log(`${name.padEnd(10)} sent=${String(r.sent).padStart(6)} ok=${r.ok} success=${((r.ok / r.sent) * 100).toFixed(1).padStart(5)}% elapsed≈${(r.ms / 1000).toFixed(1)}s redis checks=${calls}`);
+row("hammer", h, stats.get("hammer") ?? 0);
+row("obeyer", o, stats.get("obeyer") ?? 0);
+await app.close();
+redis.disconnect();</code></pre>
+<pre><code class="language-plaintext">HTTP 200
+  ratelimit-policy: "default";q=10;w=1
+  ratelimit: "default";r=9;t=1
+  x-ratelimit-limit: 10
+  x-ratelimit-remaining: 9
+  x-ratelimit-reset: 1
+HTTP 429
+  ratelimit-policy: "default";q=10;w=1
+  ratelimit: "default";r=0;t=1
+  x-ratelimit-limit: 10
+  x-ratelimit-remaining: 0
+  x-ratelimit-reset: 1
+  retry-after: 1
+hammer     sent=  2991 ok=30 success=  1.0% elapsed≈2.0s redis checks=2991
+obeyer     sent=    32 ok=30 success= 93.8% elapsed≈2.2s redis checks=32</code></pre>
+  <div class="ar-note">أول response كان 200 وفيه الـ headers التلاتة: الـ <code>RateLimit-Policy</code> بيقول quota 10 في ثانية، و<code>RateLimit</code> بيقول فاضل 9. بعد ما خلصت الـ quota الـ response بقى 429 وزوّد <code>retry-after: 1</code>. آخر سطرين هم القياس: الـ client اللي بيضرب بعت 2,991 request ونجح 1% منهم في حوالي 2.0 ثانية، واللي بيحترم <code>Retry-After</code> بعت 32 ونجح 93.8% في حوالي 2.2 ثانية. نفس الـ 30 نجاح تقريبًا في نفس الوقت، بفرق 93 مرة في الـ load.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ request المرفوض لازم يرجع <code>429 Too Many Requests</code>، ولو تقدر تحسب، <code>Retry-After</code>: عدد ثواني أو HTTP date. وعندك عيلتين headers: <code>X-RateLimit-Limit</code> و<code>X-RateLimit-Remaining</code> و<code>X-RateLimit-Reset</code> ده عُرف منتشر مفيش standard وراه، و<code>Reset</code> في APIs بيبقى epoch وفي APIs تانية عدد ثواني.</p>
+    <p>وعيلة الـ IETF: <code>RateLimit-Policy</code> و<code>RateLimit</code>، ودول <strong>لسه draft</strong>: draft-ietf-httpapi-ratelimit-headers-11 بتاع مايو 2026، مش RFC. الشكل الحالي Structured Field: <code>RateLimit-Policy: "default";q=100;w=60</code> يعني quota وwindow، و<code>RateLimit: "default";r=50;t=30</code> يعني الباقي والوقت، والاتنين مربوطين باسم الـ policy. الـ drafts القديمة والمقالات ممكن تعرض شكل مختلف، فارجع للـ draft اللي بتنفّذه. وكمان بيقول إن <code>r</code> الموجب مش ضمان إن الـ request الجاي هينجح، وإن <code>Retry-After</code> هو اللي يكسب لو الاتنين موجودين.</p>
+    <p>الـ token bucket مش بيركب بالظبط على <code>t</code> في الـ draft، اللي معناها الوقت اللي الـ client مش هيقدر يستخدم فيه أكتر من الـ quota المتاحة، لأن الـ bucket بيتملى طول الوقت ده. الدرس هنا بيبعت وقت الملء الكامل وبيقول كده في الـ API docs: تقريب مش contract.</p>
+    <p>الـ client المحترم في التجربة نجح 93.8% بـ 32 request. واللي تجاهل <code>Retry-After</code> بعت 2,991 request وطلع بنفس الـ 30 نجاح في نفس الوقت تقريبًا. مفيش مكسب من الـ load الزيادة: حوالي 93 ضعف requests، و93 ضعف Redis checks إنت اللي بتدفع تمنها.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في الـ retry بتاع أي integration مع Stripe أو WhatsApp API: لو عندك <code>while(true)</code> بيعيد على 429 من غير ما يقرا <code>Retry-After</code>، إنت بتحرق الـ quota وبتطوّل الوقت. اقرا الـ header، استنى، وزوّد jitter صغير عشان الـ clients ما يرجعوش كلهم في نفس الملي ثانية. ولو بتبني API عام، ابعت <code>RateLimit</code> و<code>Retry-After</code>، واكتب في الـ docs شكل الـ reset بالظبط.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: the size of <code>Retry-After</code></b>
+    Delay-seconds is a whole number, so a 200 ms wait rounds up to 1 s and the client waits longer than needed. Sending the exact wait isn't allowed by the format, so accept the rounding, or tell clients to use <code>RateLimit</code> values to pace themselves before they reach 429.
+    <div class="ar-note">الموازنة هنا في حجم <code>Retry-After</code>: الـ delay-seconds رقم صحيح، فانتظار 200 ms بيتقرّب لثانية والـ client بيستنى أكتر من اللازم. الشكل نفسه مش بيسمح بالكسور، فإما تقبل التقريب، أو تقول للـ clients يستخدموا قيم <code>RateLimit</code> عشان ينظّموا نفسهم قبل ما يوصلوا لـ 429.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — The mechanism, real <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الآلية، على حقيقي</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Two real API processes, one real Redis, the token-bucket Lua from <code>limiter.ts</code> in Part 1. Because Redis runs a script to completion on one thread, the read, the refill and the decrement are one atomic step. 1,000 concurrent requests across both instances came back with exactly 100 allowed: overshoot 0 against a bound that includes what the bucket could refill during the test. The fixed limit lives in one place, so the instances can't disagree.</p>
+    <p><strong>Latency.</strong> The limiter's Redis call measured from inside the instance was about p50 0.34 ms and p99 2.2 ms over 44,419 calls on this loaded Windows build, under the 5 ms budget. Autocannon's p99 stayed about 1 ms either way, since it reports whole milliseconds. The real difference is throughput, about 38k against 14.6k requests per second, because every request now waits for a Redis round trip on the same machine.</p>
+    <p><strong>Rules without a deploy.</strong> Instances poll <code>rl:config</code> every 500 ms and keep the last good value if the read fails. The rule change was visible on instance A after about 228 ms and on B after about 323 ms. The poll keeps the config read off the hot path, at the cost of up to 500 ms of drift between instances.</p>
+    <p><strong>When Redis dies.</strong> Three settings keep the failure fast: <code>commandTimeout: 100</code>, <code>enableOfflineQueue: false</code>, and <code>maxRetriesPerRequest: 0</code>. A breaker then skips Redis for a second after an error, so a dead Redis doesn't cost a timeout per request. Each instance saw one or two errors, then the breaker took over. What happens next is a policy choice per route. The table of the three modes follows.</p>
+  </section>
+
+<pre data-file="p4-instance.ts"><code class="language-typescript">// الملف ده API instance واحد، والأب بيشغّل منه اتنين process منفصلين
+import type { AddressInfo } from "node:net";
+import { once } from "node:events";
+import Fastify from "fastify";
+import { client, safePort } from "./redis-common.ts";
+import { RedisLimiter, type OnFailure, type Rule } from "./limiter.ts";
+
+const mode = (process.argv[2] ?? "insurance") as OnFailure;
+// الإعدادات دي بتخلي الفشل سريع: من غير queue ومن غير retry جوه الـ client
+const redis = client(safePort(), {
+  maxRetriesPerRequest: 0,
+  enableOfflineQueue: false,
+  commandTimeout: 100,
+  retryStrategy: () =&gt; 300,
+});
+redis.on("error", () =&gt; {});
+await once(redis, "ready");
+
+const limiter = new RedisLimiter(redis, mode, 2);
+await limiter.load();
+
+// الـ rule بتتقرا من Redis كل نص ثانية، ولو Redis واقع بنكمّل بآخر قيمة سليمة
+let rule: Rule = { name: "per-user", capacity: 100, refillPerSec: 100 / 60 };
+const poll = setInterval(async () =&gt; {
+  try {
+    const raw = await redis.get("rl:config");
+    if (raw) rule = { name: "per-user", ...(JSON.parse(raw) as Omit&lt;Rule, "name"&gt;) };
+  } catch {
+    // هنا بنسيب الـ rule القديمة زي ما هي عن قصد
+  }
+}, 500);
+
+const app = Fastify();
+app.get("/noop", async () =&gt; ({ ok: true }));
+app.get("/orders", async (req, reply) =&gt; {
+  const user = String(req.headers["x-user-id"] ?? "anon");
+  const d = await limiter.check(`rl:{${user}}:rpm`, rule);
+  reply.header("X-RateLimit-Limit", d.limit).header("X-RateLimit-Source", d.source);
+  if (!d.allowed) return reply.code(429).header("Retry-After", Math.ceil(d.retryAfterMs / 1000)).send({ error: "limited" });
+  return { ok: true };
+});
+app.get("/stats", async () =&gt; {
+  const s = [...limiter.metrics.redisMs].sort((a, b) =&gt; a - b);
+  const pick = (p: number) =&gt; s[Math.floor((s.length - 1) * p)] ?? 0;
+  return { n: s.length, p50: pick(0.5), p99: pick(0.99), metrics: { ...limiter.metrics, redisMs: undefined } };
+});
+await app.listen({ port: 0, host: "127.0.0.1" });
+process.send!({ port: (app.server.address() as AddressInfo).port });
+process.on("message", async () =&gt; {
+  clearInterval(poll);
+  await app.close();
+  redis.disconnect();
+  process.exit(0);
+});</code></pre>
+<pre data-file="p4-run.ts"><code class="language-typescript">// الملف ده بيشغّل instance اتنين على Redis واحد ويقيس: overshoot و latency والـ rule من غير deploy
+import { fork, type ChildProcess } from "node:child_process";
+import autocannon from "autocannon";
+import { client, safePort, sleep } from "./redis-common.ts";
+
+const admin = client(safePort());
+await admin.flushall();
+
+function spawnInstance(mode: string): Promise&lt;{ child: ChildProcess; port: number }&gt; {
+  const child = fork(new URL("./p4-instance.ts", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"), [mode]);
+  return new Promise((res) =&gt; child.once("message", (m: { port: number }) =&gt; res({ child, port: m.port })));
+}
+
+const [a, b] = await Promise.all([spawnInstance("insurance"), spawnInstance("insurance")]);
+const urlOf = (x: { port: number }, p: string) =&gt; `http://127.0.0.1:${x.port}${p}`;
+const get = (x: { port: number }, user: string) =&gt;
+  fetch(urlOf(x, "/orders"), { headers: { "x-user-id": user } }).then(async (r) =&gt; {
+    await r.arrayBuffer();
+    return { status: r.status, limit: r.headers.get("x-ratelimit-limit"), source: r.headers.get("x-ratelimit-source") };
+  });
+
+// (1) ألف request مع بعض على الـ instances الاتنين، والـ limit 100
+const capacity = 100;
+const refill = 100 / 60;
+const t0 = performance.now();
+const results = await Promise.all(Array.from({ length: 1000 }, (_, i) =&gt; get(i % 2 ? a : b, "user:1000")));
+const elapsed = (performance.now() - t0) / 1000;
+const allowed = results.filter((r) =&gt; r.status === 200).length;
+const bound = capacity + Math.floor(refill * elapsed);
+console.log(`1000 concurrent across 2 instances: allowed=${allowed} bound=${bound} (cap ${capacity} + refill in ${elapsed.toFixed(2)}s) overshoot=${Math.max(0, allowed - bound)}`);
+
+// (2) الـ load على كل instance، وبنقارن الـ endpoint اللي من غير limiter باللي بيه
+async function load(path: string, user: string) {
+  const r = await autocannon({ url: urlOf(a, path), connections: 10, duration: 3, headers: { "x-user-id": user } });
+  return { p50: r.latency.p50, p99: r.latency.p99, rps: Math.round(r.requests.average) };
+}
+const noop = await load("/noop", "x");
+const limited = await load("/orders", "load");
+const statsA = (await (await fetch(urlOf(a, "/stats"))).json()) as { n: number; p50: number; p99: number };
+console.log(`autocannon /noop:   p50≈${noop.p50} ms p99≈${noop.p99} ms ~${noop.rps} req/s`);
+console.log(`autocannon /orders: p50≈${limited.p50} ms p99≈${limited.p99} ms ~${limited.rps} req/s`);
+console.log(`limiter call inside instance A over ${statsA.n} requests: p50≈${statsA.p50.toFixed(2)} ms p99≈${statsA.p99.toFixed(2)} ms`);
+
+// (3) تغيير الحد من غير deploy: بنكتب في Redis وبس
+const before = (await get(a, "fresh-user")).limit;
+await admin.set("rl:config", JSON.stringify({ capacity: 250, refillPerSec: 250 / 60 }));
+const t1 = performance.now();
+const seen = new Map&lt;string, number&gt;();
+while (seen.size &lt; 2 &amp;&amp; performance.now() - t1 &lt; 3000) {
+  for (const [name, inst] of [["A", a], ["B", b]] as const) {
+    if (seen.has(name)) continue;
+    if ((await get(inst, `probe:${name}`)).limit === "250") seen.set(name, performance.now() - t1);
+  }
+  await sleep(20);
+}
+console.log(`rule change without deploy: limit ${before} -&gt; 250, seen by instance A after ≈${Math.round(seen.get("A") ?? -1)} ms, B after ≈${Math.round(seen.get("B") ?? -1)} ms`);
+
+a.child.send("stop");
+b.child.send("stop");
+admin.disconnect();</code></pre>
+<pre><code class="language-plaintext">1000 concurrent across 2 instances: allowed=100 bound=100 (cap 100 + refill in 0.48s) overshoot=0
+autocannon /noop:   p50≈0 ms p99≈1 ms ~38232 req/s
+autocannon /orders: p50≈0 ms p99≈1 ms ~14637 req/s
+limiter call inside instance A over 44419 requests: p50≈0.34 ms p99≈2.23 ms
+rule change without deploy: limit 100 -&gt; 250, seen by instance A after ≈228 ms, B after ≈323 ms</code></pre>
+  <div class="ar-note">ده القياس الحقيقي على Redis حقيقي. أول سطر: 1000 request مع بعض على الـ instances الاتنين، اللي عدّوا 100 بالظبط، والـ overshoot صفر. السطرين اللي بعدهم autocannon: الـ <code>/noop</code> حوالي 38 ألف request في الثانية، والـ <code>/orders</code> اللي فيه الـ limiter حوالي 14.6 ألف. بعدها زمن مكالمة الـ limiter نفسها من جوه الـ instance: p50 حوالي 0.34 ms و p99 حوالي 2.23 ms على 44,419 مكالمة، وده ويندوز وعلى جهاز عليه شغل تاني فالأرقام تقريبية. آخر سطر: تغيير الـ rule في Redis اتشاف عند A بعد حوالي 228 ms وعند B بعد حوالي 323 ms، من غير deploy.</div>
+
+<pre class="diagram">
+request --> breaker open? --yes--> fallback (policy)
+                 | no
+                 v
+            EVALSHA with timeout 100 ms
+                 |
+         ok -----+----- error
+         |              |
+   Redis decision    open breaker 1 s --> fallback (policy)
+
+policy = open:      allow, count nothing
+policy = closed:    reject
+policy = insurance: local bucket with limit / instances
+</pre>
+  <div class="ar-note">دي رحلة كل request لما يكون Redis في مشكلة. لو الـ breaker مفتوح نروح على طول للـ fallback. لو مقفول نكلم Redis بـ timeout 100 ms. لو نجح ناخد القرار من Redis. لو فشل نفتح الـ breaker ثانية ونروح للـ fallback. والـ fallback حسب سياسة الـ route: <code>open</code> يعدّي من غير عد، <code>closed</code> يرفض، <code>insurance</code> bucket محلي بقيمة limit مقسومة على عدد الـ instances.</div>
+
+<pre data-file="p4-kill.ts"><code class="language-typescript">// الملف ده بيقتل Redis في نص الـ traffic ويعدّ اللي عدّى في كل وضع
+// للتشغيل: node p4-kill.ts insurance  أو open أو closed
+import { fork, type ChildProcess } from "node:child_process";
+import { client, safePort } from "./redis-common.ts";
+
+const mode = process.argv[2] ?? "insurance";
+const admin = client(safePort(), { retryStrategy: () =&gt; null });
+admin.on("error", () =&gt; {});
+await admin.flushall();
+
+function spawnInstance(): Promise&lt;{ child: ChildProcess; port: number }&gt; {
+  const child = fork(new URL("./p4-instance.ts", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"), [mode]);
+  return new Promise((res) =&gt; child.once("message", (m: { port: number }) =&gt; res({ child, port: m.port })));
+}
+
+const [a, b] = await Promise.all([spawnInstance(), spawnInstance()]);
+const TOTAL = 1500;
+const KILL_AT = 300;
+let next = 0;
+let killed = false;
+const seen = { beforeOk: 0, beforeSent: 0, afterOk: 0, afterSent: 0, afterLocal: 0, afterOpen: 0, http5xx: 0, slowestMs: 0 };
+
+// الـ workers دول بيبعتوا لنفس الـ user، فالـ limit المفروض يبقى 100 في الدقيقة
+async function worker() {
+  while (next &lt; TOTAL) {
+    const n = next++;
+    if (n === KILL_AT &amp;&amp; !killed) {
+      killed = true;
+      await admin.shutdown("NOSAVE").catch(() =&gt; {});
+    }
+    const started = performance.now();
+    const r = await fetch(`http://127.0.0.1:${(n % 2 ? a : b).port}/orders`, { headers: { "x-user-id": "user:7" } });
+    await r.arrayBuffer();
+    seen.slowestMs = Math.max(seen.slowestMs, performance.now() - started);
+    if (r.status &gt;= 500) seen.http5xx++;
+    if (n &lt; KILL_AT) {
+      seen.beforeSent++;
+      if (r.status === 200) seen.beforeOk++;
+    } else {
+      seen.afterSent++;
+      if (r.status === 200) seen.afterOk++;
+      const source = r.headers.get("x-ratelimit-source");
+      if (source === "local") seen.afterLocal++;
+      if (source === "open") seen.afterOpen++;
+    }
+  }
+}
+await Promise.all(Array.from({ length: 20 }, worker));
+
+const metrics = await Promise.all(
+  [a, b].map(async (x) =&gt; ((await (await fetch(`http://127.0.0.1:${x.port}/stats`)).json()) as { metrics: { errors: number } }).metrics.errors),
+);
+console.log(`mode=${mode.padEnd(9)} before kill allowed=${seen.beforeOk}/${seen.beforeSent}  after kill allowed=${seen.afterOk}/${seen.afterSent}  local=${seen.afterLocal} open=${seen.afterOpen}  5xx=${seen.http5xx}  redis errors seen=${metrics.join("+")}  slowest request≈${Math.round(seen.slowestMs)} ms`);
+
+a.child.send("stop");
+b.child.send("stop");
+admin.disconnect();</code></pre>
+<pre><code class="language-plaintext">mode=insurance before kill allowed=100/300  after kill allowed=100/1200  local=1200 open=0  5xx=0  redis errors seen=1+1  slowest request≈41 ms
+mode=open      before kill allowed=100/300  after kill allowed=1200/1200  local=0 open=1200  5xx=0  redis errors seen=2+1  slowest request≈35 ms
+mode=closed    before kill allowed=100/300  after kill allowed=0/1200  local=1200 open=0  5xx=0  redis errors seen=1+1  slowest request≈33 ms</code></pre>
+  <div class="ar-note">ده Redis حقيقي اتقتل بعد الـ request رقم 300 من 1500، و20 worker شغالين على نفس الـ user، والـ limit 100 في الدقيقة. الكل قبل الـ kill سمح بـ 100 من 300. بعد الـ kill: وضع <code>insurance</code> سمح بـ 100 من 1200 بس (نصيب 50 لكل instance)، وضع <code>open</code> عدّى الـ 1200 كلهم، وضع <code>closed</code> رفضهم كلهم. مفيش 5xx في الـ 3 أوضاع، والـ Redis errors 1 أو 2 بس لأن الـ breaker قفل الباب، وأبطأ request حوالي 40 ms.</div>
+
+  <table>
+    <thead><tr><th>Mode</th><th>Allowed after the kill</th><th>Good for</th><th>Risk</th></tr></thead>
+    <tbody>
+      <tr><td><code>insurance</code></td><td>100 / 1200: the limit still holds</td><td>Most API routes</td><td>Doesn't know what Redis already counted: this user had 200 in that minute, not 100</td></tr>
+      <tr><td><code>open</code></td><td>1200 / 1200</td><td>Browse, reads, anything cheap</td><td>No limit at all while Redis is down</td></tr>
+      <tr><td><code>closed</code></td><td>0 / 1200</td><td>Login, password reset, payments</td><td>The API is effectively down for that route</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">كل صف وضع. الـ <code>insurance</code> عدّى 100 من 1200 فالحد ماسك، ومناسب لمعظم الـ routes، بس خد بالك إنه مش عارف Redis كان عدّ قد إيه قبل ما يقع: اليوزر ده اتحسب 200 في الدقيقة دي مش 100. الـ <code>open</code> عدّى الـ 1200 كلهم، مناسب للـ browse والـ reads الرخيصة، والخطر إن مفيش حد خالص طول ما Redis واقع. الـ <code>closed</code> رفض الكل، مناسب للـ login والـ password reset والـ payments، والخطر إن الـ route ده فعليًا واقع.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>عندك 2 API processes حقيقيين و Redis حقيقي واحد و الـ token-bucket Lua من <code>limiter.ts</code> اللي في Part 1. لأن Redis بيشغّل الـ script لآخره على thread واحد، القراءة والـ refill والخصم كلهم خطوة واحدة atomic. 1,000 request مع بعض على الـ instances الاتنين طلعوا 100 بالظبط: overshoot صفر، مقارنة بسقف فيه اللي الـ bucket ممكن يتملى بيه وقت التجربة. الحد نفسه في مكان واحد فالـ instances مش ممكن يختلفوا عليه.</p>
+    <p><strong>الـ latency.</strong> مكالمة Redis بتاعة الـ limiter من جوه الـ instance كانت حوالي p50 بـ 0.34 ms و p99 بـ 2.2 ms على 44,419 مكالمة على ويندوز وعلى جهاز عليه شغل تاني، يعني تحت ميزانية الـ 5 ms. و autocannon الـ p99 بتاعه فضل حوالي 1 ms في الحالتين لأنه بيقرّب لملي ثانية كاملة. الفرق الحقيقي في الـ throughput: حوالي 38 ألف مقابل 14.6 ألف request في الثانية، لأن كل request بقى بيستنى round trip لـ Redis على نفس الجهاز.</p>
+    <p><strong>الـ rules من غير deploy.</strong> الـ instances بتعمل poll على <code>rl:config</code> كل 500 ms وبتسيب آخر قيمة سليمة لو القراءة فشلت. التغيير اتشاف عند A بعد حوالي 228 ms وعند B بعد حوالي 323 ms. الـ poll بيخلي قراءة الـ config بره الـ hot path، والتمن إن فيه لحد 500 ms فرق بين الـ instances.</p>
+    <p><strong>لما Redis يموت.</strong> تلات إعدادات بتخلي الفشل سريع: <code>commandTimeout: 100</code>، و<code>enableOfflineQueue: false</code>، و<code>maxRetriesPerRequest: 0</code>. وبعدها breaker بيعدّي Redis ثانية كاملة بعد أي error، عشان Redis الواقع ميكلّفكش timeout على كل request. كل instance شاف error واحد تقريبًا والـ breaker خد الباقي. وبعد كده السياسة قرار بتاعك على كل route، والـ 3 أوضاع في الجدول فوق.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في أي service بيستخدم Redis كـ dependency للـ limiter، اسأل: "لو Redis وقع دلوقتي إيه اللي بيحصل؟". لو الإجابة إن الـ request بيقف 5 ثواني لأن ioredis بيعمل retry في الـ queue بتاعته، ده incident جاهز. حط <code>commandTimeout</code> و<code>enableOfflineQueue: false</code>، و breaker، وقرّر: <code>closed</code> على <code>/login</code> و<code>/payments</code>، و<code>insurance</code> أو <code>open</code> على الباقي.
+    </div>
+    <p>والغلطة الشائعة هنا إنك تسيب ioredis بالإعدادات الـ default: الـ offline queue والـ retries بيخلوا الـ request يستنى Redis بدل ما يفشل سريع، و limit بدل ما يحمي الـ API بيوقّعه.</p>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: Redis goes down, what happens to your limiter?</b>
+    Decide per route. Fail fast with a short client timeout, no offline queue and a breaker. Login and payments fail closed. Everything else uses an in-memory insurance bucket sized limit / instances, so traffic stays bounded. Say the cost out loud: while Redis is down the numbers are approximate and a user can get more than one window's worth of quota.
+    <div class="ar-note">السؤال: Redis وقع، الـ limiter بتاعك هيعمل إيه؟ قرّر لكل route. افشل بسرعة بـ timeout قصير ومن غير offline queue و breaker. الـ login والـ payments تفشل closed. وأي حاجة تانية تكمّل بـ insurance bucket في الـ memory بقيمة limit على عدد الـ instances فالـ traffic يفضل محدود. وقول التمن بصوت عالي: وقت ما Redis واقع الأرقام تقريبية، ويوزر ممكن ياخد أكتر من quota window كاملة.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Trade-offs &amp; review <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الموازنات والمراجعة</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>Shard Redis by user hash.</strong> One Redis is fine for 27.8k script calls per second. At 10× you need about 7 shards at a 40k/s planning budget per shard, which is an assumption and well under the 151k/s pipelined number measured here. In Redis Cluster every key in one Lua call must live in one slot, so a user's keys share a hash tag: <code>rl:{user:42}:rpm</code>. The run below shows the real <code>CROSSSLOT</code> error without the tag.</p>
+    <p><strong>Local + global at high QPS.</strong> Calling Redis per request means Redis ops equal QPS. An instance can take a batch of tokens and spend them locally, so ops drop by the batch size, at the cost of overshoot up to batch × instances. <a href="./25-rate-limiting-algorithms-distributed.html">Lesson 25</a> measures that. <strong>Multi-region:</strong> don't share one Redis across regions, because a 70 ms round trip blows the 5 ms budget by itself. Give each region its own bucket and a share of the quota.</p>
+    <p><strong>What breaks at 10×.</strong> Not memory, at 0.64 GB. It's the single Redis, then the per-request network cost, then hot keys. <strong>Interviewer looks for:</strong> an algorithm chosen with a reason, atomicity, what happens when Redis fails, and the headers. <strong>Red flag:</strong> reciting all five algorithms and choosing none of them. <strong>Routine:</strong> write a one-page design doc with <code>project/design-docs/0000-template.md</code>, compare it with chapter 4 of Alex Xu's <em>System Design Interview</em> volume 1, and write down what you missed.</p>
+  </section>
+
+<pre data-file="p5-calc.ts"><code class="language-typescript">// الـ calculator ده بيوريك إيه اللي بيقع أول عند 10x، مش بس بيكبر الأرقام
+const peak = 13_889;
+
+for (const factor of [1, 10]) {
+  const qps = peak * factor;
+  const checks = qps * 2;
+  // افتراض مقصود: Redis واحد مريح لحد 40 ألف EVALSHA في الثانية من production مش من البنشمارك
+  const safePerShard = 40_000;
+  const shards = Math.ceil(checks / safePerShard);
+  const bandwidthMbps = (checks * 300 * 8) / 1e6;
+  const keys = 510_000 * factor;
+  const memGb = (keys * 125) / 1e9;
+  console.log(`${String(factor).padStart(2)}x  ${String(Math.round(qps)).padStart(6)} req/s  checks ${String(Math.round(checks)).padStart(6)}/s  shards ${shards}  keys ${keys}  memory ${memGb.toFixed(2)} GB  net ${bandwidthMbps.toFixed(0)} Mbit/s`);
+}
+
+// لو عملنا local+global بـ batch، الـ Redis ops بتقل على قد حجم الـ batch
+for (const batch of [1, 10, 50]) {
+  const qps = peak * 10 * 2;
+  console.log(`batch ${String(batch).padStart(2)} tokens: Redis ops ${String(Math.round(qps / batch)).padStart(6)}/s`);
+}</code></pre>
+<pre><code class="language-plaintext"> 1x   13889 req/s  checks  27778/s  shards 1  keys 510000  memory 0.06 GB  net 67 Mbit/s
+10x  138890 req/s  checks 277780/s  shards 7  keys 5100000  memory 0.64 GB  net 667 Mbit/s
+batch  1 tokens: Redis ops 277780/s
+batch 10 tokens: Redis ops  27778/s
+batch 50 tokens: Redis ops   5556/s</code></pre>
+  <div class="ar-note">ده حساب مش قياس. عند 1× عندنا 27,778 check في الثانية و shard واحد، و 510 ألف key بـ 0.06 GB. عند 10× بقى 277,780 check في الثانية و7 shards، و5.1 مليون key بـ 0.64 GB. الـ memory مش المشكلة، وعدد الـ ops هو المشكلة. والأسطر التلاتة الأخيرة بتوضح إن batch بـ 10 tokens بيقلّل الـ Redis ops من 277,780 لـ 27,778 في الثانية، و batch بـ 50 يقلّلها لـ 5,556.</div>
+
+<pre data-file="p5-slots.ts"><code class="language-typescript">// الملف ده بيشغّل Redis في cluster mode عشان نشوف ليه الـ hash tags لازم تبقى في الـ key
+import calculateSlot from "cluster-key-slot";
+import { client, safePort, sleep } from "./redis-common.ts";
+
+const r = client(safePort());
+await r.call("CLUSTER", "ADDSLOTSRANGE", "0", "16383");
+for (let i = 0; i &lt; 50; i++) {
+  const info = (await r.call("CLUSTER", "INFO")) as string;
+  if (info.includes("cluster_state:ok")) break;
+  await sleep(100);
+}
+
+const script = `redis.call('INCR', KEYS[1]); redis.call('INCR', KEYS[2]); return 1`;
+const attempt = async (k1: string, k2: string) =&gt; {
+  try {
+    const out = await r.eval(script, 2, k1, k2);
+    console.log(`slots ${calculateSlot(k1)}/${calculateSlot(k2)} ${k1} + ${k2} -&gt; ${out}`);
+  } catch (e) {
+    console.log(`slots ${calculateSlot(k1)}/${calculateSlot(k2)} ${k1} + ${k2} -&gt; ${(e as Error).message}`);
+  }
+};
+
+await attempt("rl:user:42:rpm", "rl:user:42:rpd");
+await attempt("rl:{user:42}:rpm", "rl:{user:42}:rpd");
+r.disconnect();</code></pre>
+<pre><code class="language-plaintext">slots 7122/2811 rl:user:42:rpm + rl:user:42:rpd -&gt; CROSSSLOT Keys in request don't hash to the same slot
+slots 15880/15880 rl:{user:42}:rpm + rl:{user:42}:rpd -&gt; 1</code></pre>
+  <div class="ar-note">ده Redis حقيقي شغال في cluster mode. أول سطر: <code>rl:user:42:rpm</code> و<code>rl:user:42:rpd</code> راحوا لـ slots مختلفة، 7122 و2811، فالـ Lua اترفض بـ <code>CROSSSLOT</code>. تاني سطر: بعد ما حطينا <code>{user:42}</code> كـ hash tag الاتنين راحوا لنفس الـ slot، 15880، والسكربت رجع 1.</div>
+
+  <table>
+    <thead><tr><th>What breaks first at 10×</th><th>Symptom</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td>One Redis at 277k script calls/s</td><td>p99 of every API request climbs</td><td>Shard by user hash with hash tags</td></tr>
+      <tr><td>Round trip per request</td><td>Throughput capped by Redis, even when it's healthy</td><td>Local + global batches, accepting overshoot</td></tr>
+      <tr><td>A hot key: one big tenant</td><td>One shard saturates while the others idle</td><td>Quota per tenant in the app, or several buckets for that tenant</td></tr>
+      <tr><td>Rule config poll at scale</td><td>Instances drift during a change</td><td>Pub/sub invalidation plus the poll as a safety net</td></tr>
+      <tr><td>Redis as a shared dependency</td><td>An outage hits every endpoint at once</td><td>A separate limiter Redis, so cache traffic can't starve it</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">كل صف حاجة بتقع عند 10×. Redis واحد عليه 277 ألف script في الثانية: الـ p99 بتاع كل request بيطلع، والحل shard بالـ user hash مع hash tags. الـ round trip على كل request: الـ throughput بيبقى محدود بـ Redis حتى لو كويس، والحل local و global بـ batches ومعاها overshoot. الـ hot key زي tenant كبير: shard واحد بيتملى والباقي فاضي، والحل quota للـ tenant في الـ app أو أكتر من bucket ليه. الـ config poll مع توسّع النظام: الـ instances بتختلف وقت التغيير، والحل pub/sub invalidation مع الـ poll كـ safety net. Redis مشترك: وقوعه بيأثّر على كل الـ endpoints، والحل Redis منفصل للـ limiter عشان الـ cache traffic ميجوعوش.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><strong>الـ sharding بالـ user hash.</strong> Redis واحد مكفّي 27.8 ألف script في الثانية. عند 10× محتاج حوالي 7 shards بميزانية 40 ألف في الثانية لكل shard، ودي افتراض وأقل بكتير من الـ 151 ألف المقاسة هنا بـ pipeline. في Redis Cluster كل keys السكربت الواحد لازم تكون في slot واحد، فالـ keys بتاعة اليوزر بتتشارك hash tag: <code>rl:{user:42}:rpm</code>. التجربة فوق وريتك <code>CROSSSLOT</code> الحقيقي من غير الـ tag.</p>
+    <p><strong>الـ local والـ global عند QPS عالي.</strong> مكالمة Redis لكل request معناها إن ops Redis تساوي الـ QPS. الـ instance ممكن ياخد batch من الـ tokens ويصرفها محلي، فالـ ops بتقل بعدد الـ batch، والتمن overshoot لحد batch مضروب في الـ instances، و<a href="./25-rate-limiting-algorithms-distributed.html">درس 25</a> بيقيس ده. <strong>الـ multi-region:</strong> متخليش Redis واحد لكل المناطق، round trip بـ 70 ms لوحده بيكسر ميزانية الـ 5 ms. خلي لكل منطقة bucket خاص ونصيب من الـ quota.</p>
+    <p><strong>اللي بيقع عند 10×.</strong> مش الـ memory، دي 0.64 GB. بيقع Redis الواحد، وبعده تكلفة الشبكة لكل request، وبعدها الـ hot keys. <strong>الـ interviewer بيدور على:</strong> algorithm اتختار بسبب، والـ atomicity، وإيه اللي بيحصل لما Redis يقع، والـ headers. <strong>الـ red flag:</strong> إنك تحفظ الـ 5 algorithms من غير ما تختار واحد. <strong>الـ routine:</strong> اكتب design doc صفحة واحدة بالـ template في <code>project/design-docs/0000-template.md</code>، وقارنه بالفصل الرابع من <em>System Design Interview</em> لـ Alex Xu الجزء الأول، واكتب اللي فاتك.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو شغلك فيه Redis Cluster، راجع كل مكان بتبعت فيه Lua بأكتر من key: لو الـ keys مش فيها hash tag هتطلعلك <code>CROSSSLOT</code> في production أول ما تنقل، مش في الـ tests على single node. ولو الـ limiter حبيس Redis الكاش، ابدأ بفصله الأول: أبسط تأمين قبل أي sharding.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: why not Redis Cluster's built-in key distribution with no thought?</b>
+    Because a Lua script needs all its keys in one slot. Name the hash tag on purpose, usually the user or tenant, so one user's per-minute and per-day buckets live together and one Lua call can check both atomically.
+    <div class="ar-note">السؤال: ليه منسيبش Redis Cluster يوزّع الـ keys وخلاص؟ لأن الـ Lua script لازم كل الـ keys بتاعته في slot واحد. اختار الـ hash tag بقصد، عادة الـ user أو الـ tenant، عشان bucket الدقيقة و bucket اليوم لنفس اليوزر يبقوا سوا و Lua call واحدة تشيّكهم الاتنين atomic.</div>
+  </div>
+
+  <div class="callout ok">
+    <b>Scorecard: what the interviewer is checking</b>
+    <ul>
+      <li><b>Looks for:</b> an algorithm chosen with a reason, atomic check-and-decrement, a stated failure policy, correct headers, sharding with hash tags.</li>
+      <li><b>Red flags:</b> reciting every algorithm with no choice, Redis in the design with no failure answer, <code>GET</code> then <code>INCR</code>, ignoring the 5 ms budget.</li>
+    </ul>
+    <div class="ar-note">
+      <p>الجدول ده اللي الـ interviewer بيقيّمه.</p>
+      <ul>
+        <li><b>بيدور على:</b> algorithm اتختار بسبب، و check-and-decrement atomic، وسياسة فشل مقولة صريح، و headers صح، و sharding بـ hash tags.</li>
+        <li><b>الـ red flags:</b> إنك تعدّ كل الـ algorithms من غير اختيار، أو Redis في التصميم من غير إجابة عن وقوعه، أو <code>GET</code> وبعدها <code>INCR</code>، أو تتجاهل ميزانية الـ 5 ms.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Same rule, counted twice</b>
+<pre><code class="language-typescript">// الـ gateway والـ service الاتنين بيخصموا من نفس الـ key
+// ده في الـ gateway
+await limiter.check(`rl:user:${user}`, PER_USER);
+// وده تاني في الـ service
+await limiter.check(`rl:user:${user}`, PER_USER);</code></pre></div>
+    <div class="good"><b>✅ Each layer owns a different limit</b>
+<pre><code class="language-typescript">// الـ gateway بيخصم من الـ IP، والـ service بيخصم من الـ user
+await limiter.check(`rl:ip:${ip}`, PER_IP);
+await limiter.check(`rl:user:${user}`, PER_USER);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ rule نفسها على نفس الـ key في طبقتين بتنصّف الـ quota: في التجربة 20 بقوا 10. ✅ كل طبقة بتسأل سؤال مختلف بـ key مختلف، فالـ gateway بيحمي من الـ abuse، والـ service بيطبّق حد اليوزر، والرقم اللي اليوزر بياخده هو الرقم المكتوب.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Default Redis client options</b>
+<pre><code class="language-typescript">// الـ offline queue والـ retries بيخلوا الـ request يستنى Redis الواقع
+const redis = new Redis(url);
+await limiter.check(key, rule);</code></pre></div>
+    <div class="good"><b>✅ Fail fast, then decide</b>
+<pre><code class="language-typescript">// الفشل هنا سريع، وبعد كده الـ fallback هو اللي بيقرر
+const redis = new Redis(url, {
+  commandTimeout: 100,
+  enableOfflineQueue: false,
+  maxRetriesPerRequest: 0,
+});</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الإعدادات الـ default بتخلي الـ command تستنى Redis يرجع، فـ limiter المفروض يحمي الـ API بيبقى هو اللي بيوقّفه. ✅ الـ timeout القصير وقفل الـ offline queue بيخلوا الفشل سريع، وبعدها الـ breaker والـ fallback يقرروا: في التجربة الـ errors كانت 1 أو 2 بس وأبطأ request حوالي 40 ms.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ 429 with nothing else</b>
+<pre><code class="language-typescript">// الـ client مش عارف يستنى قد إيه، فهيعيد على طول
+return reply.code(429).send({ error: "limited" });</code></pre></div>
+    <div class="good"><b>✅ 429 that says when to come back</b>
+<pre><code class="language-typescript">// كده الـ client عارف هيرجع إمتى، وبنحسبها بالثواني
+reply.header("Retry-After", Math.ceil(d.retryAfterMs / 1000));
+return reply.code(429).send({ error: "limited" });</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>429</code> لوحده يخلي الـ client يعيد على طول، زي الـ hammer في التجربة اللي بعت 2,991 request. ✅ <code>Retry-After</code> بيقول للـ client يستنى قد إيه، والمحترم بعت 32 بس وعمل نفس الشغل.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Rules in environment variables</b>
+<pre><code class="language-typescript">// لو حصل abuse تغيير الرقم محتاج deploy كامل
+const LIMIT = Number(process.env.RATE_LIMIT ?? 100);</code></pre></div>
+    <div class="good"><b>✅ Rules in a config key, polled</b>
+<pre><code class="language-typescript">// الـ instances بتشوف القيمة الجديدة خلال نص ثانية
+const raw = await redis.get("rl:config");
+if (raw) rule = { name: "per-user", ...JSON.parse(raw) };</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الرقم في الـ env معناه إن وقت الـ abuse لازم deploy كامل عشان تغيّر سطر. ✅ لو الـ rule في <code>rl:config</code> والـ instances بتعمل poll، التغيير بياخد أقل من نص ثانية، في التجربة حوالي 228 و323 ms.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Redo the case, recorded <span class="lvl lvl-1">🟢 easy</span></b>
+    Close this page. Start a 45-minute timer and a screen or voice recording, then run the case from the prompt alone. Listen back and note where you stalled, which number you guessed, and whether you said what happens when Redis fails.
+    <div class="ar-note">اقفل الصفحة. شغّل تايمر 45 دقيقة وتسجيل صوت أو شاشة، وحل الـ case من السؤال بس. اسمع التسجيل بعدها، واكتب وقفت فين، وأنهي رقم خمّنته، وهل قلت إيه اللي بيحصل لما Redis يقع.</div>
+    <details><summary>Hint · تلميح</summary>
+      The review routine has three steps: one-page doc with the template, compare with Xu's chapter 4, write what you missed.
+      <div class="ar-note">الـ routine تلات خطوات: design doc صفحة بالـ template، قارنه بالفصل الرابع عند Xu، واكتب اللي فاتك.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. Two limits, one atomic decision <span class="lvl lvl-2">🟡 medium</span></b>
+    Write one Lua script that checks a user bucket and an IP bucket together and consumes from both only if both allow. Keep both keys in one slot with a hash tag. Test that a rejected request consumes nothing.
+    <div class="ar-note">اكتب Lua script واحد بيشيّك bucket الـ user و bucket الـ IP مع بعض، وبيخصم من الاتنين بس لو الاتنين قالوا آه. خلي الـ keys في slot واحد بـ hash tag. اختبر إن الـ request المرفوض مبيخصمش حاجة.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="sol-multi.ts"><code class="language-typescript">// الحل: Lua واحد على bucket الـ user و bucket الـ IP، يا يعدّوا الاتنين يا ولا واحد
+import { client, safePort } from "./redis-common.ts";
+
+const LUA = `
+local t = redis.call('TIME')
+local now = t[1] * 1000 + math.floor(t[2] / 1000)
+local function load(k, cap, perMs)
+  local d = redis.call('HMGET', k, 'tokens', 'ts')
+  local tokens = tonumber(d[1]) or cap
+  local ts = tonumber(d[2]) or now
+  return math.min(cap, tokens + math.max(0, now - ts) * perMs)
+end
+local capU, perU, capI, perI = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3]), tonumber(ARGV[4])
+local u = load(KEYS[1], capU, perU)
+local i = load(KEYS[2], capI, perI)
+local allowed = 0
+if u &gt;= 1 and i &gt;= 1 then u = u - 1; i = i - 1; allowed = 1 end
+redis.call('HSET', KEYS[1], 'tokens', tostring(u), 'ts', now)
+redis.call('HSET', KEYS[2], 'tokens', tostring(i), 'ts', now)
+redis.call('PEXPIRE', KEYS[1], math.ceil(capU / perU))
+redis.call('PEXPIRE', KEYS[2], math.ceil(capI / perI))
+return { allowed, math.floor(u), math.floor(i) }
+`;
+
+const r = client(safePort());
+await r.flushall();
+const perHour = (n: number) =&gt; n / 3_600_000;
+for (let n = 1; n &lt;= 6; n++) {
+  const out = (await r.eval(LUA, 2, "rl:{user:42}:rpm", "rl:{user:42}:ip", 3, perHour(3), 5, perHour(5))) as number[];
+  console.log(`request ${n}: allowed=${out[0]} user tokens=${out[1]} ip tokens=${out[2]}`);
+}
+r.disconnect();</code></pre>
+<pre><code class="language-plaintext">request 1: allowed=1 user tokens=2 ip tokens=4
+request 2: allowed=1 user tokens=1 ip tokens=3
+request 3: allowed=1 user tokens=0 ip tokens=2
+request 4: allowed=0 user tokens=0 ip tokens=2
+request 5: allowed=0 user tokens=0 ip tokens=2
+request 6: allowed=0 user tokens=0 ip tokens=2</code></pre>
+      <div class="ar-note">لاحظ إن بعد ما الـ user خلص عند الـ request التالت، الـ IP فضل على 2 tokens: الـ requests المرفوضة مخصمتش منه، وده اللي الـ atomic معناه هنا.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. Failure policy per route <span class="lvl lvl-2">🟡 medium</span></b>
+    Use two limiters over one Redis: <code>open</code> for browsing and <code>closed</code> for payments. Kill Redis and confirm each route behaves by its policy.
+    <div class="ar-note">استخدم limiter اتنين على نفس Redis: <code>open</code> للـ browsing و<code>closed</code> للـ payments. اقتل Redis واتأكد إن كل route ماشي حسب السياسة بتاعته.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="sol-policy.ts"><code class="language-typescript">// الحل: كل route ليه سياسة فشل خاصة بيه: الدفع closed والكتالوج open
+import { client, safePort, sleep } from "./redis-common.ts";
+import { RedisLimiter, type Rule } from "./limiter.ts";
+
+const port = safePort();
+const app = client(port, { maxRetriesPerRequest: 0, enableOfflineQueue: false, commandTimeout: 100, retryStrategy: () =&gt; 300 });
+app.on("error", () =&gt; {});
+await new Promise((res) =&gt; app.once("ready", res));
+
+const browse = new RedisLimiter(app, "open");
+const pay = new RedisLimiter(app, "closed");
+await browse.load();
+await pay.load();
+const rule: Rule = { name: "default", capacity: 100, refillPerSec: 10 };
+
+const before = [await browse.check("rl:browse", rule), await pay.check("rl:pay", rule)];
+console.log(`Redis up:   browse allowed=${before[0].allowed}, pay allowed=${before[1].allowed}`);
+
+const admin = client(port, { retryStrategy: () =&gt; null });
+admin.on("error", () =&gt; {});
+await admin.shutdown("NOSAVE").catch(() =&gt; {});
+await sleep(200);
+
+const after = [await browse.check("rl:browse", rule), await pay.check("rl:pay", rule)];
+console.log(`Redis down: browse allowed=${after[0].allowed} (${after[0].source}), pay allowed=${after[1].allowed} (${after[1].source})`);
+app.disconnect();
+admin.disconnect();</code></pre>
+<pre><code class="language-plaintext">Redis up:   browse allowed=true, pay allowed=true
+Redis down: browse allowed=true (open), pay allowed=false (local)</code></pre>
+      <div class="ar-note">الـ browse بعد ما Redis وقع فضل مسموح بالـ source <code>open</code>، والـ payment اترفض، وده بالظبط السلوك اللي المفروض تقرره قبل الـ incident مش وقته.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project: a real limiter on Redis <span class="lvl lvl-3">🔴 project</span></b>
+    Add this limiter to your side project's API: token bucket in Lua, per-user and per-IP keys with hash tags, 429 with <code>Retry-After</code>, and a chosen failure policy per route. Write one ADR with the template in <code>project/adr/0000-template.md</code> covering the algorithm and failure policy, and a load test showing the overshoot with two instances.
+    <div class="ar-note">ضيف الـ limiter ده للـ API بتاع مشروعك الجانبي: token bucket بـ Lua، و keys للـ user والـ IP بـ hash tags، و 429 مع <code>Retry-After</code>، وسياسة فشل لكل route. واكتب ADR واحد بالـ template في <code>project/adr/0000-template.md</code> عن الـ algorithm وسياسة الفشل، و load test بيوري الـ overshoot مع instance اتنين.</div>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Estimate live keys from users active in the window, not from DAU: 510k keys, not 10M.</li>
+    <li>Measured per key: fixed counter 92 B, token bucket 125 B, sliding log with 100 entries 2,893 B.</li>
+    <li>Token bucket: two fields, allows bursts, no edge problem, weighted cost is one argument.</li>
+    <li>Coarse at the edge, business limits in the service. Never the same rule on the same key twice.</li>
+    <li>429 plus <code>Retry-After</code>. The IETF <code>RateLimit</code> fields are still a draft (draft-11, May 2026). <code>X-RateLimit-*</code> is the common legacy with no standard meaning for reset.</li>
+    <li><code>Retry-After</code> beats <code>RateLimit</code> when both appear; a positive <code>r</code> promises nothing.</li>
+    <li>Lua + Redis single-threaded execution = atomic check-and-decrement: 1,000 concurrent requests, overshoot 0.</li>
+    <li>Fail fast: <code>commandTimeout</code>, <code>enableOfflineQueue: false</code>, a breaker, then a policy per route.</li>
+    <li>Insurance bucket = limit / instances. It bounds traffic but doesn't know what Redis already counted.</li>
+    <li>Redis Cluster: every key in one Lua call needs one slot, so use a hash tag such as <code>{user:42}</code>.</li>
+    <li>At 10× the first thing to break is not memory (0.64 GB) but one Redis and the round trip per request.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>احسب الـ keys الحية من النشطين في الـ window مش من الـ DAU: 510 ألف مش 10 مليون.</li>
+      <li>المقاس لكل key: الـ fixed counter 92 byte، والـ token bucket 125 byte، والـ sliding log بـ 100 entry حوالي 2,893 byte.</li>
+      <li>الـ token bucket: حقلين، بيسمح بـ bursts، مفيش مشكلة edge، والتكلفة بالوزن argument واحد.</li>
+      <li>الخشن عند الـ edge، والـ business limits جوه الـ service، ومتحطش نفس الـ rule على نفس الـ key مرتين.</li>
+      <li>رجّع 429 ومعاه <code>Retry-After</code>. حقول IETF <code>RateLimit</code> لسه draft (draft-11 مايو 2026). و<code>X-RateLimit-*</code> عُرف قديم من غير معنى ثابت لـ reset.</li>
+      <li>لو <code>Retry-After</code> و<code>RateLimit</code> اتبعتوا مع بعض، <code>Retry-After</code> هو اللي يكسب، و<code>r</code> الموجب مش ضمان.</li>
+      <li>Lua مع تنفيذ Redis اللي على thread واحد بيدوك check-and-decrement atomic: 1,000 request مع بعض و overshoot صفر.</li>
+      <li>افشل بسرعة: <code>commandTimeout</code>، و<code>enableOfflineQueue: false</code>، و breaker، وبعدها سياسة لكل route.</li>
+      <li>الـ insurance bucket بقيمة limit على عدد الـ instances. بيحدّ الـ traffic بس مش عارف Redis عدّ قد إيه قبل كده.</li>
+      <li>في Redis Cluster كل keys الـ Lua الواحد لازم في slot واحد، فاستخدم hash tag زي <code>{user:42}</code>.</li>
+      <li>عند 10× أول حاجة بتقع مش الـ memory (0.64 GB)، بيقع Redis الواحد والـ round trip لكل request.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 12 · 3.2 — 2. Rate limiter — algorithms، Redis، distributed consistency، where to put it (gateway vs service)، response headers</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/">IETF draft-ietf-httpapi-ratelimit-headers (draft-11, May 2026)</a></li>
+    <li><a href="https://www.rfc-editor.org/rfc/rfc9110.html">RFC 9110, HTTP Semantics: Retry-After</a></li>
+    <li><a href="https://nginx.org/en/docs/http/ngx_http_limit_req_module.html">nginx ngx_http_limit_req_module docs</a></li>
+    <li><a href="https://redis.io/docs/latest/develop/programmability/eval-intro/">Redis docs: Lua scripting and atomic execution</a></li>
+    <li><a href="https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/">Redis Cluster specification: hash tags and slots</a></li>
+    <li><a href="https://bytebytego.com/courses/system-design-interview/design-a-rate-limiter">Alex Xu, System Design Interview: Design a Rate Limiter (ByteByteGo)</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./46-case-url-shortener-id-generator.html"><small>← Previous</small>46 · URL Shortener &amp; IDs</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./48-case-key-value-store.html"><small>Next →</small>48 · Key-Value Store</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

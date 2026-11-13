@@ -1,0 +1,1847 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Storage Engines: B-Tree vs LSM-Tree — 12 System Design</title>
+<meta name="section" content="12-System-Design">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">12 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 35 / 63</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <header>
+    <h1>Storage Engines: B-Tree vs LSM-Tree</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 35 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Postgres 18 · LevelDB · Node 22</span>
+      <span class="chip">Prereq: 01 · B-trees, 07 · MVCC</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>12 · 3.1 — Storage engines: B-tree (read-optimized، in-place updates) vs LSM-tree (write-optimized، SSTables، compaction، Bloom filters للـ reads) — Postgres/MySQL vs Cassandra/RocksDB، WAL في الاتنين</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — A WAL you can crash</a></li>
+      <li><a href="#p2">Part 2 — B-tree for real</a></li>
+      <li><a href="#p3">Part 3 — A mini LSM</a></li>
+      <li><a href="#p4">Part 4 — Bloom filters &amp; compaction</a></li>
+      <li><a href="#p5">Part 5 — Real LSM vs real B-tree</a></li>
+      <li><a href="#p6">Part 6 — Choosing</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Most database incidents that look mysterious from the API are storage engine behaviour: WAL volume that jumps right after every checkpoint, a random primary key that multiplies write I/O, compaction that falls behind and turns reads slow, a delete that makes the disk grow. In this lesson you build a crashable log and a small LSM engine with real files, then look inside real Postgres and real LevelDB.</p>
+    <p>The interview question is "B-tree or LSM, and when?", and the honest answer is about which cost you agree to pay: read amplification, write amplification, or space amplification. You cannot minimise all three, so a senior picks the one the workload can afford and can say why.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>أغلب مشاكل الـ database اللي بتبان غامضة من ناحية الـ API هي في الحقيقة سلوك الـ storage engine: حجم WAL بيقفز بعد كل checkpoint، أو primary key عشوائي بيضاعف الكتابة على الديسك، أو compaction متأخر فالقراية بتبطأ، أو delete بيكبّر الديسك بدل ما يصغّره. في الدرس ده هتبني log تقدر تعمله crash، و LSM engine صغير بملفات حقيقية، وبعدين هتبص جوه Postgres و LevelDB الحقيقيين.</p>
+    <p>سؤال الـ interview هو "B-tree ولا LSM، وإمتى؟"، والإجابة الصادقة إنك بتختار تدفع أنهي تكلفة: read amplification، ولا write amplification، ولا space amplification. مش هتقدر تقلل التلاتة مع بعض، فالسنيور بيختار اللي الـ workload يستحمله وبيعرف يقول ليه.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — A WAL you can crash <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — WAL تقدر تعمله crash</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>An append is the cheapest durable write there is: one sequential write, no page to find or rewrite. So serious engines do the same thing first: append a record describing the change, make it durable, and only then acknowledge the client. The main structure (B-tree pages, or a memtable in RAM) is updated afterwards, at its own pace, because a crash can rebuild it from the log. That ordering is what "write-ahead" means.</p>
+    <p>Bitcask takes this to its simplest form: the log <em>is</em> the database, plus an in-memory hash index from key to the offset of its latest value. Writes are one append, reads are one positioned read, recovery is a scan. <code>WalStore</code> below is that idea with real files. Each record carries a CRC and lengths, which is how recovery finds a torn tail: the first record that fails its CRC or runs past the end of the file marks the end of the valid log, and everything after it is cut off.</p>
+    <p>Be careful what a kill test proves. Killing the process (<code>SIGKILL</code>, which is <code>TerminateProcess</code> on Windows) destroys only the process, so whatever already reached the OS page cache survives. That is why <code>os-only</code> lost nothing below. It does <strong>not</strong> show that <code>write()</code> is durable: a power cut loses whatever the OS had not flushed. We cannot cut power here, so that column of the table is reasoned, not measured. <code>fsync</code> is what pushes data to the device, assuming the drive honours flushes.</p>
+    <p>The bill is large. On this machine (Windows, NVMe, loaded by other work, so treat these as approximate) <code>fsync</code> per write cost about 226 times a plain write. Group commit recovers most of it: 50 writes sharing one <code>fsync</code> reached 46,357 writes/s against 1,134. Postgres does the same when concurrent commits share one WAL flush.</p>
+  </section>
+
+<pre data-file="src/wal-store.ts"><code class="language-typescript">import {
+  closeSync, existsSync, fstatSync, fsyncSync, ftruncateSync,
+  openSync, readSync, writeSync,
+} from "node:fs";
+import { crc32 } from "node:zlib";
+
+// شكل الـ record على الديسك: crc(4) + keyLen(4) + valLen(4) + key + value
+const HEADER = 12;
+const TOMBSTONE = 0xffffffff;
+
+// ثلاث درجات أمان، كل واحدة بتتنازل عن حاجة قصاد السرعة
+export type Durability = "fsync" | "os-only" | "memory-buffer";
+
+export class WalStore {
+  private fd: number;
+  private end = 0;
+  private pending: Buffer[] = [];
+  private index = new Map&lt;string, { offset: number; len: number }&gt;();
+  readonly recovered = { records: 0, tornBytes: 0 };
+  private mode: Durability;
+
+  constructor(path: string, mode: Durability) {
+    this.mode = mode;
+    if (!existsSync(path)) closeSync(openSync(path, "w"));
+    this.fd = openSync(path, "r+");
+    this.recover();
+  }
+
+  // بنقرا الملف من أوله ونبني الـ hash index من جديد، وده هو الـ recovery كله
+  private recover(): void {
+    const size = fstatSync(this.fd).size;
+    const buf = Buffer.alloc(size);
+    readSync(this.fd, buf, 0, size, 0);
+    let pos = 0;
+    while (pos + HEADER &lt;= size) {
+      const keyLen = buf.readUInt32LE(pos + 4);
+      const rawLen = buf.readUInt32LE(pos + 8);
+      const valLen = rawLen === TOMBSTONE ? 0 : rawLen;
+      const next = pos + HEADER + keyLen + valLen;
+      // الـ record الأخير ممكن يكون اتقطع في النص وقت الـ crash
+      if (next &gt; size) break;
+      if (crc32(buf.subarray(pos + 4, next)) !== buf.readUInt32LE(pos)) break;
+      const key = buf.toString("utf8", pos + HEADER, pos + HEADER + keyLen);
+      if (rawLen === TOMBSTONE) this.index.delete(key);
+      else this.index.set(key, { offset: pos + HEADER + keyLen, len: valLen });
+      this.recovered.records++;
+      pos = next;
+    }
+    this.recovered.tornBytes = size - pos;
+    // الذيل البايظ لازم يتشال، وإلا الـ writes الجاية هتتكتب بعده ومش هتتقري
+    if (pos &lt; size) ftruncateSync(this.fd, pos);
+    this.end = pos;
+  }
+
+  private encode(key: string, value: string | null): Buffer {
+    const k = Buffer.from(key);
+    const v = Buffer.from(value ?? "");
+    const rec = Buffer.alloc(HEADER + k.length + v.length);
+    rec.writeUInt32LE(k.length, 4);
+    rec.writeUInt32LE(value === null ? TOMBSTONE : v.length, 8);
+    k.copy(rec, HEADER);
+    v.copy(rec, HEADER + k.length);
+    rec.writeUInt32LE(crc32(rec.subarray(4)), 0);
+    return rec;
+  }
+
+  private append(rec: Buffer): number {
+    const offset = this.end;
+    this.end += rec.length;
+    if (this.mode === "memory-buffer") {
+      this.pending.push(rec);
+      if (this.pending.length &gt;= 200) this.flushPending();
+      return offset;
+    }
+    writeSync(this.fd, rec, 0, rec.length, offset);
+    if (this.mode === "fsync") fsyncSync(this.fd);
+    return offset;
+  }
+
+  private flushPending(): void {
+    const all = Buffer.concat(this.pending);
+    writeSync(this.fd, all, 0, all.length, this.end - all.length);
+    this.pending = [];
+  }
+
+  put(key: string, value: string): void {
+    const rec = this.encode(key, value);
+    const offset = this.append(rec);
+    const len = Buffer.byteLength(value);
+    this.index.set(key, { offset: offset + rec.length - len, len });
+  }
+
+  del(key: string): void {
+    this.append(this.encode(key, null));
+    this.index.delete(key);
+  }
+
+  get(key: string): string | undefined {
+    const hit = this.index.get(key);
+    if (!hit) return undefined;
+    if (this.pending.length) this.flushPending();
+    const buf = Buffer.alloc(hit.len);
+    readSync(this.fd, buf, 0, hit.len, hit.offset);
+    return buf.toString("utf8");
+  }
+
+  // ده الـ group commit: كذا write بيشيلوا fsync واحد
+  sync(): void {
+    if (this.pending.length) this.flushPending();
+    fsyncSync(this.fd);
+  }
+
+  liveKeys(): string[] { return [...this.index.keys()]; }
+  get keys(): number { return this.index.size; }
+  close(): void { closeSync(this.fd); }
+}</code></pre>
+
+<pre data-file="src/wal-child.ts"><code class="language-typescript">import { WalStore, type Durability } from "./wal-store.ts";
+
+// الـ process ده بيكتب orders وبيقول ack بعد كل write لحد ما يتقتل
+const [file, mode] = process.argv.slice(2) as [string, Durability];
+const store = new WalStore(file, mode);
+for (let i = 0; ; i++) {
+  store.put(`order:${i}`, JSON.stringify({ id: i, status: "paid", totalCents: 4200 + i }));
+  process.stdout.write(`${i}\n`);
+  // بنسيب الـ event loop يتنفس عشان الـ stdout يوصل للأب
+  if (i % 20 === 0) await new Promise((r) =&gt; setImmediate(r));
+}</code></pre>
+
+<pre data-file="src/wal-crash-test.ts"><code class="language-typescript">import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync, statSync, truncateSync } from "node:fs";
+import path from "node:path";
+import { WalStore, type Durability } from "./wal-store.ts";
+
+const dir = mkdtempSync(path.join(process.cwd(), "wal-crash-"));
+
+// بنشغّل الـ writer ونقتله بـ kill حقيقي بعد عدد معين من الـ acks
+function runAndKill(file: string, mode: Durability, killAfter: number): Promise&lt;number&gt; {
+  return new Promise((resolve) =&gt; {
+    const child = spawn(process.execPath, ["wal-child.ts", file, mode], {
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    let lastAck = -1;
+    let tail = "";
+    child.stdout.on("data", (d: Buffer) =&gt; {
+      const parts = (tail + d.toString()).split("\n");
+      tail = parts.pop() ?? "";
+      for (const p of parts) lastAck = Number(p);
+      if (lastAck &gt;= killAfter &amp;&amp; !child.killed) child.kill("SIGKILL");
+    });
+    child.on("exit", () =&gt; resolve(lastAck));
+  });
+}
+
+for (const mode of ["memory-buffer", "os-only", "fsync"] as Durability[]) {
+  const file = path.join(dir, `${mode}.log`);
+  const lastAck = await runAndKill(file, mode, 500);
+  const store = new WalStore(file, mode);
+  let survived = 0;
+  for (let i = 0; i &lt;= lastAck; i++) if (store.get(`order:${i}`) !== undefined) survived++;
+  console.log(`${mode.padEnd(14)} acked=${lastAck + 1}  survived=${survived}  lost=${lastAck + 1 - survived}  tornBytes=${store.recovered.tornBytes}`);
+  store.close();
+}
+
+// محاكاة: بنقص آخر 7 bytes من الملف كأن الكهربا قطعت في نص write
+const file = path.join(dir, "torn.log");
+const s = new WalStore(file, "os-only");
+for (let i = 0; i &lt; 100; i++) s.put(`order:${i}`, `paid-${i}`);
+s.close();
+truncateSync(file, statSync(file).size - 7);
+const r = new WalStore(file, "os-only");
+console.log(`torn tail (simulated): records=${r.recovered.records} tornBytes=${r.recovered.tornBytes} order:98=${r.get("order:98")} order:99=${r.get("order:99")}`);
+r.close();
+rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });</code></pre>
+
+<pre><code class="language-plaintext">memory-buffer  acked=536  survived=400  lost=136  tornBytes=0
+os-only        acked=507  survived=507  lost=0  tornBytes=0
+fsync          acked=501  survived=501  lost=0  tornBytes=0
+torn tail (simulated): records=99 tornBytes=20 order:98=paid-98 order:99=undefined</code></pre>
+  <div class="ar-note">كل سطر طريقة كتابة: <code>memory-buffer</code> الأب أخد ack لـ 536 طلب، والـ 136 اللي كانوا لسه في الـ buffer ضاعوا مع الـ kill. <code>os-only</code> و<code>fsync</code> ماضاعش منهم حاجة لأن الـ data وصلت لنظام التشغيل قبل الـ kill. السطر الأخير محاكاة لانقطاع الكهربا: شيلنا 7 bytes من آخر الملف، فالـ recovery لقى الـ CRC غلط، قطع الـ 20 byte الأخيرة (السجل الناقص كله)، و<code>order:98</code> سليم و<code>order:99</code> راح.</div>
+
+  <table>
+    <tr><th>Mode</th><th>Process killed</th><th>Power loss</th><th>How it was checked</th></tr>
+    <tr><td><code>memory-buffer</code></td><td>loses acked writes</td><td>loses acked writes</td><td>kill measured above</td></tr>
+    <tr><td><code>os-only</code> (write, no fsync)</td><td>survives</td><td>may lose the tail</td><td>kill measured, power loss not run here</td></tr>
+    <tr><td><code>fsync</code></td><td>survives</td><td>survives if the drive honours flush</td><td>kill measured, power loss not run here</td></tr>
+  </table>
+  <div class="ar-note">الجدول: <code>memory-buffer</code> بيخسر الكتابات اللي أخدت ack في الحالتين. <code>os-only</code> بيعدّي الـ kill بس ممكن يخسر آخر الملف لو الكهربا قطعت. <code>fsync</code> بيعدّي الحالتين بشرط إن الـ drive يحترم الـ flush. عمود الكهربا بالمنطق مش بالقياس، لأننا مش هنقطع كهربا هنا (not run here).</div>
+
+<pre data-file="src/wal-fsync-cost.ts"><code class="language-typescript">import { mkdtempSync, rmSync } from "node:fs";
+import path from "node:path";
+import { WalStore, type Durability } from "./wal-store.ts";
+
+const dir = mkdtempSync(path.join(process.cwd(), "wal-cost-"));
+const value = JSON.stringify({ status: "paid", totalCents: 4200, currency: "EGP" });
+
+function measure(label: string, mode: Durability, n: number, groupSize = 0): void {
+  const store = new WalStore(path.join(dir, `${label.replace(/\W+/g, "-")}.log`), mode);
+  const t0 = performance.now();
+  for (let i = 0; i &lt; n; i++) {
+    store.put(`order:${i}`, value);
+    if (groupSize &amp;&amp; (i + 1) % groupSize === 0) store.sync();
+  }
+  const ms = performance.now() - t0;
+  store.close();
+  console.log(`${label.padEnd(27)} n=${String(n).padEnd(6)} ${String(Math.round(n / (ms / 1000))).padStart(8)} writes/s  ${(ms / n).toFixed(4)} ms/write`);
+}
+
+measure("write() only, no fsync", "os-only", 50_000);
+measure("fsync every write", "fsync", 1_000);
+measure("group commit, 50 per fsync", "os-only", 25_000, 50);
+rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });</code></pre>
+
+<pre><code class="language-plaintext">write() only, no fsync      n=50000    256651 writes/s  0.0039 ms/write
+fsync every write           n=1000       1134 writes/s  0.8817 ms/write
+group commit, 50 per fsync  n=25000     46357 writes/s  0.0216 ms/write</code></pre>
+  <div class="ar-note">الأرقام تقريبية لأن الجهاز عليه شغل تاني. الكتابة من غير fsync حوالي 256 ألف في الثانية، وfsync مع كل كتابة 1,134 بس، يعني أبطأ حوالي 226 مرة. الـ group commit (كل 50 كتابة يشيلوا fsync واحد) رجّع حوالي 46 ألف في الثانية.</div>
+
+<pre data-file="src/pg-wal-peek.mjs"><code class="language-javascript">import { execFileSync } from "node:child_process";
+import path from "node:path";
+import { connect, createPrimary, stopAll } from "../pg-cluster.mjs";
+
+const BIN = "C:/Program Files/PostgreSQL/18/bin";
+const c = await createPrimary();
+try {
+  // حارس: مفيش اتصال إلا على بورت متأكدين إنه بتاع الـ cluster المؤقت
+  if (!/^\d+$/.test(String(c.port)) || c.port &lt; 1024 || [5432, 27017, 6379].includes(c.port)) throw new Error("refusing port " + c.port);
+  const db = await connect(c.port);
+  await db.query(`create table orders(id bigint primary key, status text not null, total_cents int not null)`);
+  await db.query(`insert into orders values (0, 'pending', 1)`);
+  await db.query(`update orders set status = 'paid' where id = 0`);
+
+  const lsn = async () =&gt; (await db.query("select pg_current_wal_lsn() l")).rows[0].l;
+  const a = await lsn();
+  await db.query(`insert into orders values (1, 'pending', 4200)`);
+  const b = await lsn();
+  await db.query(`update orders set status = 'paid' where id = 1`);
+  const c2 = await lsn();
+  const diff = async (x, y) =&gt; Number((await db.query("select pg_wal_lsn_diff($1, $2) d", [y, x])).rows[0].d);
+  console.log(`lsn before insert ${a}`);
+  console.log(`lsn after insert  ${b}  (+${await diff(a, b)} bytes)`);
+  console.log(`lsn after update  ${c2}  (+${await diff(b, c2)} bytes)`);
+  await db.end();
+  const dump = execFileSync(`${BIN}/pg_waldump.exe`, ["-p", path.join(c.root, "primary", "pg_wal"), "-s", a, "-e", c2], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  console.log(dump.split("\n").map((l) =&gt; l.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n"));
+} finally {
+  await stopAll(c);
+}</code></pre>
+
+<pre><code class="language-plaintext">lsn before insert 0/1819B08
+lsn after insert  0/1819BC0  (+184 bytes)
+lsn after update  0/1819C38  (+120 bytes)
+rmgr: Heap len (rec/tot): 75/ 75, tx: 755, lsn: 0/01819B08, prev 0/01819AE0, desc: INSERT off: 3, flags: 0x00, blkref #0: rel 1663/5/16384 blk 0
+rmgr: Btree len (rec/tot): 64/ 64, tx: 755, lsn: 0/01819B58, prev 0/01819B08, desc: INSERT_LEAF off: 2, blkref #0: rel 1663/5/16392 blk 1
+rmgr: Transaction len (rec/tot): 34/ 34, tx: 755, lsn: 0/01819B98, prev 0/01819B58, desc: COMMIT 2026-11-09 05:24:05.436100 Egypt Standard Time
+rmgr: Heap len (rec/tot): 78/ 78, tx: 756, lsn: 0/01819BC0, prev 0/01819B98, desc: HOT_UPDATE old_xmax: 756, old_off: 3, old_infobits: [], flags: 0x60, new_xmax: 0, new_off: 4, blkref #0: rel 1663/5/16384 blk 0
+rmgr: Transaction len (rec/tot): 34/ 34, tx: 756, lsn: 0/01819C10, prev 0/01819BC0, desc: COMMIT 2026-11-09 05:24:05.436851 Egypt Standard Time</code></pre>
+  <div class="ar-note">دي Postgres 18 حقيقية: الـ LSN زاد 184 byte بعد الـ insert و120 بعد الـ update. <code>pg_waldump</code> بيقرا الـ records: الـ insert كتب Heap INSERT وBtree INSERT_LEAF وCOMMIT. الـ update كتب <code>HOT_UPDATE</code> من غير أي Btree record، وده هيتشرح في الجزء 2.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الكتابة في آخر ملف أرخص كتابة durable ممكنة: مفيش page تدور عليها ولا تكتبها تاني. عشان كده أي engine محترم بيعمل نفس الخطوة الأول: يكتب record بيوصف التغيير، يتأكد إنه وصل، وبعدها بس يرد على الـ client. الـ structure الأساسي (صفحات B-tree أو memtable في الـ RAM) بيتعدل بعدين على مهله، لأن لو حصل crash الـ log يقدر يبنيه من الأول. ده بالظبط معنى "write-ahead".</p>
+    <p>الـ Bitcask بياخد الفكرة لأبسط شكل: الـ log هو الـ database نفسها، ومعاه hash index في الـ memory من كل key لمكان آخر قيمة ليه في الملف. الكتابة append واحد، والقراية read واحد في مكان معروف، والـ recovery scan للملف. الـ <code>WalStore</code> هو الفكرة دي بملفات حقيقية. كل record معاه CRC وأطوال، وده اللي بيخلّي الـ recovery يكتشف الذيل المقطوع: أول record الـ CRC بتاعه غلط أو طوله بيعدّي آخر الملف هو نهاية الـ log السليم، وأي حاجة بعده بتتشال.</p>
+    <p>خد بالك الـ kill test بيثبت إيه بالظبط. الـ kill بيموّت الـ process بس، فأي data وصلت لـ page cache بتاع نظام التشغيل بتفضل موجودة، وعشان كده <code>os-only</code> ماخسرش حاجة. ده <strong>مش</strong> معناه إن <code>write()</code> durable: لو الكهربا قطعت، اللي نظام التشغيل مكتبهوش بيضيع. إحنا مش هنقطع كهربا هنا، فالعمود ده بالمنطق مش بالقياس. الـ <code>fsync</code> هو اللي بيوصّل الـ data للـ device، بشرط إن الـ drive يحترم الـ flush.</p>
+    <p>التكلفة كبيرة. على الجهاز ده (Windows و NVMe وعليه شغل تاني، فالأرقام تقريبية) الـ <code>fsync</code> مع كل write طلع أغلى حوالي 226 مرة من الكتابة العادية. الـ group commit بيرجّع أغلب الفرق: 50 write بيتشاركوا <code>fsync</code> واحد وصلوا لـ 46,357 write/s بدل 1,134. Postgres بيعمل نفس الحكاية لما commits في نفس الوقت بيتشاركوا WAL flush واحد.</p>
+    <p>وليه الاتنين بيبدأوا بالـ log؟ الـ B-tree بيعدل pages في مكانها، وده random I/O، والـ page ممكن تتكتب نصها وقت الـ crash. والـ LSM الـ memtable بتاعه في الـ RAM لحد الـ flush، فالـ log هو النسخة الوحيدة الـ durable. في الحالتين من غير الـ log، الـ ack اللي رجع للـ client يبقى وعد ممكن يتكسر.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما تعمل endpoint بيستقبل webhooks من payment provider وتحب تكتب كل event في ملف أو queue قبل ما ترد 200، السؤال الأول: الـ ack بيطلع بعد الـ fsync ولا قبله؟ لو قبله، crash واحد بيضيّع دفعات اترد عليها بنجاح. والحل المعتاد عمل batch: تجمع الـ events كل 5–10 ms في fsync واحد، زي الـ group commit بالظبط. ونفس الكلام لما تظبط <code>appendfsync</code> في Redis، أو <code>synchronous_commit</code> في Postgres.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Why does a database write everything twice, once to the WAL and once to the data pages?" → The WAL is a cheap sequential append that makes the commit durable right away. The data pages are written later, in batches, so random I/O stops being on the commit path. On a crash, the log replays whatever the pages missed.
+    <div class="ar-note">"ليه الـ database بتكتب كل حاجة مرتين، مرة في الـ WAL ومرة في الصفحات؟" ← الـ WAL كتابة sequential رخيصة بتخلي الـ commit يبقى durable على طول. والصفحات بتتكتب بعدين على دفعات، فالـ random I/O بيبقى بره مسار الـ commit. ولو حصل crash، الـ log بيعيد تطبيق اللي الصفحات فاتها.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — B-tree for real <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — الـ B-tree على الحقيقة</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The data structure itself is covered in <a href="../../03-CS-Fundamentals/lessons/05-trees-bst-btrees.html">section 03 · B-trees</a>. Here we measure what Postgres pays for it. Everything lives in 8 KB pages. With <code>pageinspect</code> on a 200,000-row <code>bigint</code> primary key we get a leaf holding 367 entries, internal pages holding 262–286, and a tree of height 2 (three levels). A full tree of that fanout reaches about 286 × 286 × 367 ≈ 30 million rows at the same depth, which is why a B-tree lookup stays a handful of page reads.</p>
+    <p>Key order decides the shape. Sequential keys always hit the rightmost leaf, and Postgres splits it unevenly (about 90/10) so old pages stay full: <strong>547 right splits, 89.95% density, 0% fragmentation</strong>. Random keys split in both directions and leave pages partly empty: <strong>617 splits, 79.9% density, 50% fragmentation</strong>. Key width matters too: these are 8-byte keys, so <a href="./31-unique-id-generation.html">UUIDs, measured in lesson 31</a>, differ further.</p>
+    <p>Then comes the cost you can't see in a benchmark that starts cold. Postgres repairs torn pages with <em>full page images</em>: the first time a page is touched after a checkpoint, the whole 8 KB goes into the WAL. In the lab a single update right after a checkpoint wrote 9,670 bytes, the next update on the same page wrote 165. Now multiply that by key distribution: 2,000 sequential rows after a checkpoint touch 3 pages, while 2,000 random rows touch 590 of them, costing <strong>2,089 bytes of WAL per row against 153</strong>, about 13.7 times more. WAL volume drives replica lag, archive size and fsync pressure.</p>
+    <p>HOT updates are the mitigation for updates. If no indexed column changes and the new version fits on the same page, Postgres skips the index entries entirely: 96 bytes per row, against 240 for an update that changes an indexed column (710 when those index pages also needed full images). So write amplification, measured here as WAL bytes per 48-byte logical row, runs from 2× to over 40× on the same engine. And WAL is only part of it: the pages themselves still get written later, so these are lower bounds. MVCC and vacuum, which decide when old versions go away, are in <a href="../../09-Databases/lessons/14-mvcc-vacuum-long-transactions.html">section 09 · MVCC</a>.</p>
+  </section>
+
+<pre data-file="src/btree-lab.mjs"><code class="language-javascript">import { execFileSync } from "node:child_process";
+import path from "node:path";
+import { connect, createPrimary, stopAll } from "../pg-cluster.mjs";
+
+const BIN = "C:/Program Files/PostgreSQL/18/bin";
+// ظبطنا autovacuum على off عشان العدادات تقيس التجربة بس
+const c = await createPrimary({ conf: "autovacuum=off" });
+try {
+  if (!/^\d+$/.test(String(c.port)) || c.port &lt; 1024 || [5432, 27017, 6379].includes(c.port)) throw new Error("refusing port " + c.port);
+  const db = await connect(c.port);
+  await db.query("create extension pageinspect; create extension pgstattuple");
+  const one = async (sql, args) =&gt; (await db.query(sql, args)).rows[0];
+  const lsn = async () =&gt; (await one("select pg_current_wal_lsn() l")).l;
+
+  // العدادات بتاعة pg_stat_wal بتتبعت لما الـ transaction يخلص، فلازم نطلب flush
+  const walStats = async () =&gt; {
+    await db.query("select pg_stat_force_next_flush()");
+    return one("select wal_records::bigint r, wal_fpi::bigint f, wal_bytes::bigint b from pg_stat_wal");
+  };
+  const measure = async (fn) =&gt; {
+    const a = await walStats();
+    await fn();
+    const b = await walStats();
+    return { records: b.r - a.r, fpi: b.f - a.f, bytes: b.b - a.b };
+  };
+  const splits = (from, to) =&gt; {
+    const txt = execFileSync(`${BIN}/pg_waldump.exe`, ["-p", path.join(c.root, "primary", "pg_wal"), "-s", from, "-e", to, "--stats=record", "--rmgr=Btree"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    const count = (name) =&gt; Number(new RegExp(`Btree/${name}\\s+(\\d+)`).exec(txt)?.[1] ?? 0);
+    return { left: count("SPLIT_L"), right: count("SPLIT_R") };
+  };
+  const shape = async (name) =&gt; one(`select tree_level, index_size, leaf_pages, internal_pages, avg_leaf_density, leaf_fragmentation from pgstatindex($1)`, [name]);
+
+  console.log("block_size =", (await one("select current_setting('block_size') s")).s);
+
+  // (1) العمق والـ fanout
+  await db.query("create table orders_seq(id bigint primary key, customer_id int, status text, total_cents int)");
+  await db.query("create table orders_rnd(id bigint primary key, customer_id int, status text, total_cents int)");
+  const a0 = await lsn();
+  const seq = await measure(() =&gt; db.query("insert into orders_seq select g, g % 1000, 'paid', 4200 from generate_series(1, 200000) g"));
+  const a1 = await lsn();
+  const seqSplits = splits(a0, a1);
+  const rnd = await measure(() =&gt; db.query("insert into orders_rnd select (random() * 9e15)::bigint, g % 1000, 'paid', 4200 from generate_series(1, 200000) g"));
+  const a2 = await lsn();
+  const rndSplits = splits(a1, a2);
+
+  const meta = await one("select root, level, fastroot, fastlevel from bt_metap('orders_seq_pkey')");
+  const root = await one("select live_items, free_size, avg_item_size, btpo_level from bt_page_stats('orders_seq_pkey', $1)", [meta.root]);
+  console.log("bt_metap   ", JSON.stringify(meta));
+  console.log("root page  ", JSON.stringify(root));
+  const leaf = await one("select live_items, free_size, avg_item_size from bt_page_stats('orders_seq_pkey', 1)");
+  console.log("leaf page 1", JSON.stringify(leaf));
+  const internal = await one("select min(live_items) lo, max(live_items) hi, count(*)::int pages from bt_multi_page_stats('orders_seq_pkey', 1, -1) where btpo_level = 1");
+  console.log("level 1    ", JSON.stringify(internal));
+  console.log("data_checksums =", (await one("show data_checksums")).data_checksums, " full_page_writes =", (await one("show full_page_writes")).full_page_writes);
+
+  const p = (x) =&gt; `${x.bytes} bytes WAL, ${(x.bytes / 200000).toFixed(1)} bytes/row, fpi=${x.fpi}`;
+  console.log("sequential ", p(seq), "splits", JSON.stringify(seqSplits), JSON.stringify(await shape("orders_seq_pkey")));
+  console.log("random     ", p(rnd), "splits", JSON.stringify(rndSplits), JSON.stringify(await shape("orders_rnd_pkey")));
+
+  // (2) كتابة الصفحة كاملة: بعد الـ checkpoint أول لمسة لأي صفحة بتاخد نسخة كاملة
+  await db.query("checkpoint");
+  const seqAfter = await measure(() =&gt; db.query("insert into orders_seq select g, g % 1000, 'paid', 4200 from generate_series(200001, 202000) g"));
+  await db.query("checkpoint");
+  const rndAfter = await measure(() =&gt; db.query("insert into orders_rnd select (random() * 9e15)::bigint, g % 1000, 'paid', 4200 from generate_series(1, 2000) g"));
+  const after = (x) =&gt; `${x.bytes} bytes, ${(x.bytes / 2000).toFixed(1)} bytes/row, fpi=${x.fpi}`;
+  console.log("after checkpoint, 2000 rows, sequential:", after(seqAfter));
+  console.log("after checkpoint, 2000 rows, random:    ", after(rndAfter));
+
+  // (3) تكلفة الـ FPI لصف واحد
+  await db.query("create table invoices(id bigint primary key, status text, note text)");
+  await db.query("insert into invoices select g, 'open', 'x' from generate_series(1, 400) g");
+  await db.query("checkpoint");
+  await db.query("select * from invoices where id in (1, 2)");
+  const firstTouch = await measure(() =&gt; db.query("update invoices set note = 'first' where id = 1"));
+  const secondTouch = await measure(() =&gt; db.query("update invoices set note = 'second' where id = 2"));
+  console.log("same page: first update after checkpoint", JSON.stringify(firstTouch));
+  console.log("same page: second update               ", JSON.stringify(secondTouch));
+
+  // (4) مقارنة الـ HOT بغيره: عمود مش متعمله index ضد عمود متعمله index
+  await db.query("create table orders_hot(id bigint primary key, status text not null, note text, total_cents int) with (fillfactor = 85)");
+  await db.query("create index on orders_hot(status)");
+  await db.query("insert into orders_hot select g, 'pending', 'n', 100 from generate_series(1, 50000) g");
+  await db.query("vacuum orders_hot");
+  const ids = Array.from({ length: 2000 }, (_, i) =&gt; 1 + (i * 23) % 50000);
+  await db.query("checkpoint");
+  await db.query("update orders_hot set note = 'warm' where id = any($1)", [ids]);
+  const hotStats = async () =&gt; { await db.query("select pg_stat_force_next_flush()"); return one("select n_tup_upd::int u, n_tup_hot_upd::int h from pg_stat_user_tables where relname = 'orders_hot'"); };
+  const s0 = await hotStats();
+  const hot = await measure(() =&gt; db.query("update orders_hot set note = 'shipped soon' where id = any($1)", [ids]));
+  const s1 = await hotStats();
+  const nonHot = await measure(() =&gt; db.query("update orders_hot set status = 'paid' where id = any($1)", [ids]));
+  const s2 = await hotStats();
+  console.log(`HOT update (non-indexed note):  ${(hot.bytes / 2000).toFixed(1)} bytes/row, fpi=${hot.fpi}, hot=${s1.h - s0.h}/${s1.u - s0.u}`);
+  console.log(`non-HOT (indexed status):       ${(nonHot.bytes / 2000).toFixed(1)} bytes/row, fpi=${nonHot.fpi}, hot=${s2.h - s1.h}/${s2.u - s1.u}`);
+  const nonHot2 = await measure(() =&gt; db.query("update orders_hot set status = 'shipped' where id = any($1)", [ids]));
+  console.log(`non-HOT again (pages already logged): ${(nonHot2.bytes / 2000).toFixed(1)} bytes/row, fpi=${nonHot2.fpi}`);
+  console.log("logical row size", (await one("select avg(pg_column_size(o.*))::int s from (select * from orders_seq limit 1000) o")).s, "bytes");
+  await db.end();
+} finally {
+  await stopAll(c);
+}</code></pre>
+
+<pre><code class="language-plaintext">block_size = 8192
+bt_metap    {"root":"412","level":"2","fastroot":"412","fastlevel":"2"}
+root page   {"live_items":2,"free_size":8116,"avg_item_size":12,"btpo_level":"2"}
+leaf page 1 {"live_items":367,"free_size":808,"avg_item_size":16}
+level 1     {"lo":262,"hi":286,"pages":2}
+data_checksums = on  full_page_writes = on
+sequential  29017300 bytes WAL, 145.1 bytes/row, fpi=0 splits {"left":0,"right":547} {"tree_level":2,"index_size":"4513792","leaf_pages":"547","internal_pages":"3","avg_leaf_density":89.95,"leaf_fragmentation":0}
+random      30679504 bytes WAL, 153.4 bytes/row, fpi=0 splits {"left":341,"right":276} {"tree_level":2,"index_size":"5087232","leaf_pages":"616","internal_pages":"4","avg_leaf_density":79.9,"leaf_fragmentation":50}
+after checkpoint, 2000 rows, sequential: 305723 bytes, 152.9 bytes/row, fpi=3
+after checkpoint, 2000 rows, random:     4178466 bytes, 2089.2 bytes/row, fpi=590
+same page: first update after checkpoint {"records":4,"fpi":2,"bytes":9670}
+same page: second update                {"records":3,"fpi":0,"bytes":165}
+HOT update (non-indexed note):  96.4 bytes/row, fpi=0, hot=2000/2000
+non-HOT (indexed status):       710.4 bytes/row, fpi=129, hot=0/2000
+non-HOT again (pages already logged): 239.8 bytes/row, fpi=1
+logical row size 48 bytes</code></pre>
+  <div class="ar-note">حجم الصفحة 8192 وارتفاع الشجرة 2 (يعني 3 مستويات). الصفحة الورقة فيها 367 مفتاح، والصفحة الداخلية 262–286. الترتيب المتسلسل: 547 split كلهم لليمين وكثافة 89.95% والتشتت صفر. العشوائي: 617 split وكثافة 79.9% وتشتت 50%. بعد الـ checkpoint: 2000 صف متسلسل كتبوا 153 byte للصف (3 FPI)، والعشوائي 2089 byte للصف (590 FPI). نفس الصفحة: أول update بعد الـ checkpoint 9670 byte، والتاني 165. الـ HOT بـ 96 byte، وغير الـ HOT بـ 240، و710 لما صفحات الـ index احتاجت نسخ كاملة.</div>
+
+<pre class="diagram">
+ sequential keys                          random keys
+ ┌────────────────────────────────┐       ┌────────────────────────────────┐
+ │ only the rightmost leaf grows  │       │ any leaf can be hit            │
+ │ split ~90/10, old pages stay   │       │ split ~50/50, pages half empty │
+ │ full and never change again    │       │ every touched page gets an FPI │
+ └────────────────────────────────┘       └────────────────────────────────┘
+ 2,000 rows after checkpoint: 3 FPIs      2,000 rows after checkpoint: 590 FPIs
+ WAL per row: 153 bytes                   WAL per row: 2,089 bytes
+</pre>
+  <div class="ar-note">الرسمة بتقارن الاتنين: المفاتيح المتسلسلة بتكبّر آخر ورقة بس، فالـ split بيبقى 90/10 والصفحات القديمة بتفضل مليانة ومبتتغيرش، و2000 صف بعد الـ checkpoint بيدّوا 3 FPI و153 byte للصف. المفاتيح العشوائية ممكن تيجي على أي ورقة، فالـ split حوالي 50/50، والصفحات بتفضل نص فاضية، وكل صفحة اتلمست بتاخد FPI: 590 FPI و2089 byte للصف.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ data structure نفسه موجود في <a href="../../03-CS-Fundamentals/lessons/05-trees-bst-btrees.html">قسم 03 · الـ B-trees</a>. هنا بنقيس Postgres بيدفع إيه. كل حاجة عايشة في صفحات 8 KB. بـ <code>pageinspect</code> على primary key من نوع <code>bigint</code> وفيه 200 ألف صف: الورقة فيها 367 مفتاح، والصفحات الداخلية 262–286، والشجرة ارتفاعها 2 (3 مستويات). شجرة بالـ fanout ده توصل لحوالي 286 × 286 × 367 ≈ 30 مليون صف بنفس العمق، وعشان كده lookup الـ B-tree بيفضل كام page read بس.</p>
+    <p>ترتيب المفتاح بيحدد الشكل. المفاتيح المتسلسلة دايمًا بتروح لآخر ورقة على اليمين، و Postgres بيقسمها 90/10 تقريبًا فالصفحات القديمة تفضل مليانة: <strong>547 right split، كثافة 89.95%، وتشتت صفر</strong>. المفاتيح العشوائية بتقسم في الاتجاهين وبتسيب الصفحات نص فاضية: <strong>617 split، كثافة 79.9%، وتشتت 50%</strong>. وعرض المفتاح بيفرق كمان: دي مفاتيح 8 byte، أما <a href="./31-unique-id-generation.html">الـ UUIDs في الدرس 31</a> فأرقامها تختلف أكتر.</p>
+    <p>وبعدين في التكلفة اللي benchmark بيبدأ على بارد مش هيوريهالك. Postgres بيصلّح الصفحات المقطوعة بـ <em>full page images</em>: أول مرة صفحة تتلمس بعد checkpoint، الـ 8 KB كلهم بيتكتبوا في الـ WAL. في التجربة أول update بعد الـ checkpoint كتب 9,670 byte، والـ update اللي بعده على نفس الصفحة 165 بس. واضرب ده في توزيع المفاتيح: 2000 صف متسلسل بعد checkpoint بيلمسوا 3 صفحات، و2000 صف عشوائي بيلمسوا 590، يعني <strong>2,089 byte WAL للصف قصاد 153</strong>، حوالي 13.7 مرة. وحجم الـ WAL ده هو اللي بيحدد lag الـ replicas وحجم الأرشيف وضغط الـ fsync.</p>
+    <p>الـ HOT updates هي العلاج للـ updates. لو مفيش عمود عليه index اتغير والنسخة الجديدة دخلت في نفس الصفحة، Postgres مش بيلمس الـ indexes خالص: 96 byte للصف، قصاد 240 لما عمود عليه index يتغير (و710 لما صفحات الـ index احتاجت نسخ كاملة كمان). يعني الـ write amplification، اللي قسناه هنا بـ WAL bytes لكل صف منطقي حجمه 48 byte، بيبدأ من 2× وبيوصل لأكتر من 40× على نفس الـ engine. والـ WAL جزء بس: الصفحات نفسها هتتكتب بعدين، فدول حدود دنيا. والـ MVCC والـ vacuum اللي بيحددوا إمتى النسخ القديمة تتشال في <a href="../../09-Databases/lessons/14-mvcc-vacuum-long-transactions.html">قسم 09 · الـ MVCC</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      جدول <code>orders</code> بـ <code>id uuid default gen_random_uuid()</code> وواحد من الفريق سأل "ليه الـ WAL بيطلع 40 GB في اليوم والـ replica بتتأخر الصبح؟". افتح <code>pg_stat_wal</code> وقارن <code>wal_fpi</code> لساعة قبل وبعد checkpoint، وشوف الكثافة بـ <code>pgstatindex</code>. والعلاج: <code>uuidv7()</code> (موجود في Postgres 18) بدل v4، وشيل أي index مش بيستخدمه query، عشان الـ HOT يشتغل على الأعمدة اللي بتتحدث كتير زي <code>updated_at</code>.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks at scale</b>
+    Lowering <code>checkpoint_timeout</code> to "keep recovery fast" means every page gets a fresh full image more often. Replica lag and WAL archive size go up together. Tune it with <code>wal_fpi</code> in front of you, and consider <code>wal_compression</code>.
+    <div class="ar-note">لو نزّلت <code>checkpoint_timeout</code> عشان "الـ recovery يبقى أسرع"، كل صفحة هتاخد نسخة كاملة أكتر. والـ replica lag وحجم أرشيف الـ WAL هيزيدوا مع بعض. ظبطه وإنت باصص على <code>wal_fpi</code>، وفكّر في <code>wal_compression</code>.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — A mini LSM <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — LSM صغير بإيدك</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>An LSM-tree never updates a data file. Writes go into the <strong>memtable</strong> (a sorted structure in RAM, protected by the same WAL you just built). When it fills, it is flushed as an immutable, sorted file, an <strong>SSTable</strong>. A read checks the memtable, then the files from newest to oldest, and the first file containing the key wins. A delete is just a write of a marker, a <strong>tombstone</strong>, because the old value is sitting in an immutable file that can't be edited.</p>
+    <p>The price is on the read path. Writes are cheap, but every flush adds a file that a read may have to look in. <code>MiniLSM</code> below is about 150 lines with real files, a sparse block index in memory (one disk read per file probed), and a counter for every block read. The experiment fills it to 32 files and measures: a missing key costs one read per file, 2, 4, 8, 16 and 31.9, exactly linear. A hit is cheaper only because it can stop early. The next part fixes the growth.</p>
+    <p>A detail that hid a real bug while writing this lesson: the per-table min/max key check is free and rejects keys outside a file's range, so a test that looks up keys past the end of the key space measures nothing. The misses below are <em>inside</em> the range.</p>
+  </section>
+
+<pre class="diagram">
+ B-TREE (update in place)              LSM-TREE (never rewrite, merge later)
+ ┌──────────────────────┐              ┌──────────────────────┐
+ │ 1. append to WAL     │              │ 1. append to WAL     │
+ └──────────┬───────────┘              └──────────┬───────────┘
+            ▼                                     ▼
+ ┌──────────────────────┐              ┌──────────────────────┐
+ │ 2. change the page   │              │ 2. insert in memtable│
+ │    in buffer pool    │              │    (sorted, in RAM)  │
+ └──────────┬───────────┘              └──────────┬───────────┘
+            ▼ later                               ▼ memtable full
+ ┌──────────────────────┐              ┌──────────────────────┐
+ │ 3. checkpoint writes │              │ 3. flush: one new    │
+ │    the page back to  │              │    sorted immutable  │
+ │    the same place    │              │    SSTable           │
+ └──────────────────────┘              └──────────┬───────────┘
+                                                  ▼ background
+                                       ┌──────────────────────┐
+                                       │ 4. compaction merges │
+                                       │    files, drops old  │
+                                       │    versions          │
+                                       └──────────────────────┘
+</pre>
+  <div class="ar-note">العمودين بيبدأوا بنفس الخطوة: append للـ WAL. بعدها الـ B-tree بيعدل الصفحة في الـ buffer pool وبعدين الـ checkpoint بيرجّعها مكانها. أما الـ LSM فبيحط في الـ memtable، ولما يتملى بيعمل flush لملف جديد sorted مبيتغيرش، وفي الخلفية الـ compaction بيدمج الملفات ويشيل النسخ القديمة.</div>
+
+<pre data-file="src/mini-lsm.ts"><code class="language-typescript">import { closeSync, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+// الـ value بـ null معناها tombstone، يعني المفتاح اتمسح
+export type Entry = [key: string, value: string | null];
+
+export interface SSTable {
+  id: number;
+  level: number;
+  file: string;
+  fd: number;
+  min: string;
+  max: string;
+  bytes: number;
+  blocks: { first: string; offset: number; length: number }[];
+  bloom?: { has(key: string): boolean };
+}
+
+const BLOCK_ENTRIES = 32;
+
+export class MiniLSM {
+  protected memtable = new Map&lt;string, string | null&gt;();
+  protected dir: string;
+  protected memLimit: number;
+  protected nextId = 1;
+  // الجداول مترتبة من الأحدث للأقدم، وده اللي بيخلّي أحدث قيمة تكسب
+  tables: SSTable[] = [];
+  readonly stats = { userBytes: 0, diskBytes: 0, blockReads: 0, tablesProbed: 0 };
+
+  constructor(dir: string, memLimit = 1000) {
+    this.dir = dir;
+    this.memLimit = memLimit;
+    mkdirSync(dir, { recursive: true });
+  }
+
+  put(key: string, value: string): void {
+    this.stats.userBytes += Buffer.byteLength(key) + Buffer.byteLength(value);
+    this.memtable.set(key, value);
+    if (this.memtable.size &gt;= this.memLimit) this.flush();
+  }
+
+  // المسح كتابة عادية: بنحط tombstone ومفيش حاجة بتتمسح من الملفات دلوقتي
+  del(key: string): void {
+    this.stats.userBytes += Buffer.byteLength(key);
+    this.memtable.set(key, null);
+    if (this.memtable.size &gt;= this.memLimit) this.flush();
+  }
+
+  get(key: string): string | undefined {
+    if (this.memtable.has(key)) return this.memtable.get(key) ?? undefined;
+    for (const table of this.candidates(key)) {
+      const found = this.probe(table, key);
+      // أول جدول فيه المفتاح هو الإجابة، حتى لو كانت tombstone
+      if (found !== undefined) return found ?? undefined;
+    }
+    return undefined;
+  }
+
+  flush(): void {
+    if (this.memtable.size === 0) return;
+    const entries = [...this.memtable].sort(([a], [b]) =&gt; (a &lt; b ? -1 : a &gt; b ? 1 : 0));
+    this.memtable.clear();
+    this.tables.unshift(this.writeTable(entries, 0));
+    this.afterFlush();
+  }
+
+  // الأنواع التانية من الـ compaction بتغيّر الدالتين دول بس
+  protected afterFlush(): void {}
+  protected candidates(_key: string): SSTable[] {
+    return this.tables;
+  }
+
+  protected writeTable(entries: Entry[], level: number): SSTable {
+    const id = this.nextId++;
+    const file = path.join(this.dir, `${String(id).padStart(6, "0")}.sst`);
+    const blocks: SSTable["blocks"] = [];
+    const chunks: Buffer[] = [];
+    let offset = 0;
+    for (let i = 0; i &lt; entries.length; i += BLOCK_ENTRIES) {
+      const slice = entries.slice(i, i + BLOCK_ENTRIES);
+      const buf = Buffer.from(slice.map((e) =&gt; JSON.stringify(e)).join("\n") + "\n");
+      blocks.push({ first: slice[0][0], offset, length: buf.length });
+      chunks.push(buf);
+      offset += buf.length;
+    }
+    writeFileSync(file, Buffer.concat(chunks));
+    this.stats.diskBytes += offset;
+    return {
+      id, level, file, fd: openSync(file, "r"), bytes: offset, blocks,
+      min: entries[0][0], max: entries[entries.length - 1][0],
+    };
+  }
+
+  // البحث جوه جدول واحد: sparse index في الـ memory وقراية block واحد من الديسك
+  protected probe(t: SSTable, key: string): string | null | undefined {
+    if (key &lt; t.min || key &gt; t.max) return undefined;
+    this.stats.tablesProbed++;
+    if (t.bloom &amp;&amp; !t.bloom.has(key)) return undefined;
+    let lo = 0;
+    let hi = t.blocks.length - 1;
+    while (lo &lt; hi) {
+      const mid = (lo + hi + 1) &gt;&gt; 1;
+      if (t.blocks[mid].first &lt;= key) lo = mid;
+      else hi = mid - 1;
+    }
+    const block = t.blocks[lo];
+    const buf = Buffer.alloc(block.length);
+    readSync(t.fd, buf, 0, block.length, block.offset);
+    this.stats.blockReads++;
+    for (const line of buf.toString("utf8").trimEnd().split("\n")) {
+      const [k, v] = JSON.parse(line) as Entry;
+      if (k === key) return v;
+    }
+    return undefined;
+  }
+
+  protected readTable(t: SSTable): Entry[] {
+    return readFileSync(t.file, "utf8").trimEnd().split("\n").map((l) =&gt; JSON.parse(l) as Entry);
+  }
+
+  // الدمج: الجداول داخلة من الأحدث للأقدم فبنكتب من الأقدم عشان الأحدث يكسب
+  // ملحوظة: الـ engines الحقيقية بتعمل k-way merge على هيئة stream عشان الـ memory
+  protected merge(newestFirst: SSTable[], dropTombstones: boolean): Entry[] {
+    const all = new Map&lt;string, string | null&gt;();
+    for (const t of [...newestFirst].reverse()) {
+      for (const [k, v] of this.readTable(t)) all.set(k, v);
+    }
+    const out = [...all].filter(([, v]) =&gt; !dropTombstones || v !== null);
+    return out.sort(([a], [b]) =&gt; (a &lt; b ? -1 : a &gt; b ? 1 : 0));
+  }
+
+  protected removeTable(t: SSTable): void {
+    closeSync(t.fd);
+    rmSync(t.file);
+  }
+
+  get diskBytesNow(): number {
+    return this.tables.reduce((sum, t) =&gt; sum + t.bytes, 0);
+  }
+
+  close(): void {
+    for (const t of this.tables) closeSync(t.fd);
+  }
+}</code></pre>
+
+<pre data-file="src/lsm-read-cost.ts"><code class="language-typescript">import { mkdtempSync, rmSync } from "node:fs";
+import path from "node:path";
+import { MiniLSM } from "./mini-lsm.ts";
+
+// مولّد أرقام بـ seed ثابت عشان الناتج يتكرر بالظبط
+function mulberry32(seed: number) {
+  return () =&gt; {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed &gt;&gt;&gt; 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+const dir = mkdtempSync(path.join(process.cwd(), "lsm-read-"));
+const db = new MiniLSM(dir, 1000);
+const rng = mulberry32(35);
+const key = (n: number) =&gt; `order:${String(n).padStart(7, "0")}`;
+const KEYS = 40_000;
+const written: number[] = [];
+
+function sample(label: string): void {
+  const before = { ...db.stats };
+  const N = 2000;
+  // مفتاح جوه الـ range بس مش موجود، عشان فلتر min/max ميحلّش المشكلة
+  for (let i = 0; i &lt; N; i++) db.get(`${key(Math.floor(rng() * KEYS))}x`);
+  const miss = (db.stats.blockReads - before.blockReads) / N;
+  const mid = { ...db.stats };
+  for (let i = 0; i &lt; N; i++) db.get(key(written[Math.floor(rng() * written.length)]));
+  const hit = (db.stats.blockReads - mid.blockReads) / N;
+  console.log(`${label.padEnd(16)} files=${String(db.tables.length).padEnd(3)}  block reads per miss=${miss.toFixed(1).padStart(5)}  per hit=${hit.toFixed(1).padStart(5)}`);
+}
+
+let ops = 0;
+for (const target of [2, 4, 8, 16, 32]) {
+  while (db.tables.length &lt; target) {
+    const n = Math.floor(rng() * KEYS);
+    db.put(key(n), JSON.stringify({ status: "paid", totalCents: n }));
+    written.push(n);
+    ops++;
+  }
+  sample(`after ${ops} puts`);
+}
+
+// الـ tombstone بيغطي على القيمة القديمة وهي لسه موجودة في ملف قديم
+const victim = key(written[0]);
+const v0 = db.get(victim);
+db.del(victim);
+db.flush();
+console.log(`delete: before=${v0 !== undefined} after=${db.get(victim) !== undefined} files=${db.tables.length}`);
+db.close();
+rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });</code></pre>
+
+<pre><code class="language-plaintext">after 2030 puts  files=2    block reads per miss=  2.0  per hit=  1.5
+after 4053 puts  files=4    block reads per miss=  4.0  per hit=  2.5
+after 8096 puts  files=8    block reads per miss=  8.0  per hit=  4.2
+after 16185 puts files=16   block reads per miss= 16.0  per hit=  7.4
+after 32393 puts files=32   block reads per miss= 31.9  per hit= 12.8
+delete: before=true after=false files=33</code></pre>
+  <div class="ar-note">كل سطر بعد عدد ملفات أكبر. الـ miss (مفتاح مش موجود) بيقرا من كل الملفات: 2 ثم 4 ثم 8 ثم 16 ثم 31.9 — خطي بالظبط مع عدد الملفات. الـ hit أرخص لأنه بيقف أول ما يلاقي. السطر الأخير: الـ delete نجح (المفتاح بقى مش موجود) بس عدد الملفات زاد 33، يعني المسح نفسه كتب ملف جديد فيه tombstone.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ LSM-tree عمره ما بيعدل ملف data. الكتابة بتروح للـ <strong>memtable</strong> (structure مترتب في الـ RAM، ومحمي بنفس الـ WAL اللي بنيته). لما يتملى، بيتعمله flush كملف sorted مبيتغيرش اسمه <strong>SSTable</strong>. القراية بتدور في الـ memtable، وبعدها في الملفات من الأحدث للأقدم، وأول ملف فيه المفتاح هو الإجابة. والـ delete مجرد كتابة علامة اسمها <strong>tombstone</strong>، لأن القيمة القديمة قاعدة في ملف ثابت مش بيتعدل.</p>
+    <p>التمن بيتدفع في القراية. الكتابة رخيصة، بس كل flush بيزوّد ملف ممكن القراية تحتاج تبص فيه. الـ <code>MiniLSM</code> حوالي 150 سطر بملفات حقيقية، و sparse block index في الـ memory (قراية ديسك واحدة لكل ملف بنبص فيه)، وعدّاد لكل block read. التجربة بتوصّله لـ 32 ملف وبتقيس: المفتاح الغايب بيكلف قراية لكل ملف، 2 و4 و8 و16 و31.9، خطي بالظبط. والـ hit أرخص بس عشان ممكن يقف بدري. الجزء الجاي بيعالج النمو ده.</p>
+    <p>وفيه تفصيلة خبّت bug حقيقي وأنا بكتب الدرس: فحص الـ min/max لكل جدول ببلاش وبيرفض المفاتيح اللي بره range الملف، فلو اختبرت بمفاتيح بعد آخر الـ key space مش هتقيس حاجة. الـ misses هنا كلها <em>جوه</em> الـ range.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      تخيل service بيجمع events من الـ workers كل ثانية في RocksDB أو Cassandra. لو الـ compaction واقف، read متوسط بيبدأ ياخد 5 ms لأنه بيبص في 30 ملف، والـ dashboard بيبان إن "الـ database بطيئة". أول حاجة تبص عليها هي عدد الـ SSTables للـ read، زي <code>sstables per read</code> في مقاييس Cassandra، مش الـ CPU.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Why not merge on every write?</b>
+    Merging each new key into one big sorted file gives one read per lookup, but a write then rewrites the whole file: O(N) per write. The memtable and multiple sorted files exist so that sorting happens once per batch, not once per key.
+    <div class="ar-note">لو دمجت كل مفتاح جديد في ملف واحد كبير، القراية هتبقى قراية واحدة، بس كل كتابة هتعيد كتابة الملف كله: O(N) لكل write. الـ memtable والملفات المتعددة موجودين عشان الترتيب يحصل مرة لكل دفعة مش مرة لكل مفتاح.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Bloom filters &amp; compaction <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ Bloom filters والـ compaction</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><strong>Bloom filters</strong> (the structure is in <a href="../../03-CS-Fundamentals/lessons/10-ds-for-system-design.html#p2">section 03 · Part 2</a>) sit in front of each file: "definitely not here" or "maybe". Ten bits per key cost almost nothing and cut disk reads on a miss from 198.63 to 1.22 in the run below, because 199 files mostly answer "definitely not". They do nothing for hits, which still probe until found, and they don't help range scans at all.</p>
+    <p><strong>Compaction</strong> bounds the number of files, and the two classic strategies pay differently. <em>Size-tiered</em> merges several similar-sized files into one bigger file: few rewrites, so low write amplification (3.9 here), but keys exist in several tiers at once, so space amplification stays high (2.18). <em>Leveled</em> keeps each level non-overlapping and 10× larger than the last: a read touches one file per level and space stays tight (1.19), but each key is rewritten across levels repeatedly, so write amplification is double (7.6). Those numbers are from counters in this engine at this scale (200,000 ops, 60,000 keys), so read them as a shape, not as universal constants.</p>
+    <p><strong>Tombstones</strong> are the bill that comes last. A delete adds bytes (+230 KB below) and the dead values stay on disk until compaction reaches the oldest file holding them. In the run below 10,000 dead values and 10,000 tombstones sat on disk until 34,000 more writes pushed a merge down to the oldest tier. Real clusters add one more constraint: a tombstone must outlive the time every replica needs to see it, or a replica that missed the delete resurrects the row. Cassandra's <code>gc_grace_seconds</code> exists for exactly that (not run here).</p>
+  </section>
+
+<pre data-file="src/lsm-compaction.ts"><code class="language-typescript">import { crc32 } from "node:zlib";
+import { MiniLSM, type Entry, type SSTable } from "./mini-lsm.ts";
+
+// بلوم فيلتر بسيط: 10 bits لكل مفتاح و7 hashes بيدّوا false positive حوالي 1%
+class Bloom {
+  private bits: Uint8Array;
+  private m: number;
+  constructor(n: number, bitsPerKey = 10) {
+    this.m = Math.max(64, n * bitsPerKey);
+    this.bits = new Uint8Array(Math.ceil(this.m / 8));
+  }
+  private *hashes(key: string): Generator&lt;number&gt; {
+    const h1 = crc32(key);
+    const h2 = crc32(key, 0x9e3779b9) | 1;
+    for (let i = 0; i &lt; 7; i++) yield Math.abs((h1 + Math.imul(i, h2)) | 0) % this.m;
+  }
+  add(key: string): void {
+    for (const h of this.hashes(key)) this.bits[h &gt;&gt; 3] |= 1 &lt;&lt; (h &amp; 7);
+  }
+  has(key: string): boolean {
+    for (const h of this.hashes(key)) if (!(this.bits[h &gt;&gt; 3] &amp; (1 &lt;&lt; (h &amp; 7)))) return false;
+    return true;
+  }
+}
+
+export class BloomLSM extends MiniLSM {
+  protected override writeTable(entries: Entry[], level: number): SSTable {
+    const t = super.writeTable(entries, level);
+    const bloom = new Bloom(entries.length);
+    for (const [k] of entries) bloom.add(k);
+    t.bloom = bloom;
+    return t;
+  }
+}
+
+const newest = (a: SSTable, b: SSTable) =&gt; a.level - b.level || b.id - a.id;
+
+// (1) الـ size-tiered: كل 4 جداول قد بعض يتدمجوا في جدول واحد أكبر
+export class TieredLSM extends BloomLSM {
+  protected override afterFlush(): void {
+    for (let tier = 0; ; tier++) {
+      const group = this.tables.filter((t) =&gt; t.level === tier);
+      if (group.length &lt; 4) return;
+      // الـ tombstone يتشال بس لو مفيش جداول أقدم ممكن تكون لسه فيها المفتاح
+      const noOlderData = !this.tables.some((t) =&gt; t.level &gt; tier);
+      const merged = this.merge(group, noOlderData);
+      const rest = this.tables.filter((t) =&gt; t.level !== tier);
+      if (merged.length) rest.push(this.writeTable(merged, tier + 1));
+      this.tables = rest.sort(newest);
+      group.forEach((t) =&gt; this.removeTable(t));
+    }
+  }
+}
+
+// (2) الـ leveled: كل level ملفاته مش متداخلة وكل level أكبر 10 مرات من اللي قبله
+export class LeveledLSM extends BloomLSM {
+  private pointer = new Map&lt;number, string&gt;();
+  private fileEntries = 1000;
+
+  private level(n: number): SSTable[] {
+    return this.tables.filter((t) =&gt; t.level === n);
+  }
+  private limit(n: number): number {
+    return n === 0 ? 4 : 10 ** n;
+  }
+
+  // القراية بتلمس كل L0 وبعدها ملف واحد بس في كل level
+  protected override candidates(key: string): SSTable[] {
+    const out = this.level(0);
+    const maxLevel = Math.max(0, ...this.tables.map((t) =&gt; t.level));
+    for (let n = 1; n &lt;= maxLevel; n++) {
+      const hit = this.level(n).find((t) =&gt; t.min &lt;= key &amp;&amp; key &lt;= t.max);
+      if (hit) out.push(hit);
+    }
+    return out;
+  }
+
+  protected override afterFlush(): void {
+    for (;;) {
+      const maxLevel = Math.max(0, ...this.tables.map((t) =&gt; t.level));
+      let over = -1;
+      for (let n = 0; n &lt;= maxLevel &amp;&amp; over &lt; 0; n++) {
+        if (this.level(n).length &gt; this.limit(n) - (n === 0 ? 1 : 0)) over = n;
+      }
+      if (over &lt; 0) return;
+      this.compact(over);
+    }
+  }
+
+  private pickOne(n: number): SSTable {
+    const files = this.level(n).sort((a, b) =&gt; (a.min &lt; b.min ? -1 : 1));
+    const after = this.pointer.get(n) ?? "";
+    const pick = files.find((f) =&gt; f.min &gt; after) ?? files[0];
+    this.pointer.set(n, pick.max);
+    return pick;
+  }
+
+  private compact(n: number): void {
+    const upper = n === 0 ? this.level(0) : [this.pickOne(n)];
+    const lo = upper.reduce((m, t) =&gt; (t.min &lt; m ? t.min : m), upper[0].min);
+    const hi = upper.reduce((m, t) =&gt; (t.max &gt; m ? t.max : m), upper[0].max);
+    const lower = this.level(n + 1).filter((t) =&gt; t.min &lt;= hi &amp;&amp; t.max &gt;= lo);
+    const deepest = !this.tables.some((t) =&gt; t.level &gt; n + 1);
+    const merged = this.merge([...upper, ...lower], deepest);
+    const gone = new Set([...upper, ...lower]);
+    this.tables = this.tables.filter((t) =&gt; !gone.has(t));
+    for (let i = 0; i &lt; merged.length; i += this.fileEntries) {
+      this.tables.push(this.writeTable(merged.slice(i, i + this.fileEntries), n + 1));
+    }
+    this.tables.sort(newest);
+    gone.forEach((t) =&gt; this.removeTable(t));
+  }
+}</code></pre>
+
+<pre data-file="src/lsm-compare.ts"><code class="language-typescript">import { mkdtempSync, rmSync } from "node:fs";
+import path from "node:path";
+import { BloomLSM, LeveledLSM, TieredLSM } from "./lsm-compaction.ts";
+import { MiniLSM } from "./mini-lsm.ts";
+
+function mulberry32(seed: number) {
+  return () =&gt; {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed &gt;&gt;&gt; 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+const KEYS = 60_000;
+const OPS = 200_000;
+const key = (n: number) =&gt; `order:${String(n).padStart(7, "0")}`;
+const val = (n: number) =&gt; JSON.stringify({ status: "paid", totalCents: n, note: "x".repeat(60) });
+
+function run(name: string, make: (dir: string) =&gt; MiniLSM): void {
+  const dir = mkdtempSync(path.join(process.cwd(), "lsm-cmp-"));
+  const db = make(dir);
+  const rng = mulberry32(7);
+  const live = new Map&lt;string, string&gt;();
+  for (let i = 0; i &lt; OPS; i++) {
+    const n = Math.floor(rng() * KEYS);
+    if (i % 10 === 9) { db.del(key(n)); live.delete(key(n)); }
+    else { const v = val(n); db.put(key(n), v); live.set(key(n), v); }
+  }
+  db.flush();
+  const liveBytes = [...live].reduce((s, [k, v]) =&gt; s + JSON.stringify([k, v]).length + 1, 0);
+  const liveKeys = [...live.keys()];
+
+  const G = 3000;
+  const s0 = { ...db.stats };
+  for (let i = 0; i &lt; G; i++) db.get(`${key(Math.floor(rng() * KEYS))}x`);
+  const missProbes = (db.stats.tablesProbed - s0.tablesProbed) / G;
+  const missReads = (db.stats.blockReads - s0.blockReads) / G;
+  const s1 = { ...db.stats };
+  for (let i = 0; i &lt; G; i++) db.get(liveKeys[Math.floor(rng() * liveKeys.length)]);
+  const hitProbes = (db.stats.tablesProbed - s1.tablesProbed) / G;
+  const hitReads = (db.stats.blockReads - s1.blockReads) / G;
+
+  const row = [
+    name.padEnd(18),
+    `files=${String(db.tables.length).padEnd(4)}`,
+    `writeAmp=${(db.stats.diskBytes / db.stats.userBytes).toFixed(1).padStart(5)}`,
+    `spaceAmp=${(db.diskBytesNow / liveBytes).toFixed(2).padStart(5)}`,
+    `miss: probes=${missProbes.toFixed(1).padStart(5)} reads=${missReads.toFixed(2).padStart(5)}`,
+    `hit: probes=${hitProbes.toFixed(1).padStart(5)} reads=${hitReads.toFixed(2).padStart(5)}`,
+  ];
+  console.log(row.join("  "));
+  db.close();
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+}
+
+run("no compaction", (d) =&gt; new MiniLSM(d));
+run("+ bloom", (d) =&gt; new BloomLSM(d));
+run("size-tiered", (d) =&gt; new TieredLSM(d));
+run("leveled", (d) =&gt; new LeveledLSM(d));</code></pre>
+
+<pre><code class="language-plaintext">no compaction       files=199   writeAmp=  1.1  spaceAmp= 3.49  miss: probes=198.6 reads=198.63  hit: probes= 54.8 reads=54.83
++ bloom             files=199   writeAmp=  1.1  spaceAmp= 3.49  miss: probes=198.6 reads= 1.22  hit: probes= 54.8 reads= 1.50
+size-tiered         files=7     writeAmp=  3.9  spaceAmp= 2.18  miss: probes=  7.0 reads= 0.04  hit: probes=  5.2 reads= 1.03
+leveled             files=70    writeAmp=  7.6  spaceAmp= 1.19  miss: probes=  4.8 reads= 0.03  hit: probes=  4.6 reads= 1.03</code></pre>
+  <div class="ar-note">كل سطر استراتيجية على نفس الـ 200 ألف عملية (الأرقام من العدّادات، والـ I/O ملفات حقيقية). <code>probes</code> عدد الملفات اللي استشرناها، و<code>reads</code> القراية الفعلية من الديسك. من غير compaction: 199 ملف و198.63 قراية لكل miss. مع Bloom: 1.22 قراية بس بنفس الـ 199 ملف. الـ size-tiered: 7 ملفات، write amp 3.9، space amp 2.18. الـ leveled: 70 ملف، write amp 7.6، space amp 1.19. قارن الشكل، مش الرقم المطلق.</div>
+
+  <table>
+    <tr><th>Strategy</th><th>Write amp</th><th>Space amp</th><th>Read path</th><th>Good for</th></tr>
+    <tr><td>Size-tiered</td><td>Low (3.9 here)</td><td>High (2.18 here)</td><td>several files per read, Bloom filters carry it</td><td>write-heavy, mostly recent reads</td></tr>
+    <tr><td>Leveled</td><td>High (7.6 here)</td><td>Low (1.19 here)</td><td>L0 plus one file per level</td><td>read-heavy, space-sensitive</td></tr>
+  </table>
+  <div class="ar-note">الجدول: الـ size-tiered كتابته قليلة (3.9) بس بياخد مساحة أكتر (2.18) وكل قراية ممكن تبص في كذا ملف فبيعتمد على الـ Bloom filters، وينفع للـ write-heavy والقراية على الجديد. الـ leveled كتابته أكتر (7.6) ومساحته أقل (1.19) والقراية ملف واحد في كل level بعد L0، وينفع للقراية الكتير ولما المساحة مهمة.</div>
+
+<pre data-file="src/lsm-tombstones.ts"><code class="language-typescript">import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import path from "node:path";
+import { TieredLSM } from "./lsm-compaction.ts";
+
+const dir = mkdtempSync(path.join(process.cwd(), "lsm-ts-"));
+const db = new TieredLSM(dir, 1000);
+const key = (n: number) =&gt; `order:${String(n).padStart(7, "0")}`;
+const DELETED = 10_000;
+let deletedAlready = false;
+
+// بنعدّ من الملفات نفسها: كام قيمة ميتة وكام tombstone لسه على الديسك
+function report(label: string): void {
+  let dead = 0;
+  let tombstones = 0;
+  for (const t of db.tables) {
+    for (const line of readFileSync(t.file, "utf8").trimEnd().split("\n")) {
+      const [k, v] = JSON.parse(line) as [string, string | null];
+      if (v === null) tombstones++;
+      else if (deletedAlready &amp;&amp; Number(k.slice(6)) &lt; DELETED) dead++;
+    }
+  }
+  console.log(`${label.padEnd(26)} files=${String(db.tables.length).padEnd(3)} bytes=${String(db.diskBytesNow).padStart(8)} dead values=${String(dead).padStart(6)} tombstones=${String(tombstones).padStart(6)}`);
+}
+
+for (let i = 0; i &lt; 20_000; i++) db.put(key(i), JSON.stringify({ status: "paid", note: "x".repeat(60) }));
+db.flush();
+report("after 20k puts");
+
+// بنمسح نص الداتا: الملفات مش بتصغر، بالعكس بتكبر عشان الـ tombstones بتتكتب
+deletedAlready = true;
+for (let i = 0; i &lt; DELETED; i++) db.del(key(i));
+db.flush();
+report("after deleting 10k keys");
+
+// بنكتب داتا جديدة لحد ما الـ compaction يدمج أكبر طبقة مع أقدم ملف
+let added = 0;
+while (!db.tables.some((t) =&gt; t.level &gt;= 3)) {
+  for (let j = 0; j &lt; 1000; j++) db.put(key(100_000 + added + j), "{}");
+  added += 1000;
+  db.flush();
+}
+report(`after ${added} more puts`);
+db.close();
+rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });</code></pre>
+
+<pre><code class="language-plaintext">after 20k puts             files=2   bytes= 2320000 dead values=     0 tombstones=     0
+after deleting 10k keys    files=6   bytes= 2550000 dead values= 10000 tombstones= 10000
+after 34000 more puts      files=1   bytes= 1942000 dead values=     0 tombstones=     0</code></pre>
+  <div class="ar-note">بعد ما مسحنا 10 آلاف مفتاح: الـ bytes زادت من 2.32 مليون لـ 2.55 مليون، والديسك عليه 10 آلاف قيمة ميتة و10 آلاف tombstone. بعد 34 ألف كتابة جديدة وصل الـ merge لأقدم طبقة فاتشالوا كلهم، والـ bytes بقت 1.94 مليون (ده الـ 10 آلاف الأحياء والـ 34 ألف الجداد).</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <strong>Bloom filters</strong> (الـ structure نفسه في <a href="../../03-CS-Fundamentals/lessons/10-ds-for-system-design.html#p2">قسم 03 · الجزء 2</a>) بيقعدوا قدام كل ملف: "أكيد مش هنا" أو "يمكن". 10 bits لكل مفتاح تكلفتهم تقريبًا صفر، وبينزّلوا قراية الديسك للـ miss من 198.63 لـ 1.22 في التجربة، لأن 199 ملف أغلبهم بيقول "أكيد مش هنا". بس مش بيعملوا حاجة للـ hits، اللي بتفضل تدور لحد ما تلاقي، ومش بيساعدوا الـ range scans خالص.</p>
+    <p>الـ <strong>Compaction</strong> بيحدد عدد الملفات، والاستراتيجيتين المشهورين بيدفعوا بشكل مختلف. الـ <em>size-tiered</em> بيدمج كذا ملف بنفس الحجم في ملف أكبر: إعادة كتابة قليلة فالـ write amplification واطي (3.9 هنا)، بس المفتاح الواحد بيبقى موجود في كذا tier، فالـ space amplification عالي (2.18). الـ <em>leveled</em> بيخلي كل level مفيهوش تداخل وأكبر 10 مرات من اللي قبله: القراية بتلمس ملف واحد في كل level والمساحة مظبوطة (1.19)، بس كل مفتاح بيتكتب تاني كذا مرة عبر الـ levels فالـ write amplification الضعف (7.6). الأرقام دي من عدّادات الـ engine ده بالحجم ده (200 ألف عملية و60 ألف مفتاح)، فاقراها كشكل مش كثوابت عامة.</p>
+    <p>والـ <strong>Tombstones</strong> هي الفاتورة اللي بتيجي في الآخر. الـ delete بيزوّد bytes (230 KB زيادة هنا)، والقيم الميتة بتفضل على الديسك لحد ما الـ compaction يوصل لأقدم ملف فيها. في التجربة 10 آلاف قيمة ميتة و10 آلاف tombstone فضلوا لحد ما 34 ألف كتابة جديدة دفعت merge للطبقة الأقدم. والـ clusters الحقيقية فيها قيد زيادة: الـ tombstone لازم يعيش لحد ما كل replica تشوفه، وإلا الـ replica اللي فاتها الـ delete هترجّع الصف من الموت. الـ <code>gc_grace_seconds</code> في Cassandra موجود عشان كده (not run here).</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو حد قالك "مسحنا 300 مليون event من Cassandra بس الديسك مانزلش"، دي مش مشكلة في الأمر: الـ tombstones لسه في الملفات. الحل المعتاد للبيانات الزمنية مش delete أصلًا: partition زمني وTTL بحيث ملف كامل يتشال مرة واحدة (زي <code>DROP</code> للـ partition في Postgres). ولو الـ dashboards بدأت تبطأ مع data قديمة، راجع الـ compaction strategy قبل ما تزوّد nodes.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "How does a Bloom filter help an LSM, and what doesn't it help?" → Per SSTable, it answers "definitely absent" without touching disk, so misses skip almost every file. It says nothing useful about hits (the value still has to be read) and nothing for range scans, which must merge every overlapping file.
+    <div class="ar-note">"الـ Bloom filter بيساعد الـ LSM إزاي، ومش بيساعد في إيه؟" ← لكل SSTable بيجاوب "أكيد مش موجود" من غير ما يلمس الديسك، فالـ misses بتعدّي أغلب الملفات. بس مش بيفيد في الـ hits (القيمة لسه لازم تتقري من الديسك)، ومش بيفيد في الـ range scans اللي لازم تدمج كل الملفات المتداخلة.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Real LSM vs real B-tree <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — LSM حقيقي جنب B-tree حقيقي</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Now the real engines: <code>classic-level</code> 3 (LevelDB, prebuilt inside the npm package) next to Postgres 18, both given the same 200,000 random keys with incompressible values, 1,000 rows per batch.</p>
+    <p>Read this as a comparison of shapes, not winners, because the setups differ in ways that matter. LevelDB is a library inside the Node process with no network or SQL. Postgres is a separate server over a TCP socket, with parsing, planning and MVCC on every call. Their durability settings also differ by default. So "LevelDB did 34,000 hits/s and Postgres 10,000" mostly measures the process boundary, not the data structure.</p>
+    <p>What does hold up: LevelDB's on-disk layout matches Part 3 (<code>.ldb</code> tables, a <code>.log</code>, a <code>MANIFEST</code> recording which files exist), and <code>leveldb.stats</code> shows compaction doing the rewriting. After forcing a full compaction the store went from 15 files (43.5 MB) to 14 files (27.2 MB), with 128 MB written to hold 26.4 MB of user data, about 4.8× before counting the <code>.log</code>. Point hits rose from 34,093/s to 41,340/s after compaction. Misses (46,546/s) beat hits because Bloom filters answer most of them without reading a data block. Postgres won the range scan (1.1M rows/s against 777k), helped by one sorted index and a JS iterator on the other side. And the p99 write latency numbers reflect the machine under load, so read them for shape only.</p>
+    <p>On durability specifically: <code>sync: true</code> on a 1,000-row batch still reached 224,156 rows/s, because one <code>fsync</code> serves the whole batch. Per-row durability would look nothing like that. Postgres ran <code>synchronous_commit=on</code> with one commit per batch, and <code>off</code> gained little here because a batch hides the fsync cost.</p>
+  </section>
+
+<pre data-file="src/real-engines.mjs"><code class="language-javascript">import { randomBytes } from "node:crypto";
+import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import path from "node:path";
+import { ClassicLevel } from "classic-level";
+import { connect, createPrimary, stopAll } from "../pg-cluster.mjs";
+
+const N = 200_000;
+const BATCH = 1000;
+// قيم عشوائية مش بتنضغط، عشان snappy في LevelDB ميخبّيش حجم الداتا
+const value = () =&gt; randomBytes(50).toString("hex");
+const keys = Array.from({ length: N }, () =&gt; randomBytes(16).toString("hex"));
+// مفاتيح عشوائية جوه الـ range ومش موجودة، عشان فلتر الـ min/max ميخبّيش الـ Bloom filter
+const missKeys = Array.from({ length: 20000 }, () =&gt; randomBytes(16).toString("hex"));
+const pct = (xs, p) =&gt; [...xs].sort((a, b) =&gt; a - b)[Math.floor(xs.length * p)];
+const summary = (xs) =&gt; `p50=${pct(xs, 0.5).toFixed(1)}ms p99=${pct(xs, 0.99).toFixed(1)}ms max=${Math.max(...xs).toFixed(1)}ms`;
+const perSec = (n, ms) =&gt; Math.round(n / (ms / 1000));
+
+// مكتبة LevelDB جوه نفس الـ process
+const dir = mkdtempSync(path.join(process.cwd(), "ldb-"));
+const level = new ClassicLevel(dir, { valueEncoding: "utf8" });
+await level.open();
+{
+  const lat = [];
+  const t0 = performance.now();
+  for (let i = 0; i &lt; N; i += BATCH) {
+    const start = performance.now();
+    const batch = level.batch();
+    for (const k of keys.slice(i, i + BATCH)) batch.put(k, value());
+    await batch.write();
+    lat.push(performance.now() - start);
+  }
+  console.log(`LevelDB  writes: ${perSec(N, performance.now() - t0)} rows/s  batch ${summary(lat)}  (no fsync per batch)`);
+
+  const listFiles = (label) =&gt; {
+    const by = {};
+    let bytes = 0;
+    for (const f of readdirSync(dir)) {
+      const ext = path.extname(f) || f.replace(/-\d+$/, "");
+      by[ext] = (by[ext] ?? 0) + 1;
+      bytes += statSync(path.join(dir, f)).size;
+    }
+    console.log(`LevelDB  files ${label}:`, JSON.stringify(by), `${(bytes / 1048576).toFixed(1)} MB`);
+  };
+  listFiles("after writes");
+  console.log(level.getProperty("leveldb.stats").trim());
+
+  let t = performance.now();
+  for (let j = 0; j &lt; 20000; j++) await level.get(keys[(j * 7) % N]);
+  console.log(`LevelDB  point hits:   ${perSec(20000, performance.now() - t)} gets/s`);
+  t = performance.now();
+  for (const k of missKeys) await level.get(k);
+  console.log(`LevelDB  point misses: ${perSec(20000, performance.now() - t)} gets/s`);
+  t = performance.now();
+  let rows = 0;
+  for (let r = 0; r &lt; 200; r++) {
+    for await (const _kv of level.iterator({ gte: keys[r], limit: 1000 })) rows++;
+  }
+  console.log(`LevelDB  range scans:  ${perSec(rows, performance.now() - t)} rows/s (${rows} rows, 200 scans of 1000)`);
+
+  // بنجبر compaction كامل ونشوف الـ Read والـ Write لكل level
+  t = performance.now();
+  await level.compactRange("0", "g");
+  console.log(`LevelDB  compactRange took ${(performance.now() - t).toFixed(0)} ms`);
+  listFiles("after full compaction");
+  console.log(level.getProperty("leveldb.stats").trim());
+  t = performance.now();
+  for (let j = 0; j &lt; 20000; j++) await level.get(keys[(j * 7) % N]);
+  console.log(`LevelDB  point hits after compaction: ${perSec(20000, performance.now() - t)} gets/s`);
+}
+{
+  // نفس الكتابة بس بـ fsync عند كل batch، زي commit بتاع Postgres
+  const lat = [];
+  const t0 = performance.now();
+  for (let i = 0; i &lt; 20_000; i += BATCH) {
+    const start = performance.now();
+    const batch = level.batch();
+    for (let j = 0; j &lt; BATCH; j++) batch.put("sync-" + keys[(i + j) % N], value());
+    await batch.write({ sync: true });
+    lat.push(performance.now() - start);
+  }
+  console.log(`LevelDB  writes with sync=true: ${perSec(20_000, performance.now() - t0)} rows/s  batch ${summary(lat)}`);
+}
+await level.close();
+rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+
+// خادم Postgres منفصل، client-server على نفس الجهاز
+for (const sync of ["on", "off"]) {
+  const c = await createPrimary({ conf: `synchronous_commit=${sync}\nautovacuum=off` });
+  try {
+    if (!/^\d+$/.test(String(c.port)) || c.port &lt; 1024 || [5432, 27017, 6379].includes(c.port)) throw new Error("refusing port " + c.port);
+    const db = await connect(c.port);
+    await db.query("create table kv(k text primary key, v text not null)");
+    const lsn0 = (await db.query("select pg_current_wal_lsn() l")).rows[0].l;
+    const lat = [];
+    const t0 = performance.now();
+    for (let i = 0; i &lt; N; i += BATCH) {
+      const slice = keys.slice(i, i + BATCH);
+      const start = performance.now();
+      await db.query("insert into kv select * from unnest($1::text[], $2::text[])", [slice, slice.map(() =&gt; value())]);
+      lat.push(performance.now() - start);
+    }
+    const ms = performance.now() - t0;
+    const wal = Number((await db.query("select pg_wal_lsn_diff(pg_current_wal_lsn(), $1) d", [lsn0])).rows[0].d);
+    const size = Number((await db.query("select pg_total_relation_size('kv') s")).rows[0].s);
+    console.log(`Postgres writes (synchronous_commit=${sync}): ${perSec(N, ms)} rows/s  batch ${summary(lat)}  WAL ${(wal / N).toFixed(0)} bytes/row  table+index ${(size / 1048576).toFixed(1)} MB`);
+    if (sync === "on") {
+      let t = performance.now();
+      for (let j = 0; j &lt; 20000; j++) await db.query("select v from kv where k = $1", [keys[(j * 7) % N]]);
+      console.log(`Postgres point hits:   ${perSec(20000, performance.now() - t)} gets/s`);
+      t = performance.now();
+      for (const k of missKeys) await db.query("select v from kv where k = $1", [k]);
+      console.log(`Postgres point misses: ${perSec(20000, performance.now() - t)} gets/s`);
+      t = performance.now();
+      let rows = 0;
+      for (let r = 0; r &lt; 200; r++) rows += (await db.query("select k, v from kv where k &gt;= $1 order by k limit 1000", [keys[r]])).rowCount;
+      console.log(`Postgres range scans:  ${perSec(rows, performance.now() - t)} rows/s (${rows} rows)`);
+    }
+    await db.end();
+  } finally {
+    await stopAll(c);
+  }
+}</code></pre>
+
+<pre><code class="language-plaintext">LevelDB  writes: 244260 rows/s  batch p50=3.7ms p99=9.8ms max=10.0ms  (no fsync per batch)
+LevelDB  files after writes: {".ldb":15,".log":1,"CURRENT":1,"LOCK":1,"LOG":1,"MANIFEST":1} 43.5 MB
+Compactions
+Level  Files Size(MB) Time(sec) Read(MB) Write(MB)
+--------------------------------------------------
+  0        5       18         0        0        18
+  1        1        4         0        0         4
+  2        1        4         0        0         4
+LevelDB  point hits:   34093 gets/s
+LevelDB  point misses: 46546 gets/s
+LevelDB  range scans:  777491 rows/s (199038 rows, 200 scans of 1000)
+LevelDB  compactRange took 258 ms
+LevelDB  files after full compaction: {".log":1,".ldb":14,"CURRENT":1,"LOCK":1,"LOG":1,"MANIFEST":1} 27.2 MB
+Compactions
+Level  Files Size(MB) Time(sec) Read(MB) Write(MB)
+--------------------------------------------------
+  0        0        0         0        0        20
+  1        0        0         0       24        27
+  2       14       27         1       77        81
+LevelDB  point hits after compaction: 41340 gets/s
+LevelDB  writes with sync=true: 224156 rows/s  batch p50=4.2ms p99=6.3ms max=6.3ms
+Postgres writes (synchronous_commit=on): 145899 rows/s  batch p50=6.1ms p99=43.8ms max=44.2ms  WAL 327 bytes/row  table+index 47.0 MB
+Postgres point hits:   10082 gets/s
+Postgres point misses: 11555 gets/s
+Postgres range scans:  1108813 rows/s (199038 rows)
+Postgres writes (synchronous_commit=off): 163292 rows/s  batch p50=5.9ms p99=11.8ms max=15.1ms  WAL 321 bytes/row  table+index 47.0 MB</code></pre>
+  <div class="ar-note">الترتيب: كتابات LevelDB من غير fsync، وعدد الملفات (<code>.ldb</code> و<code>.log</code> و<code>MANIFEST</code>)، وجدول <code>leveldb.stats</code> لكل level، وبعدين hits وmisses وrange scans. بعد الـ compaction الكامل بقى عندنا 14 ملف و27.2 MB، و<code>Write(MB)</code> الكلي 20 + 27 + 81. كتابات <code>sync=true</code> لسه سريعة لأن الـ fsync بيتقسم على 1000 صف. أرقام Postgres معاها WAL 327 byte للصف. كل الأرقام تقريبية على جهاز Windows عليه ضغط، وقارن الشكل مش الفايز.</div>
+
+  <table>
+    <tr><th>Observation</th><th>LevelDB</th><th>Postgres 18</th><th>Why, honestly</th></tr>
+    <tr><td>Point hits/s</td><td>≈34,000 (41,000 after compaction)</td><td>≈10,000</td><td>embedded vs a TCP round trip plus SQL per call</td></tr>
+    <tr><td>Point misses/s</td><td>≈46,500</td><td>≈11,500</td><td>Bloom filters skip data blocks; Postgres walks the tree each time</td></tr>
+    <tr><td>Range scan rows/s</td><td>≈777,000</td><td>≈1,100,000</td><td>one sorted index, and a JS iterator on the LevelDB side</td></tr>
+    <tr><td>Write amplification signal</td><td>≈4.8× compaction writes</td><td>≈327 bytes WAL per 132-byte row</td><td>different counters: not the same quantity</td></tr>
+  </table>
+  <div class="ar-note">الجدول: كل صف بيقارن شكل مش فايز. الـ hits أعلى في LevelDB لأنه مكتبة جوه الـ process، والـ misses أعلى لأن الـ Bloom filter بيعدّي الـ data blocks، والـ range scan أعلى في Postgres لأنه index واحد مترتب. والـ amplification مقاسة بعدّادات مختلفة، فمفيش مقارنة مباشرة بينهم.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>دلوقتي الـ engines الحقيقية: <code>classic-level</code> 3 (يعني LevelDB، والـ binary جوه npm package نفسها) جنب Postgres 18، والاتنين خدوا نفس الـ 200 ألف مفتاح عشوائي بقيم مش بتنضغط، 1000 صف في الـ batch.</p>
+    <p>اقرا ده كمقارنة أشكال مش فايز وخسران، لأن الإعدادين مختلفين في حاجات مهمة. LevelDB مكتبة جوه الـ Node process من غير شبكة ولا SQL. Postgres server منفصل على TCP socket، ومعاه parsing و planning و MVCC في كل call. وكمان إعدادات الـ durability الافتراضية مختلفة. فرقم زي "LevelDB عمل 34 ألف hit/s و Postgres عمل 10 آلاف" أغلبه بيقيس حدود الـ process، مش الـ data structure.</p>
+    <p>اللي بيصمد فعلًا: شكل الملفات على الديسك زي الجزء 3 بالظبط (<code>.ldb</code> للجداول، <code>.log</code>، و<code>MANIFEST</code> بيسجل الملفات الموجودة)، و<code>leveldb.stats</code> بيوريك الـ compaction وهو بيعيد الكتابة. بعد compaction كامل الـ store راح من 15 ملف (43.5 MB) لـ 14 ملف (27.2 MB)، و128 MB اتكتبوا عشان يشيلوا 26.4 MB من الـ user data، يعني حوالي 4.8× من غير ما نعد الـ <code>.log</code>. الـ point hits طلعت من 34,093/s لـ 41,340/s بعد الـ compaction. الـ misses (46,546/s) أسرع من الـ hits لأن الـ Bloom filters بتجاوب أغلبها من غير قراية data block. والـ range scan كسب فيه Postgres (1.1 مليون صف/ثانية قصاد 777 ألف)، بمساعدة index واحد مترتب، ومن الناحية التانية JS iterator. وأرقام الـ p99 للكتابة بتعكس جهاز عليه ضغط، فبصّ عليها كشكل بس.</p>
+    <p>وفي الـ durability: <code>sync: true</code> على batch فيه 1000 صف وصل لـ 224,156 صف/ثانية، لأن <code>fsync</code> واحد بيخدم الـ batch كله. الـ durability لكل صف شكلها مختلف خالص. و Postgres اشتغل بـ <code>synchronous_commit=on</code> و commit لكل batch، وتحويله لـ <code>off</code> مزوّدش كتير هنا لأن الـ batch بيخبّي تكلفة الـ fsync.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو حد عمل benchmark سريع وقال "LevelDB أسرع 3 مرات من Postgres فنسيب Postgres"، اسأله: الاتنين بنفس الـ durability؟ على نفس الـ deployment؟ ده بيقيس الـ network ولا الـ engine؟ الـ p99 وقت الـ compaction إيه؟ مشروعك النهاردة لو محتاج cache محلي جوه الـ process أو queue صغيرة على ملف، LevelDB/RocksDB اختيار ممتاز. لو محتاج transactions و joins، Postgres.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>Not a product benchmark</b>
+    Embedded vs client-server, different fsync policies, one Windows machine under load, 200k rows that fit in memory. Use these numbers to read each engine's shape, and benchmark your own workload before picking one.
+    <div class="ar-note">دي مش مقارنة منتجات: مكتبة جوه الـ process قصاد client-server، وسياسات fsync مختلفة، وجهاز Windows عليه ضغط، و200 ألف صف داخلين في الـ memory. استخدم الأرقام عشان تفهم شكل كل engine، واعمل benchmark للـ workload بتاعك قبل ما تختار.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Choosing <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — تختار إزاي</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The table below is about the kind of cost each engine pays. Postgres keeps rows in a heap and indexes point at them, so a non-HOT update rewrites index entries. MySQL's InnoDB stores the row inside the primary key's B-tree (<em>clustered</em>), so secondary indexes hold the PK and a wide random PK bloats every one of them. That difference is covered in <a href="../../09-Databases/lessons/29-pgvector-timescale-graph-mysql.html">section 09 · MySQL</a>. Cassandra and RocksDB are LSM engines: their write path is cheap and sequential, and compaction is the background debt.</p>
+    <p>Latency jitter is the difference that production feels most. A B-tree has checkpoint spikes (a burst of writes and full page images), while an LSM has compaction, which can compete with foreground work for I/O and, if it falls behind, leaves more files for every read. SSD wear is a real number you can calculate: write amplification multiplies your logical bytes, and the drive has a rated endurance. The calculator below uses the amplification numbers measured in this lesson and an assumed drive: at 50,000 rows/s, the difference between a sequential B-tree key and a random one right after a checkpoint is years of drive life against months. That second number is a worst case, since it assumes every row costs what the first touch after a checkpoint costs.</p>
+    <p>Rule of thumb for exit test Q7 (B-tree vs LSM: when?). Orders, payments and invoices are read-your-own-row and range-scan by tenant or time, with updates in place and transactions: B-tree. Metrics, event streams and logs are append-heavy, rarely updated, deleted by TTL: LSM. A real story of the same choice at scale: Discord moved its message store from Cassandra (177 nodes) to ScyllaDB (72 nodes), citing compaction backlogs, hot partitions and GC pauses; the full case is in <a href="./44-cost-overengineering-evolution.html">lesson 44</a>.</p>
+  </section>
+
+  <p style="color:var(--text-muted);font-size:.9rem">Not run here: Cassandra, MySQL and RocksDB. The rows for them describe documented designs, not measurements from this lesson.</p>
+  <div class="ar-note">مش متشغّل هنا: Cassandra و MySQL و RocksDB. صفوفهم بتوصف تصميمات موثقة، مش قياسات من الدرس ده.</div>
+
+  <table>
+    <tr><th>Engine</th><th>Structure</th><th>Writes</th><th>Point &amp; range reads</th><th>Space</th><th>Jitter</th><th>SSD wear</th></tr>
+    <tr><td>Postgres</td><td>Heap + B-tree indexes</td><td>WAL + pages, FPI after checkpoints</td><td>Point: few pages. Range: excellent on an index</td><td>Dead tuples until vacuum</td><td>Checkpoint spikes</td><td>Moderate, worse with random keys</td></tr>
+    <tr><td>MySQL (InnoDB)</td><td>Clustered B-tree on PK</td><td>Like Postgres, plus a doublewrite buffer</td><td>Range on PK is very cheap</td><td>Page fragmentation</td><td>Flush spikes</td><td>Moderate</td></tr>
+    <tr><td>Cassandra</td><td>LSM, per-table strategy (size-tiered, leveled, time-window, unified)</td><td>Cheap append, compaction later</td><td>Point fine with Bloom filters. Range: within a partition only</td><td>Depends on strategy</td><td>Compaction, JVM GC</td><td>Depends on strategy</td></tr>
+    <tr><td>RocksDB</td><td>LSM, leveled by default</td><td>Cheap append, leveled rewrites</td><td>Point with Bloom filters. Range: merge across levels</td><td>Tight when leveled</td><td>Compaction stalls</td><td>Higher when leveled</td></tr>
+  </table>
+  <div class="ar-note">الجدول صف صف: Postgres ـ heap مع B-tree indexes: الكتابة WAL وصفحات وFPI بعد الـ checkpoint، القراية ممتازة في الـ range على index، المساحة فيها dead tuples لحد الـ vacuum، الـ jitter من الـ checkpoints، والـ SSD متوسط بس أسوأ مع المفاتيح العشوائية. InnoDB ـ الصف جوه B-tree الـ primary key، زي Postgres مع doublewrite buffer، الـ range على الـ PK رخيص جدًا. Cassandra ـ LSM بـ compaction strategy لكل جدول، الكتابة رخيصة والـ compaction بعدين، والـ range جوه partition واحد بس، والـ jitter من الـ compaction والـ JVM GC. RocksDB ـ LSM و leveled افتراضيًا، المساحة ضيقة وتآكل الـ SSD أعلى.</div>
+
+<pre data-file="src/engine-calculator.ts"><code class="language-typescript">// آلة حاسبة: كام byte بيتكتب فعلًا على الـ SSD لكل workload
+// عوامل الـ amplification جاية من القياسات اللي فوق، مش أرقام عامة لأي نظام
+interface Workload { name: string; writesPerSec: number; rowBytes: number }
+interface Engine { name: string; writeAmp: number }
+
+const workloads: Workload[] = [
+  { name: "orders API", writesPerSec: 200, rowBytes: 400 },
+  { name: "metrics ingest", writesPerSec: 50_000, rowBytes: 120 },
+];
+const engines: Engine[] = [
+  { name: "B-tree, sequential key, WAL only", writeAmp: 3 },
+  { name: "B-tree, random key after checkpoint", writeAmp: 43 },
+  { name: "LSM size-tiered (mini engine)", writeAmp: 3.9 },
+  { name: "LSM leveled (mini engine)", writeAmp: 7.6 },
+];
+
+const DRIVE_TB = 1.92;
+const RATED_DWPD = 1;
+const SECONDS_PER_DAY = 86_400;
+
+for (const w of workloads) {
+  const logicalTbPerDay = (w.writesPerSec * w.rowBytes * SECONDS_PER_DAY) / 1e12;
+  console.log(`\n${w.name}: ${w.writesPerSec} rows/s x ${w.rowBytes} bytes = ${logicalTbPerDay.toFixed(3)} TB/day logical`);
+  for (const e of engines) {
+    const physical = logicalTbPerDay * e.writeAmp;
+    const dwpd = physical / DRIVE_TB;
+    const lifeYears = (RATED_DWPD * 5) / dwpd;
+    console.log(`  ${e.name.padEnd(38)} ${physical.toFixed(2).padStart(8)} TB/day  ${dwpd.toFixed(2).padStart(6)} DWPD  drive life ${lifeYears &gt; 99 ? "&gt;99" : lifeYears.toFixed(1)} years`);
+  }
+}</code></pre>
+
+<pre><code class="language-plaintext">
+orders API: 200 rows/s x 400 bytes = 0.007 TB/day logical
+  B-tree, sequential key, WAL only           0.02 TB/day    0.01 DWPD  drive life &gt;99 years
+  B-tree, random key after checkpoint        0.30 TB/day    0.15 DWPD  drive life 32.3 years
+  LSM size-tiered (mini engine)              0.03 TB/day    0.01 DWPD  drive life &gt;99 years
+  LSM leveled (mini engine)                  0.05 TB/day    0.03 DWPD  drive life &gt;99 years
+
+metrics ingest: 50000 rows/s x 120 bytes = 0.518 TB/day logical
+  B-tree, sequential key, WAL only           1.56 TB/day    0.81 DWPD  drive life 6.2 years
+  B-tree, random key after checkpoint       22.29 TB/day   11.61 DWPD  drive life 0.4 years
+  LSM size-tiered (mini engine)              2.02 TB/day    1.05 DWPD  drive life 4.7 years
+  LSM leveled (mini engine)                  3.94 TB/day    2.05 DWPD  drive life 2.4 years</code></pre>
+  <div class="ar-note">آلة حاسبة بفرضيات: درايف 1.92 TB وحده تحمل 1 DWPD لـ 5 سنين. الـ orders API حجمها صغير فكل الاختيارات مريحة. الـ metrics ingest (50 ألف صف/ثانية) هي اللي الاختيار بيفرق فيها: B-tree بمفتاح متسلسل 0.81 DWPD حوالي 6 سنين، وعشوائي بعد checkpoint 11.61 DWPD يعني شهور (وده أسوأ حالة، لأنه بيفترض إن كل صف بتكلفة أول لمسة بعد checkpoint). الـ LSM في الوسط.</div>
+
+<pre class="diagram">
+ get("order:42")
+    │
+    ▼
+ memtable (RAM) ──found?──▶ return value
+    │ no
+    ▼
+ L0: table 9 ▶ table 8 ▶ table 7     files overlap: check every one
+    │  (Bloom says "maybe" or skip)   newest first
+    ▼
+ L1: one file whose key range covers the key
+    │
+    ▼
+ L2: one file
+    │
+    ▼
+ not found, unless a tombstone above already stopped the search
+</pre>
+  <div class="ar-note">مسار قراية في LSM: الأول الـ memtable. لو مش فيها، كل ملفات L0 لأنها متداخلة، من الأحدث للأقدم، والـ Bloom filter بيعدّي أغلبها. بعدها ملف واحد بس في كل level تحت. ولو لقينا tombstone فوق، بنقف ونقول المفتاح اتمسح.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الجدول اللي فوق عن نوع التكلفة اللي كل engine بيدفعها. Postgres بيحط الصفوف في heap والـ indexes بتشاور عليها، فالـ update غير الـ HOT بيعيد كتابة entries الـ index. الـ InnoDB في MySQL بيحط الصف جوه B-tree الـ primary key (<em>clustered</em>)، فالـ secondary indexes فيها الـ PK، وأي PK عشوائي وكبير بيكبّرها كلها. الفرق ده مشروح في <a href="../../09-Databases/lessons/29-pgvector-timescale-graph-mysql.html">قسم 09 · MySQL</a>. أما Cassandra و RocksDB فدول LSM: الكتابة رخيصة و sequential، والـ compaction هو الدين اللي بيتدفع في الخلفية.</p>
+    <p>الـ latency jitter هو الفرق اللي الـ production بيحس بيه أكتر. الـ B-tree عنده spikes الـ checkpoint (دفعة كتابة و full page images)، والـ LSM عنده الـ compaction اللي بينافس الشغل العادي على الـ I/O، ولو اتأخر بيسيب ملفات أكتر لكل قراية. وتآكل الـ SSD رقم تقدر تحسبه: الـ write amplification بيضرب الـ bytes المنطقية، والـ drive ليه endurance مكتوب. الآلة الحاسبة استخدمت أرقام الـ amplification اللي قسناها في الدرس ودرايف بفرضيات: عند 50 ألف صف/ثانية، الفرق بين مفتاح متسلسل وعشوائي بعد checkpoint هو سنين عمر للدرايف قصاد شهور. والرقم التاني أسوأ حالة، لأنه بيفترض إن كل صف بتكلفة أول لمسة بعد الـ checkpoint.</p>
+    <p>قاعدة عملية لسؤال الـ exit test رقم 7 (B-tree ولا LSM: إمتى؟). الـ orders والـ payments والـ invoices بتتقري بالصف وبـ range على الـ tenant أو الوقت، وفيها updates و transactions: B-tree. الـ metrics والـ event streams والـ logs أغلبها append، ونادرًا ما تتعدل، وبتتشال بـ TTL: LSM. وقصة حقيقية لنفس الاختيار على scale: Discord نقلت تخزين الرسايل من Cassandra (177 node) لـ ScyllaDB (72 node)، وذكروا تأخر الـ compaction والـ hot partitions وتوقفات الـ GC، والحكاية كاملة في <a href="./44-cost-overengineering-evolution.html">الدرس 44</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في design review لخدمة metrics جديدة: 50 ألف نقطة في الثانية، والقراية على آخر ساعتين، والـ retention 30 يوم. لو الفريق اقترح Postgres عشان "متعودين عليه"، احسب الأول: الكتابة كام TB في اليوم، والجدول هيبقى قد إيه، والـ retention هيتعمل إزاي. غالبًا الحل partitioned table مع <code>DROP</code> لو الحجم صغير، أو LSM/TSDB لو الحجم فعلاً كبير. وخدمة الـ orders جنبها تفضل Postgres.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Exit test Q7 — B-tree vs LSM-tree: when each?</b>
+    Choose B-tree when reads and range scans matter and rows change in place: transactional data like orders. Choose LSM when write volume dominates and data is mostly appended and aged out: metrics, events, logs. Say which amplification you are paying and how you'd watch it: <code>wal_fpi</code> and leaf density on one side, SSTables per read and compaction backlog on the other.
+    <div class="ar-note">B-tree ولا LSM: إمتى؟ B-tree لما القراية والـ range scans مهمين والصفوف بتتعدل في مكانها، زي الـ orders. LSM لما حجم الكتابة هو الأساس والـ data أغلبها append وبتتشال بعد مدة، زي الـ metrics والـ events والـ logs. وقول إنت بتدفع أنهي amplification وهتراقبها إزاي: <code>wal_fpi</code> وكثافة الأوراق في ناحية، وعدد الـ SSTables لكل قراية وتأخر الـ compaction في الناحية التانية.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ "It survived kill -9, so it's durable"</b>
+<pre><code class="language-typescript">writeSync(fd, record);
+res.status(201).end();
+// الـ kill مش بيختبر انقطاع الكهربا
+// الـ data لسه في الـ page cache بتاع نظام التشغيل</code></pre></div>
+    <div class="good"><b>✅ Ack after fsync, or group commit</b>
+<pre><code class="language-typescript">writeSync(fd, record);
+// كل الطلبات في الدفعة بتستنى نفس الـ fsync
+await groupCommit.flush();
+res.status(201).end();</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ kill بيموّت الـ process بس، والـ data اللي وصلت لنظام التشغيل بتعدّي. ده مش معناه إنها وصلت للديسك. ❌ الكود الأول بيرد 201 قبل ما الـ data تبقى durable، وأول انقطاع كهربا بيضيّع طلبات اترد عليها. ✅ الصح: الرد بعد الـ fsync، أو group commit بحيث كذا طلب يستنوا fsync واحد وتكلفته تتقسم عليهم.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Random v4 primary key on a write-heavy table</b>
+<pre><code class="language-sql">-- كل insert بيروح لصفحة عشوائية بعد الـ checkpoint
+CREATE TABLE orders (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  total_cents int NOT NULL
+);</code></pre></div>
+    <div class="good"><b>✅ Time-ordered key</b>
+<pre><code class="language-sql">-- مرتب بالوقت: أغلب الـ inserts في آخر الشجرة
+CREATE TABLE orders (
+  id uuid PRIMARY KEY DEFAULT uuidv7(),
+  total_cents int NOT NULL
+);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ المفتاح العشوائي بيبعتر الـ inserts على كل الورق، فبعد كل checkpoint كل صفحة بتاخد FPI: في التجربة 2,089 byte WAL للصف قصاد 153، و590 FPI قصاد 3 لنفس الـ 2000 صف. ✅ مفتاح مرتب بالوقت زي <code>uuidv7()</code> الموجود في Postgres 18 بيخلي الكتابة في آخر الشجرة. فكّر في <a href="./31-unique-id-generation.html">الدرس 31</a> لو الـ ID لازم يكشف ترتيب الإنشاء ولا لأ.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Deleting old rows to free space on an LSM</b>
+<pre><code class="language-typescript">// في LSM الـ delete كتابة: tombstones والديسك مش بينزل
+for (const id of oldEventIds) await events.delete(id);</code></pre></div>
+    <div class="good"><b>✅ Expire whole partitions</b>
+<pre><code class="language-sql">-- بيشيل ملفات كاملة مرة واحدة، من غير tombstones
+DROP TABLE events_2026_01;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ كل delete في LSM بيضيف tombstone والقيمة القديمة لسه على الديسك، زي ما شفت: الـ bytes زادت من 2.32 مليون لـ 2.55 مليون بعد مسح 10 آلاف مفتاح. ✅ للبيانات الزمنية، قسّم بالوقت وامسح partition كامل، وفي Postgres ده <code>DROP TABLE</code> لـ partition، وفي LSM ده TTL مع time-window compaction.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ An index on every column "just in case"</b>
+<pre><code class="language-sql">-- أي update لـ updated_at بقى non-HOT
+CREATE INDEX ON orders (updated_at);
+CREATE INDEX ON orders (status);</code></pre></div>
+    <div class="good"><b>✅ Index what queries actually use</b>
+<pre><code class="language-sql">-- بنشيل اللي مفيش query بيستخدمه ونسيب مساحة للـ HOT
+DROP INDEX orders_updated_at_idx;
+ALTER TABLE orders SET (fillfactor = 85);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ كل index بيقتل الـ HOT على العمود بتاعه. عمود زي <code>updated_at</code> بيتغير مع كل update، فكل update بيعيد كتابة كل الـ indexes: 240 byte للصف قصاد 96، و710 لو الصفحات محتاجة FPI. ✅ شيل الـ indexes اللي مفيش query بيستخدمها (شوف <code>pg_stat_user_indexes</code>)، وسيب <code>fillfactor</code> أقل من 100 على الجداول اللي بتتحدث كتير عشان النسخة الجديدة تدخل في نفس الصفحة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Picking an engine from one benchmark</b>
+<pre><code class="language-plaintext">LevelDB 34,000 gets/s
+Postgres 10,000 gets/s
+=> replace Postgres</code></pre></div>
+    <div class="good"><b>✅ Compare the same deployment and durability</b>
+<pre><code class="language-plaintext">Same process boundary? Same fsync?
+p99 during compaction or checkpoint?
+Range scans? Transactions? Ops cost?</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الأرقام دي حقيقية بس بتقارن مكتبة جوه الـ process بـ server على TCP، فالفرق أغلبه حدود الـ process مش الـ engine. ✅ الصح: نفس الـ deployment، نفس الـ durability، وتبص على الـ p99 وقت الـ compaction أو الـ checkpoint، وتسأل عن الـ range scans والـ transactions وتكلفة التشغيل قبل أي قرار.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Measure your own fsync <span class="lvl lvl-1">🟢 easy</span></b>
+    Run <code>wal-fsync-cost.ts</code> on your machine with group sizes 1, 10, 100 and 1000. Plot writes per second against group size and find where the extra throughput stops being worth the wait.
+    <div class="ar-note">شغّل <code>wal-fsync-cost.ts</code> عندك بأحجام group 1 و10 و100 و1000. ارسم الـ writes/s قصاد حجم الـ group وشوف عند أنهي نقطة الزيادة في الـ throughput مبقتش تستاهل الانتظار.</div>
+    <details><summary>Hint · تلميح</summary>
+      Call <code>measure("group 10", "os-only", 25_000, 10)</code>, repeating for each size. Compare the latency of the slowest write in each group: everyone in a batch waits for the same fsync.
+      <div class="ar-note">نادي <code>measure("group 10", "os-only", 25_000, 10)</code> لكل حجم. وقارن أبطأ write في كل مجموعة: كل الطلبات في الدفعة بتستنى نفس الـ fsync.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Compact the log <span class="lvl lvl-2">🟡 medium</span></b>
+    <code>WalStore</code> grows forever because old versions stay in the file. Write <code>compact(file)</code>: copy only live keys to a new file, make it durable, then atomically replace the old one. Prove it with a file where the same 100 keys were written 50 times.
+    <div class="ar-note">الـ <code>WalStore</code> بيكبر للأبد لأن النسخ القديمة فاضلة في الملف. اكتب <code>compact(file)</code>: انسخ المفاتيح الحية بس لملف جديد، خليه durable، وبعدين بدّل الملف القديم بشكل ذري. واختبره على ملف فيه نفس الـ 100 مفتاح اتكتبوا 50 مرة.</div>
+    <details><summary>Hint · تلميح</summary>
+      <code>fsync</code> the new file before <code>rename</code>, and close both handles first on Windows, or the rename fails.
+      <div class="ar-note">لازم <code>fsync</code> للملف الجديد قبل الـ <code>rename</code>، وعلى Windows لازم تقفل الـ handles الأول وإلا الـ rename هيفشل.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-compact.ts"><code class="language-typescript">import { mkdtempSync, renameSync, rmSync, statSync } from "node:fs";
+import path from "node:path";
+import { WalStore } from "./wal-store.ts";
+
+// الدمج: بنكتب المفاتيح الحية بس في ملف جديد وبعدين rename ذري
+function compact(file: string): { before: number; after: number } {
+  const before = statSync(file).size;
+  const tmp = `${file}.compacting`;
+  const oldStore = new WalStore(file, "os-only");
+  const fresh = new WalStore(tmp, "os-only");
+  for (const key of oldStore.liveKeys()) fresh.put(key, oldStore.get(key)!);
+  // لازم fsync قبل الـ rename، وإلا الـ crash يسيبنا بملف فاضي مكان الأصلي
+  fresh.sync();
+  oldStore.close();
+  fresh.close();
+  renameSync(tmp, file);
+  return { before, after: statSync(file).size };
+}
+
+const dir = mkdtempSync(path.join(process.cwd(), "wal-ex-"));
+const file = path.join(dir, "orders.log");
+const store = new WalStore(file, "os-only");
+for (let round = 0; round &lt; 50; round++) {
+  for (let i = 0; i &lt; 100; i++) store.put(`order:${i}`, JSON.stringify({ round, status: "paid" }));
+}
+store.del("order:0");
+store.close();
+
+console.log(compact(file));
+const after = new WalStore(file, "os-only");
+console.log("keys:", after.keys, " order:7 =", after.get("order:7"), " order:0 =", after.get("order:0"));
+after.close();
+rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });</code></pre>
+<pre><code class="language-plaintext">{ before: 238519, after: 4743 }
+keys: 99  order:7 = {"round":49,"status":"paid"}  order:0 = undefined</code></pre>
+      <div class="ar-note">الملف نزل من 238,519 byte لـ 4,743 byte، و<code>order:7</code> لسه موجود بآخر قيمة، و<code>order:0</code> اللي اتمسح اختفى. الـ rename الذري معناه إن الـ crash أثناء الـ compaction مش بيضيّع الـ data: يا إما الملف القديم، يا إما الجديد الكامل.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Range scan on the mini LSM <span class="lvl lvl-2">🟡 medium</span></b>
+    Add <code>scan(from, to)</code> to <code>MiniLSM</code>: all live keys in the range, newest value wins, tombstones hidden, memtable included.
+    <div class="ar-note">ضيف <code>scan(from, to)</code> لـ <code>MiniLSM</code>: كل المفاتيح الحية في الـ range، أحدث قيمة تكسب، الـ tombstones متظهرش، والـ memtable محسوبة.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-scan.ts"><code class="language-typescript">import { mkdtempSync, rmSync } from "node:fs";
+import path from "node:path";
+import { MiniLSM } from "./mini-lsm.ts";
+
+class ScanLSM extends MiniLSM {
+  // الـ range scan لازم يدمج كل الجداول والـ memtable والأحدث يكسب
+  scan(from: string, to: string): [string, string][] {
+    const merged = new Map&lt;string, string | null&gt;();
+    for (const t of [...this.tables].reverse()) {
+      for (const [k, v] of this.readTable(t)) if (k &gt;= from &amp;&amp; k &lt; to) merged.set(k, v);
+    }
+    for (const [k, v] of this.memtable) if (k &gt;= from &amp;&amp; k &lt; to) merged.set(k, v);
+    return [...merged]
+      .filter((e): e is [string, string] =&gt; e[1] !== null)
+      .sort(([a], [b]) =&gt; (a &lt; b ? -1 : 1));
+  }
+}
+
+const dir = mkdtempSync(path.join(process.cwd(), "lsm-ex-"));
+const db = new ScanLSM(dir, 3);
+db.put("invoice:001", "v1");
+db.put("invoice:002", "v1");
+db.put("invoice:003", "v1");
+db.put("invoice:002", "v2");
+db.del("invoice:003");
+db.put("order:001", "other");
+console.log(JSON.stringify(db.scan("invoice:", "invoice;")), "files:", db.tables.length);
+db.close();
+rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });</code></pre>
+<pre><code class="language-plaintext">[["invoice:001","v1"],["invoice:002","v2"]] files: 2</code></pre>
+      <div class="ar-note">الناتج فيه <code>invoice:002</code> بالقيمة الأحدث <code>v2</code>، و<code>invoice:003</code> مش ظاهر لأنه اتمسح، و<code>order:001</code> بره الـ range. لاحظ إن الـ scan لازم يبص في كل ملف، وده ليه الـ Bloom filters مش بتفيد الـ range scans.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    In your side project's database, find the hottest table by writes. Record its HOT ratio (<code>n_tup_hot_upd / n_tup_upd</code>), the leaf density of its primary key (<code>pgstatindex</code>) and the WAL bytes per write over one hour from <code>pg_stat_wal</code>. Pick one change (a <code>uuidv7()</code> key, a dropped index, or a lower <code>fillfactor</code>), apply it, and write down the before and after in an ADR.
+    <div class="ar-note">في قاعدة بيانات مشروعك الجانبي، حدد أكتر جدول بيتكتب فيه. سجّل نسبة الـ HOT (<code>n_tup_hot_upd / n_tup_upd</code>)، وكثافة الورق في الـ primary key بـ <code>pgstatindex</code>، والـ WAL bytes لكل كتابة في ساعة من <code>pg_stat_wal</code>. اختار تغيير واحد (مفتاح <code>uuidv7()</code>، أو شيل index، أو <code>fillfactor</code> أقل)، طبقه، واكتب قبل وبعد في ADR.</div>
+    <details><summary>Hint · تلميح</summary>
+      Take the hour-long measurement when traffic looks normal, not right after a deploy, and call <code>pg_stat_reset_shared('wal')</code> at the start so the counters cover only your window.
+      <div class="ar-note">خد قياس الساعة في وقت traffic طبيعي، مش بعد deploy على طول، ونادي <code>pg_stat_reset_shared('wal')</code> في الأول عشان العدادات تغطي الفترة دي بس.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Both engines log first: an append is the cheapest durable write, and the main structure catches up later.</li>
+    <li><code>fsync</code> cost about 226× a plain write here; group commit recovers most of it (1,134 vs 46,357 writes/s).</li>
+    <li>A kill test can't show durability against power loss: the OS page cache survives a process kill.</li>
+    <li>B-tree: 8 KB pages, high fanout, three levels hold millions of rows. Sequential keys give 90% density, random keys about 80% and many splits.</li>
+    <li>Full page images are the hidden cost: first touch after a checkpoint writes 8 KB (2,089 vs 153 WAL bytes per row).</li>
+    <li>HOT updates skip index entries (96 vs 240 bytes per row) when no indexed column changes and the page has room.</li>
+    <li>LSM: memtable, flush to immutable sorted files, read newest to oldest, delete writes a tombstone.</li>
+    <li>Read cost grows linearly with files (2, 4, 8, 16, 31.9 reads per miss), until Bloom filters and compaction bound it.</li>
+    <li>Size-tiered: low write amp, high space amp. Leveled: high write amp, low space amp. Bloom filters don't help range scans.</li>
+    <li>Tombstones linger until compaction reaches the oldest file; prefer dropping whole partitions for time-based data.</li>
+    <li>Benchmarks across engines compare process boundaries and fsync policy as much as data structures: compare shapes.</li>
+    <li>Orders and payments fit B-tree; metrics, events and logs fit LSM. Name the amplification you accept and how you'll watch it.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الاتنين بيكتبوا في الـ log الأول: الـ append أرخص كتابة durable، والـ structure الأساسي بيحصّل بعدين.</li>
+      <li>الـ <code>fsync</code> كلف هنا حوالي 226× من الكتابة العادية، والـ group commit بيرجّع أغلبها (1,134 قصاد 46,357 write/s).</li>
+      <li>الـ kill test مش بيثبت durability ضد انقطاع الكهربا: الـ OS page cache بيعدّي من موت الـ process.</li>
+      <li>الـ B-tree: صفحات 8 KB و fanout عالي، و3 مستويات بتشيل ملايين الصفوف. المفاتيح المتسلسلة كثافتها 90%، والعشوائية حوالي 80% ومعاها splits كتير.</li>
+      <li>الـ full page images هي التكلفة المخفية: أول لمسة بعد الـ checkpoint بتكتب 8 KB (2,089 قصاد 153 byte WAL للصف).</li>
+      <li>الـ HOT updates بتعدّي entries الـ index (96 قصاد 240 byte للصف) لو مفيش عمود عليه index اتغير وفيه مكان في الصفحة.</li>
+      <li>الـ LSM: memtable، flush لملفات sorted ثابتة، قراية من الأحدث للأقدم، والـ delete بيكتب tombstone.</li>
+      <li>تكلفة القراية خطية مع عدد الملفات (2، 4، 8، 16، 31.9 قراية لكل miss)، لحد ما الـ Bloom filters والـ compaction يحطوا حد.</li>
+      <li>الـ size-tiered: كتابة قليلة ومساحة أكتر. الـ leveled: كتابة أكتر ومساحة أقل. والـ Bloom filters مش بتفيد الـ range scans.</li>
+      <li>الـ tombstones بتفضل لحد ما الـ compaction يوصل لأقدم ملف. للبيانات الزمنية الأحسن تمسح partition كامل.</li>
+      <li>الـ benchmarks بين الـ engines بتقارن حدود الـ process وسياسة الـ fsync زي ما بتقارن الـ data structures: قارن الأشكال.</li>
+      <li>الـ orders والـ payments تناسب B-tree، والـ metrics والـ events والـ logs تناسب LSM. قول إنت بتدفع أنهي amplification وهتراقبها إزاي.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 12 · 3.1 — Storage engines: B-tree (read-optimized، in-place updates) vs LSM-tree (write-optimized، SSTables، compaction، Bloom filters للـ reads) — Postgres/MySQL vs Cassandra/RocksDB، WAL في الاتنين</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.postgresql.org/docs/current/wal-intro.html">PostgreSQL — Write-Ahead Logging</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/pageinspect.html">PostgreSQL — pageinspect</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/storage-hot.html">PostgreSQL — Heap-Only Tuples (HOT)</a></li>
+    <li><a href="https://riak.com/assets/bitcask-intro.pdf">Bitcask: A Log-Structured Hash Table (paper)</a></li>
+    <li><a href="https://github.com/google/leveldb/blob/main/doc/impl.md">LevelDB — implementation notes</a></li>
+    <li><a href="https://github.com/facebook/rocksdb/wiki/Leveled-Compaction">RocksDB wiki — Leveled Compaction</a></li>
+    <li><a href="https://cassandra.apache.org/doc/latest/cassandra/managing/operating/compaction/index.html">Apache Cassandra — Compaction</a></li>
+    <li><a href="https://discord.com/blog/how-discord-stores-trillions-of-messages">Discord — How Discord Stores Trillions of Messages</a></li>
+  </ul>
+
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <!-- ===== Prev / Next (use class="empty" on a span when there is no prev/next) ===== -->
+  <nav class="lesson-nav">
+    <a class="prev" href="./34-transactions-2pc-saga-exactly-once.html"><small>← Previous</small>34 · Distributed Transactions</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./36-geo-distribution-crdts-residency.html"><small>Next →</small>36 · Geo-Distribution</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

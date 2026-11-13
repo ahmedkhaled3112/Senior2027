@@ -1,0 +1,1735 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Load Balancers in Depth — 12 System Design</title>
+<meta name="section" content="12-System-Design">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">12 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 07 / 63</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+  <header>
+    <h1>Load Balancers in Depth</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 07 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">Node 22 · TypeScript 7 · Postgres 18 · Redis 8</span>
+      <span class="chip">Prereq: 01 · Load Balancers, Proxies &amp; CDN</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>12 · 2.1 — <b>Load balancers بعمق</b>: L4 (TCP — أسرع، مش بيفهم HTTP) vs L7 (HTTP — routing بالـ path/header، TLS termination)، algorithms (round robin، weighted، least connections، least response time، IP hash، consistent hashing)، health checks (active/passive)، connection draining</li>
+        <li>12 · 2.1 — Sticky sessions وليه تتجنبها (stateless بدلها)، وإمتى مفيش بديل (WebSockets)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — L4 vs L7, measured</a></li>
+      <li><a href="#p2">Part 2 — Algorithms under a slow backend</a></li>
+      <li><a href="#p3">Part 3 — Health checks that cause outages</a></li>
+      <li><a href="#p4">Part 4 — Connection draining</a></li>
+      <li><a href="#p5">Part 5 — Sticky sessions</a></li>
+      <li><a href="#p6">Part 6 — The LB as a failure point</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The load balancer decides which backend does the work, so its mistakes are multiplied by every request. A wrong algorithm turned one slow instance into a 4× throughput loss in the runs below. A health check that queries the database turned a 3-second lock into a full outage. A rolling deploy without draining failed 43 of 1000 requests, and with draining it failed none. Interviewers ask about these because they separate people who have run production traffic from people who have only drawn a box labelled "LB".</p>
+    <p>The basics (what an LB is, the algorithms in a simulation, the keep-alive 502) are in <a href="../../03-CS-Fundamentals/lessons/16-load-balancers-proxies-cdn.html">section 03 · Load Balancers, Proxies &amp; CDN</a>. This lesson uses real Node backends and counts what breaks. Every LB here is a Node <b>stand-in</b>, labelled as such: the behaviour is the point, not the speed.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ load balancer هو اللي بيقرر مين يشتغل، فأي غلطة فيه بتتضرب في كل request. في التجارب تحت: algorithm غلط خلّى instance واحد بطيء يضيّع 4 أضعاف الـ throughput. و health check بيكلم الـ DB خلّى lock مدته 3 ثواني يبقى outage كامل. و rolling deploy من غير draining وقّع 43 من 1000 request، وبالـ draining صفر. الـ interviewers بيسألوا في الحاجات دي عشان هي اللي بتفرّق بين حد شغّل traffic حقيقي وحد رسم مربع مكتوب عليه "LB" وخلاص.</p>
+    <p>الأساسيات (يعني إيه LB، الـ algorithms في simulation، و 502 بتاعة الـ keep-alive) موجودة في <a href="../../03-CS-Fundamentals/lessons/16-load-balancers-proxies-cdn.html">درس section 03</a>. هنا هنشغّل backends حقيقية بـ Node ونعدّ إيه اللي بيقع. وكل LB في الدرس ده <b>stand-in</b> مكتوب بـ Node ومتعلّم عليه كده: اللي يهمنا هو السلوك، مش السرعة.</p>
+  </section>
+
+  <h2 id="p1">Part 1 — L4 vs L7, measured <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الفرق بين L4 و L7 بالأرقام</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><a href="../../03-CS-Fundamentals/lessons/16-load-balancers-proxies-cdn.html#p1">Section 03, part 1</a> explains the idea. Here is the consequence people miss. An L4 balancer makes <b>one decision per TCP connection</b> and then moves bytes. It can see the 5-tuple and nothing else. An L7 balancer terminates the protocol, reads every request, and makes <b>one decision per request</b>, so it can route by path, header, cookie or method, terminate TLS, and retry.</p>
+    <p>That difference becomes an outage with long-lived multiplexed connections. HTTP/2 and gRPC put thousands of requests on one TCP connection. Through L4, every one of them lands on the backend chosen when the connection opened. The test below sends 1000 requests over a single HTTP/2 connection through both stand-ins: L4 sent all 1000 to one backend, and L7 split them 334/333/333.</p>
+    <p>The price of L7 is work per request: parsing, and usually TLS. In this run L7 took about 133 ms against about 102 ms for L4 (Node stand-ins on a loaded Windows machine, so read the ratio only). Real L4 can also be much cheaper than this, since it can run in the kernel or on a NIC, which a Node process can't show.</p>
+  </section>
+<pre class="diagram">
+  L4: one decision per TCP connection
+  client ==== 1 TCP connection, 1000 streams ====&gt; LB ====&gt; orders-1 (1000)
+                                                           orders-2 (0)
+                                                           orders-3 (0)
+
+  L7: one decision per request
+  client ==== 1 TCP connection, 1000 streams ====&gt; LB --+--&gt; orders-1 (334)
+                                                        +--&gt; orders-2 (333)
+                                                        +--&gt; orders-3 (333)
+</pre>
+  <div class="ar-note">فوق: الـ L4 قرر مرة واحدة لما الـ TCP connection اتفتحت، فكل الـ 1000 stream راحوا لـ orders-1 والباقي فاضيين. تحت: الـ L7 بيفك الـ HTTP/2 وبيقرر لكل request لوحده، فالحمل اتقسم 334/333/333 رغم إن العميل فاتح connection واحدة بس.</div>
+
+<pre data-file="src/p1-l4-vs-l7.ts"><code class="language-typescript">// تجربة: عميل HTTP/2 واحد بيبعت 1000 request، ومرة بيعدّي على L4 ومرة على L7.
+// الاتنين هنا stand-ins مكتوبين بـ Node، مش HAProxy ولا ALB.
+import http2 from "node:http2";
+import net from "node:net";
+
+type Backend = { name: string; port: number; hits: number; close(): void };
+
+async function startBackend(name: string): Promise&lt;Backend&gt; {
+  const b: Backend = { name, port: 0, hits: 0, close() {} };
+  const server = http2.createServer((req, res) =&gt; {
+    b.hits++;
+    res.end(JSON.stringify({ servedBy: name, path: req.url }));
+  });
+  await new Promise&lt;void&gt;((r) =&gt; server.listen(0, "127.0.0.1", r));
+  b.port = (server.address() as net.AddressInfo).port;
+  b.close = () =&gt; server.close();
+  return b;
+}
+
+// الـ L4: بيختار backend مرة واحدة لكل TCP connection، وبعدها بينقل bytes وبس
+function startL4(backends: Backend[]) {
+  let next = 0;
+  const seen = { connections: 0, firstBytes: "" };
+  const server = net.createServer((client) =&gt; {
+    seen.connections++;
+    const target = backends[next++ % backends.length]!;
+    const upstream = net.connect(target.port, "127.0.0.1");
+    client.once("data", (d) =&gt; (seen.firstBytes = (d as Buffer).subarray(0, 14).toString("latin1")));
+    client.pipe(upstream).pipe(client);
+    client.on("error", () =&gt; upstream.destroy());
+    upstream.on("error", () =&gt; client.destroy());
+  });
+  return { server, seen };
+}
+
+// الـ L7: بيفك الـ HTTP/2 ويقرأ كل stream، فبيختار backend لكل request لوحده
+function startL7(pools: { orders: Backend[]; payments: Backend[]; canary: Backend[] }) {
+  let next = 0;
+  const sessions = new Map&lt;Backend, http2.ClientHttp2Session&gt;();
+  const sessionFor = (b: Backend) =&gt; {
+    if (!sessions.has(b)) sessions.set(b, http2.connect(`http://127.0.0.1:${b.port}`));
+    return sessions.get(b)!;
+  };
+  const server = http2.createServer((req, res) =&gt; {
+    // القرار ده مستحيل على L4: الـ path والـ header جوه الـ bytes
+    const pool = req.url.startsWith("/payments/") ? pools.payments
+      : req.headers["x-canary"] === "1" ? pools.canary
+      : pools.orders;
+    const target = pool[next++ % pool.length]!;
+    const up = sessionFor(target).request({ ":method": req.method, ":path": req.url });
+    up.on("response", (h) =&gt; res.writeHead(Number(h[":status"])));
+    up.pipe(res);
+    up.on("error", () =&gt; res.destroy());
+  });
+  const close = () =&gt; { for (const s of sessions.values()) s.close(); server.close(); };
+  return { server, close };
+}
+
+const listen = (s: net.Server) =&gt;
+  new Promise&lt;number&gt;((r) =&gt; s.listen(0, "127.0.0.1", () =&gt; r((s.address() as net.AddressInfo).port)));
+
+// بنبعت كل الـ requests على HTTP/2 connection واحدة (multiplexing)
+async function sendAll(port: number, n: number, path = (i: number) =&gt; `/orders/${i}`, headers = {}) {
+  const session = http2.connect(`http://127.0.0.1:${port}`);
+  const one = (i: number) =&gt; new Promise&lt;void&gt;((resolve, reject) =&gt; {
+    const r = session.request({ ":path": path(i), ...headers });
+    r.on("error", reject);
+    r.resume();
+    r.on("end", resolve);
+    r.end();
+  });
+  const t0 = performance.now();
+  for (let i = 0; i &lt; n; i += 50) {
+    await Promise.all(Array.from({ length: Math.min(50, n - i) }, (_, k) =&gt; one(i + k)));
+  }
+  session.close();
+  return Math.round(performance.now() - t0);
+}
+
+const orders = await Promise.all(["orders-1", "orders-2", "orders-3"].map(startBackend));
+const payments = await startBackend("payments-1");
+const canary = await startBackend("orders-canary");
+const all = [...orders, payments, canary];
+const counts = () =&gt; Object.fromEntries(all.map((b) =&gt; [b.name, b.hits]));
+const reset = () =&gt; all.forEach((b) =&gt; (b.hits = 0));
+
+const l4 = startL4(orders);
+const l4Port = await listen(l4.server);
+const l4Ms = await sendAll(l4Port, 1000);
+console.log("L4, 1 connection, 1000 requests:", counts(), `≈${l4Ms}ms`);
+console.log("L4 saw connections:", l4.seen.connections, "| first bytes:", JSON.stringify(l4.seen.firstBytes));
+reset();
+
+const l7 = startL7({ orders, payments: [payments], canary: [canary] });
+const l7Port = await listen(l7.server);
+const l7Ms = await sendAll(l7Port, 1000);
+console.log("L7, 1 connection, 1000 requests:", counts(), `≈${l7Ms}ms`);
+reset();
+
+await sendAll(l7Port, 10, (i) =&gt; `/payments/${i}`);
+await sendAll(l7Port, 10, (i) =&gt; `/orders/${i}`, { "x-canary": "1" });
+console.log("L7 routing by path and header:", counts());
+
+l4.server.close();
+l7.close();
+all.forEach((b) =&gt; b.close());
+setTimeout(() =&gt; process.exit(0), 100);</code></pre>
+
+<pre data-file="output"><code class="language-plaintext">L4, 1 connection, 1000 requests: {
+  'orders-1': 1000,
+  'orders-2': 0,
+  'orders-3': 0,
+  'payments-1': 0,
+  'orders-canary': 0
+} ≈102ms
+L4 saw connections: 1 | first bytes: "PRI * HTTP/2.0"
+L7, 1 connection, 1000 requests: {
+  'orders-1': 334,
+  'orders-2': 333,
+  'orders-3': 333,
+  'payments-1': 0,
+  'orders-canary': 0
+} ≈133ms
+L7 routing by path and header: {
+  'orders-1': 0,
+  'orders-2': 0,
+  'orders-3': 0,
+  'payments-1': 10,
+  'orders-canary': 10
+}</code></pre>
+  <div class="ar-note">الـ L4 بعت الـ 1000 كلهم لـ <code>orders-1</code> وشاف connection واحدة، وكل اللي شافه من البيانات bytes بتبدأ بـ <code>PRI * HTTP/2.0</code> (الـ preface بتاع HTTP/2) ومعرفش حاجة عن الـ path. الـ L7 قسمهم 334/333/333، وفي آخر سطر وجّه 10 requests لـ <code>payments-1</code> بالـ path، و10 لـ <code>orders-canary</code> بالـ header. الأوقات تقريبية (≈) وقارن النسبة بس.</div>
+
+<table>
+  <tr><th></th><th>L4 (TCP)</th><th>L7 (HTTP)</th></tr>
+  <tr><td>Decision unit</td><td>Connection</td><td>Request</td></tr>
+  <tr><td>Can see</td><td>IPs, ports, bytes (SNI if TLS passthrough)</td><td>Path, headers, cookies, method, body</td></tr>
+  <tr><td>Routing by path or tenant</td><td>No</td><td>Yes</td></tr>
+  <tr><td>TLS</td><td>Passes it through (or terminates in some products)</td><td>Terminates it</td></tr>
+  <tr><td>Retries, per-request metrics</td><td>No</td><td>Yes</td></tr>
+  <tr><td>HTTP/2 and gRPC balance</td><td>Pinned per connection</td><td>Per request</td></tr>
+  <tr><td>Cost per request</td><td>Lowest</td><td>Higher (parsing, TLS)</td></tr>
+  <tr><td>Typical use</td><td>Non-HTTP (Postgres, Redis, MQTT), very high throughput, in front of L7</td><td>Public APIs, microservices, canaries</td></tr>
+</table>
+  <div class="ar-note">الجدول سطر بسطر: <b>وحدة القرار</b>: الـ L4 لكل connection، والـ L7 لكل request. <b>بيشوف إيه</b>: الـ L4 الـ IPs والـ ports والـ bytes (والـ SNI لو TLS passthrough)، والـ L7 الـ path والـ headers والـ cookies والـ method والـ body. <b>Routing بالـ path أو الـ tenant</b>: الـ L4 لأ، والـ L7 آه. <b>الـ TLS</b>: الـ L4 بيعدّيه زي ما هو (وبعض المنتجات بتفكه)، والـ L7 بيفكه. <b>الـ retries والـ metrics لكل request</b>: الـ L4 لأ، والـ L7 آه. <b>توزيع HTTP/2 و gRPC</b>: على الـ L4 متثبت لكل connection، وعلى الـ L7 لكل request. <b>التكلفة لكل request</b>: الـ L4 الأقل، والـ L7 أعلى بسبب الـ parsing والـ TLS. <b>الاستخدام المعتاد</b>: الـ L4 للي مش HTTP (Postgres و Redis و MQTT) والـ throughput العالي جدًا وقدّام طبقة L7، والـ L7 للـ public APIs والـ microservices والـ canaries.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ L4 بياخد قرار واحد لما الـ TCP connection تتفتح، وبعدها بينقل bytes وخلاص، وكل اللي يعرفه الـ 5-tuple. الـ L7 بيفك الـ protocol ويقرا كل request ويقرر لكل واحد لوحده، فيقدر يوجّه بالـ path أو الـ header أو الـ cookie أو الـ method، ويفك الـ TLS، ويعمل retry.</p>
+    <p>الفرق ده بيبقى outage مع الـ connections الطويلة: HTTP/2 و gRPC بيحطوا آلاف الـ requests على TCP connection واحدة. على L4 كلهم بيروحوا للـ backend اللي اتحدد وقت فتح الـ connection. في التجربة: 1000 request على connection واحدة، الـ L4 بعتهم كلهم لـ backend واحد، والـ L7 قسمهم 334/333/333.</p>
+    <p>تمن الـ L7 إنه بيشتغل على كل request: parsing وغالبًا TLS. هنا أخد ≈133ms مقابل ≈102ms للـ L4، وده Node على Windows عليه ضغط، فبص على النسبة بس. والـ L4 الحقيقي ممكن يبقى أرخص بكتير لأنه ممكن يشتغل في الـ kernel أو على الـ NIC، وده Node مايقدرش يوريه.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو عندك خدمة بتنادي خدمة تانية بـ gRPC من ورا NLB (يعني L4)، هتلاقي pod واحد واكل الحمل كله وباقي الـ pods فاضيين، حتى لو الـ dashboard بيقول "4 instances". الحل: L7 proxy قدّام الـ gRPC، أو client-side balancing، أو <code>maxConnectionAge</code> عشان الـ connections تتجدد. نفس المشكلة في Postgres من ورا NLB: الـ connections الجديدة بس هي اللي بتتوزع.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "We scaled our gRPC service from 3 to 6 pods behind an NLB and load didn't drop on the old pods. Why?" → gRPC multiplexes on long-lived connections, and an L4 balancer chooses per connection. Existing connections stay where they are. Fix with an L7 proxy, client-side balancing, or a maximum connection age so clients reconnect.
+    <div class="ar-note"><b>السؤال:</b> "كبّرنا خدمة gRPC من 3 لـ 6 pods ورا NLB والحمل على القديمة مانزلش. ليه؟" ← <b>الإجابة:</b> الـ gRPC بيعمل multiplexing على connections طويلة، والـ L4 بيختار لكل connection، فالـ connections القديمة بتفضل مكانها. الحل L7 proxy، أو client-side balancing، أو حد أقصى لعمر الـ connection عشان العملاء يعملوا reconnect.</div>
+  </div>
+
+  <h2 id="p2">Part 2 — Algorithms under a slow backend <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ algorithms مع backend بطيء</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The simulation is in <a href="../../03-CS-Fundamentals/lessons/16-load-balancers-proxies-cdn.html#p2">section 03, part 2</a>. Here the backends are real: four Node servers, one of them 10× slower (requested 20 ms and 200 ms, and <code>setTimeout</code> on Windows really gave ≈28 ms and ≈206 ms). Each has 8 slots, like a small connection pool, so excess work queues. The load is 40 keep-alive connections from autocannon.</p>
+    <ul>
+      <li><b>Round robin</b> gave the slow backend the same share. Under a closed loop every connection eventually waits on it (peak in-flight 39 of 40), so the whole fleet runs at the speed of the slowest node: ≈180 rps against ≈800 for the adaptive algorithms.</li>
+      <li><b>Weighted</b> had the best p99 (≈217 ms), but only because I told it the truth (10:10:10:1). A backend that becomes slow unexpectedly doesn't update its weight.</li>
+      <li><b>Least connections</b> needs no configuration. The slow node holds its requests longer, so its count stays high and it naturally receives fewer: ≈806 rps.</li>
+      <li><b>Least response time</b>, taken literally, is the trap. Every new request goes to the backend with the lowest moving average, so all 40 land on one backend until its average rises, and then all 40 move to the next. That is the <b>herd effect</b>: peak in-flight 40 on each fast backend, p50 ≈124 ms, ≈350 rps, and the slow node got 0 requests, so its bad average never changes.</li>
+      <li><b>Power of two choices</b> samples two backends at random and takes the less loaded. It nearly matched least connections (≈803 rps, peak in-flight 12) with no global scan. The randomness is what breaks the herd: two balancers with stale counts won't all choose the same "best" backend. Envoy's <code>LEAST_REQUEST</code> uses this (P2C) when host weights are equal.</li>
+    </ul>
+  </section>
+
+<pre data-file="src/lb.ts"><code class="language-typescript">// الـ stand-in بتاع الـ L7 load balancer: مكتوب بـ Node وبيتغيّر فيه الـ picker بس.
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+
+export type Backend = {
+  id: string; port: number; weight: number;
+  inflight: number; peak: number; count: number; ewma: number;
+};
+export type Picker = (bs: Backend[]) =&gt; Backend;
+
+const random = (n: number) =&gt; Math.floor(Math.random() * n);
+const lowestBy = (bs: Backend[], f: (b: Backend) =&gt; number) =&gt; {
+  let best = [bs[0]!];
+  for (const b of bs.slice(1)) {
+    if (f(b) &lt; f(best[0]!)) best = [b];
+    else if (f(b) === f(best[0]!)) best.push(b);
+  }
+  // لو فيه تعادل بنختار عشوائي، عشان مفيش backend يتظلم بسبب ترتيبه
+  return best[random(best.length)]!;
+};
+
+export const roundRobin = (): Picker =&gt; { let i = 0; return (bs) =&gt; bs[i++ % bs.length]!; };
+
+// ده الـ smooth weighted round robin بتاع nginx: بيوزّع الـ weights من غير دفعات متتالية
+export const weightedRoundRobin = (): Picker =&gt; {
+  const current = new Map&lt;string, number&gt;();
+  return (bs) =&gt; {
+    const total = bs.reduce((s, b) =&gt; s + b.weight, 0);
+    let best = bs[0]!;
+    for (const b of bs) {
+      const c = (current.get(b.id) ?? 0) + b.weight;
+      current.set(b.id, c);
+      if (c &gt; (current.get(best.id) ?? 0)) best = b;
+    }
+    current.set(best.id, current.get(best.id)! - total);
+    return best;
+  };
+};
+
+export const leastConnections = (): Picker =&gt; (bs) =&gt; lowestBy(bs, (b) =&gt; b.inflight);
+
+// أقل response time بس: مبيبصش على الـ inflight، وده سبب الـ herd
+export const leastResponseTime = (): Picker =&gt; (bs) =&gt; lowestBy(bs, (b) =&gt; b.ewma);
+
+// اختيار عشوائي لاتنين، وبعدين الأقل inflight منهم (ده LEAST_REQUEST في Envoy)
+export const powerOfTwo = (): Picker =&gt; (bs) =&gt; {
+  const a = random(bs.length);
+  let b = random(bs.length - 1);
+  if (b &gt;= a) b++;
+  return bs[a]!.inflight &lt;= bs[b]!.inflight ? bs[a]! : bs[b]!;
+};
+
+export function startLb(backends: Backend[], pick: Picker) {
+  const agent = new http.Agent({ keepAlive: true });
+  const server = http.createServer((req, res) =&gt; {
+    const b = pick(backends);
+    b.count++;
+    b.inflight++;
+    b.peak = Math.max(b.peak, b.inflight);
+    const t0 = performance.now();
+    const up = http.request(
+      { port: b.port, host: "127.0.0.1", path: req.url, method: req.method, agent },
+      (r) =&gt; {
+        res.writeHead(r.statusCode ?? 502, r.headers);
+        r.pipe(res);
+        r.on("end", () =&gt; {
+          b.inflight--;
+          const rtt = performance.now() - t0;
+          b.ewma = b.ewma === 0 ? rtt : 0.2 * rtt + 0.8 * b.ewma;
+        });
+      },
+    );
+    up.on("error", () =&gt; { b.inflight--; res.statusCode = 502; res.end("bad gateway"); });
+    req.pipe(up);
+  });
+  return new Promise&lt;{ port: number; close(): void }&gt;((resolve) =&gt; {
+    server.listen(0, "127.0.0.1", () =&gt;
+      resolve({
+        port: (server.address() as AddressInfo).port,
+        close() { agent.destroy(); server.close(); server.closeAllConnections(); },
+      }));
+  });
+}</code></pre>
+<pre data-file="src/p2-algorithms.ts"><code class="language-typescript">// تجربة: 4 backends حقيقيين، واحد منهم أبطأ 10 مرات، وكل algorithm بيشتغل 4 ثواني.
+// الـ backend عنده 8 slots بس زي connection pool، فالزيادة بتقف في طابور.
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import autocannon from "autocannon";
+import {
+  type Backend, type Picker, startLb, roundRobin, weightedRoundRobin,
+  leastConnections, leastResponseTime, powerOfTwo,
+} from "./lb.ts";
+
+const SLOTS = 8;
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+
+async function startBackend(id: string, delayMs: number, weight: number) {
+  let busy = 0;
+  const waiters: Array&lt;() =&gt; void&gt; = [];
+  const samples: number[] = [];
+  const server = http.createServer(async (_req, res) =&gt; {
+    if (busy &gt;= SLOTS) await new Promise&lt;void&gt;((r) =&gt; waiters.push(r));
+    busy++;
+    const t0 = performance.now();
+    await sleep(delayMs);
+    samples.push(performance.now() - t0);
+    busy--;
+    waiters.shift()?.();
+    res.end(JSON.stringify({ id }));
+  });
+  await new Promise&lt;void&gt;((r) =&gt; server.listen(0, "127.0.0.1", r));
+  const b: Backend = {
+    id, port: (server.address() as AddressInfo).port, weight,
+    inflight: 0, peak: 0, count: 0, ewma: 0,
+  };
+  const realDelay = () =&gt; samples.reduce((s, x) =&gt; s + x, 0) / (samples.length || 1);
+  return { b, server, realDelay };
+}
+
+const nodes = await Promise.all([
+  startBackend("a", 20, 10), startBackend("b", 20, 10),
+  startBackend("c", 20, 10), startBackend("slow", 200, 1),
+]);
+
+async function probe(port: number) {
+  const t0 = performance.now();
+  await (await fetch(`http://127.0.0.1:${port}/probe`)).text();
+  return performance.now() - t0;
+}
+
+const algorithms: Array&lt;[string, () =&gt; Picker]&gt; = [
+  ["round robin", roundRobin], ["weighted 10:10:10:1", weightedRoundRobin],
+  ["least connections", leastConnections], ["least response time", leastResponseTime],
+  ["power of two", powerOfTwo],
+];
+
+for (const [name, make] of algorithms) {
+  const backends = nodes.map((n) =&gt; n.b);
+  for (const b of backends) {
+    Object.assign(b, { inflight: 0, peak: 0, count: 0 });
+    // بنقيس كل backend مرة قبل الحمل: من غير كده backend من غير قياس بيبان إنه الأسرع
+    b.ewma = await probe(b.port);
+  }
+  const lb = await startLb(backends, make());
+  const r = await autocannon({ url: `http://127.0.0.1:${lb.port}/orders/1`, connections: 40, duration: 4 });
+  lb.close();
+  const per = backends.map((b) =&gt; `${b.id}=${b.count}`).join(" ");
+  const peaks = backends.map((b) =&gt; b.peak).join("/");
+  console.log(`${name.padEnd(21)} rps≈${String(Math.round(r.requests.average)).padStart(4)} p50≈${String(r.latency.p50).padStart(4)}ms p99≈${String(r.latency.p99).padStart(5)}ms non2xx=${r.non2xx} | ${per} | peak inflight ${peaks}`);
+  await sleep(300);
+}
+console.log("measured backend delay:", nodes.map((n) =&gt; `${n.b.id}≈${Math.round(n.realDelay())}ms`).join(" "));
+for (const n of nodes) { n.server.close(); n.server.closeAllConnections(); }</code></pre>
+<pre data-file="output"><code class="language-plaintext">round robin           rps≈ 180 p50≈  31ms p99≈ 1007ms non2xx=0 | a=190 b=190 c=190 slow=190 | peak inflight 10/10/10/39
+weighted 10:10:10:1   rps≈ 793 p50≈  33ms p99≈  217ms non2xx=0 | a=1036 b=1035 c=1035 slow=104 | peak inflight 13/13/13/6
+least connections     rps≈ 806 p50≈  31ms p99≈  352ms non2xx=0 | a=1034 b=1034 c=1034 slow=162 | peak inflight 10/10/10/10
+least response time   rps≈ 350 p50≈ 124ms p99≈  159ms non2xx=0 | a=640 b=648 c=152 slow=0 | peak inflight 40/40/40/0
+power of two          rps≈ 803 p50≈  31ms p99≈  344ms non2xx=0 | a=1029 b=1029 c=1031 slow=161 | peak inflight 12/12/12/12
+measured backend delay: a≈28ms b≈28ms c≈28ms slow≈206ms</code></pre>
+  <div class="ar-note">كل سطر algorithm: الـ rps، و p50 و p99، وعدد الـ requests لكل backend، وأعلى inflight وصله كل backend. الـ round robin بعت لكل واحد 190 بس لأن الـ 40 connection وقفوا كلهم عند البطيء (peak 39)، فالـ rps نزل لـ ≈180. الـ weighted أحسن p99 لأننا قلناله الحقيقة. الـ least connections و power of two قريبين من بعض ≈800. الـ least response time وصل peak 40 على كل backend سريع (ده الـ herd)، والـ p50 بتاعه ≈124ms، والبطيء ماخدش ولا request. آخر سطر: الـ delay الحقيقي على Windows ≈28ms و ≈206ms. كل الأرقام تقريبية على جهاز عليه ضغط.</div>
+
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>IP hash and consistent hashing</b> serve a different goal: affinity, keeping a client on the same backend (a local cache, a per-tenant shard). Plain <code>hash(ip) % N</code> reshuffles almost everyone when N changes: going from 4 to 5 backends moved 80.1% of 100,000 clients. A consistent hash ring moves only the share that belongs to the new node, about 1/5. With 150 virtual nodes per backend it moved 18.2% and the load stayed within 18–21% per backend. With 1 virtual node per backend it moved 34.1% and the load ranged from 11.6% to 34.1%, which is why vnodes exist. The mechanism in depth comes in <a href="./13-partitioning-consistent-hashing.html">lesson 13</a>.</p>
+  </section>
+<pre data-file="src/p2-affinity.ts"><code class="language-typescript">// حاسبة: لو زودنا backend خامس، كام client هيروح لـ backend تاني؟
+import { createHash } from "node:crypto";
+
+const hash = (s: string) =&gt; createHash("md5").update(s).digest().readUInt32BE(0);
+const clients = Array.from({ length: 100_000 }, (_, i) =&gt; `10.${(i &gt;&gt; 16) &amp; 255}.${(i &gt;&gt; 8) &amp; 255}.${i &amp; 255}`);
+
+function ipHash(nodes: string[]) {
+  return (client: string) =&gt; nodes[hash(client) % nodes.length]!;
+}
+
+function consistentRing(nodes: string[], vnodes: number) {
+  const ring = nodes
+    .flatMap((n) =&gt; Array.from({ length: vnodes }, (_, i) =&gt; ({ at: hash(`${n}#${i}`), n })))
+    .sort((x, y) =&gt; x.at - y.at);
+  return (client: string) =&gt; {
+    const h = hash(client);
+    let lo = 0, hi = ring.length;
+    while (lo &lt; hi) {
+      const mid = (lo + hi) &gt;&gt; 1;
+      if (ring[mid]!.at &lt; h) lo = mid + 1; else hi = mid;
+    }
+    return ring[lo % ring.length]!.n;
+  };
+}
+
+function report(name: string, before: (c: string) =&gt; string, after: (c: string) =&gt; string) {
+  let moved = 0;
+  const load = new Map&lt;string, number&gt;();
+  for (const c of clients) {
+    const a = after(c);
+    if (before(c) !== a) moved++;
+    load.set(a, (load.get(a) ?? 0) + 1);
+  }
+  const shares = [...load.values()].map((v) =&gt; (v / 1000).toFixed(1) + "%").join(" ");
+  console.log(`${name.padEnd(26)} moved ${(moved / 1000).toFixed(1)}% | load after: ${shares}`);
+}
+
+const four = ["b1", "b2", "b3", "b4"];
+const five = [...four, "b5"];
+report("IP hash (mod N) 4 to 5", ipHash(four), ipHash(five));
+report("ring, 1 vnode, 4 to 5", consistentRing(four, 1), consistentRing(five, 1));
+report("ring, 150 vnodes, 4 to 5", consistentRing(four, 150), consistentRing(five, 150));</code></pre>
+<pre data-file="output"><code class="language-plaintext">IP hash (mod N) 4 to 5     moved 80.1% | load after: 20.3% 20.2% 19.8% 19.9% 19.8%
+ring, 1 vnode, 4 to 5      moved 34.1% | load after: 11.6% 22.7% 34.1% 14.0% 17.6%
+ring, 150 vnodes, 4 to 5   moved 18.2% | load after: 18.2% 19.3% 20.6% 20.5% 21.4%</code></pre>
+  <div class="ar-note">الـ IP hash بـ mod N حرك 80.1% من العملاء لما زودنا backend واحد. الـ ring بـ vnode واحد حرك 34.1% والحمل طالع من 11.6% لـ 34.1% (مش متوازن). الـ ring بـ 150 vnodes حرك 18.2% قريب من الـ 20% المثالية، والحمل بين 18% و 21%.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ simulation موجودة في <a href="../../03-CS-Fundamentals/lessons/16-load-balancers-proxies-cdn.html#p2">section 03 part 2</a>. هنا backends حقيقية: 4 Node servers، واحد أبطأ 10 مرات (طلبنا 20ms و 200ms، و <code>setTimeout</code> على Windows إدّانا فعليًا ≈28ms و ≈206ms). كل واحد عنده 8 slots زي connection pool صغير، والزيادة بتقف في طابور. والحمل 40 keep-alive connection من autocannon.</p>
+    <ul>
+      <li><b>Round robin</b>: البطيء بياخد نفس النصيب، وفي closed loop كل الـ connections في الآخر بتستناه (peak 39 من 40)، فالـ fleet كله بيمشي بسرعة أبطأ node: ≈180 rps مقابل ≈800 للـ algorithms اللي بتتكيف.</li>
+      <li><b>Weighted</b>: أحسن p99 (≈217ms)، بس عشان إحنا قلنا له الحقيقة (10:10:10:1). لو backend بقى بطيء فجأة، الـ weight مش هيتغير لوحده.</li>
+      <li><b>Least connections</b>: من غير أي config. البطيء ماسك الـ requests وقت أطول، فعدده بيفضل عالي وبياخد أقل لوحده: ≈806 rps.</li>
+      <li><b>Least response time</b> لو طبقته حرفيًا هو الفخ: كل request جديد بيروح لأقل متوسط، فالـ 40 كلهم بيروحوا لواحد لحد ما متوسطه يعلى، وبعدين الـ 40 ينقلوا للي بعده. ده الـ <b>herd effect</b>: peak 40 على كل backend سريع، و p50 ≈124ms، و ≈350 rps. والبطيء ماخدش ولا request، فالمتوسط بتاعه عمره ما هيتغير.</li>
+      <li><b>Power of two choices</b>: بياخد اتنين عشوائي ويختار الأقل حملًا. قرب جدًا من least connections (≈803 rps و peak 12) من غير ما يلف على كل الـ backends. العشوائية هي اللي بتكسر الـ herd: لو عندك كذا LB بأرقام قديمة، مش هيختاروا كلهم نفس "الأحسن". الـ <code>LEAST_REQUEST</code> في Envoy بيستخدم ده (P2C) لما الـ weights متساوية.</li>
+    </ul>
+    <p><b>IP hash و consistent hashing</b> هدفهم حاجة تانية: الـ affinity، يعني client يفضل على نفس الـ backend (cache محلي أو shard لكل tenant). الـ <code>hash(ip) % N</code> بيبعتر تقريبًا الكل لما N يتغير: من 4 لـ 5 حرك 80.1% من 100 ألف client. الـ ring بيحرك نصيب الـ node الجديد بس، حوالي الخُمس: بـ 150 vnode حرك 18.2% والحمل بين 18% و 21%، وبـ vnode واحد حرك 34.1% والحمل من 11.6% لـ 34.1%، وده سبب وجود الـ vnodes. التفاصيل في <a href="./13-partitioning-consistent-hashing.html">درس 13</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      API عندك فيه endpoint تقيل (report بياخد 2 ثانية) و endpoints خفيفة. على ALB الـ default هو round robin، فالـ instance اللي مسك reports كتير بيبقى زحمة والباقي فاضي. غيّر الـ algorithm لـ <code>least_outstanding_requests</code>. ولو بتعمل cache محلي لكل tenant، استخدم consistent hashing عشان الـ deploy أو الـ scale-out مايمسحش الـ cache كله. والغلطة الشائعة: <code>hash % N</code> مع in-memory cache، فأول scale-out الـ DB تاخد الضربة كلها.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: least connections vs power of two</b>
+    Least connections needs a current count for every backend, which is easy in a single balancer and hard across a fleet of balancers. Power of two needs only two samples, so it scales out, and it's almost as good. Don't reach for least response time unless the implementation combines latency with in-flight count and keeps probing nodes it has stopped using.
+    <div class="ar-note">الـ least connections محتاج عدد محدّث لكل backend، وده سهل في LB واحد وصعب في fleet من الـ LBs. الـ power of two محتاج عينتين بس، فبيكبر بسهولة وقريب جدًا في الجودة. ماتستخدمش least response time إلا لو الـ implementation بيجمع الـ latency مع الـ inflight وبيفضل يجرّب الـ nodes اللي بطّل يبعتلها.</div>
+  </div>
+
+  <h2 id="p3">Part 3 — Health checks that cause outages <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ health checks اللي بتعمل outage</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Active</b> checks probe each backend on a timer. <b>Passive</b> checks (outlier detection) watch real responses. Detection time is <code>interval × failure threshold</code>, plus up to one timeout. Recovery is <code>interval × success threshold</code>. On AWS ALB the documented defaults are 30 s and 2, so about 60 s to eject, and 30 s and 5, so about 150 s to return.</p>
+    <p>The dangerous pattern is a deep <code>/health</code> that queries the database. One dependency is now tied to the liveness of <b>every</b> backend, so one blip fails them all at the same moment. The run below is real: 4 backends, a throwaway Postgres 18, and a migration-style <code>LOCK TABLE orders IN ACCESS EXCLUSIVE MODE</code> held for 3 seconds. 80% of traffic is catalog reads from memory that never touch the database.</p>
+    <ul>
+      <li><b>A) Deep check</b>: the LB ejected all 4 at t=2.8 s and brought the first back at t=5.5 s. 462 of 1440 requests failed (435 were 503 "no healthy upstream"), including the catalog reads that had nothing to do with Postgres.</li>
+      <li><b>B) Deep check plus a panic threshold</b>: same ejections, but below 50% healthy the LB ignores health and keeps routing. Only 78 failed, all of them requests that really needed the database.</li>
+      <li><b>C) Shallow check</b>: <code>/health</code> doesn't touch the database, so no backend was ejected. 74 failed, again only the requests that needed it.</li>
+    </ul>
+    <p>Passive detection solves the opposite problem: a backend whose process is alive and passes a shallow check but fails every real request. In run D one of four returned 500s for the whole test, and 120 of 480 requests failed (25%). With passive ejection (5 consecutive 5xx, the Envoy default, and a cap so at most half the pool is ejected) only 5 failed.</p>
+    <p>Real products agree on the safeguards. Envoy's panic threshold defaults to 50%, and its outlier detection defaults to 5 consecutive 5xx, 30 s base ejection and a 10% max ejection. AWS ALB <b>fails open</b>: if every target is unhealthy it routes to all of them anyway. Don't let that make you comfortable, though: a deep check that fails on only some backends still ejects those and piles their load on the rest.</p>
+  </section>
+<pre class="diagram">
+  t(s)     0    1    2    3    4    5    6    7
+  DB       ok   ok   [---- locked ----]  ok   ok
+  deep     ok   ok   ok  FAIL FAIL FAIL  ok   ok
+  LB pool  4    4    4    0    0    0    4    4
+  failed   0    0    36  181  155   90    0    0   (requests per second)
+                         ^ ejected t=2.8     ^ back t=5.5
+</pre>
+  <div class="ar-note">الجدول الزمني للسيناريو A: الـ DB مقفول من ثانية 2 لثانية 5. الـ deep check بيفشل، فالـ LB بيشيل الـ 4 backends عند t=2.8 وبيرجّعهم عند t=5.5. في الوقت ده كل الـ requests بتفشل (36 ثم 181 ثم 155 ثم 90 في الثانية)، حتى الـ catalog اللي مالهوش علاقة بالـ DB.</div>
+
+<pre data-file="src/p3-health.ts"><code class="language-typescript">// تجربة: DB blip حقيقي 3 ثواني (LOCK TABLE على Postgres مؤقت) و health checks مختلفة.
+// الـ LB هنا stand-in بـ Node: active checks و panic threshold و passive ejection.
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import pg from "pg";
+import { createPrimary, connect, stopAll } from "../pg-cluster.mjs";
+
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+
+// لازم نتأكد إن الـ port بتاع الـ Postgres المؤقت مش الـ default قبل أي connection
+function safePort(port: unknown): number {
+  const n = Number(port);
+  if (!/^\d+$/.test(String(port)) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) {
+    throw new Error(`refusing port ${String(port)}`);
+  }
+  return n;
+}
+
+type Mode = "deep" | "shallow";
+
+function startBackend(dbPort: number, mode: Mode, broken = false) {
+  const pool = new pg.Pool({
+    host: "127.0.0.1", port: safePort(dbPort), user: "app", database: "postgres",
+    max: 4, connectionTimeoutMillis: 300, statement_timeout: 800,
+  });
+  pool.on("error", () =&gt; {});
+  const server = http.createServer(async (req, res) =&gt; {
+    if (req.url === "/health") {
+      if (mode === "shallow") return void res.end("ok");
+      // الغلطة: الـ liveness بتاع الـ LB بقى معتمد على الـ DB
+      try { await pool.query("select 1 from orders limit 1"); res.end("ok"); }
+      catch { res.statusCode = 503; res.end("db down"); }
+      return;
+    }
+    if (broken) { res.statusCode = 500; return void res.end("broken"); }
+    // الـ catalog من memory: مش محتاج الـ DB خالص
+    if (req.url?.startsWith("/catalog/")) return void res.end('{"sku":"A1","price":999}');
+    try { await pool.query("select id from orders where id = $1", [1]); res.end("ok"); }
+    catch { res.statusCode = 504; res.end("db timeout"); }
+  });
+  return new Promise&lt;{ port: number; stop(): Promise&lt;void&gt; }&gt;((resolve) =&gt; {
+    server.listen(0, "127.0.0.1", () =&gt; resolve({
+      port: (server.address() as AddressInfo).port,
+      async stop() { server.closeAllConnections(); server.close(); await pool.end(); },
+    }));
+  });
+}
+
+type Opts = { panic?: boolean; passive?: boolean };
+type Node = { port: number; healthy: boolean; fails: number; oks: number; bad5xx: number; ejectedUntil: number };
+
+function startLb(backends: { port: number }[], opts: Opts, log: string[]) {
+  const nodes: Node[] = backends.map((b) =&gt; ({ port: b.port, healthy: true, fails: 0, oks: 0, bad5xx: 0, ejectedUntil: 0 }));
+  const t0 = performance.now();
+  const stamp = () =&gt; ((performance.now() - t0) / 1000).toFixed(1);
+  const check = async (n: Node) =&gt; {
+    const ok = await fetch(`http://127.0.0.1:${n.port}/health`, { signal: AbortSignal.timeout(400) })
+      .then((r) =&gt; r.ok, () =&gt; false);
+    const before = nodes.some((x) =&gt; x.healthy);
+    if (ok) { n.fails = 0; if (++n.oks &gt;= 2) n.healthy = true; }
+    else { n.oks = 0; if (++n.fails &gt;= 2) n.healthy = false; }
+    const after = nodes.some((x) =&gt; x.healthy);
+    if (before &amp;&amp; !after) log.push(`all backends ejected at t=${stamp()}s`);
+    if (!before &amp;&amp; after) log.push(`first backend back at t=${stamp()}s`);
+  };
+  // كل 500ms، و 2 فشل يشيله و 2 نجاح يرجّعه: وقت الاكتشاف ⁦≈ 500 × 2⁩
+  const timer = setInterval(() =&gt; nodes.forEach((n) =&gt; void check(n)), 500);
+  let rr = 0;
+  const agent = new http.Agent({ keepAlive: true });
+  const server = http.createServer((req, res) =&gt; {
+    const now = performance.now();
+    let pool = nodes.filter((n) =&gt; n.healthy);
+    // الـ panic: لو أقل من 50% healthy، تجاهل الـ checks وابعت للكل
+    if (opts.panic &amp;&amp; pool.length / nodes.length &lt; 0.5) pool = nodes;
+    if (opts.passive) {
+      const live = pool.filter((n) =&gt; n.ejectedUntil &lt;= now);
+      // حد أقصى للـ ejection: مانشيلش أكتر من نص الـ pool
+      if (live.length &gt;= nodes.length / 2) pool = live;
+    }
+    if (pool.length === 0) { res.statusCode = 503; return void res.end("no healthy upstream"); }
+    const n = pool[rr++ % pool.length]!;
+    const up = http.request({ port: n.port, host: "127.0.0.1", path: req.url, agent }, (r) =&gt; {
+      if (r.statusCode === 500) {
+        if (++n.bad5xx &gt;= 5) { n.ejectedUntil = performance.now() + 30_000; n.bad5xx = 0; }
+      } else n.bad5xx = 0;
+      res.writeHead(r.statusCode ?? 502);
+      r.pipe(res);
+    });
+    up.on("error", () =&gt; { res.statusCode = 502; res.end(); });
+    up.end();
+  });
+  return new Promise&lt;{ port: number; stop(): void }&gt;((resolve) =&gt; {
+    server.listen(0, "127.0.0.1", () =&gt; resolve({
+      port: (server.address() as AddressInfo).port,
+      stop() { clearInterval(timer); agent.destroy(); server.closeAllConnections(); server.close(); },
+    }));
+  });
+}
+
+// حمل open-loop: حوالي 200 request في الثانية، 80% catalog و 20% orders
+async function drive(port: number, seconds: number, catalogOnly = false) {
+  const perSecond: Record&lt;string, number&gt;[] = Array.from({ length: seconds + 2 }, () =&gt; ({}));
+  const t0 = performance.now();
+  const pending: Promise&lt;void&gt;[] = [];
+  while (performance.now() - t0 &lt; seconds * 1000) {
+    for (let i = 0; i &lt; 5; i++) {
+      const url = catalogOnly || i &gt; 0 ? "/catalog/1" : "/orders/1";
+      pending.push(fetch(`http://127.0.0.1:${port}${url}`, { signal: AbortSignal.timeout(2000) })
+        .then(async (r) =&gt; { await r.arrayBuffer(); return String(r.status); }, () =&gt; "timeout")
+        .then((s) =&gt; {
+          const b = perSecond[Math.floor((performance.now() - t0) / 1000)]!;
+          b[s] = (b[s] ?? 0) + 1;
+        }));
+    }
+    await sleep(25);
+  }
+  await Promise.all(pending);
+  return perSecond;
+}
+
+function summarize(name: string, perSecond: Record&lt;string, number&gt;[], log: string[]) {
+  const total: Record&lt;string, number&gt; = {};
+  for (const b of perSecond) for (const [k, v] of Object.entries(b)) total[k] = (total[k] ?? 0) + v;
+  const failsPerSec = perSecond.slice(0, -1).map((b) =&gt;
+    Object.entries(b).filter(([k]) =&gt; k !== "200").reduce((s, [, v]) =&gt; s + v, 0));
+  console.log(`${name}\n  totals ${JSON.stringify(total)}\n  failed per second ${failsPerSec.join(" ")}`);
+  if (log.length) console.log(`  ${log.join(", ")}`);
+}
+
+const cluster = await createPrimary({ fast: true });
+try {
+  const dbPort = safePort(cluster.port);
+  const admin = await connect(dbPort);
+  await admin.query("create table orders(id int primary key); insert into orders select generate_series(1,1000)");
+
+  const scenarios: Array&lt;[string, Mode, Opts]&gt; = [
+    ["A) deep /health, no panic", "deep", {}],
+    ["B) deep /health, panic threshold 50%", "deep", { panic: true }],
+    ["C) shallow /health", "shallow", {}],
+  ];
+  for (const [name, mode, opts] of scenarios) {
+    const backends = await Promise.all([1, 2, 3, 4].map(() =&gt; startBackend(dbPort, mode)));
+    const log: string[] = [];
+    const lb = await startLb(backends, opts, log);
+    const run = drive(lb.port, 9);
+    await sleep(2000);
+    // ده الـ blip: migration ماسكة ACCESS EXCLUSIVE لمدة 3 ثواني
+    await admin.query("begin");
+    await admin.query("lock table orders in access exclusive mode");
+    await sleep(3000);
+    await admin.query("commit");
+    summarize(name, await run, log);
+    lb.stop();
+    await Promise.all(backends.map((b) =&gt; b.stop()));
+  }
+
+  // واحد من 4 بايظ بس الـ shallow check بتاعه ناجح: مين هيلقطه؟
+  for (const [name, opts] of [["D) one broken backend, no passive", {}], ["E) one broken backend, passive ejection", { passive: true }]] as Array&lt;[string, Opts]&gt;) {
+    const backends = await Promise.all([false, false, false, true].map((b) =&gt; startBackend(dbPort, "shallow", b)));
+    const lb = await startLb(backends, opts, []);
+    summarize(name, await drive(lb.port, 3, true), []);
+    lb.stop();
+    await Promise.all(backends.map((b) =&gt; b.stop()));
+  }
+  await admin.end();
+} finally {
+  await stopAll(cluster);
+}
+process.exit(0);</code></pre>
+<pre data-file="output"><code class="language-plaintext">A) deep /health, no panic
+  totals {"200":978,"503":435,"504":27}
+  failed per second 0 0 36 181 155 90 0 0 0 0
+  all backends ejected at t=2.8s, first backend back at t=5.5s
+B) deep /health, panic threshold 50%
+  totals {"200":1362,"504":78}
+  failed per second 0 0 11 35 32 0 0 0 0 0
+  all backends ejected at t=2.8s, first backend back at t=5.6s
+C) shallow /health
+  totals {"200":1366,"504":74}
+  failed per second 0 0 10 30 34 0 0 0 0 0
+D) one broken backend, no passive
+  totals {"200":360,"500":120}
+  failed per second 40 40 40 0
+E) one broken backend, passive ejection
+  totals {"200":480,"500":5}
+  failed per second 5 0 0 0</code></pre>
+  <div class="ar-note">السيناريوهات: A الـ deep check من غير panic: 435 رد 503 و 27 رد 504، والـ pool فضي من t=2.8 لـ t=5.5. B نفس الـ check مع panic threshold 50%: فشل 78 بس (504 على requests محتاجة الـ DB). C الـ shallow check: فشل 74، نفس النوع. D backend واحد بايظ من غير passive: 120 من 480 (25%). E بالـ passive ejection: فشل 5 بس، وبعدها اتشال. الحمل ≈160 request في الثانية، وبيعتمد على timers الـ Windows.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ <b>active</b> checks بتجرّب كل backend كل فترة. الـ <b>passive</b> (outlier detection) بتراقب الردود الحقيقية. وقت الاكتشاف = <code>interval × failure threshold</code> زائد timeout كحد أقصى. والرجوع = <code>interval × success threshold</code>. في AWS ALB الـ defaults الموثقة: 30s و 2، يعني حوالي 60s عشان يتشال، و 30s و 5، يعني حوالي 150s عشان يرجع.</p>
+    <p>النمط الخطر هو <code>/health</code> deep بيعمل query على الـ DB. كده ربطت dependency واحدة بـ liveness <b>كل</b> الـ backends، فأي blip بيوقّعهم كلهم في نفس اللحظة. التجربة حقيقية: 4 backends، و Postgres 18 مؤقت، و <code>LOCK TABLE orders IN ACCESS EXCLUSIVE MODE</code> زي migration لمدة 3 ثواني. و 80% من الـ traffic قراية catalog من الـ memory ومالهاش دعوة بالـ DB.</p>
+    <ul>
+      <li><b>A) Deep check</b>: الـ LB شال الـ 4 عند t=2.8s ورجّع أول واحد عند t=5.5s. فشل 462 من 1440 (منهم 435 رد 503 "no healthy upstream")، وده شامل الـ catalog اللي مالوش علاقة بـ Postgres.</li>
+      <li><b>B) Deep check مع panic threshold</b>: نفس الـ ejections، بس لما الـ healthy يقل عن 50% الـ LB بيتجاهل الـ health ويكمّل توجيه. فشل 78 بس، وكلهم requests كانت محتاجة الـ DB فعلًا.</li>
+      <li><b>C) Shallow check</b>: الـ <code>/health</code> مش بيلمس الـ DB، فماحدش اتشال. فشل 74، برضه اللي محتاجين الـ DB بس.</li>
+    </ul>
+    <p>الـ passive بيحل المشكلة العكسية: backend الـ process بتاعه شغال وبيعدي الـ shallow check بس كل request حقيقي بيفشل. في D واحد من 4 كان بيرجع 500 طول التجربة، ففشل 120 من 480 (25%). بالـ passive ejection (5 أخطاء 5xx متتالية زي default الـ Envoy، مع حد أقصى إن نص الـ pool بس يتشال) فشل 5 بس.</p>
+    <p>المنتجات الحقيقية متفقة على الحمايات دي: الـ panic threshold في Envoy الـ default بتاعه 50%، والـ outlier detection الـ default 5 أخطاء متتالية و 30s ejection و 10% حد أقصى. و AWS ALB بيعمل <b>fail open</b>: لو كل الـ targets unhealthy بيبعتلهم كلهم برضه. بس ماتطمنش للموضوع: deep check بيفشل على بعض الـ backends بس هيشيلهم ويحط حملهم على الباقي.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما تعمل migration بـ <code>ALTER TABLE</code> الساعة 2 الظهر والموقع كله يقع، وأنت عارف إن الـ migration ماأثرش غير على جدول واحد، ابص على الـ <code>/health</code> الأول. خلّي الـ LB يكلم <code>/live</code> (الـ process شغال، من غير dependencies)، وخلّي الـ DB check في <code>/ready</code> اللي بيستخدمه الـ startup والـ dashboards. الشرح الكامل للـ endpoints في <a href="../../06-NodeJS/lessons/24-errors-shutdown-health.html#p6">درس 24 في Node</a>. والغلطة الشائعة: تحط الـ readiness probe على الـ DB في Kubernetes، فكل الـ pods تتشال من الـ Service مرة واحدة.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Should the health check verify the database?" → Not the check the load balancer uses to eject instances. If the database is down, removing every instance doesn't help and adds an outage for the requests that didn't need it. Use a shallow liveness check for the LB, passive outlier detection for real failures, and a panic threshold or fail-open as the last guard. A deep check belongs in readiness at startup and in alerting.
+    <div class="ar-note"><b>السؤال:</b> "الـ health check لازم يتأكد من الـ DB؟" ← <b>الإجابة:</b> مش الـ check اللي الـ LB بيشيل بيه الـ instances. لو الـ DB واقع، شيل كل الـ instances مش هيفيد وهيعمل outage للي مكانش محتاج الـ DB. استخدم shallow liveness للـ LB، و passive outlier detection للأعطال الحقيقية، و panic threshold أو fail-open كآخر حماية. والـ deep check مكانه الـ readiness وقت الـ startup والـ alerting.</div>
+  </div>
+
+  <h2 id="p4">Part 4 — Connection draining <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ connection draining</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The keep-alive 502 is covered in <a href="../../03-CS-Fundamentals/lessons/16-load-balancers-proxies-cdn.html#p3">section 03, part 3</a>, and the full shutdown sequence in <a href="../../06-NodeJS/lessons/24-errors-shutdown-health.html#p5">Node lesson 24</a>. This part measures the deploy. A rolling restart of 3 backends under 1000 requests, with real child processes:</p>
+    <ul>
+      <li><b>Without draining</b> the process exits while the LB still routes to it. 43 requests failed: 18 <code>ECONNRESET</code> (in flight when it died) and 25 <code>ECONNREFUSED</code> (routed to a port with nobody listening).</li>
+      <li><b>With draining</b>: start the replacement first, stop routing to the old one, wait for its in-flight count to reach zero, then <code>server.close()</code> plus <code>closeIdleConnections()</code>. 0 of 1000 failed, and the run took about the same time.</li>
+    </ul>
+    <p>Windows note: a child's SIGTERM ends it immediately with no handler, so these runs trigger shutdown over IPC with <code>child.send("shutdown")</code>. On Linux the same code would run from a <code>SIGTERM</code> handler. The trade-off is drain time against deploy speed. With 40 instances and one at a time, a 30 s drain makes a deploy about 27 minutes, a 5 s drain about 10 minutes, and batches of 4 with a 30 s drain about 7 minutes. The batch costs capacity: while 4 of 40 restart you have 90% of your capacity, so it must survive that. On ALB the deregistration delay defaults to 300 s. It ends early once a target has no in-flight requests and no active connections, so treat it as a ceiling and set it just above your longest request.</p>
+  </section>
+<pre class="diagram">
+  surge      start new backend, wait until ready
+    |
+  stop       LB marks old as draining (no new requests)
+    |
+  wait       in-flight on old == 0, or deadline
+    |
+  close      server.close() + closeIdleConnections()
+    |
+  exit       process ends, next instance
+</pre>
+  <div class="ar-note">الترتيب من فوق لتحت: شغّل البديل واستنى لحد ما يبقى جاهز، بعدين الـ LB يبطّل يبعت requests جديدة للقديم، استنى الـ inflight يوصل صفر أو الـ deadline، اقفل الـ server والـ idle connections، وبعدها الـ process يخرج وننتقل للـ instance اللي بعده.</div>
+
+<pre data-file="src/backend-child.ts"><code class="language-typescript">// الـ backend بتاع تجربة الـ draining: process منفصل، والـ shutdown بييجي برسالة IPC.
+// على Windows الـ SIGTERM بيقتل الـ child على طول، فبنستخدم IPC هنا بدل الـ signal.
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+
+const delayMs = Number(process.env.DELAY_MS ?? 60);
+const server = http.createServer((req, res) =&gt; {
+  setTimeout(() =&gt; res.end(JSON.stringify({ path: req.url, pid: process.pid })), delayMs);
+});
+
+server.listen(0, "127.0.0.1", () =&gt; {
+  process.send!({ type: "ready", port: (server.address() as AddressInfo).port });
+});
+
+process.on("message", (msg) =&gt; {
+  if (msg === "die-now") process.exit(0);
+  if (msg === "shutdown") {
+    // بنقفل الـ listener ونستنى الـ requests اللي شغالة تخلص
+    server.close(() =&gt; process.exit(0));
+    server.closeIdleConnections();
+    // أي connection تفضى بعد كده لازم تتقفل برضه
+    setInterval(() =&gt; server.closeIdleConnections(), 50).unref();
+  }
+});</code></pre>
+<pre data-file="src/p4-drain.ts"><code class="language-typescript">// تجربة: rolling restart لـ 3 backends حقيقيين تحت حمل 1000 request، مرة من غير draining ومرة بيه.
+import { fork, type ChildProcess } from "node:child_process";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { once } from "node:events";
+
+const sleep = (ms: number) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+type Slot = { child: ChildProcess; port: number; draining: boolean; inflight: number };
+
+async function spawnBackend(): Promise&lt;Slot&gt; {
+  const child = fork(new URL("./backend-child.ts", import.meta.url).pathname.slice(1));
+  const [msg] = (await once(child, "message")) as [{ port: number }];
+  return { child, port: msg.port, draining: false, inflight: 0 };
+}
+
+function startLb(slots: Slot[]) {
+  let rr = 0;
+  const errors: Record&lt;string, number&gt; = {};
+  const agent = new http.Agent({ keepAlive: true });
+  const server = http.createServer((req, res) =&gt; {
+    const live = slots.filter((s) =&gt; !s.draining);
+    const s = live[rr++ % live.length]!;
+    s.inflight++;
+    const fail = (e: NodeJS.ErrnoException) =&gt; {
+      s.inflight--;
+      errors[e.code ?? "ERR"] = (errors[e.code ?? "ERR"] ?? 0) + 1;
+      if (!res.headersSent) res.statusCode = 502;
+      res.end("bad gateway");
+    };
+    const up = http.request({ port: s.port, host: "127.0.0.1", path: req.url, agent }, (r) =&gt; {
+      res.writeHead(r.statusCode ?? 502);
+      r.pipe(res);
+      r.on("end", () =&gt; s.inflight--);
+    });
+    up.on("error", fail);
+    up.end();
+  });
+  return { server, errors, agent };
+}
+
+// حمل مقفول: 10 عملاء، كل واحد يبعت لحد ما الـ 1000 request يخلصوا
+async function drive(port: number, total: number) {
+  let sent = 0, ok = 0, failed = 0;
+  const worker = async () =&gt; {
+    while (sent &lt; total) {
+      sent++;
+      const status = await fetch(`http://127.0.0.1:${port}/orders/${sent}`)
+        .then(async (r) =&gt; { await r.arrayBuffer(); return r.status; }, () =&gt; 0);
+      if (status === 200) ok++; else failed++;
+    }
+  };
+  await Promise.all(Array.from({ length: 10 }, worker));
+  return { ok, failed };
+}
+
+async function rollingRestart(slots: Slot[], drain: boolean) {
+  for (let i = 0; i &lt; slots.length; i++) {
+    await sleep(800);
+    const old = slots[i]!;
+    if (drain) {
+      // (1) شغّل البديل الأول (maxSurge = 1)، (2) وقّف التوجيه للقديم، (3) استنى، (4) اقفله
+      const fresh = await spawnBackend();
+      slots.push(fresh);
+      old.draining = true;
+      const deadline = performance.now() + 5000;
+      while (old.inflight &gt; 0 &amp;&amp; performance.now() &lt; deadline) await sleep(5);
+      old.child.send("shutdown");
+      await once(old.child, "exit");
+      slots.splice(slots.indexOf(old), 1, fresh);
+      slots.pop();
+    } else {
+      // من غير draining: الـ LB لسه شايف الـ backend ده والـ process بيموت فجأة
+      old.child.send("die-now");
+      await once(old.child, "exit");
+      const fresh = await spawnBackend();
+      slots[i] = fresh;
+    }
+  }
+}
+
+for (const drain of [false, true]) {
+  const slots = await Promise.all([spawnBackend(), spawnBackend(), spawnBackend()]);
+  const lb = startLb(slots);
+  await new Promise&lt;void&gt;((r) =&gt; lb.server.listen(0, "127.0.0.1", r));
+  const t0 = performance.now();
+  const load = drive((lb.server.address() as AddressInfo).port, 1000);
+  await rollingRestart(slots, drain);
+  const res = await load;
+  console.log(`${drain ? "with draining   " : "without draining"} ok=${res.ok} failed=${res.failed} errors=${JSON.stringify(lb.errors)} elapsed≈${Math.round(performance.now() - t0)}ms`);
+  lb.agent.destroy();
+  lb.server.closeAllConnections();
+  lb.server.close();
+  slots.forEach((s) =&gt; s.child.send("die-now"));
+  await sleep(300);
+}
+
+// حاسبة الـ trade-off: وقت الـ ⁦deploy =⁩ عدد الدفعات ⁦× (⁩وقت البدء + وقت الـ drain)
+for (const [n, batch, startS, drainS] of [[40, 1, 10, 30], [40, 1, 10, 5], [40, 4, 10, 30]] as const) {
+  const minutes = (Math.ceil(n / batch) * (startS + drainS)) / 60;
+  console.log(`${n} instances, batch ${batch}, start ${startS}s, drain ${drainS}s: deploy≈${minutes.toFixed(1)} min`);
+}
+process.exit(0);</code></pre>
+<pre data-file="output"><code class="language-plaintext">without draining ok=957 failed=43 errors={"ECONNRESET":18,"ECONNREFUSED":25} elapsed≈7403ms
+with draining    ok=1000 failed=0 errors={} elapsed≈6954ms
+40 instances, batch 1, start 10s, drain 30s: deploy≈26.7 min
+40 instances, batch 1, start 10s, drain 5s: deploy≈10.0 min
+40 instances, batch 4, start 10s, drain 30s: deploy≈6.7 min</code></pre>
+  <div class="ar-note">من غير draining: نجح 957 وفشل 43 (18 <code>ECONNRESET</code> و 25 <code>ECONNREFUSED</code>). بالـ draining: نجح الـ 1000 وفشل صفر، والوقت قريب (≈7.4s مقابل ≈7.0s). التلات سطور الأخيرة حاسبة وقت الـ deploy: 40 instance واحد واحد مع 30s drain ≈26.7 دقيقة، و 5s drain ≈10 دقايق، ودفعات 4 مع 30s drain ≈6.7 دقيقة.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ keep-alive 502 متشرح في <a href="../../03-CS-Fundamentals/lessons/16-load-balancers-proxies-cdn.html#p3">section 03 part 3</a>، والـ shutdown كامل في <a href="../../06-NodeJS/lessons/24-errors-shutdown-health.html#p5">درس 24 في Node</a>. هنا بنقيس الـ deploy نفسه: rolling restart لـ 3 backends تحت 1000 request، بـ child processes حقيقية.</p>
+    <ul>
+      <li><b>من غير draining</b>: الـ process بيموت والـ LB لسه بيبعتله. فشل 43: منهم 18 <code>ECONNRESET</code> (كانوا شغالين وقت ما مات) و 25 <code>ECONNREFUSED</code> (اتبعتوا لـ port مفيش حد سامعه).</li>
+      <li><b>بالـ draining</b>: شغّل البديل الأول، وقّف التوجيه للقديم، استنى الـ inflight يوصل صفر، وبعدين <code>server.close()</code> مع <code>closeIdleConnections()</code>. فشل 0 من 1000، والوقت تقريبًا نفسه.</li>
+    </ul>
+    <p>ملحوظة Windows: الـ SIGTERM بينهي الـ child فورًا من غير handler، فالتجارب هنا بتبدأ الـ shutdown بـ IPC عن طريق <code>child.send("shutdown")</code>. على Linux نفس الكود هيشتغل من <code>SIGTERM</code> handler. والـ trade-off هو وقت الـ drain ضد سرعة الـ deploy: 40 instance واحد واحد مع 30s drain ≈27 دقيقة، و 5s drain ≈10 دقايق، ودفعات 4 مع 30s drain ≈7 دقايق. بس الدفعات ليها تمن: وإنت بتعمل restart لـ 4 من 40 عندك 90% من الـ capacity، فلازم تستحمل ده. وفي ALB الـ deregistration delay الـ default بتاعه 300s. وهو بيخلص بدري لو الـ target مفيهوش requests شغالة ولا connections مفتوحة، فاعتبره حد أقصى وخليه أعلى شوية من أطول request عندك.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو الـ dashboard بيطلع 502 زيادة مع كل deploy والفريق متعود، قيس بنفس الطريقة: autocannon على staging واعمل rollout، واعدّ الـ non-2xx. في Kubernetes حط <code>preStop</code> sleep بسيط عشان الـ pod يتشال من الـ endpoints قبل ما يبدأ يقفل، وخلي <code>terminationGracePeriodSeconds</code> أكبر من الـ drain. والغلطة الشائعة: <code>process.exit()</code> جوه الـ handler قبل ما الـ requests تخلص.
+    </div>
+  </section>
+
+  <h2 id="p5">Part 5 — Sticky sessions <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ sticky sessions</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Sticky sessions keep a client on one backend, usually with a cookie set by the balancer. They exist because a backend holds state in memory. Two costs follow, and both are measured here with 3 backends, 90 users and one heavy tenant making 1800 requests:</p>
+    <ul>
+      <li><b>Lost sessions</b>: when b2 died, its 30 users of 90 got 401 on the next request, because their sessions lived in that process.</li>
+      <li><b>Imbalance</b>: the load balancer can't move a pinned client, so the heavy tenant's backend took 2130 requests against 330 and 330 (max/mean 2.29).</li>
+    </ul>
+    <p>With sessions in Redis and no stickiness, the same run split 930/930/930 (max/mean 1.00) and lost 0 of 90 when b2 died. Every backend can now serve every user, so scale-out and deploys become non-events.</p>
+    <p><b>When there's no alternative: WebSockets.</b> The connection itself pins the client, and on AWS ALB WebSocket connections are inherently sticky. Keep your session state external anyway, so a reconnect can land anywhere. See <a href="../../06-NodeJS/lessons/37-realtime-at-scale.html#p7">Node lesson 37, part 7</a> for balancing and adapters. The new problem is reconnection: a simulated rolling deploy with 100,000 sockets on 20 instances (assuming 2 ms of CPU per reconnect, so 10,000 per second in total). If they all reconnect at once with no jitter, 450,000 handshakes are rejected. Exponential backoff without jitter doesn't help: the retries stay synchronized and the last client is back only after 303 s. Spreading the first attempt over 30 s plus full jitter gave a peak of 3420 per second, zero rejections, and everyone back in 30 s. During a rolling restart, sockets that reconnect anywhere get moved 1.70 times on average, because they land on instances about to restart. Steering reconnects to instances that have already restarted brought that down to 1.05.</p>
+  </section>
+<pre data-file="src/p5-sticky.ts"><code class="language-typescript">// تجربة: 3 backends، sticky cookie مع sessions في الـ memory مقابل stateless مع Redis.
+// الـ LB هنا stand-in بـ Node، والـ Redis instance مؤقت على port خاص بالتجربة.
+import http from "node:http";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import type { AddressInfo } from "node:net";
+import { Redis } from "ioredis";
+
+// بنرفض أي port فاضي أو default قبل ما نفتح connection
+function safePort(raw: string): number {
+  const n = Number(raw);
+  if (!/^\d+$/.test(raw) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) {
+    throw new Error(`refusing port ${raw}`);
+  }
+  return n;
+}
+const redis = new Redis({ host: "127.0.0.1", port: safePort(readFileSync("redis.port", "utf8").trim()) });
+
+type Store = { save(sid: string, user: string): Promise&lt;void&gt;; load(sid: string): Promise&lt;string | null&gt; };
+const memoryStore = (): Store =&gt; {
+  const m = new Map&lt;string, string&gt;();
+  return { save: async (s, u) =&gt; void m.set(s, u), load: async (s) =&gt; m.get(s) ?? null };
+};
+const redisStore: Store = {
+  save: async (s, u) =&gt; void (await redis.set(`sess:${s}`, u, "EX", 3600)),
+  load: (s) =&gt; redis.get(`sess:${s}`),
+};
+
+const cookieOf = (h: string | undefined, name: string) =&gt;
+  h?.split("; ").find((c) =&gt; c.startsWith(`${name}=`))?.slice(name.length + 1);
+
+type Node = { id: string; port: number; hits: number; alive: boolean; kill(): void };
+
+function startBackend(id: string, store: Store) {
+  const node: Node = { id, port: 0, hits: 0, alive: true, kill() {} };
+  const server = http.createServer(async (req, res) =&gt; {
+    node.hits++;
+    if (req.url?.startsWith("/login")) {
+      const sid = randomUUID();
+      await store.save(sid, new URL(req.url, "http://x").searchParams.get("u") ?? "anon");
+      res.setHeader("set-cookie", `sid=${sid}`);
+      return void res.end("ok");
+    }
+    const sid = cookieOf(req.headers.cookie, "sid");
+    const user = sid ? await store.load(sid) : null;
+    if (!user) { res.statusCode = 401; return void res.end("no session"); }
+    res.end(JSON.stringify({ user, cart: [] }));
+  });
+  return new Promise&lt;Node&gt;((resolve) =&gt; server.listen(0, "127.0.0.1", () =&gt; {
+    node.port = (server.address() as AddressInfo).port;
+    node.kill = () =&gt; { node.alive = false; server.closeAllConnections(); server.close(); };
+    resolve(node);
+  }));
+}
+
+function startLb(nodes: Node[], sticky: boolean) {
+  let rr = 0;
+  const agent = new http.Agent({ keepAlive: true });
+  const server = http.createServer((req, res) =&gt; {
+    const live = nodes.filter((n) =&gt; n.alive);
+    const pinned = sticky ? live.find((n) =&gt; n.id === cookieOf(req.headers.cookie, "srv")) : undefined;
+    const target = pinned ?? live[rr++ % live.length]!;
+    const up = http.request(
+      { port: target.port, host: "127.0.0.1", path: req.url, headers: req.headers, agent },
+      (r) =&gt; {
+        const headers = { ...r.headers };
+        if (sticky &amp;&amp; !pinned) {
+          // الـ LB بيحط cookie بالـ backend اللي اختاره عشان الـ requests الجاية ترجعله
+          headers["set-cookie"] = [...(headers["set-cookie"] ?? []), `srv=${target.id}`];
+        }
+        res.writeHead(r.statusCode ?? 502, headers);
+        r.pipe(res);
+      },
+    );
+    up.on("error", () =&gt; { res.statusCode = 502; res.end(); });
+    up.end();
+  });
+  return new Promise&lt;{ port: number; stop(): void }&gt;((resolve) =&gt; server.listen(0, "127.0.0.1", () =&gt;
+    resolve({
+      port: (server.address() as AddressInfo).port,
+      stop() { agent.destroy(); server.closeAllConnections(); server.close(); },
+    })));
+}
+
+type Client = { jar: Map&lt;string, string&gt; };
+
+async function call(port: number, c: Client, path: string) {
+  const cookie = [...c.jar].map(([k, v]) =&gt; `${k}=${v}`).join("; ");
+  const r = await fetch(`http://127.0.0.1:${port}${path}`, { headers: cookie ? { cookie } : {} });
+  for (const h of r.headers.getSetCookie()) {
+    const [k, v] = h.split("=") as [string, string];
+    c.jar.set(k, v);
+  }
+  await r.arrayBuffer();
+  return r.status;
+}
+
+async function scenario(name: string, sticky: boolean, store: () =&gt; Store) {
+  const nodes = await Promise.all(["b1", "b2", "b3"].map((id) =&gt; startBackend(id, store())));
+  const lb = await startLb(nodes, sticky);
+  const users: Client[] = Array.from({ length: 90 }, () =&gt; ({ jar: new Map() }));
+  for (const [i, u] of users.entries()) await call(lb.port, u, `/login?u=user${i}`);
+
+  // عميل كبير واحد (dashboard بتاع tenant ضخم) بيعمل 1800 request
+  const heavy = users[0]!;
+  for (let i = 0; i &lt; 1800; i += 20) {
+    await Promise.all(Array.from({ length: 20 }, () =&gt; call(lb.port, heavy, "/cart")));
+  }
+  for (const u of users) for (let i = 0; i &lt; 10; i++) await call(lb.port, u, "/cart");
+  const hits = nodes.map((n) =&gt; n.hits);
+  const mean = hits.reduce((a, b) =&gt; a + b, 0) / hits.length;
+
+  // هنا الـ backend بيموت، وكل المستخدمين بيعملوا request واحد بعدها
+  nodes[1]!.kill();
+  let lost = 0;
+  for (const u of users) if ((await call(lb.port, u, "/cart")) === 401) lost++;
+  console.log(`${name}: requests ${hits.join("/")} max/mean=${(Math.max(...hits) / mean).toFixed(2)} | sessions lost after b2 dies: ${lost}/90`);
+  lb.stop();
+  nodes.filter((n) =&gt; n.alive).forEach((n) =&gt; n.kill());
+}
+
+await scenario("sticky + in-memory sessions", true, memoryStore);
+await scenario("no sticky + Redis sessions  ", false, () =&gt; redisStore);
+await redis.quit();
+process.exit(0);</code></pre>
+<pre data-file="output"><code class="language-plaintext">sticky + in-memory sessions: requests 2130/330/330 max/mean=2.29 | sessions lost after b2 dies: 30/90
+no sticky + Redis sessions  : requests 930/930/930 max/mean=1.00 | sessions lost after b2 dies: 0/90</code></pre>
+  <div class="ar-note">الـ sticky مع memory sessions: الحمل 2130/330/330 (max/mean = 2.29)، ولما b2 مات 30 من 90 مستخدم خسروا الـ session. بدون sticky ومع Redis: 930/930/930 (max/mean = 1.00)، وخسرنا صفر. الـ Redis هنا instance مؤقت على port مخصوص للتجربة.</div>
+
+<pre data-file="src/p5-reconnect.ts"><code class="language-typescript">// محاكاة (مش قياس⁦): 100⁩ ألف WebSocket على 20 instance وقعوا مرة واحدة.
+// الفرض: reconnect واحد ⁦≈ 2ms CPU (TLS + auth + subscribe)⁩، يعني 500 في الثانية لكل instance.
+const SOCKETS = 100_000;
+const INSTANCES = 20;
+const CAPACITY = INSTANCES * 500;
+
+// مولّد أرقام بـ seed ثابت عشان الأرقام تطلع زي بعضها كل مرة
+function rng(seed: number) {
+  return () =&gt; {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed &gt;&gt;&gt; 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+type Policy = { name: string; first(r: () =&gt; number): number; retry(attempt: number, r: () =&gt; number): number };
+
+function simulate(p: Policy) {
+  const r = rng(42);
+  const arrivals = new Map&lt;number, number[]&gt;();
+  const add = (t: number, attempt: number) =&gt; {
+    const s = Math.floor(t);
+    (arrivals.get(s) ?? arrivals.set(s, []).get(s)!).push(attempt);
+  };
+  for (let i = 0; i &lt; SOCKETS; i++) add(p.first(r), 1);
+  let connected = 0, rejected = 0, peak = 0, last = 0;
+  for (let t = 0; connected &lt; SOCKETS &amp;&amp; t &lt; 3600; t++) {
+    const now = arrivals.get(t) ?? [];
+    peak = Math.max(peak, now.length);
+    const admitted = Math.min(now.length, CAPACITY);
+    connected += admitted;
+    if (admitted &gt; 0) last = t;
+    for (const attempt of now.slice(admitted)) {
+      rejected++;
+      add(t + Math.max(1, p.retry(attempt, r)), attempt + 1);
+    }
+    arrivals.delete(t);
+  }
+  console.log(`${p.name.padEnd(36)} peak/s=${String(peak).padStart(6)} rejected=${String(rejected).padStart(7)} all back after ${last + 1}s`);
+}
+
+simulate({ name: "no jitter, retry every 1s", first: () =&gt; 0, retry: () =&gt; 1 });
+simulate({ name: "no jitter, exponential backoff", first: () =&gt; 0, retry: (a) =&gt; Math.min(60, 2 ** a) });
+simulate({ name: "first jitter 30s, then full jitter", first: (r) =&gt; r() * 30, retry: (a, r) =&gt; r() * Math.min(60, 2 ** a) });
+
+// في rolling deploy الـ socket ممكن يتنقل أكتر من مرة لو رجع على instance لسه ماتعملهاش restart
+function rollingBounces(smart: boolean) {
+  const r = rng(7);
+  const home = Int32Array.from({ length: SOCKETS }, () =&gt; Math.floor(r() * INSTANCES));
+  let moves = 0;
+  for (let restarting = 0; restarting &lt; INSTANCES; restarting++) {
+    for (let s = 0; s &lt; SOCKETS; s++) {
+      if (home[s] !== restarting) continue;
+      moves++;
+      if (smart &amp;&amp; restarting + 1 &lt; INSTANCES) {
+        // بنوجّه الـ reconnect لـ instance اتعملها restart خلاص، لو فيه
+        home[s] = restarting === 0 ? 1 + Math.floor(r() * (INSTANCES - 1)) : Math.floor(r() * restarting);
+      } else {
+        let n = Math.floor(r() * (INSTANCES - 1));
+        if (n &gt;= restarting) n++;
+        home[s] = n;
+      }
+    }
+  }
+  console.log(`rolling deploy, ${smart ? "reconnect to restarted instances" : "reconnect anywhere"}: ${moves} reconnects, ${(moves / SOCKETS).toFixed(2)} per socket`);
+}
+rollingBounces(false);
+rollingBounces(true);</code></pre>
+<pre data-file="output"><code class="language-plaintext">no jitter, retry every 1s            peak/s=100000 rejected= 450000 all back after 10s
+no jitter, exponential backoff       peak/s=100000 rejected= 450000 all back after 303s
+first jitter 30s, then full jitter   peak/s=  3420 rejected=      0 all back after 30s
+rolling deploy, reconnect anywhere: 169976 reconnects, 1.70 per socket
+rolling deploy, reconnect to restarted instances: 104986 reconnects, 1.05 per socket</code></pre>
+  <div class="ar-note">دي محاكاة مش قياس، وفرضها 2ms CPU لكل reconnect. من غير jitter: 100 ألف في نفس الثانية و 450 ألف handshake مرفوض ورجعوا كلهم في 10 ثواني. الـ exponential backoff من غير jitter: نفس الـ peak ونفس الرفض، بس الـ retries متزامنة فالكل رجع بعد 303 ثانية. بالـ jitter 30 ثانية: أعلى peak 3420 في الثانية، صفر رفض، والكل رجع في 30 ثانية. وفي الـ rolling deploy: الـ socket بيتنقل 1.70 مرة في المتوسط لو رجع على أي instance، و 1.05 لو وجّهناه لـ instance اتعملها restart خلاص.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ sticky sessions بتخلي الـ client على backend واحد، غالبًا بـ cookie من الـ LB، وسبب وجودها إن الـ backend ماسك state في الـ memory. ليها تمنين، واتقاسوا هنا بـ 3 backends و 90 مستخدم و tenant كبير عمل 1800 request:</p>
+    <ul>
+      <li><b>sessions بتضيع</b>: لما b2 مات، 30 من الـ 90 مستخدم اللي عليه خدوا 401 في الـ request اللي بعده، عشان الـ sessions بتاعتهم كانت جوه الـ process ده.</li>
+      <li><b>حمل مش متوازن</b>: الـ LB مايقدرش يحرّك client متثبت، فالـ backend بتاع الـ tenant الكبير أخد 2130 مقابل 330 و 330 (max/mean = 2.29).</li>
+    </ul>
+    <p>بـ sessions في Redis ومن غير sticky، نفس التجربة اتقسمت 930/930/930 (max/mean = 1.00) وخسرنا 0 من 90 لما b2 مات. كل backend يقدر يخدم أي مستخدم، فالـ scale-out والـ deploy بيبقوا عاديين.</p>
+    <p><b>إمتى مفيش بديل: الـ WebSockets.</b> الـ connection نفسها بتثبّت الـ client، وفي AWS ALB الـ WebSocket connections sticky بطبيعتها. خلي الـ session state بره برضه عشان الـ reconnect يروح أي مكان. شوف <a href="../../06-NodeJS/lessons/37-realtime-at-scale.html#p7">درس 37 في Node، part 7</a>. المشكلة الجديدة هي الـ reconnect: simulation لـ rolling deploy بـ 100 ألف socket على 20 instance (فرض 2ms CPU لكل reconnect، يعني 10 آلاف في الثانية إجمالي). لو كله رجع مرة واحدة من غير jitter: 450 ألف handshake مرفوض. والـ exponential backoff من غير jitter مش بيحل: الـ retries بتفضل متزامنة وآخر client بيرجع بعد 303 ثانية. لما وزّعنا أول محاولة على 30 ثانية مع full jitter: الـ peak بقى 3420 في الثانية، وصفر رفض، والكل رجع في 30 ثانية. وأثناء الـ rolling restart، الـ socket اللي بيرجع على أي instance بيتنقل 1.70 مرة في المتوسط، لأنه بينزل على instances قربت تعمل restart. ولما وجّهنا الـ reconnects للـ instances اللي خلصت restart نزلت لـ 1.05.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما تلاقي في code review <code>app.use(session({ store: MemoryStore }))</code>، ده معناه sticky إجباري أو logout عشوائي مع كل deploy. حوّله لـ Redis، أو JWT لو الـ session صغيرة. ولو عندك chat أو notifications بـ WebSockets، حط في الـ client: تأخير عشوائي قبل أول reconnect، و exponential backoff مع full jitter. والغلطة الشائعة: <code>reconnect()</code> بعد ثانية ثابتة لكل العملاء، فالـ deploy يبقى thundering herd على الـ auth و Redis.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Sticky sessions: yes or no?" → No for HTTP APIs: externalize the session to Redis or use a signed token, because stickiness loses sessions on failure and blocks rebalancing (2.29× imbalance here). They remain necessary only for protocols where the connection is the session, like WebSockets, and even there keep state external so reconnects work anywhere.
+    <div class="ar-note"><b>السؤال:</b> "الـ sticky sessions: آه ولا لأ؟" ← <b>الإجابة:</b> لأ للـ HTTP APIs: حط الـ session في Redis أو استخدم signed token، لأن الـ stickiness بيضيّع الـ sessions مع أي عطل وبيمنع إعادة التوازن (2.29× هنا). وبتفضل ضرورية بس في protocols الـ connection فيها هي الـ session زي الـ WebSockets، وحتى هناك خلي الـ state بره عشان الـ reconnect يروح أي مكان.</div>
+  </div>
+
+  <h2 id="p6">Part 6 — The LB as a failure point <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ LB نفسه ممكن يقع</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A load balancer that removes single points of failure can be one. The three standard patterns for making it redundant:</p>
+    <ul>
+      <li><b>Active-passive with a virtual IP (VIP)</b>: two LBs share an IP through VRRP (keepalived). The passive one takes the IP if heartbeats stop. Failover takes seconds, existing connections usually break unless state is synced, and half your hardware sits idle.</li>
+      <li><b>ECMP</b>: the routers spread flows over several active LBs by hashing the 5-tuple. All capacity is used. But if plain modulo hashing is in use, losing 1 of 4 LBs moves 75.1% of flows (calculated below), and those connections break. Resilient hashing moves only the 25.0% that were on the dead LB.</li>
+      <li><b>Managed LB</b> (ALB, NLB, GCLB): the provider runs the redundancy. You still own the configuration, and there are limits you need to know.</li>
+    </ul>
+    <p>Three limits show up in production. <b>Ephemeral ports</b>: an LB connecting to one backend IP and port can use one source port per connection on each of its source IPs. Linux's default range of 32768–60999 is 28,232 ports, and the side that closes first holds the pair in TIME_WAIT for 60 s on Linux. If that side is the LB, you get about 470 new connections per second per backend, or about 1075 even if you widened the range to the 64,512-port maximum. Without keep-alive every request costs a port: the run below used 2000 distinct source ports for 2000 requests, and with keep-alive only 20. <b>Max connections</b>: <code>server.maxConnections = 2</code> dropped 3 of 5 clients at once, and every LB has an equivalent limit. <b>Idle timeouts</b>: Node's <code>keepAliveTimeout</code> defaults to 5 s and ALB's idle timeout to 60 s. AWS recommends making the application's idle timeout larger than the LB's, because otherwise the LB can send a request on a connection the application just closed and return a 502. Set <code>keepAliveTimeout</code> above the LB's value, and keep <code>headersTimeout</code> above that as a common safe default.</p>
+  </section>
+<pre data-file="src/p6-limits.ts"><code class="language-typescript">// تجربة وحاسبات: حدود الـ LB نفسه — الـ ephemeral ports، الـ max connections، والـ idle timeout.
+import http from "node:http";
+import net from "node:net";
+import { createHash } from "node:crypto";
+import type { AddressInfo } from "node:net";
+
+// (1) حقيقي: الـ LB بيستهلك كام source port على الـ backend؟
+async function countPorts(keepAlive: boolean) {
+  const ports = new Set&lt;number&gt;();
+  const server = http.createServer((req, res) =&gt; { ports.add(req.socket.remotePort!); res.end("ok"); });
+  await new Promise&lt;void&gt;((r) =&gt; server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const agent = new http.Agent({ keepAlive, maxSockets: 20 });
+  const one = () =&gt; new Promise&lt;void&gt;((resolve, reject) =&gt; {
+    http.get({ port, host: "127.0.0.1", path: "/orders/1", agent }, (r) =&gt; { r.resume(); r.on("end", resolve); }).on("error", reject);
+  });
+  for (let i = 0; i &lt; 2000; i += 20) await Promise.all(Array.from({ length: 20 }, one));
+  agent.destroy();
+  server.closeAllConnections();
+  server.close();
+  console.log(`2000 requests, keepAlive=${keepAlive}: ${ports.size} distinct source ports`);
+}
+await countPorts(false);
+await countPorts(true);
+
+// (2) حقيقي: server.maxConnections بيقفل الزيادة فورًا
+async function maxConnections() {
+  const server = net.createServer((s) =&gt; { s.on("data", () =&gt; s.write("pong")); s.on("error", () =&gt; {}); });
+  server.maxConnections = 2;
+  let dropped = 0;
+  server.on("drop", () =&gt; dropped++);
+  await new Promise&lt;void&gt;((r) =&gt; server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const results = await Promise.all(Array.from({ length: 5 }, (_, i) =&gt; new Promise&lt;string&gt;((resolve) =&gt; {
+    const c = net.connect(port, "127.0.0.1", () =&gt; setTimeout(() =&gt; c.write("ping"), 20 * i));
+    c.setTimeout(300, () =&gt; { c.destroy(); resolve("timeout"); });
+    c.on("data", () =&gt; { c.destroy(); resolve("served"); });
+    c.on("close", () =&gt; resolve("closed by server"));
+    c.on("error", () =&gt; resolve("reset"));
+  })));
+  server.close();
+  console.log(`maxConnections=2, 5 clients: ${JSON.stringify(results)} dropped=${dropped}`);
+}
+await maxConnections();
+
+// (3) حاسبة: حد الـ connections الجديدة بدون keep-alive
+function portBudget(ports: number, timeWaitS: number, backends: number) {
+  const perTuple = Math.floor(ports / timeWaitS);
+  return `${ports} ports, TIME_WAIT ${timeWaitS}s, ${backends} backend(s): ${perTuple} new conn/s per backend IP:port, ${perTuple * backends} total`;
+}
+console.log(portBudget(28232, 60, 1));
+console.log(portBudget(28232, 60, 8));
+console.log(portBudget(64512, 60, 1));
+
+// (4) القيم الافتراضية في Node والقاعدة بتاعتها
+const s = http.createServer();
+console.log(`node defaults: keepAliveTimeout=${s.keepAliveTimeout}ms headersTimeout=${s.headersTimeout}ms requestTimeout=${s.requestTimeout}ms`);
+function checkIdle(lbIdleS: number, nodeKeepAliveS: number) {
+  const safe = nodeKeepAliveS &gt; lbIdleS;
+  return `LB idle ${lbIdleS}s, node keepAlive ${nodeKeepAliveS}s: ${safe ? "OK, LB closes first" : "RISK of 502, node closes first"}`;
+}
+console.log(checkIdle(60, 5));
+console.log(checkIdle(60, 65));
+
+// (5) حاسبة: ECMP لو LB واحد من 4 وقع، كام flow بيتحرك؟
+const h = (x: string) =&gt; createHash("md5").update(x).digest().readUInt32BE(0);
+let modMoved = 0, resilientMoved = 0;
+const flows = 100_000;
+for (let i = 0; i &lt; flows; i++) {
+  const f = h(`flow-${i}`);
+  if (f % 4 !== f % 3) modMoved++;
+  // الـ resilient hashing بيحرك الـ flows اللي كانت على الـ LB اللي وقع بس
+  if (f % 4 === 3) resilientMoved++;
+}
+console.log(`ECMP 4 to 3: modulo moved ${(modMoved / 1000).toFixed(1)}%, resilient hashing moved ${(resilientMoved / 1000).toFixed(1)}%`);
+process.exit(0);</code></pre>
+<pre data-file="output"><code class="language-plaintext">2000 requests, keepAlive=false: 2000 distinct source ports
+2000 requests, keepAlive=true: 20 distinct source ports
+maxConnections=2, 5 clients: ["served","served","closed by server","closed by server","closed by server"] dropped=3
+28232 ports, TIME_WAIT 60s, 1 backend(s): 470 new conn/s per backend IP:port, 470 total
+28232 ports, TIME_WAIT 60s, 8 backend(s): 470 new conn/s per backend IP:port, 3760 total
+64512 ports, TIME_WAIT 60s, 1 backend(s): 1075 new conn/s per backend IP:port, 1075 total
+node defaults: keepAliveTimeout=5000ms headersTimeout=60000ms requestTimeout=300000ms
+LB idle 60s, node keepAlive 5s: RISK of 502, node closes first
+LB idle 60s, node keepAlive 65s: OK, LB closes first
+ECMP 4 to 3: modulo moved 75.1%, resilient hashing moved 25.0%</code></pre>
+  <div class="ar-note">حقيقي: 2000 request من غير keep-alive استهلكوا 2000 source port، وبـ keep-alive استهلكوا 20. حقيقي: <code>maxConnections=2</code> خدم اتنين وقفل 3. حاسبة: 28232 port مع TIME_WAIT 60s = 470 connection جديدة في الثانية لكل backend، و 3760 لـ 8 backends، و 1075 للحد الأقصى 64512. حقيقي: defaults الـ Node 5000ms و 60000ms و 300000ms. فحص: LB idle 60s مع keepAlive 5s خطر 502، و 65s كويس. حاسبة: ECMP من 4 لـ 3 مع modulo بيحرّك 75.1% من الـ flows، والـ resilient hashing بيحرّك 25.0%.</div>
+
+  <div class="callout warn">
+    <b>Not run here · ماتجربش هنا</b>
+    HAProxy, nginx and AWS ALB don't run on this machine. The settings below are real configuration, shown so you recognize them, and they were not executed.
+    <div class="ar-note">الـ HAProxy و nginx و AWS ALB مش شغالين على الجهاز ده. الإعدادات اللي تحت حقيقية، معروضة عشان تعرفها، وماتجربتش هنا.</div>
+  </div>
+<pre data-file="haproxy.cfg"><code class="language-nginx"># ده كله config حقيقي بس ماتشغلش هنا
+backend orders
+    balance leastconn
+    option httpchk GET /live
+    # كل 2 ثانية، 3 فشل يشيله، 2 نجاح يرجعه
+    default-server inter 2s fall 3 rise 2
+    timeout server 30s
+    server orders1 10.0.1.11:3000 check maxconn 200
+    server orders2 10.0.1.12:3000 check maxconn 200
+</code></pre>
+<pre data-file="nginx.conf"><code class="language-nginx"># الـ upstream لازم يحتفظ بـ connections مفتوحة عشان الـ ports
+upstream orders {
+    least_conn;
+    server 10.0.1.11:3000 max_fails=3 fail_timeout=10s;
+    server 10.0.1.12:3000 max_fails=3 fail_timeout=10s;
+    keepalive 64;
+}
+server {
+    location /api/ {
+        proxy_pass http://orders;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+}
+</code></pre>
+<pre data-file="alb-attributes.txt"><code class="language-plaintext">load_balancing.algorithm.type        = least_outstanding_requests
+deregistration_delay.timeout_seconds = 30
+idle_timeout.timeout_seconds         = 60
+stickiness.enabled                   = false
+</code></pre>
+  <div class="ar-note">دي attributes حقيقية في ALB: الـ algorithm، ووقت الـ deregistration (الـ draining، الـ default بتاعه 300 ثانية)، والـ idle timeout (الـ default بتاعه 60)، وقفل الـ stickiness.</div>
+
+<table>
+  <tr><th>Question</th><th>Managed (ALB, NLB)</th><th>Self-run (HAProxy, nginx, Envoy)</th></tr>
+  <tr><td>Who handles failover and patching</td><td>Provider</td><td>You</td></tr>
+  <tr><td>Cost model</td><td>Per hour plus traffic units</td><td>Instances plus engineering time</td></tr>
+  <tr><td>Custom logic, per-request tuning</td><td>Limited</td><td>Full</td></tr>
+  <tr><td>Latency and algorithm control</td><td>What the product offers</td><td>Whatever you configure</td></tr>
+  <tr><td>Pick when</td><td>Small team, standard HTTP, cloud-native</td><td>Need specific L7 behaviour, on-prem, huge volume where the bill exceeds the team's cost</td></tr>
+</table>
+  <div class="ar-note">الجدول سطر بسطر: <b>مين بيعمل الـ failover والـ patching</b>: في الـ managed الـ provider، وفي الـ self-run إنت. <b>التكلفة</b>: الـ managed بالساعة زائد وحدات traffic، والـ self-run instances زائد وقت المهندسين. <b>المنطق المخصوص والـ tuning لكل request</b>: الـ managed محدود، والـ self-run كامل. <b>التحكم في الـ latency والـ algorithm</b>: في الـ managed اللي المنتج بيقدمه، وفي الـ self-run اللي تظبطه. <b>اختار إيه إمتى</b>: الـ managed للفريق الصغير والـ HTTP العادي والـ cloud-native، والـ self-run لو محتاج سلوك L7 معين، أو on-prem، أو حجم ضخم الفاتورة فيه أكتر من تكلفة الفريق.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ LB اللي بيشيل الـ single points of failure ممكن يبقى هو نفسه واحد. فيه 3 طرق معروفة للـ redundancy:</p>
+    <ul>
+      <li><b>Active-passive بـ virtual IP (VIP)</b>: اتنين LB بيتشاركوا IP عن طريق VRRP (keepalived)، والـ passive بياخد الـ IP لو الـ heartbeats وقفت. الـ failover بياخد ثواني، والـ connections الموجودة غالبًا بتقع إلا لو الـ state متزامن، ونص الـ hardware قاعد فاضي.</li>
+      <li><b>ECMP</b>: الـ routers بتوزع الـ flows على كذا LB شغالين بالـ hash على الـ 5-tuple، فكل الـ capacity مستخدمة. بس مع modulo عادي، لو واحد من 4 وقع، 75.1% من الـ flows بتتحرك (محسوبة تحت) والـ connections دي بتقع. الـ resilient hashing بيحرك الـ 25.0% اللي كانوا على الـ LB الميت بس.</li>
+      <li><b>Managed LB</b> (ALB و NLB و GCLB): الـ provider بيشغّل الـ redundancy، وإنت لسه مسؤول عن الـ config، وفيه حدود لازم تعرفها.</li>
+    </ul>
+    <p>3 حدود بتظهر في الـ production. <b>الـ ephemeral ports</b>: الـ LB لما يكلم backend على IP و port معين، بيستخدم source port واحد لكل connection على كل source IP عنده. الـ default في Linux من 32768 لـ 60999، يعني 28,232 port، والطرف اللي بيقفل الأول بيمسك الـ pair في TIME_WAIT لمدة 60s على Linux. لو الطرف ده هو الـ LB، هتاخد حوالي 470 connection جديدة في الثانية لكل backend، أو حوالي 1075 حتى لو وسّعت الـ range لأقصى 64,512 port. ومن غير keep-alive كل request بياخد port: التجربة استهلكت 2000 source port مختلف لـ 2000 request، وبالـ keep-alive 20 بس. <b>الـ max connections</b>: <code>server.maxConnections = 2</code> قفل 3 من 5 عملاء فورًا، وكل LB عنده حد زي ده. <b>الـ idle timeouts</b>: الـ <code>keepAliveTimeout</code> في Node الـ default بتاعه 5s، والـ idle timeout في ALB الـ default بتاعه 60s. و AWS بتنصح إن الـ idle timeout بتاع الـ application يكون أكبر من بتاع الـ LB، لأن غير كده الـ LB ممكن يبعت request على connection الـ app لسه قافلها ويرجع 502. خلي <code>keepAliveTimeout</code> أكبر من قيمة الـ LB، وخلي <code>headersTimeout</code> أكبر منه كـ default آمن شائع.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو شفت في الـ logs <code>EADDRNOTAVAIL</code> أو 502 متفرقة تحت الضغط، أول حاجة تتأكد إن الـ keep-alive شغال بين الـ LB والـ backends (في nginx لازم <code>keepalive</code> و <code>proxy_http_version 1.1</code>). وفي كل service Node ورا ALB حط <code>server.keepAliveTimeout = 65_000</code> و <code>server.headersTimeout = 66_000</code>. والغلطة الشائعة: تسيب الـ default 5s ورا ALB فتشوف 502 متفرقة مالهاش سبب واضح.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Your LB runs out of ephemeral ports under load. What's going on and what do you do?" → Without keep-alive each request opens a new connection from the LB to the backend, and the side that closes first keeps the pair in TIME_WAIT (60 s on Linux). If that is the LB, a port range of about 28k gives about 470 new connections per second per backend. Fix: keep-alive to the backends, more source IPs on the LB, more backend IP:port pairs, and a wider port range as a last step.
+    <div class="ar-note"><b>السؤال:</b> "الـ LB بتاعك خلصت منه الـ ephemeral ports تحت الضغط. إيه اللي بيحصل وهتعمل إيه؟" ← <b>الإجابة:</b> من غير keep-alive كل request بيفتح connection جديدة من الـ LB للـ backend، والطرف اللي بيقفل الأول بيمسك الـ pair في TIME_WAIT (60s في Linux). لو الطرف ده هو الـ LB، مدى حوالي 28 ألف port بيدّيك حوالي 470 connection جديدة في الثانية لكل backend. الحل: keep-alive للـ backends، و source IPs أكتر على الـ LB، و IP:port pairs أكتر للـ backends، وتوسيع الـ port range كآخر خطوة.</div>
+  </div>
+
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+  <div class="compare">
+    <div class="bad"><b>❌ Deep check for ejection</b>
+<pre><code class="language-typescript">app.get("/health", async (_req, res) =&gt; {
+  // لو الـ DB وقع، كل الـ instances هتتشال
+  await db.query("select 1");
+  res.send("ok");
+});</code></pre></div>
+    <div class="good"><b>✅ Separate liveness and readiness</b>
+<pre><code class="language-typescript">// الـ LB بيكلم ده: الـ process شغال وبس
+app.get("/live", (_req, res) =&gt; res.send("ok"));
+// ده للـ startup والـ dashboards
+app.get("/ready", async (_req, res) =&gt; {
+  await db.query("select 1");
+  res.send("ready");
+});</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ لو الـ endpoint اللي الـ LB بيستخدمه بيعتمد على الـ DB، أي blip في الـ DB بيشيل كل الـ instances مرة واحدة: في تجربتنا 462 من 1440 request فشلوا. ✅ افصل الاتنين: <code>/live</code> للـ LB ومالوش dependencies، و <code>/ready</code> للـ startup والـ dashboards.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Stateful sessions behind round robin</b>
+<pre><code class="language-typescript">// كل instance عنده الـ sessions بتاعته في الـ memory
+app.use(session({ secret, store: new MemoryStore() }));</code></pre></div>
+    <div class="good"><b>✅ External store</b>
+<pre><code class="language-typescript">// أي instance يقدر يخدم أي مستخدم
+app.use(session({ secret, store: new RedisStore({ client: redis }) }));</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ MemoryStore معناه المستخدم يخسر الـ session لو الـ backend مات أو الـ LB وجّهه لواحد تاني، ولو حطيت sticky عشان تغطي المشكلة هتاخد 2.29× imbalance زي ما شفنا. ✅ الـ Redis store بيخلي أي backend يخدم أي مستخدم، والـ deploy يعدي من غير logout.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Node defaults behind an ALB</b>
+<pre><code class="language-typescript">const server = http.createServer(app);
+// الـ keepAliveTimeout الـ default بتاعه 5 ثواني
+server.listen(3000);</code></pre></div>
+    <div class="good"><b>✅ Outlive the LB's idle timeout</b>
+<pre><code class="language-typescript">const server = http.createServer(app);
+// أطول من الـ 60 ثانية بتاعة الـ ALB
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
+server.listen(3000);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ default في Node 5 ثواني، فلو الـ connection فضيت 5 ثواني Node بيقفلها والـ ALB ممكن يبعت عليها request في نفس اللحظة ويرجع 502. ✅ خلي الـ <code>keepAliveTimeout</code> أكبر من الـ idle timeout بتاع الـ LB (60 ثانية في ALB)، و <code>headersTimeout</code> أكبر منه.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Reconnect with a fixed delay</b>
+<pre><code class="language-typescript">socket.on("close", () =&gt; {
+  // كل العملاء هيرجعوا في نفس الثانية
+  setTimeout(connect, 1000);
+});</code></pre></div>
+    <div class="good"><b>✅ Backoff with full jitter</b>
+<pre><code class="language-typescript">let attempt = 0;
+socket.on("close", () =&gt; {
+  // وقت عشوائي بين 0 والحد الأقصى، بيكبر مع كل محاولة
+  const cap = Math.min(60_000, 1000 * 2 ** attempt++);
+  setTimeout(connect, Math.random() * cap);
+});</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ تأخير ثابت معناه كل العملاء بيرجعوا مع بعض: 100 ألف في الثانية الأولى و 450 ألف handshake مرفوض في الـ simulation. ✅ الـ exponential backoff مع full jitter بيوزعهم: الـ peak نزل لـ 3420 في الثانية من غير رفض. وخلي بالك: الـ exponential backoff من غير jitter مش حل، الكل رجع بعد 303 ثانية.</p>
+  </section>
+
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Change the slot count <span class="lvl lvl-1">🟢 easy</span></b>
+    In <code>p2-algorithms.ts</code>, set <code>SLOTS = 2</code> and run again. Predict which algorithm suffers most before you run it, then compare with the table.
+    <div class="ar-note">في <code>p2-algorithms.ts</code> خلي <code>SLOTS = 2</code> وشغّله تاني. توقع قبل ما تشغّل مين هيتأثر أكتر، وبعدين قارن بالجدول.</div>
+    <details><summary>Hint · تلميح</summary>
+      With fewer slots the slow backend saturates sooner, so round robin should get worse, and least connections should still avoid it.
+      <div class="ar-note">مع slots أقل البطيء بيتملي أسرع، فالـ round robin المفروض يسوء أكتر، والـ least connections يفضل بعيد عنه.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. Add slow start <span class="lvl lvl-2">🟡 medium</span></b>
+    Add a slow-start phase to <code>lb.ts</code>: a backend that joined less than 5 seconds ago gets a reduced share. Use it when a new instance comes up in the draining test and count how its traffic ramps.
+    <div class="ar-note">ضيف slow start في <code>lb.ts</code>: أي backend دخل من أقل من 5 ثواني ياخد نصيب أقل. استخدمه لما instance جديد يطلع في تجربة الـ draining وعدّ الـ traffic بيزيد إزاي.</div>
+    <details><summary>Solution · الحل</summary>
+<pre><code class="language-typescript">// الفكرة: احسب وزن تدريجي من عمر الـ backend وطبّقه قبل الاختيار
+const weightOf = (joinedAt: number, now: number, windowMs = 5000) =&gt;
+  Math.min(1, Math.max(0.1, (now - joinedAt) / windowMs));
+// ✅ جرّبها: عند العمر 0 الوزن 0.1، وبعد 5 ثواني الوزن 1
+console.log(weightOf(0, 0), weightOf(0, 2500), weightOf(0, 5000));
+// → 0.1 0.5 1</code></pre>
+      <div class="ar-note">اضرب الـ inflight أو الـ cost في عكس الوزن وقت الاختيار، أو اختار الـ backend الجديد باحتمال الوزن بتاعه. مش كل الـ LBs بتدعم ده مع كل algorithm: في ALB الـ slow start مش متاح مع <code>least_outstanding_requests</code>.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. Passive ejection with recovery <span class="lvl lvl-3">🔴 hard</span></b>
+    In <code>p3-health.ts</code> the ejection lasts 30 s and never probes the backend again. Change it so ejection time doubles per ejection (30 s, 60 s, 120 s) and the backend gets a single trial request once its ejection ends. Show that a backend that recovers returns to the pool and one that keeps failing stays out longer.
+    <div class="ar-note">في <code>p3-health.ts</code> الـ ejection بياخد 30 ثانية ومفيش تجربة بعدها. عدّله بحيث الوقت يتضاعف مع كل ejection (30 ثم 60 ثم 120)، وبعد ما الوقت يخلص الـ backend ياخد request تجربة واحد. ووريني إن الـ backend اللي اتصلح بيرجع، واللي لسه بايظ بيفضل بره وقت أطول.</div>
+    <details><summary>Hint · تلميح</summary>
+      Keep a per-backend <code>ejections</code> counter. <code>ejectedUntil = now + 30_000 * 2 ** ejections</code>, and allow one in-flight trial request when <code>now &gt;= ejectedUntil</code>. Reset the counter after a period of success.
+      <div class="ar-note">خلي عداد <code>ejections</code> لكل backend، و <code>ejectedUntil = now + 30_000 * 2 ** ejections</code>، واسمح بـ request تجربة واحد لما <code>now &gt;= ejectedUntil</code>، وصفّر العداد بعد فترة نجاح.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project / at work <span class="lvl lvl-3">🔴 project</span></b>
+    Look at what sits in front of your API. Write down: the algorithm, the health check path and what it touches, the idle timeout against your Node <code>keepAliveTimeout</code>, and the drain time. Then fix the worst one and test a rolling deploy with autocannon on staging, counting non-2xx responses.
+    <div class="ar-note">بص على اللي قدّام الـ API بتاعك واكتب: الـ algorithm، ومسار الـ health check وبيلمس إيه، والـ idle timeout مقارنة بالـ <code>keepAliveTimeout</code> بتاع Node، ووقت الـ drain. صلّح أسوأ واحدة، وجرّب rolling deploy بـ autocannon على staging وعدّ الـ non-2xx.</div>
+  </div>
+
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>L4 decides per connection, L7 per request. HTTP/2 or gRPC through L4 pins everything to one backend (1000/0/0 vs 334/333/333).</li>
+    <li>Round robin runs the fleet at the speed of its slowest node. Prefer least connections or power of two; weights only help if they are true.</li>
+    <li>Pure least response time herds. Power of two avoids it with two random samples.</li>
+    <li>Affinity: <code>hash % N</code> moved 80.1% when adding a node, a ring with vnodes moved 18.2%.</li>
+    <li>Never make the LB's check depend on the DB. Shallow liveness + passive ejection + panic threshold or fail-open.</li>
+    <li>Detection = interval × failure threshold. Recovery = interval × success threshold. ALB defaults: ~60 s and ~150 s.</li>
+    <li>Draining: surge, stop routing, wait for in-flight 0, <code>close()</code> + <code>closeIdleConnections()</code>. 43 errors became 0.</li>
+    <li>Sessions in Redis instead of stickiness. WebSockets pin by nature, so add jitter to reconnects.</li>
+    <li>Exponential backoff without jitter stays synchronized: full jitter is what spreads the herd.</li>
+    <li>LB limits: ephemeral ports (~470 new conn/s per backend without keep-alive), max connections, and <code>keepAliveTimeout</code> &gt; LB idle timeout.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ L4 بيقرر لكل connection والـ L7 لكل request. HTTP/2 أو gRPC على L4 بيثبّت كله على backend واحد (1000/0/0 مقابل 334/333/333).</li>
+      <li>الـ round robin بيمشّي الـ fleet كله بسرعة أبطأ node. استخدم least connections أو power of two، والـ weights بتفيد لو حقيقية بس.</li>
+      <li>الـ least response time الصافي بيعمل herd، والـ power of two بيتجنبه بعينتين عشوائيتين.</li>
+      <li>الـ affinity: <code>hash % N</code> حرّك 80.1% لما زودنا node، والـ ring بالـ vnodes حرّك 18.2%.</li>
+      <li>أوعى تخلي check الـ LB معتمد على الـ DB. استخدم shallow liveness مع passive ejection مع panic threshold أو fail-open.</li>
+      <li>الاكتشاف = interval × failure threshold، والرجوع = interval × success threshold. defaults الـ ALB حوالي 60 ثانية و 150 ثانية.</li>
+      <li>الـ draining: surge، وقف التوجيه، استنى inflight صفر، <code>close()</code> مع <code>closeIdleConnections()</code>. الـ 43 error بقوا 0.</li>
+      <li>الـ sessions في Redis بدل الـ stickiness. الـ WebSockets بتتثبت بطبيعتها، فحط jitter للـ reconnects.</li>
+      <li>الـ exponential backoff من غير jitter بيفضل متزامن: الـ full jitter هو اللي بيبعتر الـ herd.</li>
+      <li>حدود الـ LB: الـ ephemeral ports (حوالي 470 connection جديدة في الثانية لكل backend من غير keep-alive)، والـ max connections، و <code>keepAliveTimeout</code> لازم أكبر من الـ idle timeout بتاع الـ LB.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 12 · 2.1 — <b>Load balancers بعمق</b>: L4 vs L7، algorithms، health checks (active/passive)، connection draining</label>
+    <label><input type="checkbox" data-key="r2"> 12 · 2.1 — Sticky sessions وليه تتجنبها (stateless بدلها)، وإمتى مفيش بديل (WebSockets)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/target-group-health-checks.html">AWS — Health checks for ALB target groups (defaults, fail open)</a></li>
+    <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/edit-load-balancer-attributes.html">AWS — ALB idle timeout and the 502 warning</a></li>
+    <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/edit-target-group-attributes.html">AWS — Deregistration delay, routing algorithms, stickiness</a></li>
+    <li><a href="https://raw.githubusercontent.com/envoyproxy/envoy/main/docs/root/intro/arch_overview/upstream/load_balancing/panic_threshold.rst">Envoy docs source — Panic threshold</a></li>
+    <li><a href="https://raw.githubusercontent.com/envoyproxy/envoy/main/api/envoy/config/cluster/v3/outlier_detection.proto">Envoy API — Outlier detection defaults</a></li>
+    <li><a href="https://www.eecs.harvard.edu/~michaelm/postscripts/handbook2001.pdf">Mitzenmacher, Richa, Sitaraman — The Power of Two Random Choices: A Survey</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./06-dns-global-routing.html"><small>← Previous</small>06 · DNS &amp; Global Routing</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./08-reverse-proxy-gateway-mesh.html"><small>Next →</small>08 · Proxy, Gateway, Mesh</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

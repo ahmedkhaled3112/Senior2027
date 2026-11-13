@@ -1,0 +1,1599 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Geo-Distribution: Locality, Conflicts, CRDTs &amp; Residency — 12 System Design</title>
+<meta name="section" content="12-System-Design">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">12 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 36 / 63</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <header>
+    <h1>Geo-Distribution: Locality, Conflicts, CRDTs &amp; Residency</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 36 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">Postgres 18 · Yjs · fast-check · Node 22</span>
+      <span class="chip">Prereq: 12 · Replication, 29 · Clocks</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>12 · 3.1 — Geo-distribution: data locality، cross-region replication lag، conflict resolution (last-write-wins ومشاكله، CRDTs كمفهوم)، data residency laws</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Data locality</a></li>
+      <li><a href="#p2">Part 2 — Cross-region lag</a></li>
+      <li><a href="#p3">Part 3 — Last-write-wins</a></li>
+      <li><a href="#p4">Part 4 — CRDTs</a></li>
+      <li><a href="#p5">Part 5 — Data residency</a></li>
+      <li><a href="#p6">Part 6 — Patterns</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The speed of light sets a floor nobody can tune away, and a page with five sequential queries pays that floor five times. Going multi-region buys latency and survival, and charges you in lag, conflicts and legal scope. This lesson measures each of those: real Postgres behind a delay proxy, a simulation that counts the updates last-write-wins throws away, CRDTs tested against their merge laws, and a residency rule that fails CI.</p>
+    <p>Interviewers ask "how would you go global?" to hear whether you start from where the data must live and what may conflict, rather than from a product name. The honest default is one region until the numbers say otherwise.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>سرعة الضوء حد أدنى محدش يقدر يعمله tuning، وصفحة فيها 5 queries ورا بعض بتدفع الحد ده 5 مرات. لما تروح multi-region بتكسب latency وقدرة على النجاة، وبتدفع lag و conflicts ونطاق قانوني أوسع. الدرس ده بيقيس كل حاجة من دول: Postgres حقيقي ورا delay proxy، ومحاكاة بتعدّ الـ updates اللي last-write-wins بيرميها، و CRDTs متجربة على قوانين الدمج، وقاعدة residency بتوقّع الـ CI.</p>
+    <p>لما الـ interviewer يسأل "هتعملها global إزاي؟"، عايز يعرف إنت بتبدأ من الـ data لازم تعيش فين وإيه اللي ممكن يتعارض، مش من اسم منتج. والـ default الصادق: region واحدة لحد ما الأرقام تقول غير كده.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Data locality <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — الـ data قريبة من مين</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Latency depends on where each hop is. Take users in Cairo, Frankfurt and Virginia and a page that makes 5 sequential database queries. The calculator below uses ballpark round-trip times as inputs; they are assumptions, so measure your own paths. The result matters more than the exact numbers: an app next to the database costs one user-to-app round trip plus 5 tiny ones, while an app in Frankfurt with its database in Virginia pays the cross-region RTT <em>on every query</em>, 451 to 540 ms. Splitting the app from its data is the worst placement of the four.</p>
+    <p>The placement that serves everyone is to give each user a <strong>home region</strong> and keep that user's rows there. A real run below uses two Postgres clusters with a TCP delay proxy standing in for distance. Windows timers round delays up, so the proxy's real RTT is measured and printed next to the result (93.6 ms for a requested 90). Five sequential queries went from 3.5 ms locally to 492.7 ms across the delay, and packing the same data into one round trip brought it back to 91.7 ms. When the database has to stay far away, round trips are the thing to count.</p>
+    <p>Routing is then a lookup. A small directory maps a login to a home region, and every order is read and written in that region's database. Only that directory and the <code>tenants</code> table stay global, and neither holds order data. The directory stores a keyed hash of the email (an HMAC, with the key kept in a KMS) instead of the email. That reduces what leaves the region, but a keyed hash of an email is still pseudonymous personal data under GDPR, so it doesn't by itself make the table non-personal. Part 5 returns to that.</p>
+  </section>
+
+<pre class="diagram">
+ App beside the data                 App split from the data
+ ┌────────┐  1 RTT  ┌──────────┐    ┌────────┐  1 RTT  ┌──────────┐
+ │  user  │────────▶│ app + db │    │  user  │────────▶│   app    │
+ └────────┘         └──────────┘    └────────┘         └────┬─────┘
+                  5 queries x ~1 ms                         │ 5 queries
+                                                            │ x cross-region RTT
+                                                       ┌────▼─────┐
+                                                       │    db    │
+                                                       └──────────┘
+</pre>
+  <div class="ar-note">شمال: الـ app جنب الـ db، فالمستخدم بيدفع رحلة واحدة ليه و5 queries كل واحد ~1 ms. يمين: الـ app بعيد عن الـ db، فكل query بيدفع RTT بين الـ regions، وده بيتضرب في 5.</div>
+
+<pre data-file="src/placement-calculator.ts"><code class="language-typescript">// دي آلة حاسبة مش قياس: أرقام الـ RTT تقديرية وبتتغير حسب المسار، قيس بتاعتك
+const RTT_MS: Record&lt;string, number&gt; = {
+  "cairo-frankfurt": 60,
+  "cairo-virginia": 150,
+  "frankfurt-virginia": 90,
+};
+const SAME_REGION_MS = 1;
+
+function rtt(a: string, b: string): number {
+  if (a === b) return SAME_REGION_MS;
+  return RTT_MS[`${a}-${b}`] ?? RTT_MS[`${b}-${a}`];
+}
+
+const QUERIES = 5;
+const users = ["cairo", "frankfurt", "virginia"];
+const placements: [string, string, string][] = [
+  ["app+db in Virginia", "virginia", "virginia"],
+  ["app+db in Frankfurt", "frankfurt", "frankfurt"],
+  ["app Frankfurt, db Virginia", "frankfurt", "virginia"],
+];
+
+console.log(`placement`.padEnd(28) + users.map((u) =&gt; u.padStart(11)).join(""));
+for (const [label, app, db] of placements) {
+  const cells = users.map((u) =&gt; `${rtt(u, app) + QUERIES * rtt(app, db)} ms`.padStart(11));
+  console.log(label.padEnd(28) + cells.join(""));
+}
+const home = users.map((u) =&gt; {
+  const region = u === "virginia" ? "virginia" : "frankfurt";
+  return `${rtt(u, region) + QUERIES * SAME_REGION_MS} ms`.padStart(11);
+});
+console.log("home region per user".padEnd(28) + home.join(""));</code></pre>
+
+<pre><code class="language-plaintext">placement                         cairo  frankfurt   virginia
+app+db in Virginia               155 ms      95 ms       6 ms
+app+db in Frankfurt               65 ms       6 ms      95 ms
+app Frankfurt, db Virginia       510 ms     451 ms     540 ms
+home region per user              65 ms       6 ms       6 ms</code></pre>
+  <div class="ar-note">كل صف مكان، وكل عمود مستخدم، والرقم = RTT المستخدم للـ app + 5 × RTT الـ app للـ db. الـ app والـ db في Virginia: القاهرة 155 ms. في Frankfurt: القاهرة 65. الـ app في Frankfurt والـ db في Virginia: 510 و451 و540، وده أسوأ توزيع. الـ home region لكل مستخدم: 65 و6 و6. الأرقام مدخلات تقديرية مش قياس.</div>
+
+<pre data-file="src/delay-proxy.mjs"><code class="language-javascript">import net from "node:net";
+
+// بروكسي TCP بيأخر كل chunk، وده بديل للمسافة مش مسافة حقيقية
+// الخيار bytesPerSec بيحط سقف للسرعة في كل اتجاه عشان نشوف الـ lag وهو بيكبر
+export function delayProxy(targetPort, oneWayMs) {
+  const sockets = new Set();
+  const state = { bytesPerSec: 0 };
+  const server = net.createServer((client) =&gt; {
+    const upstream = net.connect(targetPort, "127.0.0.1");
+    sockets.add(client);
+    sockets.add(upstream);
+    client.setNoDelay(true);
+    upstream.setNoDelay(true);
+    const pipe = (from, to) =&gt; {
+      let nextFree = 0;
+      // طابور FIFO بتايمر واحد: لو كل chunk ليها تايمر، الـ bytes ممكن تتلخبط
+      const queue = [];
+      let timer = null;
+      const drain = () =&gt; {
+        timer = null;
+        while (queue.length &amp;&amp; queue[0].at &lt;= performance.now()) {
+          const { chunk } = queue.shift();
+          if (!to.destroyed) to.write(chunk);
+        }
+        if (queue.length) timer = setTimeout(drain, Math.max(1, queue[0].at - performance.now()));
+      };
+      from.on("data", (chunk) =&gt; {
+        const now = performance.now();
+        const start = Math.max(now, nextFree);
+        const serialize = state.bytesPerSec ? (chunk.length / state.bytesPerSec) * 1000 : 0;
+        nextFree = start + serialize;
+        queue.push({ at: nextFree + oneWayMs, chunk });
+        if (timer === null) timer = setTimeout(drain, Math.max(1, queue[0].at - now));
+      });
+    };
+    pipe(client, upstream);
+    pipe(upstream, client);
+    const kill = () =&gt; { client.destroy(); upstream.destroy(); };
+    for (const s of [client, upstream]) { s.on("close", kill); s.on("error", kill); }
+  });
+  return new Promise((resolve) =&gt;
+    server.listen(0, "127.0.0.1", () =&gt;
+      resolve({
+        port: server.address().port,
+        setCap: (bytesPerSec) =&gt; { state.bytesPerSec = bytesPerSec; },
+        close: () =&gt; { sockets.forEach((s) =&gt; s.destroy()); server.close(); },
+      }),
+    ),
+  );
+}
+
+// الحارس: أي بورت فاضي أو افتراضي معناه خدمة حقيقية على الجهاز، فبنرفضه
+export function guard(port) {
+  const n = Number(port);
+  if (!/^\d+$/.test(String(port)) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) {
+    throw new Error("refusing port " + port);
+  }
+  return n;
+}</code></pre>
+
+<pre data-file="src/home-region.mjs"><code class="language-javascript">import { createHmac } from "node:crypto";
+import { connect, createPrimary, stopAll } from "../pg-cluster.mjs";
+import { delayProxy, guard } from "./delay-proxy.mjs";
+
+// الـ directory مش بيخزّن الإيميل نفسه، بيخزّن HMAC ليه بمفتاح سري
+// في production المفتاح ييجي من KMS مش من الكود
+const lookupKey = (email) =&gt; createHmac("sha256", "demo-key-from-kms").update(email.toLowerCase()).digest("hex");
+
+const eu = await createPrimary();
+const us = await createPrimary();
+const proxy = await delayProxy(guard(us.port), 45);
+try {
+  const euDb = await connect(guard(eu.port));
+  const usLocal = await connect(guard(us.port));
+  const usFar = await connect(guard(proxy.port));
+
+  // الجدول ده في كل region، وعمود region بيقول الصف ده بيتبع مين
+  const schema = `create table orders(id bigint generated always as identity primary key,
+    user_id int not null, region text not null, total_cents int not null)`;
+  await euDb.query(schema);
+  await usLocal.query(schema);
+  // ده الجزء الوحيد العالمي: مين فين، من غير أي بيانات طلبات
+  await euDb.query(`create table user_directory(email_hmac text primary key, user_id int not null, home_region text not null)`);
+  await euDb.query(`create table tenants(id int primary key, name text not null, region text not null)`);
+  for (const [email, id, region] of [["mona@example.com", 1, "eu"], ["hans@example.com", 2, "eu"], ["amy@example.com", 3, "us"]]) {
+    await euDb.query("insert into user_directory values ($1, $2, $3)", [lookupKey(email), id, region]);
+  }
+  await euDb.query(`insert into tenants values (1, 'cairo-retail', 'eu'), (2, 'boston-shop', 'us')`);
+
+  // قياس الـ RTT الحقيقي للبروكسي، لأن timers ويندوز بتقرّب لفوق
+  const samples = [];
+  for (let i = 0; i &lt; 20; i++) {
+    const t = performance.now();
+    await usFar.query("select 1");
+    samples.push(performance.now() - t);
+  }
+  samples.sort((a, b) =&gt; a - b);
+  console.log(`measured proxy RTT: median ${samples[10].toFixed(1)} ms (asked for 2 x 45 ms, a stand-in for distance)`);
+
+  // الصفحة بتعمل 5 queries ورا بعض من app في أوروبا
+  const page = async (db) =&gt; {
+    const t = performance.now();
+    for (let q = 0; q &lt; 5; q++) await db.query("select count(*) from orders where user_id = $1", [q]);
+    return performance.now() - t;
+  };
+  console.log(`5 sequential queries, db in same region: ${(await page(euDb)).toFixed(1)} ms`);
+  console.log(`5 sequential queries, db across delay:   ${(await page(usFar)).toFixed(1)} ms`);
+
+  // الحل الأول: رحلة واحدة بدل 5 لما الـ DB لازم يفضل بعيد
+  const t0 = performance.now();
+  await usFar.query(`select (select count(*) from orders where user_id = 0) a,
+    (select count(*) from orders where user_id = 1) b, (select count(*) from orders where user_id = 2) c,
+    (select count(*) from orders where user_id = 3) d, (select count(*) from orders where user_id = 4) e`);
+  console.log(`same data, one round trip across delay:  ${(performance.now() - t0).toFixed(1)} ms`);
+
+  // الراوتر: بيعرف الـ home region من الـ directory وبيكتب هناك بس
+  const regionalDb = { eu: euDb, us: usLocal };
+  async function placeOrder(email, totalCents) {
+    const { rows } = await euDb.query("select user_id, home_region from user_directory where email_hmac = $1", [lookupKey(email)]);
+    if (rows.length === 0) throw new Error(`unknown user ${email}`);
+    const { user_id: userId, home_region: region } = rows[0];
+    await regionalDb[region].query("insert into orders(user_id, region, total_cents) values ($1, $2, $3)", [userId, region, totalCents]);
+    return region;
+  }
+  for (const [email, cents] of [["mona@example.com", 4200], ["hans@example.com", 900], ["amy@example.com", 7700]]) {
+    console.log(`${email} -&gt; home region ${await placeOrder(email, cents)}`);
+  }
+  const rows = async (db) =&gt; (await db.query("select user_id, region from orders order by id")).rows;
+  console.log("orders in EU database:", JSON.stringify(await rows(euDb)));
+  console.log("orders in US database:", JSON.stringify(await rows(usLocal)));
+  console.log("order rows in the global directory: 0 by design, columns:",
+    (await euDb.query("select string_agg(column_name, ',') c from information_schema.columns where table_name = 'user_directory'")).rows[0].c);
+  await euDb.end(); await usLocal.end(); await usFar.end();
+} finally {
+  proxy.close();
+  await stopAll(eu);
+  await stopAll(us);
+}</code></pre>
+
+<pre><code class="language-plaintext">measured proxy RTT: median 93.6 ms (asked for 2 x 45 ms, a stand-in for distance)
+5 sequential queries, db in same region: 3.5 ms
+5 sequential queries, db across delay:   492.7 ms
+same data, one round trip across delay:  91.7 ms
+mona@example.com -&gt; home region eu
+hans@example.com -&gt; home region eu
+amy@example.com -&gt; home region us
+orders in EU database: [{"user_id":1,"region":"eu"},{"user_id":2,"region":"eu"}]
+orders in US database: [{"user_id":3,"region":"us"}]
+order rows in the global directory: 0 by design, columns: email_hmac,user_id,home_region</code></pre>
+  <div class="ar-note">دي Postgres حقيقية على نفس الجهاز، والـ delay بروكسي بديل للمسافة. الـ RTT المقاس 93.6 ms. الـ 5 queries جوه نفس الـ region أخدوا 3.5 ms، وعبر الـ delay 492.7 ms، ونفس الداتا في رحلة واحدة 91.7 ms. كل order اتكتب في الـ region بتاع صاحبه، والجدول العالمي فيه <code>email_hmac</code> مش الإيميل.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ latency بتتحدد بمكان كل hop. خد مستخدمين في القاهرة و Frankfurt و Virginia، وصفحة بتعمل 5 queries ورا بعض. الآلة الحاسبة بتستخدم RTT تقديرية كمدخلات، فدي فرضيات وقيس بتاعتك. النتيجة أهم من الأرقام بالظبط: app جنب الـ database بيكلف رحلة واحدة للمستخدم و5 رحلات صغيرة، أما app في Frankfurt والـ database بتاعه في Virginia بيدفع الـ RTT بين الـ regions <em>في كل query</em>، من 451 لـ 540 ms. إنك تفصل الـ app عن الـ data هو أسوأ مكان من الأربعة.</p>
+    <p>المكان اللي بيخدم الكل هو إنك تدي لكل مستخدم <strong>home region</strong> وتخلي صفوفه فيها. التجربة الحقيقية تحت بتستخدم 2 Postgres clusters، و TCP delay proxy كبديل للمسافة. الـ timers على Windows بتقرّب لفوق، فبنقيس الـ RTT الحقيقي للبروكسي ونطبعه جنب النتيجة (93.6 ms لما طلبنا 90). الـ 5 queries راحوا من 3.5 ms محليًا لـ 492.7 ms عبر الـ delay، ولما جمعناهم في رحلة واحدة رجعوا 91.7 ms. لو الـ database لازم يفضل بعيد، عدّ الـ round trips.</p>
+    <p>الـ routing بعدها lookup بسيط. directory صغير بيحوّل الـ login لـ home region، وكل order بيتقري ويتكتب في database الـ region دي. الحاجات اللي بتفضل global هي الـ directory ده وجدول <code>tenants</code> بس، ومفيش فيهم بيانات طلبات. الـ directory بيخزن keyed hash للإيميل (HMAC، والـ key في KMS) بدل الإيميل نفسه. ده بيقلل اللي بيخرج من الـ region، بس keyed hash للإيميل لسه pseudonymous personal data في GDPR، فلوحده مش بيخلي الجدول non-personal. هنرجع لده في الجزء 5.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو عندك Next.js app على Vercel في Frankfurt والـ Postgres في us-east-1 وصفحة الـ order بتعمل 5 queries، الصفحة هتاخد نص ثانية من غير أي bug. قبل ما تعمل multi-region، اعمل الأرخص: حط الـ app في region الـ database، أو جمّع الـ queries في round trip واحد. ولما يبقى عندك فعلًا مستخدمين كتير في region تانية، ضيف <code>home_region</code> في users واعمل routing زي اللي فوق.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Latency versus operations</b>
+    A home region per user fixes latency for most traffic, and creates the cross-region case: a user who travels, or a query that needs users from two regions. Decide up front what happens then (usually: read through the home region, accept the latency).
+    <div class="ar-note">الـ home region لكل مستخدم بتحل الـ latency لأغلب الـ traffic، وبتخلق حالة جديدة: مستخدم مسافر، أو query محتاج مستخدمين من region تانية. قرر من الأول هتعمل إيه وقتها (غالبًا: تقرا عن طريق الـ home region وتقبل الـ latency).</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Cross-region lag <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — الـ lag بين الـ regions</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Asynchronous replication means the standby is behind by at least the one-way time plus apply time. With a real Postgres standby behind the delay proxy at 75 ms each way (measured RTT 157.2 ms) we can watch it in <code>pg_stat_replication</code>. During a three-second write burst the standby's <code>replay_lag</code> peaked at 204 ms with 13.3 MB unapplied. That's the delay plus whatever the burst queued up. When the same proxy also capped bandwidth at 1 MB/s (delay and bandwidth are separate costs, and links are shared), a modest burst left 4 MB behind, <code>replay_lag</code> rose to 1,794 ms and the standby took 3,989 ms to catch up after the writes stopped. Lag isn't a constant of the link; it grows when the write rate exceeds what the link and the replay process can carry.</p>
+    <p>Read-your-writes fails exactly as you'd predict: writing to the primary and immediately reading from the replica missed the row in 40 of 40 attempts. Two fixes, both worth having. <strong>Sticky reads</strong>: after a user writes, send that user's reads to the home region for a while. <strong>Token-based reads</strong>: after the write, capture the primary's WAL position and have the replica wait until it has replayed past that LSN. With the token, stale reads dropped from 40 to 0, at the cost of a median wait of 93 ms and 106 ms at worst. In production that wait needs a limit, and when the limit is hit the read goes to the home region instead. The vocabulary is in <a href="./14-consistency-models-cap-pacelc.html">lesson 14</a>.</p>
+  </section>
+
+<pre data-file="src/repl-lag.mjs"><code class="language-javascript">import { addStandby, connect, createPrimary, stopAll } from "../pg-cluster.mjs";
+import { delayProxy, guard } from "./delay-proxy.mjs";
+
+const sleep = (ms) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+const c = await createPrimary();
+const proxy = await delayProxy(guard(c.port), 75);
+try {
+  const standby = await addStandby(c, {
+    name: "virginia",
+    conf: `primary_conninfo='host=127.0.0.1 port=${guard(proxy.port)} user=app application_name=virginia'`,
+  });
+  const primary = await connect(guard(c.port));
+  const replica = await connect(guard(standby.port));
+  const far = await connect(guard(proxy.port));
+  await primary.query("create table orders(id bigint generated always as identity primary key, user_id int, status text, note text)");
+  await sleep(1500);
+
+  const samples = [];
+  for (let i = 0; i &lt; 15; i++) {
+    const t = performance.now();
+    await far.query("select 1");
+    samples.push(performance.now() - t);
+  }
+  samples.sort((a, b) =&gt; a - b);
+  console.log(`measured RTT through the proxy: median ${samples[7].toFixed(1)} ms (stand-in for distance, asked for 2 x 75 ms)`);
+  await far.end();
+
+  // بنكتب burst لمدة 3 ثواني وبنقرا pg_stat_replication كل 150 ms
+  async function burst(label, pauseMs = 0) {
+    let running = true;
+    let inserted = 0;
+    const writer = (async () =&gt; {
+      while (running) {
+        await primary.query("insert into orders(user_id, status, note) select g, 'paid', repeat('x', 200) from generate_series(1, 200) g");
+        inserted += 200;
+        if (pauseMs) await sleep(pauseMs);
+      }
+    })();
+    let maxBytes = 0;
+    let maxReplayMs = 0;
+    for (let i = 0; i &lt; 20; i++) {
+      await sleep(150);
+      const { rows } = await primary.query(`select pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)::bigint as bytes,
+        coalesce(extract(epoch from replay_lag) * 1000, 0)::int as replay_ms from pg_stat_replication`);
+      if (rows[0]) {
+        maxBytes = Math.max(maxBytes, Number(rows[0].bytes));
+        maxReplayMs = Math.max(maxReplayMs, rows[0].replay_ms);
+      }
+    }
+    running = false;
+    await writer;
+    console.log(`${label.padEnd(26)} inserted=${inserted}  max bytes behind=${maxBytes}  max replay_lag=${maxReplayMs} ms`);
+  }
+  await burst("burst, delay only");
+  await sleep(2000);
+  proxy.setCap(1_000_000);
+  // بنبطّأ الكتابة هنا عشان اللي في الطريق يخلص في ثواني مش دقايق
+  await burst("burst, delay + 1 MB/s cap", 25);
+  const t0 = performance.now();
+  let caughtUp = false;
+  while (performance.now() - t0 &lt; 45_000) {
+    const { rows } = await primary.query("select pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)::bigint b from pg_stat_replication");
+    if (rows[0] &amp;&amp; Number(rows[0].b) === 0) { caughtUp = true; break; }
+    await sleep(50);
+  }
+  console.log(`after the burst stopped: ${caughtUp ? "caught up" : "still behind"} in ${(performance.now() - t0).toFixed(0)} ms`);
+  proxy.setCap(0);
+  await sleep(300);
+
+  // قراية بعد الكتابة على طول: بنكتب على الـ primary ونقرا فورًا من الـ replica
+  const N = 40;
+  let stale = 0;
+  for (let i = 0; i &lt; N; i++) {
+    const { rows } = await primary.query("insert into orders(user_id, status) values ($1, 'pending') returning id", [100000 + i]);
+    const seen = await replica.query("select 1 from orders where id = $1", [rows[0].id]);
+    if (seen.rowCount === 0) stale++;
+  }
+  console.log(`read your writes from replica: ${stale}/${N} reads did not see the row`);
+  await sleep(600);
+
+  // الحل: token هو الـ LSN بعد الكتابة، والـ replica لازم توصل له قبل ما نقرا
+  async function waitForToken(db, token, timeoutMs = 2000) {
+    const start = performance.now();
+    while (performance.now() - start &lt; timeoutMs) {
+      const { rows } = await db.query("select pg_last_wal_replay_lsn() &gt;= $1::pg_lsn ok", [token]);
+      if (rows[0].ok) return performance.now() - start;
+      await sleep(5);
+    }
+    return -1;
+  }
+  let staleWithToken = 0;
+  const waits = [];
+  for (let i = 0; i &lt; N; i++) {
+    const { rows } = await primary.query("insert into orders(user_id, status) values ($1, 'pending') returning id", [200000 + i]);
+    const token = (await primary.query("select pg_current_wal_insert_lsn() t")).rows[0].t;
+    const waited = await waitForToken(replica, token);
+    waits.push(waited);
+    const seen = await replica.query("select 1 from orders where id = $1", [rows[0].id]);
+    if (seen.rowCount === 0) staleWithToken++;
+  }
+  waits.sort((a, b) =&gt; a - b);
+  console.log(`with LSN token: ${staleWithToken}/${N} stale, median wait before reading ${waits[N &gt;&gt; 1].toFixed(0)} ms, max ${waits[N - 1].toFixed(0)} ms`);
+  await primary.end();
+  await replica.end();
+} finally {
+  proxy.close();
+  await stopAll(c);
+}</code></pre>
+
+<pre><code class="language-plaintext">measured RTT through the proxy: median 157.2 ms (stand-in for distance, asked for 2 x 75 ms)
+burst, delay only          inserted=624800  max bytes behind=13317464  max replay_lag=204 ms
+burst, delay + 1 MB/s cap  inserted=19600  max bytes behind=3995136  max replay_lag=1794 ms
+after the burst stopped: caught up in 3989 ms
+read your writes from replica: 40/40 reads did not see the row
+with LSN token: 0/40 stale, median wait before reading 93 ms, max 106 ms</code></pre>
+  <div class="ar-note">الـ RTT عبر البروكسي 157.2 ms (بديل للمسافة). بعد burst من غير سقف: 13.3 MB لسه متعملهاش replay و204 ms lag. بعد سقف 1 MB/s: 4 MB متأخرة و1794 ms lag، واحتاج 3989 ms عشان يحصّل بعد ما الكتابة وقفت. الـ read-your-writes فشل 40 من 40. بالـ LSN token: صفر قراية قديمة، مع انتظار median 93 ms وأقصى 106 ms.</div>
+
+<pre class="diagram">
+ Frankfurt (home)                       Virginia (replica)
+ ┌─────────────────┐   WAL, 75 ms       ┌──────────────────┐
+ │ primary         │──────────────────▶ │ standby          │
+ │ write: LSN 0/90 │                    │ replay: LSN 0/72 │
+ └───────┬─────────┘                    └────────▲─────────┘
+         │ token = 0/90                          │ wait until replay >= 0/90
+         └──────── returned to the client ───────┘ or read from home
+</pre>
+  <div class="ar-note">الـ primary في Frankfurt بيرجّع token بالـ LSN مع الكتابة، والـ standby في Virginia بيكون لسه ورا (0/72). الـ read اللي معاه الـ token بيستنى لحد ما الـ replay يعدّي 0/90، ولو الـ wait طول يروح يقرا من الـ home.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ asynchronous replication معناها إن الـ standby متأخر على الأقل وقت الرحلة في اتجاه واحد زائد وقت الـ apply. مع standby حقيقي ورا delay proxy بـ 75 ms في كل اتجاه (الـ RTT المقاس 157.2 ms) نقدر نشوف ده في <code>pg_stat_replication</code>. وقت write burst لمدة 3 ثواني، الـ <code>replay_lag</code> وصل 204 ms ومعاه 13.3 MB لسه متعملهاش replay. وده مجموع الـ delay زائد اللي الـ burst كدّسه. ولما البروكسي نفسه حط كمان سقف bandwidth 1 MB/s (الـ delay والـ bandwidth تكلفتين مختلفتين، والـ links متشاركة)، burst عادي ساب 4 MB ورا، والـ <code>replay_lag</code> طلع لـ 1,794 ms، والـ standby احتاج 3,989 ms عشان يلحق بعد ما الكتابة وقفت. يعني الـ lag مش رقم ثابت للـ link؛ بيكبر لما معدل الكتابة يعدّي اللي الـ link والـ replay يقدروا يشيلوه.</p>
+    <p>الـ read-your-writes بيفشل زي ما تتوقع بالظبط: كتبنا على الـ primary وقرينا فورًا من الـ replica، والصف مكنش موجود في 40 من 40 محاولة. حلّين، والاتنين مفيدين. <strong>Sticky reads</strong>: بعد ما المستخدم يكتب، ابعت قراياته للـ home region فترة. <strong>Token-based reads</strong>: بعد الكتابة، خد موقع الـ WAL من الـ primary وخلّي الـ replica تستنى لحد ما تعمل replay بعد الـ LSN ده. بالـ token، القراية القديمة نزلت من 40 لصفر، والتكلفة انتظار median 93 ms وأقصى 106 ms. وفي production الانتظار ده لازم يبقى ليه حد، ولو وصل للحد تروح القراية للـ home region. والمصطلحات دي في <a href="./14-consistency-models-cap-pacelc.html">الدرس 14</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      المستخدم عمل checkout ورجع لصفحة "طلباتي" من الـ replica القريبة فمش لاقي الطلب، والـ support اتملى tickets. الحل: الـ checkout يرجّع token (LSN) في cookie قصيرة العمر، وصفحة الطلبات تقرا من الـ replica لو وصلت للـ LSN ده، وإلا تقرا من الـ home. ولو الـ replica لسه ورا بكتير، راقب <code>replay_lag</code> وابعت traffic الـ region دي للـ home لحد ما تلحق.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks under load</b>
+    <code>replay_lag</code> measures how far behind the standby is. A growing number means the link or the replay process can't keep up, and a token wait turns from a few ms into a timeout. Alert on lag trend, and have the fallback ready before you need it.
+    <div class="ar-note"><code>replay_lag</code> بيقيس الـ standby متأخر قد إيه. لو الرقم بيكبر، الـ link أو الـ replay مش لاحقين، وانتظار الـ token بيتحول من كام ms لـ timeout. حط alert على اتجاه الـ lag، وخلّي الـ fallback جاهز قبل ما تحتاجه.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Last-write-wins <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — آخر كتابة تكسب</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>If two regions both accept writes, the same key can be written in both before either has seen the other. Last-write-wins (LWW) picks the version with the higher timestamp and silently drops the other. The simulation below (seeded, virtual time, labelled as a simulation) replays 20,000 writes on 500 keys across two regions. It counts a <em>lost update</em> when a write disappears although the winning write never saw it.</p>
+    <p>Even with perfect clocks and only 100 ms of lag, 71 writes vanished. At 1 s of lag it was 645, so loss grows with lag, because more writes overlap. Then skew: with one region's clock 500 ms ahead the loss rises to 209, and with 5 s it reaches 1,593, of which 1,569 are cases where the <em>later</em> write in real time lost to an earlier one, because that clock ran fast. Skew and its measurement are in <a href="./29-time-clocks-ordering.html">lesson 29</a>. Note the last column: divergence is 0 in every row. LWW always converges. Converging and keeping your data are different things.</p>
+    <p>LWW is fine where the value is a replaceable snapshot and losing one is harmless: a last-seen timestamp, a cached preference, presence status. It is wrong for money, inventory, order state or anything a person typed and expects to keep. The next step is a <strong>custom merge</strong> that knows what the fields mean: merge field by field against the common ancestor, or walk a state machine so <code>shipped</code> beats <code>paid</code> regardless of clock. Below, LWW loses the phone change while a field merge keeps both changes and reports a real conflict only when the same field changed twice.</p>
+  </section>
+
+<pre data-file="src/lww-sim.ts"><code class="language-typescript">// دي محاكاة بوقت افتراضي وseed ثابت، مش قياس على شبكة حقيقية
+// مش بتغطي: فقد الرسايل، تغيّر الـ lag مع الضغط، أو انقسام الشبكة
+function mulberry32(seed: number) {
+  return () =&gt; {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed &gt;&gt;&gt; 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t &gt;&gt;&gt; 7), 61 | t)) ^ t;
+    return ((t ^ (t &gt;&gt;&gt; 14)) &gt;&gt;&gt; 0) / 4294967296;
+  };
+}
+
+interface Write { id: number; key: number; region: 0 | 1; trueTime: number; stamp: number; sawId: number | null }
+type Versioned = { writeId: number; stamp: number; region: 0 | 1 };
+
+function simulate(skewMs: number, lagMs: number) {
+  const rng = mulberry32(2026);
+  const WRITES = 20_000;
+  const KEYS = 500;
+  const DURATION_MS = 600_000;
+  const writes = new Map&lt;number, Write&gt;();
+  const state: Map&lt;number, Versioned&gt;[] = [new Map(), new Map()];
+  const events: { at: number; kind: "write" | "replicate"; w?: Write; to?: 0 | 1 }[] = [];
+
+  for (let i = 0; i &lt; WRITES; i++) {
+    const region = (rng() &lt; 0.5 ? 0 : 1) as 0 | 1;
+    const key = Math.floor(rng() * KEYS);
+    const at = rng() * DURATION_MS;
+    events.push({ at, kind: "write", w: { id: i, key, region, trueTime: at, stamp: 0, sawId: null } });
+  }
+  events.sort((a, b) =&gt; a.at - b.at);
+
+  // الـ region التاني ساعته متقدمة بمقدار الـ skew
+  const clock = (region: 0 | 1, t: number) =&gt; t + (region === 1 ? skewMs : 0);
+  let lostUpdates = 0;
+  let laterWriteLost = 0;
+  const seenBy = new Map&lt;number, Set&lt;number&gt;&gt;();
+  const chainOf = (w: Write): Set&lt;number&gt; =&gt; seenBy.get(w.id) ?? new Set();
+
+  function apply(region: 0 | 1, incoming: Versioned, w: Write): void {
+    const cur = state[region].get(w.key);
+    const wins = !cur || incoming.stamp &gt; cur.stamp || (incoming.stamp === cur.stamp &amp;&amp; incoming.region &gt; cur.region);
+    if (!cur) { state[region].set(w.key, incoming); return; }
+    const winnerId = wins ? incoming.writeId : cur.writeId;
+    const loserId = wins ? cur.writeId : incoming.writeId;
+    if (region === 0 &amp;&amp; winnerId !== loserId) {
+      const winner = writes.get(winnerId)!;
+      const loser = writes.get(loserId)!;
+      // خسارة صامتة: اللي كسب مكانش شاف اللي اتمسح أصلًا
+      if (!chainOf(winner).has(loserId)) {
+        lostUpdates++;
+        if (loser.trueTime &gt; winner.trueTime) laterWriteLost++;
+      }
+    }
+    if (wins) state[region].set(w.key, incoming);
+  }
+
+  let idx = 0;
+  const queue = [...events];
+  queue.sort((a, b) =&gt; a.at - b.at);
+  while (idx &lt; queue.length) {
+    const ev = queue[idx++];
+    if (ev.kind === "write") {
+      const w = ev.w!;
+      const cur = state[w.region].get(w.key);
+      w.sawId = cur ? cur.writeId : null;
+      const chain = new Set&lt;number&gt;();
+      if (w.sawId !== null) {
+        chain.add(w.sawId);
+        for (const id of seenBy.get(w.sawId) ?? []) chain.add(id);
+      }
+      seenBy.set(w.id, chain);
+      w.stamp = clock(w.region, ev.at);
+      writes.set(w.id, w);
+      const v: Versioned = { writeId: w.id, stamp: w.stamp, region: w.region };
+      apply(w.region, v, w);
+      const other = (w.region === 0 ? 1 : 0) as 0 | 1;
+      const arrive = ev.at + lagMs * (0.5 + rng());
+      const pos = lowerBound(queue, arrive, idx);
+      queue.splice(pos, 0, { at: arrive, kind: "replicate", w, to: other });
+    } else {
+      const w = ev.w!;
+      apply(ev.to!, { writeId: w.id, stamp: w.stamp, region: w.region }, w);
+    }
+  }
+
+  let divergent = 0;
+  for (const [k, v] of state[0]) {
+    if (state[1].get(k)?.writeId !== v.writeId) divergent++;
+  }
+  return { writes: WRITES, keys: KEYS, lostUpdates, laterWriteLost, divergent };
+}
+
+function lowerBound(q: { at: number }[], at: number, from: number): number {
+  let lo = from;
+  let hi = q.length;
+  while (lo &lt; hi) {
+    const mid = (lo + hi) &gt;&gt; 1;
+    if (q[mid].at &lt; at) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+console.log("SIMULATION (seeded, virtual time): two regions, last-write-wins by wall clock.");
+console.log("Not captured: message loss, lag that grows under load, partitions.");
+console.log("skew(ms)  lag(ms)  lost updates  later write lost  divergent keys");
+for (const [skew, lag] of [[0, 100], [0, 1000], [50, 100], [500, 100], [5000, 100]] as const) {
+  const r = simulate(skew, lag);
+  console.log(`${String(skew).padStart(7)}  ${String(lag).padStart(7)}  ${String(r.lostUpdates).padStart(12)}  ${String(r.laterWriteLost).padStart(16)}  ${String(r.divergent).padStart(14)}`);
+}</code></pre>
+
+<pre><code class="language-plaintext">SIMULATION (seeded, virtual time): two regions, last-write-wins by wall clock.
+Not captured: message loss, lag that grows under load, partitions.
+skew(ms)  lag(ms)  lost updates  later write lost  divergent keys
+      0      100            71                 0               0
+      0     1000           645                 0               0
+     50      100            71                16               0
+    500      100           209               179               0
+   5000      100          1593              1569               0</code></pre>
+  <div class="ar-note">محاكاة بوقت افتراضي و seed ثابت، ومش بتغطي فقد الرسايل أو تغيّر الـ lag مع الضغط أو انقسام الشبكة. كل صف skew و lag: بدون skew و100 ms lag ضاع 71 update، و1000 ms ضاع 645. مع skew 500 ms ضاع 209، و5 ثواني ضاع 1593 منهم 1569 الكتابة الأحدث هي اللي خسرت. وآخر عمود صفر في كل الصفوف: الـ LWW بيتفق دايمًا، بس الاتفاق غير الحفاظ على الـ data.</div>
+
+<pre data-file="src/merge-functions.ts"><code class="language-typescript">// الدمج المخصص: بدل ما نختار كسبان واحد، بنعرف معنى كل حقل
+interface Customer { name: string; phone: string; address: string }
+
+// دمج حقل بحقل مقارنةً بالنسخة الأساسية اللي الطرفين بدأوا منها
+export function mergeFields(base: Customer, a: Customer, b: Customer): { merged: Customer; conflicts: string[] } {
+  const merged = { ...base };
+  const conflicts: string[] = [];
+  for (const field of Object.keys(base) as (keyof Customer)[]) {
+    const changedA = a[field] !== base[field];
+    const changedB = b[field] !== base[field];
+    if (changedA &amp;&amp; changedB &amp;&amp; a[field] !== b[field]) {
+      conflicts.push(field);
+      merged[field] = a[field];
+    } else {
+      merged[field] = changedA ? a[field] : b[field];
+    }
+  }
+  return { merged, conflicts };
+}
+
+// حالة الطلب ماشية في اتجاه واحد، فالأبعد في الترتيب هو اللي يكسب
+const RANK = { pending: 0, paid: 1, shipped: 2, delivered: 3, refunded: 4 } as const;
+type OrderStatus = keyof typeof RANK;
+export const mergeStatus = (a: OrderStatus, b: OrderStatus): OrderStatus =&gt; (RANK[a] &gt;= RANK[b] ? a : b);
+
+const base: Customer = { name: "Mona", phone: "010", address: "Maadi" };
+const eu: Customer = { ...base, phone: "012" };
+const us: Customer = { ...base, address: "Zamalek" };
+console.log("LWW keeps one whole row:", JSON.stringify(us));
+console.log("field merge:           ", JSON.stringify(mergeFields(base, eu, us)));
+console.log("same field changed:    ", JSON.stringify(mergeFields(base, { ...base, phone: "012" }, { ...base, phone: "015" })));
+console.log("status merge:", mergeStatus("paid", "shipped"), mergeStatus("refunded", "shipped"));</code></pre>
+
+<pre><code class="language-plaintext">LWW keeps one whole row: {"name":"Mona","phone":"010","address":"Zamalek"}
+field merge:            {"merged":{"name":"Mona","phone":"012","address":"Zamalek"},"conflicts":[]}
+same field changed:     {"merged":{"name":"Mona","phone":"012","address":"Maadi"},"conflicts":["phone"]}
+status merge: shipped refunded</code></pre>
+  <div class="ar-note">الـ LWW كسب فيه الصف الكامل بتاع Virginia فضاع تغيير التليفون. دمج الحقول حافظ على الاتنين، ولما نفس الحقل اتغير مرتين بلّغ عن conflict في <code>phone</code>. ودمج الحالة بيختار الأبعد في الترتيب: <code>shipped</code> تكسب <code>paid</code>، و<code>refunded</code> تكسب <code>shipped</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>لو الـ regions الاتنين بيقبلوا كتابة، نفس الـ key ممكن يتكتب في الاتنين قبل ما أي واحد يشوف التاني. الـ last-write-wins (LWW) بياخد النسخة صاحبة الـ timestamp الأعلى ويرمي التانية من غير ما يقولك. المحاكاة تحت (بـ seed ثابت ووقت افتراضي، ومكتوب عليها إنها محاكاة) بتعيد 20,000 كتابة على 500 مفتاح بين region اتنين، وبتعدّ <em>lost update</em> لما كتابة تختفي مع إن الكتابة اللي كسبت مكانتش شافتها أصلًا.</p>
+    <p>حتى بساعات مظبوطة و100 ms lag بس، 71 كتابة راحوا. بـ lag ثانية واحدة 645، فالخسارة بتكبر مع الـ lag لأن الكتابات اللي بتتداخل بتزيد. وبعدين الـ skew: لو ساعة region متقدمة 500 ms الخسارة بتوصل 209، وبـ 5 ثواني توصل 1,593، منهم 1,569 حالة الكتابة <em>الأحدث</em> في الواقع خسرت قدام كتابة أقدم لأن الساعة كانت قدام. الـ skew وقياسه في <a href="./29-time-clocks-ordering.html">الدرس 29</a>. وبص على آخر عمود: الـ divergence صفر في كل صف. الـ LWW بيتفق دايمًا، بس إنك تتفق وإنك تحافظ على الـ data حاجتين مختلفتين.</p>
+    <p>الـ LWW مناسب لما القيمة snapshot ينفع يتستبدل وخسارتها مش مشكلة: آخر وقت ظهور، preference متخزنة في cache، حالة الـ presence. وغلط للفلوس والمخزون وحالة الطلب وأي حاجة إنسان كتبها ومستني تفضل. الخطوة الجاية هي <strong>custom merge</strong> بيفهم معنى الحقول: دمج حقل بحقل مقارنة بالنسخة الأساسية، أو state machine بحيث <code>shipped</code> تكسب <code>paid</code> مهما كانت الساعة. في الكود تحت، الـ LWW بيضيّع تغيير التليفون، ودمج الحقول بيحافظ على التغييرين وبيبلّغ عن conflict حقيقي بس لو نفس الحقل اتغير مرتين.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      Sync بين موبايل و server: المستخدم عدّل البروفايل من الموبايل وهو أوفلاين وعدّله من الـ web. لو عملت <code>updated_at</code> وLWW، تعديل واحد بيضيع. الأحسن تبعت الحقول اللي اتغيرت بس وتدمج حقل بحقل، وترجّع conflict للمستخدم لو نفس الحقل اتغير مرتين. والمبدأ نفسه في أي active-active: اعرف الأول مين بيكسب في كل حقل قبل ما تفتح الكتابة في region تانية.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Two regions accept writes. What does last-write-wins cost you?" → Concurrent writes are dropped silently, and clock skew makes a newer write lose to an older one. The data converges, so nothing looks wrong. Use it only where a lost value is acceptable, otherwise a domain merge, a CRDT, or a single write region.
+    <div class="ar-note">"region اتنين بيقبلوا كتابة. الـ LWW بيكلفك إيه؟" ← الكتابات المتزامنة بتتشال من غير ما حد يعرف، والـ clock skew بيخلي كتابة أحدث تخسر قدام أقدم. والـ data بتتفق فمفيش حاجة بتبان غلط. استخدمه بس لو خسارة القيمة مقبولة، وإلا domain merge أو CRDT أو write region واحدة.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — CRDTs <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ CRDTs</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A CRDT avoids the conflict by design. Each replica keeps state such that merging two states is <strong>commutative</strong> (order doesn't matter), <strong>associative</strong> (grouping doesn't matter) and <strong>idempotent</strong> (merging the same thing twice changes nothing). If those three laws hold, replicas that exchange state in any order, with duplicates, end up equal. So you test the laws instead of hand-picking examples, and that's what the <code>fast-check</code> run below does: 300 random states per law, per type.</p>
+    <p>A <strong>G-Counter</strong> gives each region one slot that only it may increment; merge takes the max per slot. A <strong>PN-Counter</strong> is two G-Counters, for increments and decrements. An <strong>OR-Set</strong> gives each add a unique tag, and a remove deletes only the tags that replica has observed, so a concurrent add survives. That's the cart below: two regions edit during a partition, and after merging, each sees the same cart. The removal of the shirt wins because the shirt's tag had been observed, the phone and mug survive. For real shared documents, <code>yjs</code> does the same job for text and maps: concurrent edits on two docs merged with both fields kept and the same text on both sides.</p>
+    <p>The limit is the part interviewers want. CRDTs only guarantee convergence, so they can't enforce a global invariant. Two regions each debit 100 from a balance of 150, both locally correct, and after the merge the balance is <strong>-50</strong>. The same goes for "unique username": two regions can both accept it. An invariant needs coordination or a single owner. Metadata is the other bill: the OR-Set below stays at one visible element but its state reached 157,824 bytes after 10,000 add/remove cycles. Yjs garbage-collected its deleted items down to 27 bytes in the same kind of test, which is the best case for it, since adjacent deletes merge into one range.</p>
+  </section>
+
+<pre data-file="src/crdt.ts"><code class="language-typescript">// الـ G-Counter: كل region ليه خانة بيزوّدها هو بس، والدمج بياخد الأكبر
+export type GCounter = Record&lt;string, number&gt;;
+
+export const gInc = (c: GCounter, region: string, by = 1): GCounter =&gt; ({ ...c, [region]: (c[region] ?? 0) + by });
+export const gValue = (c: GCounter): number =&gt; Object.values(c).reduce((s, n) =&gt; s + n, 0);
+export function gMerge(a: GCounter, b: GCounter): GCounter {
+  const out: GCounter = { ...a };
+  for (const [region, n] of Object.entries(b)) out[region] = Math.max(out[region] ?? 0, n);
+  return out;
+}
+
+// الـ PN-Counter: عدّادين G واحد للزيادة وواحد للنقصان
+export interface PNCounter { p: GCounter; n: GCounter }
+export const pnEmpty = (): PNCounter =&gt; ({ p: {}, n: {} });
+export const pnInc = (c: PNCounter, region: string, by = 1): PNCounter =&gt; ({ ...c, p: gInc(c.p, region, by) });
+export const pnDec = (c: PNCounter, region: string, by = 1): PNCounter =&gt; ({ ...c, n: gInc(c.n, region, by) });
+export const pnValue = (c: PNCounter): number =&gt; gValue(c.p) - gValue(c.n);
+export const pnMerge = (a: PNCounter, b: PNCounter): PNCounter =&gt; ({ p: gMerge(a.p, b.p), n: gMerge(a.n, b.n) });
+
+// الـ OR-Set: كل add ليه tag فريد، والـ remove بيشيل الـ tags اللي شافها بس
+export interface ORSet { adds: Record&lt;string, string[]&gt;; removes: string[] }
+export const orEmpty = (): ORSet =&gt; ({ adds: {}, removes: [] });
+
+export function orAdd(s: ORSet, element: string, tag: string): ORSet {
+  return { ...s, adds: { ...s.adds, [element]: [...(s.adds[element] ?? []), tag] } };
+}
+export function orRemove(s: ORSet, element: string): ORSet {
+  return { ...s, removes: [...new Set([...s.removes, ...(s.adds[element] ?? [])])] };
+}
+export function orHas(s: ORSet, element: string): boolean {
+  return (s.adds[element] ?? []).some((t) =&gt; !s.removes.includes(t));
+}
+export function orValues(s: ORSet): string[] {
+  return Object.keys(s.adds).filter((e) =&gt; orHas(s, e)).sort();
+}
+export function orMerge(a: ORSet, b: ORSet): ORSet {
+  const adds: Record&lt;string, string[]&gt; = {};
+  for (const src of [a.adds, b.adds]) {
+    for (const [element, tags] of Object.entries(src)) {
+      adds[element] = [...new Set([...(adds[element] ?? []), ...tags])].sort();
+    }
+  }
+  return { adds, removes: [...new Set([...a.removes, ...b.removes])].sort() };
+}</code></pre>
+
+<pre data-file="src/crdt-laws.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import fc from "fast-check";
+import {
+  gInc, gMerge, gValue, orAdd, orEmpty, orMerge, orRemove, orValues,
+  pnDec, pnEmpty, pnInc, pnMerge, pnValue,
+  type GCounter, type ORSet, type PNCounter,
+} from "./crdt.ts";
+
+const region = fc.constantFrom("eu", "us", "me");
+
+// بنولّد حالات عشوائية عن طريق تطبيق عمليات حقيقية مش JSON عشوائي
+const gCounter: fc.Arbitrary&lt;GCounter&gt; = fc
+  .array(fc.tuple(region, fc.nat(50)), { maxLength: 12 })
+  .map((ops) =&gt; ops.reduce&lt;GCounter&gt;((c, [r, by]) =&gt; gInc(c, r, by), {}));
+
+const pnCounter: fc.Arbitrary&lt;PNCounter&gt; = fc
+  .array(fc.tuple(region, fc.integer({ min: -30, max: 30 })), { maxLength: 12 })
+  .map((ops) =&gt; ops.reduce((c, [r, by]) =&gt; (by &gt;= 0 ? pnInc(c, r, by) : pnDec(c, r, -by)), pnEmpty()));
+
+let tagSeq = 0;
+const orSet: fc.Arbitrary&lt;ORSet&gt; = fc
+  .array(fc.tuple(fc.constantFrom("sku-1", "sku-2", "sku-3"), fc.boolean()), { maxLength: 12 })
+  .map((ops) =&gt; ops.reduce((s, [e, add]) =&gt; (add ? orAdd(s, e, `t${++tagSeq}`) : orRemove(s, e)), orEmpty()));
+
+function laws&lt;T&gt;(name: string, arb: fc.Arbitrary&lt;T&gt;, merge: (a: T, b: T) =&gt; T, view: (x: T) =&gt; unknown): void {
+  test(`${name}: commutative`, () =&gt; {
+    fc.assert(fc.property(arb, arb, (a, b) =&gt; assert.deepEqual(view(merge(a, b)), view(merge(b, a)))), { numRuns: 300 });
+  });
+  test(`${name}: associative`, () =&gt; {
+    fc.assert(fc.property(arb, arb, arb, (a, b, c) =&gt; assert.deepEqual(view(merge(merge(a, b), c)), view(merge(a, merge(b, c))))), { numRuns: 300 });
+  });
+  test(`${name}: idempotent`, () =&gt; {
+    fc.assert(fc.property(arb, (a) =&gt; assert.deepEqual(view(merge(a, a)), view(a))), { numRuns: 300 });
+  });
+}
+
+laws("G-Counter", gCounter, gMerge, gValue);
+laws("PN-Counter", pnCounter, pnMerge, pnValue);
+laws("OR-Set", orSet, orMerge, orValues);
+
+test("OR-Set: add wins over a concurrent remove", () =&gt; {
+  const start = orAdd(orEmpty(), "sku-1", "a1");
+  const eu = orRemove(start, "sku-1");
+  const us = orAdd(start, "sku-1", "b1");
+  assert.deepEqual(orValues(orMerge(eu, us)), ["sku-1"]);
+});</code></pre>
+
+<pre><code class="language-plaintext">ok 1 - G-Counter: commutative
+ok 2 - G-Counter: associative
+ok 3 - G-Counter: idempotent
+ok 4 - PN-Counter: commutative
+ok 5 - PN-Counter: associative
+ok 6 - PN-Counter: idempotent
+ok 7 - OR-Set: commutative
+ok 8 - OR-Set: associative
+ok 9 - OR-Set: idempotent
+ok 10 - OR-Set: add wins over a concurrent remove
+# tests 10
+# pass 10
+# fail 0</code></pre>
+  <div class="ar-note">ناتج <code>node --test</code>: كل نوع له 3 اختبارات (commutative و associative و idempotent)، و300 حالة عشوائية لكل اختبار، زائد اختبار إن الـ add بيكسب قدام remove متزامن. كل الـ 10 passed.</div>
+
+<pre data-file="src/crdt-demo.ts"><code class="language-typescript">import * as Y from "yjs";
+import { orAdd, orEmpty, orMerge, orRemove, orValues, pnDec, pnEmpty, pnInc, pnMerge, pnValue } from "./crdt.ts";
+
+// (1) عربة تسوق في الـ region الاتنين وقت انقطاع بينهم
+let eu = orAdd(orEmpty(), "sku-shirt", "eu-1");
+let us = orMerge(orEmpty(), eu);
+eu = orAdd(eu, "sku-phone", "eu-2");
+us = orRemove(us, "sku-shirt");
+us = orAdd(us, "sku-mug", "us-1");
+const cart = orMerge(eu, us);
+console.log("eu sees:", orValues(eu), " us sees:", orValues(us));
+console.log("after merge:", orValues(cart), "same on both sides:", JSON.stringify(orValues(orMerge(us, eu))) === JSON.stringify(orValues(cart)));
+
+// (2) الحد: CRDT مش بيقدر يضمن قيد زي balance &gt;= 0
+let eu2 = pnInc(pnEmpty(), "eu", 150);
+let us2 = pnMerge(pnEmpty(), eu2);
+eu2 = pnDec(eu2, "eu", 100);
+us2 = pnDec(us2, "us", 100);
+console.log("balance eu:", pnValue(eu2), " balance us:", pnValue(us2), " after merge:", pnValue(pnMerge(eu2, us2)));
+
+// (3) نمو الـ metadata: مجموعة فيها عنصر واحد بس والـ state بيكبر
+let s = orEmpty();
+for (const cycles of [1000, 10000]) {
+  s = orEmpty();
+  for (let i = 0; i &lt; cycles; i++) {
+    s = orAdd(s, "sku-1", `t${i}`);
+    s = orRemove(s, "sku-1");
+    if (i === cycles - 1) s = orAdd(s, "sku-1", `final${i}`);
+  }
+  console.log(`after ${cycles} add/remove cycles: visible=${orValues(s).length} element, state=${JSON.stringify(s).length} bytes`);
+}
+
+// (4) مكتبة Yjs الحقيقية بتتعامل مع مستندات مشتركة
+const docA = new Y.Doc();
+const docB = new Y.Doc();
+Y.applyUpdate(docB, Y.encodeStateAsUpdate(docA));
+docA.getMap("invoice").set("note", "call before delivery");
+docB.getMap("invoice").set("reference", "PO-1001");
+docA.getText("memo").insert(0, "Paid. ");
+docB.getText("memo").insert(0, "Shipped. ");
+const fromA = Y.encodeStateAsUpdate(docA);
+const fromB = Y.encodeStateAsUpdate(docB);
+Y.applyUpdate(docA, fromB);
+Y.applyUpdate(docB, fromA);
+console.log("yjs doc A:", JSON.stringify(docA.getMap("invoice").toJSON()), JSON.stringify(docA.getText("memo").toString()));
+console.log("yjs doc B:", JSON.stringify(docB.getMap("invoice").toJSON()), JSON.stringify(docB.getText("memo").toString()));
+const growth = new Y.Doc();
+const text = growth.getText("memo");
+for (let i = 0; i &lt; 5000; i++) { text.insert(0, "x"); text.delete(0, 1); }
+console.log(`yjs after 5000 insert/delete cycles: visible chars=${text.length}, state=${Y.encodeStateAsUpdate(growth).byteLength} bytes`);</code></pre>
+
+<pre><code class="language-plaintext">eu sees: [ 'sku-phone', 'sku-shirt' ]  us sees: [ 'sku-mug' ]
+after merge: [ 'sku-mug', 'sku-phone' ] same on both sides: true
+balance eu: 50  balance us: 50  after merge: -50
+after 1000 add/remove cycles: visible=1 element, state=13823 bytes
+after 10000 add/remove cycles: visible=1 element, state=157824 bytes
+yjs doc A: {"note":"call before delivery","reference":"PO-1001"} "Shipped. Paid. "
+yjs doc B: {"reference":"PO-1001","note":"call before delivery"} "Shipped. Paid. "
+yjs after 5000 insert/delete cycles: visible chars=0, state=27 bytes</code></pre>
+  <div class="ar-note">الـ cart: أوروبا شايفة phone و shirt، وأمريكا شايفة mug بس (مسحت الـ shirt). بعد الدمج: mug و phone، ونفس النتيجة في الاتجاهين. الـ balance: كل region فاكر 50، وبعد الدمج <code>-50</code>، وده الحد بتاع الـ CRDTs. الـ metadata: عنصر واحد ظاهر والـ state بقى 157 KB بعد 10 آلاف دورة. والـ Yjs: الحقلين موجودين والنص متطابق، و27 byte بعد 5000 دورة لأن المسح المتجاور بيتجمع.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ CRDT بيتجنب الـ conflict من تصميمه. كل replica بتحتفظ بحالة بحيث دمج حالتين يبقى <strong>commutative</strong> (الترتيب مش مهم)، و<strong>associative</strong> (التجميع مش مهم)، و<strong>idempotent</strong> (الدمج مرتين زي مرة). لو القوانين التلاتة صح، الـ replicas اللي بتتبادل الحالات بأي ترتيب ومع تكرار بتوصل لنفس النتيجة. فبتختبر القوانين بدل ما تختار أمثلة بإيدك، وده اللي <code>fast-check</code> بيعمله تحت: 300 حالة عشوائية لكل قانون ولكل نوع.</p>
+    <p>الـ <strong>G-Counter</strong> بيدي كل region خانة بيزوّدها هو بس، والدمج بياخد الأكبر لكل خانة. الـ <strong>PN-Counter</strong> عدّادين G، واحد للزيادة وواحد للنقصان. الـ <strong>OR-Set</strong> بيدي كل add علامة فريدة (tag)، والـ remove بيمسح الـ tags اللي الـ replica شافتها بس، فالـ add المتزامن بيعيش. وده الـ cart تحت: region اتنين بيعدلوا وقت انقطاع، وبعد الدمج كل واحد شايف نفس الـ cart. مسح الـ shirt كسب لأن الـ tag بتاعها كان متشاف، والـ phone والـ mug عاشوا. وللمستندات المشتركة الحقيقية، <code>yjs</code> بيعمل نفس الدور للنصوص والـ maps: تعديلات متزامنة على doc اتنين اتدمجوا والحقلين موجودين والنص هو هو في الناحيتين.</p>
+    <p>الحد ده هو اللي الـ interviewer عايز يسمعه. الـ CRDTs بتضمن convergence بس، فمش بتقدر تفرض قيد عام. region اتنين كل واحد خصم 100 من رصيد 150، وكل واحد عنده الحساب صح، وبعد الدمج الرصيد <strong>-50</strong>. ونفس الكلام في "username مميز": region اتنين ممكن يقبلوا نفس الاسم. القيد ده محتاج coordination أو صاحب واحد. والـ metadata هي الفاتورة التانية: الـ OR-Set تحت فاضل فيه عنصر واحد ظاهر والحالة بقت 157,824 byte بعد 10 آلاف دورة add/remove. و Yjs عمل garbage collection لعناصره الممسوحة ونزلها لـ 27 byte في نفس النوع من الاختبار، وده أحسن حالة ليه لأن المسح المتجاور بيتجمع في range واحد.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      عربة تسوق بتشتغل في region اتنين أو أوفلاين في الموبايل: OR-Set للأصناف و PN-Counter للكمية (التمرين 2). عدّاد مشاهدات أو likes لكل region: G-Counter. محرر نص مشترك زي Notion: Yjs. أما رصيد المحفظة أو مخزون آخر قطعة أو username: مش CRDT، دي home region أو reservation من صاحب واحد.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Can a CRDT keep an account balance from going negative?" → No. A CRDT guarantees that replicas converge, not that any invariant holds across them: two regions can each approve a debit that is locally fine. An invariant like balance ≥ 0 needs a single owner, an escrow split between regions, or coordination.
+    <div class="ar-note">"هل CRDT يقدر يمنع رصيد حساب إنه يبقى سالب؟" ← لأ. الـ CRDT بيضمن إن الـ replicas توصل لنفس الحالة، مش إن أي قيد يفضل صح بينها: region اتنين ممكن كل واحد يوافق على خصم صحيح عنده. قيد زي balance ≥ 0 محتاج صاحب واحد، أو escrow متقسم بين الـ regions، أو coordination.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Data residency <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — قوانين مكان الـ data</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>This part is engineering context, not legal advice. GDPR is the common reference: Chapter V (Articles 44–50) limits transfers of personal data out of the EU/EEA. It doesn't require the data to stay inside. A transfer needs a basis: an adequacy decision (Art. 45), appropriate safeguards such as standard contractual clauses (Art. 46), binding corporate rules (Art. 47), or a narrow derogation (Art. 49). The European Commission's adequacy list includes the UK, Japan, Switzerland and US companies in the Data Privacy Framework, and not Egypt or Saudi Arabia. Two details decide most designs. The EDPB says "remote access from a third country (for example in support situations)" also counts as a transfer, so a support engineer in Cairo opening an EU customer's record is a transfer. And many customer contracts ask for EU-only storage, which is stricter than the law.</p>
+    <p>Other countries have their own rules, and they change, so check the official text before quoting one. Egypt has Law 151 of 2020; its Executive Regulations were reported as issued in November 2025, with cross-border transfers needing a licence from the data protection centre. Saudi Arabia has the PDPL and a 2024 regulation on transfers outside the Kingdom. I could not read the official text of either: what I found is law-firm summaries, so treat those two sentences as pointers for your lawyer, not as facts to build on.</p>
+    <p>The design that follows is straightforward. Pin each tenant to a region. Split the <strong>control plane</strong> (tenants, feature flags, deploys: global and free of personal data) from the <strong>data plane</strong> (orders, invoices, customers: one region per tenant). Keep personal data out of global tables, and then remember the places people forget: backups, log pipelines, analytics exports and support tooling count too. Finally, make it mechanical: a rule in a wiki does nothing at 2 a.m. The router below throws <code>ResidencyViolation</code> before a write can leave the region, an unknown tenant fails closed, a table with no data class is rejected, a CI check fails the build if any store holding EU data sits elsewhere, and a database <code>CHECK</code> constraint is the last line if the router ever has a bug.</p>
+  </section>
+
+<pre class="diagram">
+              CONTROL PLANE (global, no personal data)
+              ┌────────────────────────────────────┐
+              │ tenants · feature flags · deploys  │
+              └───────────────┬────────────────────┘
+                              │ routes each tenant
+             ┌────────────────┴────────────────┐
+             ▼                                 ▼
+ ┌────────────────────────┐        ┌────────────────────────┐
+ │ DATA PLANE: eu-central │        │ DATA PLANE: us-east    │
+ │ orders invoices users  │        │ orders invoices users  │
+ │ backups: eu-west only  │        │ backups: us-west only  │
+ │ logs: PII stays in EU  │        │ logs: PII stays in US  │
+ └────────────────────────┘        └────────────────────────┘
+</pre>
+  <div class="ar-note">الـ control plane فوق عالمي ومفيش فيه personal data (الـ tenants والـ feature flags والـ deploys). كل tenant بيتوجّه لـ data plane في region واحدة. وجوه كل data plane الـ orders والـ invoices والـ users والـ backups والـ logs كلها في نفس الـ region أو region مسموح بيها.</div>
+
+<pre data-file="src/residency.ts"><code class="language-typescript">export type Region = "eu-central" | "us-east" | "me-central";
+export type DataClass = "pii" | "operational";
+
+export interface Tenant { id: string; residency: Region }
+
+export class ResidencyViolation extends Error {
+  override name = "ResidencyViolation";
+}
+
+// الجداول اللي فيها PII لازم تفضل في region الـ tenant
+const TABLE_CLASS: Record&lt;string, DataClass&gt; = {
+  orders: "pii",
+  invoices: "pii",
+  customers: "pii",
+  feature_flags: "operational",
+};
+
+export class TenantRouter {
+  private tenants: Map&lt;string, Tenant&gt;;
+  constructor(tenants: Tenant[]) {
+    this.tenants = new Map(tenants.map((t) =&gt; [t.id, t]));
+  }
+
+  regionFor(tenantId: string): Region {
+    const tenant = this.tenants.get(tenantId);
+    // لو الـ tenant مش معروف بنرفض، عمره ما يروح لـ region افتراضي
+    if (!tenant) throw new ResidencyViolation(`unknown tenant ${tenantId}: refusing to route`);
+    return tenant.residency;
+  }
+
+  assertWrite(tenantId: string, table: string, targetRegion: Region): void {
+    const home = this.regionFor(tenantId);
+    const dataClass = TABLE_CLASS[table];
+    if (dataClass === undefined) throw new ResidencyViolation(`table ${table} has no data class: classify it first`);
+    if (dataClass === "pii" &amp;&amp; targetRegion !== home) {
+      throw new ResidencyViolation(`tenant ${tenantId} is pinned to ${home}, refusing write to ${table} in ${targetRegion}`);
+    }
+  }
+}</code></pre>
+
+<pre data-file="src/residency.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import { ResidencyViolation, TenantRouter } from "./residency.ts";
+
+const router = new TenantRouter([
+  { id: "acme-gmbh", residency: "eu-central" },
+  { id: "boston-shop", residency: "us-east" },
+]);
+
+test("EU tenant writes orders in its own region", () =&gt; {
+  assert.doesNotThrow(() =&gt; router.assertWrite("acme-gmbh", "orders", "eu-central"));
+});
+
+test("EU tenant row can never be written to another region", () =&gt; {
+  assert.throws(() =&gt; router.assertWrite("acme-gmbh", "orders", "us-east"), ResidencyViolation);
+});
+
+test("operational data is allowed anywhere", () =&gt; {
+  assert.doesNotThrow(() =&gt; router.assertWrite("acme-gmbh", "feature_flags", "us-east"));
+});
+
+test("an unknown tenant fails closed", () =&gt; {
+  assert.throws(() =&gt; router.regionFor("ghost-tenant"), /unknown tenant/);
+});
+
+test("a new table without a data class is rejected", () =&gt; {
+  assert.throws(() =&gt; router.assertWrite("acme-gmbh", "audit_trail", "eu-central"), /no data class/);
+});</code></pre>
+
+<pre><code class="language-plaintext">ok 1 - EU tenant writes orders in its own region
+ok 2 - EU tenant row can never be written to another region
+ok 3 - operational data is allowed anywhere
+ok 4 - an unknown tenant fails closed
+ok 5 - a new table without a data class is rejected
+# tests 5
+# pass 5
+# fail 0</code></pre>
+  <div class="ar-note">كل الـ 5 اختبارات passed: كتابة EU في EU مسموحة، كتابة EU في US بترمي <code>ResidencyViolation</code>، الـ operational data مسموحة في أي مكان، الـ tenant غير المعروف fail closed، والجدول من غير data class مرفوض.</div>
+
+<pre data-file="src/check-residency.ts"><code class="language-typescript">// ده سكريبت CI: أي مكان بيخزّن PII لازم يبقى مكتوب وفي نفس الـ region
+interface Store { name: string; kind: "table" | "replica" | "backup" | "logs"; region: string; pii: boolean; tenantScope: string }
+
+const bad: Store[] = [
+  { name: "orders-eu-primary", kind: "table", region: "eu-central", pii: true, tenantScope: "eu" },
+  { name: "orders-eu-replica", kind: "replica", region: "eu-west", pii: true, tenantScope: "eu" },
+  { name: "orders-eu-backup", kind: "backup", region: "us-east", pii: true, tenantScope: "eu" },
+  { name: "app-logs", kind: "logs", region: "us-east", pii: true, tenantScope: "global" },
+  { name: "user-directory", kind: "table", region: "us-east", pii: true, tenantScope: "global" },
+  { name: "feature-flags", kind: "table", region: "us-east", pii: false, tenantScope: "global" },
+];
+
+const ALLOWED: Record&lt;string, string[]&gt; = { eu: ["eu-central", "eu-west"], us: ["us-east"] };
+
+export function findViolations(stores: Store[]): string[] {
+  const problems: string[] = [];
+  for (const s of stores) {
+    if (!s.pii) continue;
+    if (s.tenantScope === "global") {
+      problems.push(`${s.name}: PII in a global store (kind=${s.kind}, region=${s.region})`);
+      continue;
+    }
+    if (!ALLOWED[s.tenantScope]?.includes(s.region)) {
+      problems.push(`${s.name}: ${s.tenantScope} data stored in ${s.region} (kind=${s.kind})`);
+    }
+  }
+  return problems;
+}
+
+// تحذير: تغيير pii لـ false هنا بيوصف شغل اتعمل فعلًا، مش بديل عنه
+// (1) الـ backup اتنقل لـ bucket في أوروبا
+// (2) الـ logs بقت بتتفلتر من الـ PII قبل ما تطلع من الـ region
+// (3) الـ directory بقى فيه HMAC بدل الإيميل، وده لسه pseudonymous data
+const fixed: Store[] = bad
+  .map((s) =&gt; (s.name === "orders-eu-backup" ? { ...s, region: "eu-west" } : s))
+  .map((s) =&gt; (s.name === "app-logs" ? { ...s, pii: false } : s))
+  .map((s) =&gt; (s.name === "user-directory" ? { ...s, pii: false } : s));
+
+const config = process.argv[2] === "fixed" ? fixed : bad;
+const problems = findViolations(config);
+for (const p of problems) console.log("VIOLATION", p);
+console.log(problems.length === 0 ? "residency check: ok" : `residency check: FAILED with ${problems.length} problems`);
+process.exitCode = problems.length === 0 ? 0 : 1;</code></pre>
+
+<pre><code class="language-plaintext">VIOLATION orders-eu-backup: eu data stored in us-east (kind=backup)
+VIOLATION app-logs: PII in a global store (kind=logs, region=us-east)
+VIOLATION user-directory: PII in a global store (kind=table, region=us-east)
+residency check: FAILED with 3 problems
+bad exit=1</code></pre>
+  <div class="ar-note">الـ CI check على الـ config الغلط: 3 مشاكل: backup لبيانات EU في us-east، و logs فيها PII في مكان عالمي، و directory فيه PII عالمي. الـ exit code بقى 1، يعني الـ build بيقع.</div>
+
+<pre><code class="language-plaintext">residency check: ok
+fixed exit=0</code></pre>
+  <div class="ar-note">بعد التصليح الـ check عدّى و exit 0. تغيير <code>pii: false</code> لازم يوصف شغل حصل فعلًا: الـ backup اتنقل، والـ logs اتفلترت، والـ directory بقى HMAC. مش مجرد تغيير flag عشان الـ CI يعدي.</div>
+
+<pre data-file="src/residency-db.mjs"><code class="language-javascript">import { connect, createPrimary, stopAll } from "../pg-cluster.mjs";
+import { guard } from "./delay-proxy.mjs";
+
+const c = await createPrimary();
+try {
+  const db = await connect(guard(c.port));
+  // خط دفاع تاني: قاعدة EU نفسها بترفض صف مكتوب لـ region تانية
+  await db.query(`create table orders(
+    id bigint generated always as identity primary key,
+    tenant_id text not null,
+    region text not null check (region = 'eu-central'),
+    total_cents int not null)`);
+  await db.query("insert into orders(tenant_id, region, total_cents) values ('acme-gmbh', 'eu-central', 4200)");
+  console.log("insert with region eu-central: ok");
+  try {
+    await db.query("insert into orders(tenant_id, region, total_cents) values ('boston-shop', 'us-east', 900)");
+  } catch (e) {
+    console.log(`insert with region us-east: ${e.code} ${e.message}`);
+  }
+  await db.end();
+} finally {
+  await stopAll(c);
+}</code></pre>
+
+<pre><code class="language-plaintext">insert with region eu-central: ok
+insert with region us-east: 23514 new row for relation "orders" violates check constraint "orders_region_check"</code></pre>
+  <div class="ar-note">دي Postgres حقيقية: الصف بتاع <code>eu-central</code> اتكتب، والصف بتاع <code>us-east</code> رجع error <code>23514</code> من الـ CHECK constraint. ده خط الدفاع الأخير لو الراوتر فيه bug.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الجزء ده سياق هندسي مش استشارة قانونية. الـ GDPR هو المرجع المشهور: Chapter V (المواد 44–50) بيحدد نقل الـ personal data بره الـ EU/EEA، ومش بيطلب إن الـ data تفضل جوه. النقل محتاج أساس: adequacy decision (مادة 45)، أو safeguards زي standard contractual clauses (مادة 46)، أو binding corporate rules (مادة 47)، أو استثناء ضيق (مادة 49). قايمة الـ adequacy بتاعة المفوضية الأوروبية فيها UK و Japan و Switzerland والشركات الأمريكية المشتركة في Data Privacy Framework، ومصر والسعودية مش فيها. وفيه تفصيلتين بيحددوا أغلب التصميمات. الـ EDPB بيقول إن "remote access from a third country (for example in support situations)" بيتحسب نقل برضه، يعني مهندس support في القاهرة فتح سجل عميل أوروبي ده نقل. وكمان عقود كتير بتطلب تخزين جوه الـ EU بس، وده أشد من القانون.</p>
+    <p>الدول التانية ليها قوانينها، وبتتغير، فراجع النص الرسمي قبل ما تقتبس. مصر عندها قانون 151 لسنة 2020، ولائحته التنفيذية اتقال إنها صدرت في نوفمبر 2025، والنقل عبر الحدود محتاج ترخيص من مركز حماية البيانات. والسعودية عندها الـ PDPL ولائحة 2024 للنقل خارج المملكة. مقدرتش أقرا النص الرسمي للاتنين: اللي لقيته ملخصات مكاتب محاماة، فاعتبر الجملتين دول نقطة بداية للمحامي بتاعك، مش حقايق تبني عليها.</p>
+    <p>التصميم اللي بيطلع من ده واضح. ثبّت كل tenant في region. وافصل الـ <strong>control plane</strong> (الـ tenants والـ feature flags والـ deploys: global ومن غير personal data) عن الـ <strong>data plane</strong> (الـ orders والـ invoices والـ customers: region واحدة لكل tenant). خلّي الـ personal data بره الجداول العالمية، وافتكر الأماكن اللي الناس بتنساها: الـ backups، والـ log pipelines، وexports الـ analytics، وأدوات الـ support كلها بتتحسب. وأخيرًا خليها آلية: قاعدة في wiki مش هتعمل حاجة الساعة 2 بالليل. الراوتر تحت بيرمي <code>ResidencyViolation</code> قبل ما أي write يخرج من الـ region، والـ tenant المجهول بيعمل fail closed، والجدول اللي من غير data class مرفوض، والـ CI check بيوقّع الـ build لو أي مخزن فيه بيانات EU قاعد في مكان تاني، و <code>CHECK</code> constraint في الـ database آخر خط لو الراوتر فيه bug.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      شركة SaaS مصرية بدأت تبيع لعميل ألماني والعقد فيه "البيانات تفضل في الاتحاد الأوروبي". هنا مش كفاية تعمل Postgres في Frankfurt. راجع: الـ backups بتروح فين؟ الـ logs بتتبعت لأي Sentry/Datadog وفي أنهي region؟ مين من الـ support بيقدر يفتح الـ data ومن أنهي بلد؟ وفي الكود: <code>tenant_id</code> إجباري في كل query و middleware بيرفض الـ region الغلط، زي <a href="../../09-Databases/lessons/28-multitenancy-rls-roles.html">الـ multitenancy في قسم 09</a>.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>Backups and logs count</b>
+    A correctly pinned primary with a backup bucket in another region, or logs shipped to a global SaaS with customer emails in them, is a residency failure the database never sees. Put every store in the map the CI check reads.
+    <div class="ar-note">Primary متثبت صح مع backup bucket في region تانية، أو logs رايحة لـ SaaS عالمي وفيها إيميلات عملاء، ده فشل residency الـ database عمره ما هتشوفه. حط كل مخزن في الـ map اللي الـ CI check بيقراها.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Patterns <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — الأنماط وإمتى كل واحد</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Most systems end up with one of four shapes. In <strong>single home per user</strong>, each user's rows live in one region, reads and writes go there, and writes never conflict. Cross-region queries get expensive. In <strong>read local, write home</strong>, replicas serve reads nearby while all writes go to one region: simple, with reads possibly stale. <strong>Active-active with conflict handling</strong> lets every region accept writes and resolves conflicts with LWW, merges or CRDTs: lowest write latency and the most moving parts. And <strong>consensus across regions</strong> gives strong consistency with a write latency of at least one inter-region round trip, which is what Spanner and CockroachDB's geo-partitioning are built around. Those two are named here and <strong>not run here</strong>.</p>
+    <p>The calculator below turns assumed inputs into a table, and every figure in it comes from those inputs, so replace them with your own. Two things are worth noticing: read-replica setups get cheap reads and leave writes where they were, and strong consensus buys an RPO of 0 with every write paying the inter-region trip. The cost column is a rough multiple of a single-region deployment, including the extra replication traffic and operational headcount that a price calculator tends to leave out.</p>
+    <p>The evolution order is the actual advice. Start in one region. Add read replicas when latency for far users or read load justifies it. Split users or tenants by home region when data volume, residency contracts or write latency require it. Active-active comes last, only when you have a specific reason to take writes in two places at once, and only for the data that can tolerate merging. Each step is cheap to do later and expensive to undo.</p>
+  </section>
+
+<pre data-file="src/pattern-calculator.ts"><code class="language-typescript">// آلة حاسبة: الأرقام مدخلات تقديرية مش قياس، غيّرها بأرقام نظامك
+const RTT_BETWEEN_REGIONS = 90;
+const USER_TO_NEAREST = 15;
+const USER_TO_HOME_WHEN_AWAY = 95;
+const REPLICATION_LAG = 400;
+const REGIONS = 2;
+
+interface Pattern { name: string; read: number; write: number; rpoMs: string; complexity: string; cost: number }
+
+const patterns: Pattern[] = [
+  { name: "single region", read: USER_TO_HOME_WHEN_AWAY, write: USER_TO_HOME_WHEN_AWAY, rpoMs: "whole region", complexity: "low", cost: 1 },
+  { name: "read replicas, one writer", read: USER_TO_NEAREST, write: USER_TO_HOME_WHEN_AWAY, rpoMs: `~${REPLICATION_LAG}`, complexity: "medium", cost: REGIONS },
+  { name: "home region per user", read: USER_TO_NEAREST, write: USER_TO_NEAREST, rpoMs: `~${REPLICATION_LAG}`, complexity: "medium-high", cost: REGIONS },
+  { name: "active-active + merge", read: USER_TO_NEAREST, write: USER_TO_NEAREST, rpoMs: `~${REPLICATION_LAG}`, complexity: "high", cost: REGIONS * 1.3 },
+  { name: "consensus across regions", read: USER_TO_NEAREST, write: USER_TO_NEAREST + RTT_BETWEEN_REGIONS, rpoMs: "0", complexity: "high (managed)", cost: REGIONS * 1.5 },
+];
+
+console.log("pattern".padEnd(28) + "read ms".padStart(8) + "write ms".padStart(10) + "RPO ms".padStart(14) + "  complexity".padEnd(18) + "cost x");
+for (const p of patterns) {
+  console.log(p.name.padEnd(28) + String(p.read).padStart(8) + String(p.write).padStart(10) + p.rpoMs.padStart(14) + `  ${p.complexity}`.padEnd(18) + p.cost.toFixed(1));
+}
+
+// إمتى التقسيم يستاهل؟ لو الوقت الضايع كبير قصاد تكلفة region إضافية
+const awayUsersPerDay = 80_000;
+const queriesPerRequest = 5;
+const savedMsPerRequest = (USER_TO_HOME_WHEN_AWAY - USER_TO_NEAREST) + queriesPerRequest * 2;
+console.log(`\nsaved per request for an away user: ~${savedMsPerRequest} ms, across ${awayUsersPerDay} requests/day = ${((awayUsersPerDay * savedMsPerRequest) / 3_600_000).toFixed(1)} hours of waiting per day`);</code></pre>
+
+<pre><code class="language-plaintext">pattern                      read ms  write ms        RPO ms  complexity      cost x
+single region                     95        95  whole region  low             1.0
+read replicas, one writer         15        95          ~400  medium          2.0
+home region per user              15        15          ~400  medium-high     2.0
+active-active + merge             15        15          ~400  high            2.6
+consensus across regions          15       105             0  high (managed)  3.0
+
+saved per request for an away user: ~90 ms, across 80000 requests/day = 2.0 hours of waiting per day</code></pre>
+  <div class="ar-note">ده حساب بفرضيات مش قياس. single region: كل حاجة 95 ms للمستخدم البعيد، والـ RPO هو الـ region كلها لو وقعت. read replicas: القراية 15 ms والكتابة 95. home region: الاتنين 15. active-active: 15 و15 بس تعقيد عالي وتكلفة 2.6. consensus: الكتابة 105 ms والـ RPO صفر والتكلفة 3. السطر الأخير: الوفر للمستخدم البعيد حوالي 90 ms في الطلب، يعني ساعتين انتظار في اليوم عند 80 ألف طلب.</div>
+
+  <table>
+    <tr><th>Pattern</th><th>Read latency</th><th>Write latency</th><th>RPO on region loss</th><th>Conflicts</th><th>Complexity</th></tr>
+    <tr><td>Single region</td><td>Far users pay RTT</td><td>Far users pay RTT</td><td>The region's backups, can be large</td><td>None</td><td>Low</td></tr>
+    <tr><td>Read local, write home</td><td>Low, may be stale</td><td>Far users pay RTT</td><td>Replication lag</td><td>None</td><td>Medium</td></tr>
+    <tr><td>Single home per user</td><td>Low for home users</td><td>Low for home users</td><td>Replication lag per home</td><td>None within a user</td><td>Medium-high</td></tr>
+    <tr><td>Active-active + merge</td><td>Low</td><td>Low</td><td>Replication lag</td><td>Yes, handled by design</td><td>High</td></tr>
+    <tr><td>Consensus across regions</td><td>Low (with care)</td><td>At least one inter-region RTT</td><td>0</td><td>None</td><td>High, usually managed</td></tr>
+  </table>
+  <div class="ar-note">الجدول صف صف: region واحدة: المستخدم البعيد بيدفع RTT في القراية والكتابة، والـ RPO بيعتمد على الـ backups، مفيش conflicts، بسيط. قراية محلية وكتابة في الـ home: القراية سريعة وممكن تبقى قديمة، والكتابة بتدفع RTT، والـ RPO قد الـ lag. الـ home region لكل مستخدم: الاتنين سريعين لصاحب المكان، ومفيش conflicts لنفس المستخدم، تعقيد متوسط لعالي. Active-active: الاتنين سريعين، بس فيه conflicts لازم تتعالج، وتعقيد عالي. Consensus: الكتابة على الأقل RTT بين الـ regions، والـ RPO صفر، ومفيش conflicts، وعادةً managed.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>أغلب الأنظمة بتوصل لواحد من 4 أشكال. <strong>Single home per user</strong>: صفوف كل مستخدم في region واحدة، والقراية والكتابة هناك، ومفيش conflicts على الكتابة، بس الـ queries بين الـ regions غالية. <strong>Read local, write home</strong>: الـ replicas بتخدم القراية القريبة وكل الكتابات بتروح لـ region واحدة: بسيط، والقراية ممكن تبقى قديمة. <strong>Active-active مع conflict handling</strong>: كل region بتقبل كتابة وبنحل الـ conflicts بـ LWW أو merge أو CRDT: أقل latency للكتابة وأكتر تعقيد. و <strong>consensus بين الـ regions</strong>: strong consistency والكتابة بتدفع على الأقل رحلة واحدة بين الـ regions، وده اللي Spanner و geo-partitioning بتاع CockroachDB مبنيين عليه. الاتنين دول بنذكرهم بالاسم بس و <strong>not run here</strong>.</p>
+    <p>الآلة الحاسبة بتحوّل فرضيات لجدول، وكل رقم جاي من الفرضيات دي، فحط أرقامك. حاجتين مهمين: الـ read replicas بتدي قراية رخيصة والكتابة بتفضل زي ما هي، والـ consensus بيدي RPO صفر بس كل كتابة بتدفع الرحلة بين الـ regions. وعمود التكلفة تقدير تقريبي لمضاعفة region واحدة، ومعاها traffic الـ replication والناس اللي هتشغّل، اللي آلات حساب الأسعار بتنسى تحسبهم.</p>
+    <p>ترتيب التطور ده هو النصيحة الفعلية. ابدأ بـ region واحدة. ضيف read replicas لما الـ latency للمستخدمين البعيدين أو حمل القراية يبرر ده. قسّم المستخدمين أو الـ tenants بـ home region لما حجم الـ data أو عقود الـ residency أو latency الكتابة يطلبوا ده. والـ active-active في الآخر خالص، لما يبقى عندك سبب محدد تقبل كتابة في مكانين في نفس الوقت، وعلى الـ data اللي تستحمل الدمج بس. كل خطوة رخيصة لو عملتها بعدين، وغالية لو حبيت ترجع فيها.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لما الـ CTO يقول "لازم نبقى global". اسأله بالأرقام: كام في المية من الـ traffic بره region الـ database؟ كام ms بيخسروا؟ فيه عقد residency؟ لو 85% من المستخدمين في مصر والخليج، region قريبة ومعاها CDN أهم بكتير من active-active. واكتب القرار في ADR بالأرقام، زي <code>project/adr/</code>، عشان اللي يجي بعدك يعرف ليه وإمتى يعيد التفكير.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Keep the option cheap</b>
+    Put <code>region</code> on the user or tenant from day one, even with one region: it's a column and a default. Then splitting by region later is a data move and a router, instead of a schema migration across every table.
+    <div class="ar-note">حط <code>region</code> على المستخدم أو الـ tenant من أول يوم، حتى لو عندك region واحدة: عمود وقيمة default. وساعتها التقسيم بعدين هيبقى نقل data وراوتر، بدل migration لكل جدول.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Chatty page across regions</b>
+<pre><code class="language-typescript">// كل await هنا رحلة كاملة بين الـ regions
+const user = await db.query(sqlUser, [id]);
+const orders = await db.query(sqlOrders, [id]);
+const invoices = await db.query(sqlInvoices, [id]);</code></pre></div>
+    <div class="good"><b>✅ One round trip, or move the app</b>
+<pre><code class="language-typescript">// الاستعلامات كلها في رحلة واحدة عبر الـ delay
+const page = await db.query(`select
+  (select row_to_json(u) from users u where id = $1) as profile,
+  (select count(*) from orders where user_id = $1) as orders`, [id]);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الكود الأول بيعمل 3 رحلات بين الـ regions، وعلى delay 90 ms ده 270 ms قبل أي شغل. قسنا 5 queries: 492.7 ms عبر الـ delay. ✅ جمّعهم في رحلة واحدة (91.7 ms في التجربة)، أو الأحسن تنقل الـ app جنب الـ database.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Read from the replica right after a write</b>
+<pre><code class="language-typescript">await primary.query(insertOrder, [id]);
+// الـ replica لسه ما وصلتش للكتابة دي
+const row = await replica.query(selectOrder, [id]);</code></pre></div>
+    <div class="good"><b>✅ Carry a token, with a fallback</b>
+<pre><code class="language-typescript">const { lsn } = await writeAndGetLsn(primary, id);
+// استنى الـ replica بحد أقصى، وإلا روح للـ home
+const ok = await waitForToken(replica, lsn, 150);
+const row = await (ok &gt;= 0 ? replica : primary).query(selectOrder, [id]);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ من غير token، الصف مكانش موجود في 40 من 40 محاولة. ✅ اكتب وخد الـ LSN، واستنى الـ replica بحد زمني (150 ms مثلًا)، ولو مش لحقت اقرا من الـ home. كده الانتظار محدود والمستخدم بيشوف اللي كتبه.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ LWW on order status</b>
+<pre><code class="language-sql">-- الساعة السريعة ممكن ترجّع الطلب من shipped لـ paid
+UPDATE orders SET status = 'paid', updated_at = now()
+WHERE id = 42;</code></pre></div>
+    <div class="good"><b>✅ Single owner, or a state machine merge</b>
+<pre><code class="language-sql">-- مسموح بس لو الترتيب بيتقدم: paid بعد pending
+UPDATE orders SET status = 'paid'
+WHERE id = 42 AND status IN ('pending');</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ LWW على حالة الطلب ممكن يرجّعها لورا بسبب ساعة سريعة: في المحاكاة 1,569 كتابة أحدث خسرت بـ 5 ثواني skew. ✅ خلي الطلب ليه owner واحد (الـ home region)، أو خلّي الـ update يتقدم في الـ state machine بس زي ما في الكود، أو دمج بالترتيب زي <code>mergeStatus</code>.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A counter guarding a balance</b>
+<pre><code class="language-typescript">// الاتنين شايفين 150 وكل واحد خصم 100
+eu = pnDec(eu, "eu", 100);
+us = pnDec(us, "us", 100);
+pnValue(pnMerge(eu, us)); // -50</code></pre></div>
+    <div class="good"><b>✅ Coordinate the invariant</b>
+<pre><code class="language-sql">-- الرصيد عند صاحب واحد والخصم بيفشل لو مفيش فلوس
+UPDATE wallets SET balance_cents = balance_cents - 10000
+WHERE user_id = 7 AND balance_cents &gt;= 10000;</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ CRDT بيضمن إن الـ regions تتفق، مش إن الرصيد موجب: طلع <code>-50</code> بعد الدمج. ✅ أي قيد زي balance ≥ 0 أو username مميز لازم يكون له صاحب واحد في region واحدة، أو حجز مقسم (escrow) بين الـ regions بحد لكل واحد.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Pinning only the primary</b>
+<pre><code class="language-plaintext">orders_eu_primary  : eu-central
+orders_eu_backup   : us-east
+app_logs (PII)     : global SaaS</code></pre></div>
+    <div class="good"><b>✅ Every store in a checked map</b>
+<pre><code class="language-plaintext">orders_eu_primary  : eu-central
+orders_eu_backup   : eu-west
+app_logs           : PII stripped, then global</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ primary في أوروبا بس الـ backup في أمريكا والـ logs فيها PII في SaaS عالمي، ده فشل residency حتى لو الـ database تمام. ✅ كل مخزن في map بيقراه CI check (زي <code>check-residency.ts</code>)، والـ logs بتتفلتر قبل ما تطلع من الـ region.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Your own numbers <span class="lvl lvl-1">🟢 easy</span></b>
+    Put your real regions into <code>placement-calculator.ts</code>: measure RTT from your laptop or a small VM with <code>ping</code> or a timed <code>select 1</code>, change the inputs, and count the queries on your busiest page. Which placement wins, and by how much?
+    <div class="ar-note">حط الـ regions الحقيقية بتاعتك في <code>placement-calculator.ts</code>: قيس الـ RTT من جهازك أو VM صغيرة بـ <code>ping</code> أو <code>select 1</code> بتوقيت، غيّر المدخلات، وعدّ الـ queries في أكتر صفحة شغالة. أنهي مكان كسب وبكام؟</div>
+    <details><summary>Hint · تلميح</summary>
+      Count round trips, not queries: a batched or joined query is one trip. The result changes more with the query count than with the exact RTT.
+      <div class="ar-note">عدّ الـ round trips مش الـ queries: query مجمّع أو join رحلة واحدة. والنتيجة بتتغير مع عدد الـ queries أكتر من الـ RTT بالظبط.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. A full cart CRDT <span class="lvl lvl-2">🟡 medium</span></b>
+    Combine an OR-Set of SKUs with a PN-Counter per SKU into one <code>Cart</code> type with <code>mergeCart</code>. Test that the merge is commutative with <code>fast-check</code>, and that two regions adding the same SKU keep the sum of both quantities.
+    <div class="ar-note">ادمج OR-Set للأصناف مع PN-Counter لكل صنف في نوع واحد <code>Cart</code> ومعاه <code>mergeCart</code>. اختبر إن الدمج commutative بـ <code>fast-check</code>، وإن region اتنين لما يضيفوا نفس الصنف، الكمية النهائية مجموع الاتنين.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-cart.test.ts"><code class="language-typescript">import assert from "node:assert/strict";
+import { test } from "node:test";
+import fc from "fast-check";
+import { orAdd, orEmpty, orMerge, orValues, pnEmpty, pnInc, pnMerge, pnValue, type ORSet, type PNCounter } from "./crdt.ts";
+
+// عربة كاملة: OR-Set للأصناف و PN-Counter للكمية بتاعة كل صنف
+interface Cart { items: ORSet; qty: Record&lt;string, PNCounter&gt; }
+const empty = (): Cart =&gt; ({ items: orEmpty(), qty: {} });
+
+function addLine(c: Cart, sku: string, region: string, tag: string, by: number): Cart {
+  const current = c.qty[sku] ?? pnEmpty();
+  return { items: orAdd(c.items, sku, tag), qty: { ...c.qty, [sku]: pnInc(current, region, by) } };
+}
+
+function mergeCart(a: Cart, b: Cart): Cart {
+  const qty: Record&lt;string, PNCounter&gt; = { ...a.qty };
+  for (const [sku, q] of Object.entries(b.qty)) qty[sku] = pnMerge(qty[sku] ?? pnEmpty(), q);
+  return { items: orMerge(a.items, b.items), qty };
+}
+
+const view = (c: Cart) =&gt; orValues(c.items).map((sku) =&gt; [sku, pnValue(c.qty[sku] ?? pnEmpty())]);
+
+let tag = 0;
+const cart: fc.Arbitrary&lt;Cart&gt; = fc
+  .array(fc.tuple(fc.constantFrom("sku-1", "sku-2"), fc.constantFrom("eu", "us"), fc.integer({ min: 1, max: 5 })), { maxLength: 10 })
+  .map((ops) =&gt; ops.reduce((c, [sku, r, by]) =&gt; addLine(c, sku, r, `t${++tag}`, by), empty()));
+
+test("cart merge is commutative", () =&gt; {
+  fc.assert(fc.property(cart, cart, (a, b) =&gt; assert.deepEqual(view(mergeCart(a, b)), view(mergeCart(b, a)))), { numRuns: 300 });
+});
+
+test("two regions adding the same item keep both quantities", () =&gt; {
+  const eu = addLine(empty(), "sku-1", "eu", "e1", 2);
+  const us = addLine(empty(), "sku-1", "us", "u1", 3);
+  assert.deepEqual(view(mergeCart(eu, us)), [["sku-1", 5]]);
+});</code></pre>
+<pre><code class="language-plaintext">ok 1 - cart merge is commutative
+ok 2 - two regions adding the same item keep both quantities
+# tests 2
+# pass 2
+# fail 0</code></pre>
+      <div class="ar-note">الاختباران passed: الدمج commutative على 300 حالة، وإضافة نفس الصنف من region اتنين بكميتين 2 و3 طلعت 5.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Token reads with a fallback <span class="lvl lvl-2">🟡 medium</span></b>
+    Take <code>repl-lag.mjs</code> and turn <code>waitForToken</code> into <code>readAfterWrite(token, sql, args)</code>: wait up to 150 ms on the replica, otherwise read from the primary, and return which side answered. Run it with the proxy cap on, and report how many reads fell back.
+    <div class="ar-note">خد <code>repl-lag.mjs</code> وحوّل <code>waitForToken</code> لـ <code>readAfterWrite(token, sql, args)</code>: استنى على الـ replica بحد أقصى 150 ms، وإلا اقرا من الـ primary، ورجّع مين اللي جاوب. شغّله والـ proxy cap شغال، وقول كام قراية راحت للـ home.</div>
+    <details><summary>Hint · تلميح</summary>
+      <code>waitForToken</code> already returns <code>-1</code> on timeout. With the 1 MB/s cap, expect more fallbacks during the burst, and watch the count drop once the standby catches up.
+      <div class="ar-note"><code>waitForToken</code> بترجع <code>-1</code> لو الوقت خلص. مع سقف 1 MB/s توقع fallbacks أكتر وقت الـ burst، والعدد ينزل لما الـ standby يلحق.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project <span class="lvl lvl-3">🔴 project</span></b>
+    Write a data map for your side project: every store (database, replica, backup, log sink, analytics export, third-party SaaS) with its region and whether it holds personal data. Adapt <code>check-residency.ts</code> to read it, make it fail on one real gap, fix the gap, and add the check to CI. Then decide, in an ADR, which of the four patterns the project should use at 10× its current traffic and what number would trigger the next step.
+    <div class="ar-note">اكتب data map لمشروعك الجانبي: كل مخزن (database، replica، backup، log sink، analytics export، SaaS خارجي) ومكانه وهل فيه personal data. عدّل <code>check-residency.ts</code> يقراها، خليه يفشل على فجوة حقيقية، صلّحها، وحطه في الـ CI. وبعدين قرر في ADR أنهي نمط من الأربعة يناسب المشروع عند 10 أضعاف الـ traffic، وإيه الرقم اللي هيخليك تنقل للخطوة الجاية.</div>
+    <details><summary>Hint · تلميح</summary>
+      The gaps people find first are log pipelines and error trackers, which often contain emails. Start there.
+      <div class="ar-note">الفجوات اللي الناس بتلاقيها الأول هي الـ log pipelines وأدوات تتبع الأخطاء، وغالبًا فيها إيميلات. ابدأ منها.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Latency is per round trip: never split the app from its data. 5 queries across a 90 ms link cost ≈493 ms, and one round trip ≈92 ms (measured through a delay proxy).</li>
+    <li>Give each user or tenant a home region; only a directory and the tenants table stay global, and a keyed email hash is still personal data.</li>
+    <li>Replication lag is at least the one-way delay plus apply time, and it grows with burst size and link limits (204 ms, then 1.8 s under a 1 MB/s cap).</li>
+    <li>Read-your-writes failed 40/40 from a far replica. Sticky reads or an LSN token fix it (0/40), and a token needs a timeout and a fallback.</li>
+    <li>LWW converges, and loses data: 71 lost updates at 100 ms lag, 1,593 at 5 s skew (simulation).</li>
+    <li>LWW is fine for replaceable snapshots. Use domain merges for anything a person expects to keep.</li>
+    <li>CRDTs converge through commutative, associative, idempotent merges. Test the laws with property tests.</li>
+    <li>CRDTs can't enforce invariants: a balance reached -50 after a merge. Metadata grows: 157,824 bytes for one element after 10,000 cycles.</li>
+    <li>GDPR restricts transfers, it doesn't demand local storage. Remote access from a third country counts as a transfer. Check other countries' official text.</li>
+    <li>Residency covers backups, logs, exports and support access. Enforce it with a router that throws, a CI check and a database constraint.</li>
+    <li>Evolution: one region → read replicas → home regions → active-active only where you can merge. Put a <code>region</code> column in from day one.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ latency بتتحسب لكل round trip: متفصلش الـ app عن الـ data. 5 queries عبر link بـ 90 ms كلفوا حوالي 493 ms، ورحلة واحدة حوالي 92 ms (مقاس عبر delay proxy).</li>
+      <li>إدي كل مستخدم أو tenant home region، والحاجات اللي تفضل global بس هي directory وجدول الـ tenants، والـ keyed hash للإيميل لسه personal data.</li>
+      <li>الـ replication lag على الأقل وقت الرحلة في اتجاه واحد زائد الـ apply، وبيكبر مع حجم الـ burst وحدود الـ link (204 ms، وبعدين 1.8 ثانية مع سقف 1 MB/s).</li>
+      <li>الـ read-your-writes فشل 40/40 من replica بعيدة. الـ sticky reads أو الـ LSN token بيحلوها (0/40)، والـ token محتاج timeout و fallback.</li>
+      <li>الـ LWW بيتفق بس بيخسر data: 71 update ضاعوا عند 100 ms lag، و1,593 عند 5 ثواني skew (محاكاة).</li>
+      <li>الـ LWW تمام للـ snapshots اللي ينفع تتستبدل. استخدم domain merge لأي حاجة إنسان مستني تفضل.</li>
+      <li>الـ CRDTs بتوصل لنفس الحالة بفضل merge يكون commutative و associative و idempotent. اختبر القوانين بـ property tests.</li>
+      <li>الـ CRDTs مش بتفرض قيود: رصيد بقى -50 بعد الدمج. والـ metadata بتكبر: 157,824 byte لعنصر واحد بعد 10 آلاف دورة.</li>
+      <li>الـ GDPR بيقيّد النقل، ومش بيطلب تخزين محلي. والـ remote access من بلد تالت بيتحسب نقل. وراجع النص الرسمي للدول التانية.</li>
+      <li>الـ residency بتشمل الـ backups والـ logs والـ exports ووصول الـ support. طبقها براوتر بيرمي error و CI check و database constraint.</li>
+      <li>التطور: region واحدة ← read replicas ← home regions ← active-active بس في المكان اللي تقدر تدمج فيه. وحط عمود <code>region</code> من أول يوم.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 12 · 3.1 — Geo-distribution: data locality، cross-region replication lag، conflict resolution (last-write-wins ومشاكله، CRDTs كمفهوم)، data residency laws</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.postgresql.org/docs/current/monitoring-stats.html">PostgreSQL — pg_stat_replication and monitoring statistics</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/warm-standby.html">PostgreSQL — Log-Shipping Standby Servers</a></li>
+    <li><a href="https://docs.yjs.dev/">Yjs documentation</a></li>
+    <li><a href="https://fast-check.dev/">fast-check — property-based testing for JavaScript</a></li>
+    <li><a href="https://gdpr-info.eu/art-44-gdpr/">GDPR Article 44 and Chapter V</a></li>
+    <li><a href="https://commission.europa.eu/law/law-topic/data-protection/international-dimension-data-protection/adequacy-decisions_en">European Commission — Adequacy decisions</a></li>
+    <li><a href="https://www.edpb.europa.eu/system/files/2021-06/edpb_recommendations_202001vo.2.0_supplementarymeasurestransferstools_en.pdf">EDPB Recommendations 01/2020 v2.0 — supplementary measures, including remote access</a></li>
+    <li><a href="https://www.edpb.europa.eu/our-work-tools/our-documents/guidelines/guidelines-052021-interplay-between-application-article-3_en">EDPB Guidelines 05/2021 — Article 3 and Chapter V</a></li>
+  </ul>
+
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <!-- ===== Prev / Next (use class="empty" on a span when there is no prev/next) ===== -->
+  <nav class="lesson-nav">
+    <a class="prev" href="./35-storage-engines-btree-lsm.html"><small>← Previous</small>35 · B-Tree vs LSM</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./37-auth-at-scale-zero-trust-ddos.html"><small>Next →</small>37 · Auth &amp; Network Security</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

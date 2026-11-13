@@ -1,0 +1,1179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Unique IDs: UUID v7, Snowflake &amp; Friends — 12 System Design</title>
+<meta name="section" content="12-System-Design">
+<meta name="level" content="🟡 Intermediate">
+<meta name="time" content="55 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">12 · System Design</a></span>
+    <span>·</span>
+    <span>Lesson 31 / 63</span>
+    <span>·</span>
+    <span>~55 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+  <header>
+    <h1>Unique IDs: UUID v7, Snowflake &amp; Friends</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 31 of 63 — System Design</p>
+    <div class="meta">
+      <span class="chip">🟡 Intermediate</span>
+      <span class="chip">⏱ 55 min</span>
+      <span class="chip">Postgres 18.4 · Node 22 · TypeScript 7</span>
+      <span class="chip">Prereq: B-tree indexes, sharding basics</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>12 · 2.6 — Unique ID generation: auto-increment (مش distributed)، UUID v4 (random — B-tree fragmentation)، UUID v7 (time-ordered)، Snowflake (timestamp + machine ID + sequence — 64-bit sortable)، ticket servers، ULID</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Auto-increment and where it stops</a></li>
+      <li><a href="#p2">Part 2 — UUID v4 and the index it damages</a></li>
+      <li><a href="#p3">Part 3 — UUID v7, the new default</a></li>
+      <li><a href="#p4">Part 4 — ULID, size, and the JavaScript trap</a></li>
+      <li><a href="#p5">Part 5 — Snowflake in BigInt</a></li>
+      <li><a href="#p6">Part 6 — Ticket servers, blocks, and the final table</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>An ID looks like a detail until the table holds a billion rows and appears in every foreign key, index, URL, log line and event. The choice decides whether two shards can both create orders, how much your primary key index and WAL cost, whether a competitor can read your sales volume from a URL, and whether a JavaScript client silently corrupts the number. It is also a very common interview question, usually asked as "design a unique ID generator".</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ ID شكله تفصيلة صغيرة لحد ما الـ table يوصل مليار صف ويبقى موجود في كل foreign key وindex وURL وlog وevent. الاختيار ده هو اللي بيحدد هل shard-ين يقدروا يعملوا orders مع بعض، الـ primary key index والـ WAL هيكلفوك قد إيه، منافسك يقدر يعرف حجم مبيعاتك من URL ولا لأ، وهل الـ client في JavaScript هيبوّظ الرقم من غير ما يقول. وكمان سؤال interview مشهور جدًا، غالبًا بصيغة "صمّم unique ID generator".</p>
+  </section>
+
+  <!-- PART 1 -->
+  <h2 id="p1">Part 1 — Auto-increment and where it stops <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الـ auto-increment وبيقف فين</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>On one database a sequence is close to perfect: 8 bytes, strictly increasing per generator, ordered inserts, and nothing to deploy. The trouble starts when two databases generate IDs independently. A sequence only knows its own database, so two shards hand out the same numbers, and the collision appears later, when you merge data, build a global search index, or move a tenant between shards.</p>
+    <p>The classic hack is offset and step: shard A takes odd numbers, shard B even. It works, but the shard count is baked into every sequence. A third shard does not fit without changing the step everywhere, and a naive "start 3, step 3" collides with both, as the run below shows. Plan for it up front by choosing a large step (say 1024) and you waste nothing real, but you are still hand-assigning ranges in a config that must never be wrong.</p>
+    <p>Sequential IDs also leak. Place two orders a day apart and subtract: that is your competitor's daily order volume. And sequential IDs in a URL make enumeration trivial: <code>/invoices/1042</code> invites <code>/invoices/1043</code>. Authorization has to stop that anyway (see <a href="../../06-NodeJS/lessons/27-owasp-top-10-node.html">OWASP Top 10 in Node</a>), but an ID that can't be guessed removes the easy version of the attack.</p>
+    <p>It is still the right answer for a single database, for internal IDs that never leave the API, and for small lookup tables. If you shard later, the usual fix is a new ID scheme for new rows, not a rewrite.</p>
+    <p>The TypeScript examples run with <code>node file.ts</code> on Node 22 (type stripping), from a folder whose <code>package.json</code> has <code>"type": "module"</code>, with <code>pg</code>, <code>uuid</code> 14 and <code>ulid</code> 3 installed.</p>
+  </section>
+
+<pre class="diagram">
+  Shard A sequence: 1, 2, 3 ...          Shard B sequence: 1, 2, 3 ...
+        |                                        |
+        v                                        v
+  order id=1 (user 7)                    order id=1 (user 20)
+        \                                        /
+         \------&gt; analytics / search / &lt;--------/
+                  shard migration
+                  id=1 now means two orders
+</pre>
+  <div class="ar-note">كل shard عنده sequence لوحده بيبدأ من 1 ومايعرفش حاجة عن التاني. طول ما الـ data منفصلة مفيش مشكلة، بس لحظة ما تجمعهم في analytics أو search أو تنقل tenant من shard لـ shard، الـ id=1 بقى معناه طلبين مختلفين.</div>
+
+<pre data-file="src/two-shards.ts"><code class="language-typescript">import pg from "pg";
+
+// تحذير: السكريبت بيعمل tables، فشغّله على Postgres للتجربة بس
+const [urlA, urlB] = [process.env.PG_A_URL, process.env.PG_B_URL];
+if (!urlA || !urlB) throw new Error("set PG_A_URL and PG_B_URL to two throwaway databases");
+const shardA = new pg.Client({ connectionString: urlA });
+const shardB = new pg.Client({ connectionString: urlB });
+await shardA.connect();
+await shardB.connect();
+
+const insertOrder = async (db: pg.Client, table: string, userId: number) =&gt; {
+  const r = await db.query&lt;{ id: string }&gt;(`INSERT INTO ${table} (user_id) VALUES ($1) RETURNING id`, [userId]);
+  return r.rows[0].id;
+};
+
+// (1) كل shard عنده sequence لوحده ومايعرفش حاجة عن التاني
+for (const db of [shardA, shardB]) {
+  await db.query(`CREATE TABLE orders (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, user_id int NOT NULL)`);
+}
+const a = [await insertOrder(shardA, "orders", 7), await insertOrder(shardA, "orders", 8), await insertOrder(shardA, "orders", 9)];
+const b = [await insertOrder(shardB, "orders", 20), await insertOrder(shardB, "orders", 21), await insertOrder(shardB, "orders", 22)];
+console.log("shard A order ids:", a);
+console.log("shard B order ids:", b);
+console.log("same id, two different orders:", a.filter((id) =&gt; b.includes(id)));
+
+// (2) حيلة الـ offset والـ step: الأرقام الفردية لـ A والزوجية لـ B
+await shardA.query(`CREATE TABLE orders2 (id bigint GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 2) PRIMARY KEY, user_id int)`);
+await shardB.query(`CREATE TABLE orders2 (id bigint GENERATED ALWAYS AS IDENTITY (START WITH 2 INCREMENT BY 2) PRIMARY KEY, user_id int)`);
+const a2: string[] = [];
+const b2: string[] = [];
+for (let i = 0; i &lt; 4; i++) {
+  a2.push(await insertOrder(shardA, "orders2", 1));
+  b2.push(await insertOrder(shardB, "orders2", 1));
+}
+console.log("step 2, A:", a2, "B:", b2, "collisions:", a2.filter((id) =&gt; b2.includes(id)).length);
+
+// (3) دلوقتي عايز shard تالت: مفيش مكان ليه من غير ما تغيّر الـ step عند الكل
+await shardA.query(`CREATE SEQUENCE third_shard START WITH 3 INCREMENT BY 3`);
+const c: string[] = [];
+for (let i = 0; i &lt; 4; i++) c.push((await shardA.query&lt;{ v: string }&gt;(`SELECT nextval('third_shard') AS v`)).rows[0].v);
+console.log("naive third shard:", c, "hits A:", c.filter((id) =&gt; a2.includes(id)), "hits B:", c.filter((id) =&gt; b2.includes(id)));
+
+await shardA.end();
+await shardB.end();</code></pre>
+<pre><code class="language-plaintext">shard A order ids: [ '1', '2', '3' ]
+shard B order ids: [ '1', '2', '3' ]
+same id, two different orders: [ '1', '2', '3' ]
+step 2, A: [ '1', '3', '5', '7' ] B: [ '2', '4', '6', '8' ] collisions: 0
+naive third shard: [ '3', '6', '9', '12' ] hits A: [ '3' ] hits B: [ '6' ]</code></pre>
+  <div class="ar-note">الناتج من تجربة حقيقية على اتنين Postgres 18 منفصلين: السطور الأولانية بتوضح نفس الأرقام 1 و2 و3 طلعت من الاتنين، يعني 3 طلبات مختلفة بنفس الـ id. بعد كده الـ step=2 مفيهوش تعارض، وآخر سطر الـ shard التالت بـ start 3 / step 3 طلع 3 (موجود عند A) و6 (موجود عند B).</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>على database واحدة الـ sequence قريب من الكمال: 8 bytes، بيزيد باستمرار جوه الـ generator، الـ inserts مرتبة، ومفيش حاجة تتعمل deploy. المشكلة بتبدأ لما اتنين databases يولّدوا IDs لوحدهم. الـ sequence عارف الـ database بتاعته بس، فالاتنين بيدّوا نفس الأرقام، والتعارض بيظهر بعدين: لما تجمع الـ data، أو تعمل global search index، أو تنقل tenant بين shards.</p>
+    <p>الحل القديم هو الـ offset والـ step: shard A ياخد الفردي وshard B ياخد الزوجي. شغال، بس عدد الـ shards بقى محفور في كل sequence. الـ shard التالت مش هيدخل من غير ما تغيّر الـ step عند الكل، ولو عملت "start 3, step 3" ببساطة هيخبط في الاتنين زي ما الناتج فوق بيوضح. ممكن تخطط من الأول بـ step كبير زي 1024 وماتخسرش حاجة حقيقية، بس برضه بتوزّع ranges بإيدك في config لازم مايغلطش أبدًا.</p>
+    <p>الـ IDs المتتالية كمان بتسرّب معلومات. اعمل طلبين بينهم يوم واطرح الرقمين: ده حجم طلبات منافسك في اليوم. وكمان في الـ URL بتسهّل الـ enumeration: <code>/invoices/1042</code> بتعزم عليك بـ <code>/invoices/1043</code>. الـ authorization لازم يوقف ده في كل الأحوال (شوف <a href="../../06-NodeJS/lessons/27-owasp-top-10-node.html">OWASP Top 10 في Node</a>)، بس الـ ID اللي مايتخمّنش بيشيل النسخة السهلة من الهجوم.</p>
+    <p>ولسه هو الاختيار الصح مع database واحدة، ومع IDs داخلية مابتطلعش برا الـ API، ومع الـ lookup tables الصغيرة. ولو عملت sharding بعدين، الحل المعتاد هو scheme جديد للصفوف الجديدة مش إعادة كتابة كل حاجة.</p>
+    <p>أمثلة الـ TypeScript بتشتغل بـ <code>node file.ts</code> على Node 22 (type stripping)، من فولدر الـ <code>package.json</code> بتاعه فيه <code>"type": "module"</code>، ومتسطب فيه <code>pg</code> و<code>uuid</code> 14 و<code>ulid</code> 3.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      API لمتجر فيه Postgres واحدة وعمود <code>orders.id</code> داخلي، بتستخدمه في الـ joins بس، وفي الـ URL بتعرض <code>public_id</code> تاني مش متتالي. الغلطة الشائعة: تعرض <code>orders.id</code> في <code>/orders/1042</code> فأي user يقدر يعرف عدد طلباتك ويجرّب أرقام غيره.
+    </div>
+  </section>
+
+  <!-- PART 2 -->
+  <h2 id="p2">Part 2 — UUID v4 and the index it damages <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — الـ UUID v4 والضرر اللي بيعمله في الـ index</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>UUID v4 has 122 random bits. Collisions are not a practical worry, and any machine can generate one with no coordination, which is why it became the default. The cost lands on the B-tree: every insert goes to a random leaf page. Pages split wherever they happen to be, so they settle around two-thirds full instead of packed, the whole index stays "hot" instead of just its right edge, and after each checkpoint the first change to every page writes a full-page image to the WAL.</p>
+    <p>I measured this on real Postgres 18.4 with 32&nbsp;MB of <code>shared_buffers</code>, durable settings, inserts in batches of 10,000, and <code>idx_blks_read</code> from <code>pg_statio_user_indexes</code> for buffer misses. Size and density are stable and repeat in every run. Insert time needs care: at 200k and 1M rows the gap moved between runs, from about 1.3× to 2.2×, on a loaded Windows machine with v4 going first, so I wouldn't conclude much from those. At 5M rows the index is about 6× larger than the buffer pool, and that is where the difference becomes real: I reran 5M with v7 going first and got the same picture, 74 s vs 23 s and 2.74M vs 17.7k misses (<a href="./35-storage-engines-btree-lsm.html">storage engines</a> explains the page mechanics).</p>
+  </section>
+
+<pre class="diagram">
+  UUID v4: every insert picks a random leaf
+    [leaf 1 ...w..] [leaf 2 .w...] [leaf 3 ..w..] [leaf 4 w....]
+     all pages dirty, splits everywhere, about 69% full
+
+  UUID v7: inserts go to the rightmost leaf
+    [leaf 1 full] [leaf 2 full] [leaf 3 full] [leaf 4 ...w -&gt;]
+     only the right edge is hot, about 90% full
+</pre>
+  <div class="ar-note">فوق: الـ v4 بيكتب في leaf عشوائية كل مرة، فكل الصفحات بتبقى dirty، والـ splits في كل حتة، والصفحات مليانة حوالي 69% بس. تحت: الـ v7 بيكتب دايمًا في آخر leaf على اليمين، فالصفحات القديمة بتتملى وتسكت، والجزء الساخن هو الطرف اليمين بس، ومليانة حوالي 90%.</div>
+
+<pre data-file="src/index-damage.ts"><code class="language-typescript">import pg from "pg";
+
+// تحذير: شغّله على Postgres 18 للتجربة، وابدأه بـ shared_buffers=32MB عشان الـ cache يبقى أصغر من الـ index
+const url = process.env.PG_URL;
+if (!url) throw new Error("set PG_URL to a throwaway Postgres 18");
+const ROWS = Number(process.env.ROWS ?? 1_000_000);
+const BATCH = 10_000;
+const db = new pg.Client({ connectionString: url });
+await db.connect();
+await db.query("CREATE EXTENSION IF NOT EXISTS pgstattuple");
+
+const indexIo = async (idx: string) =&gt; {
+  // ملحوظة: الـ stats بتتكتب متأخر، فبنجبرها تتسجل قبل ما نقرا
+  await db.query("SELECT pg_stat_force_next_flush()");
+  const r = await db.query&lt;{ read: string; hit: string }&gt;(
+    "SELECT idx_blks_read AS read, idx_blks_hit AS hit FROM pg_statio_user_indexes WHERE indexrelname = $1",
+    [idx],
+  );
+  return r.rows[0];
+};
+
+for (const [table, fn] of [["orders_v4", "gen_random_uuid()"], ["orders_v7", "uuidv7()"]] as const) {
+  await db.query(`CREATE TABLE ${table} (id uuid PRIMARY KEY, user_id int NOT NULL, total_cents int NOT NULL)`);
+  const before = (await db.query&lt;{ l: string }&gt;("SELECT pg_current_wal_lsn() AS l")).rows[0].l;
+  const t0 = performance.now();
+  // ملحوظة: دفعات صغيرة بتشبه الـ traffic الحقيقي أكتر من INSERT واحد ضخم
+  for (let i = 0; i &lt; ROWS / BATCH; i++) {
+    await db.query(`INSERT INTO ${table} SELECT ${fn}, (random()*1e5)::int, (random()*1e5)::int FROM generate_series(1, ${BATCH})`);
+  }
+  const ms = Math.round(performance.now() - t0);
+  const wal = (await db.query&lt;{ b: string }&gt;("SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), $1::pg_lsn)::bigint AS b", [before])).rows[0].b;
+  const s = (await db.query(`SELECT pg_size_pretty(pg_relation_size('${table}_pkey')) AS size, avg_leaf_density AS density, leaf_pages FROM pgstatindex('${table}_pkey')`)).rows[0];
+  console.log(table, { rows: ROWS, ms, walMB: Math.round(Number(wal) / 1048576), ...s, ...(await indexIo(`${table}_pkey`)) });
+}
+
+// القراية الواقعية: آخر 1% اتكتب هو اللي بيتقرا أكتر (طلبات النهارده، مش بتوع 2019)
+for (const table of ["orders_v4", "orders_v7"]) {
+  const recent = (await db.query&lt;{ id: string }&gt;(`SELECT id FROM ${table} ORDER BY ctid DESC LIMIT ${Math.floor(ROWS / 100)}`)).rows;
+  await db.query("SELECT pg_stat_reset()");
+  const t0 = performance.now();
+  for (let i = 0; i &lt; 20_000; i++) {
+    await db.query(`SELECT total_cents FROM ${table} WHERE id = $1`, [recent[(i * 7919) % recent.length].id]);
+  }
+  const ms = Math.round(performance.now() - t0);
+  console.log("recent reads", table, { lookups: 20_000, ms, ...(await indexIo(`${table}_pkey`)) });
+}
+await db.end();</code></pre>
+<pre><code class="language-plaintext">orders_v4 {
+  rows: 5000000,
+  ms: 77228,
+  walMB: 1108,
+  size: '196 MB',
+  density: 69.15,
+  leaf_pages: '24959',
+  read: '2740584',
+  hit: '12274806'
+}
+orders_v7 {
+  rows: 5000000,
+  ms: 25806,
+  walMB: 866,
+  size: '150 MB',
+  density: 89.99,
+  leaf_pages: '19157',
+  read: '17834',
+  hit: '5190691'
+}
+recent reads orders_v4 { lookups: 20000, ms: 2808, read: '17554', hit: '42446' }
+recent reads orders_v7 { lookups: 20000, ms: 1943, read: '195', hit: '59805' }</code></pre>
+  <div class="ar-note">ناتج 5 مليون صف: الـ v4 الـ index بتاعه 196 MB بكثافة 69%، والـ v7 بقى 150 MB بكثافة 90%. الـ <code>read</code> هو buffer misses: الـ v4 حوالي 2.7 مليون مقابل 17.8 ألف بس. في آخر سطرين (قراية آخر 1%) الـ v4 عمل 17,554 miss والـ v7 عمل 195. الأوقات تقريبية على Windows عليه ضغط.</div>
+
+  <table>
+    <tr><th>Rows</th><th>Insert ms (v4 / v7)</th><th>Index size (v4 / v7)</th><th>Leaf density (v4 / v7)</th><th>WAL MB (v4 / v7)</th><th><code>idx_blks_read</code> (v4 / v7)</th></tr>
+    <tr><td>200k</td><td>≈1,282 / 575</td><td>8.2 / 6.0 MB</td><td>66.4% / 89.9%</td><td>33 / 30</td><td>1 / 1</td></tr>
+    <tr><td>1M</td><td>≈4,539 / 2,968</td><td>38 / 30 MB</td><td>71.4% / 90.0%</td><td>162 / 149</td><td>23,460 / 2,324</td></tr>
+    <tr><td>5M</td><td>≈77,228 / 25,806</td><td>196 / 150 MB</td><td>69.2% / 90.0%</td><td>1,108 / 866</td><td>2,740,584 / 17,834</td></tr>
+  </table>
+  <div class="ar-note">بص على الأعمدة كلها مع بعض: الحجم والكثافة ثابتين تقريبًا في كل الأحجام (الـ v7 أصغر بحوالي الربع وأكثف بكتير). الـ insert time عند 200 ألف ومليون فرقه بيتغير من تشغيل للتاني (من حوالي 1.3 لـ 2.2 مرة)، والـ v4 اتشغل الأول على جهاز عليه ضغط، فماتبنيش عليه. عند 5 مليون الـ index بقى أكبر من الـ cache حوالي 6 مرات، فالـ v4 بقى أبطأ 3 مرات تقريبًا، والـ WAL زاد من 1.3 لـ 1.65 مرة (حسب مين اشتغل الأول)، والـ misses بقت أكتر بـ 150 مرة.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ UUID v4 فيه 122 bit عشوائيين. الـ collision مش مشكلة عملية، وأي machine تولّده من غير تنسيق، وعشان كده بقى الـ default. التكلفة بتيجي على الـ B-tree: كل insert بيروح لـ leaf page عشوائية. الصفحات بتتقسم في أي مكان فبتستقر على حوالي الثلثين مليانة بدل ما تبقى متروسة، والـ index كله بيفضل "سخن" بدل طرفه اليمين بس، وبعد كل checkpoint أول تعديل على كل صفحة بيكتب full-page image في الـ WAL.</p>
+    <p>قست ده على Postgres 18.4 حقيقي بـ <code>shared_buffers</code> قدها 32 MB، إعدادات durable، inserts في دفعات 10,000، و<code>idx_blks_read</code> من <code>pg_statio_user_indexes</code> عشان الـ buffer misses. الحجم والكثافة ثابتين في كل تشغيل. الـ insert time محتاج حرص: عند 200 ألف ومليون الفرق بيتغير من تشغيل للتاني (من حوالي 1.3 لـ 2.2 مرة) على Windows عليه ضغط والـ v4 اتشغل الأول، فماتستنتجش منهم كتير. عند 5 مليون الـ index أكبر من الـ buffer pool حوالي 6 مرات، وهنا الفرق بقى حقيقي: شغّلت الـ 5 مليون تاني والـ v7 الأول وطلعت نفس الصورة، 74 ثانية مقابل 23 ثانية، و2.74 مليون miss مقابل 17.7 ألف (<a href="./35-storage-engines-btree-lsm.html">storage engines</a> بيشرح ميكانيكا الصفحات).</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      جدول <code>events</code> أو <code>orders</code> بيكتب كتير والـ PK فيه v4: الأعراض في production هتبقى WAL كبير، replication lag، و cache hit ratio نازل مع إن الـ traffic ثابت. قبل ما تكبّر الـ instance، بص على <code>pgstatindex</code> و<code>idx_blks_read</code>. الغلطة الشائعة إنك تختبر بـ 10 آلاف صف، تلاقي مفيش فرق، وتقرر إن الموضوع مبالغ فيه: الفرق مابيظهرش غير لما الـ index يبقى أكبر من الـ cache.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Your UUID v4 primary key is hurting a write-heavy table. Explain why, and what would you change?" → Random inserts touch random leaf pages, so the index is about 69% full, the working set is the whole index, and checkpoints produce many full-page images. Use a time-ordered ID (v7) for new rows. A swap on old rows is rarely worth it: new rows start clustering immediately.
+    <div class="ar-note">"الـ primary key الـ UUID v4 بيأذي جدول كتابته كتيرة. اشرح ليه وهتغيّر إيه؟" ← الـ inserts العشوائية بتلمس leaf pages عشوائية، فالـ index مليان حوالي 69% بس، والـ working set هو الـ index كله، والـ checkpoints بتطلّع full-page images كتير. استخدم ID مرتب بالوقت (v7) للصفوف الجديدة. تغيير الصفوف القديمة نادرًا ما يستاهل، لإن الصفوف الجديدة بتبدأ تتجمع على طول.</div>
+  </div>
+
+  <!-- PART 3 -->
+  <h2 id="p3">Part 3 — UUID v7, the new default <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ UUID v7 الـ default الجديد</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>UUID v7 (RFC 9562) keeps the 128-bit shape and the <code>uuid</code> column type but puts a 48-bit Unix millisecond timestamp first, then version and variant bits, then random. Sorting by value now means sorting by time, so the B-tree behaves like auto-increment while any machine can still generate IDs on its own.</p>
+    <p>Postgres 18 has <code>uuidv7()</code> built in, plus <code>uuid_extract_version()</code> and <code>uuid_extract_timestamp()</code>. The docs say the timestamp uses millisecond precision plus a sub-millisecond part. An optional <code>shift</code> interval moves the embedded time. In Node, the <code>uuid</code> package's <code>v7()</code> gives the same layout, and generating in the app means you know the ID before the insert, which helps with outbox rows and idempotent retries.</p>
+    <p>Two limits matter. Ordering is only monotonic inside one generator: across servers the order is only as good as their clocks, so a server 5 seconds behind writes IDs that sort before older ones. Never use v7 to decide "which event happened first" for anything that matters (see <a href="./29-time-clocks-ordering.html">time and clocks</a>). And the creation time is printed on the ID: anyone holding it can read when the row was made. That is usually fine for orders. It is not fine when the creation time is itself sensitive, such as a medical record or a user's signup date in a public profile: keep v7 as the private key and expose a separate random token.</p>
+    <p>For new tables, UUID v7 is the default choice unless you specifically need 64 bits.</p>
+  </section>
+
+<pre class="diagram">
+  UUID v7 (128 bits)
+  +----------------------------+------+----------+----+----------------+
+  | unix_ts_ms (48)            | ver  | rand_a   | var| rand_b (62)    |
+  |                            | (4)  | (12)     |(2) |                |
+  +----------------------------+------+----------+----+----------------+
+   sorts by time first          always 7           random tail
+</pre>
+  <div class="ar-note">أول 48 bit هي الوقت بالـ millisecond، وبعدها 4 bits للـ version (دايمًا 7)، و12 bit في <code>rand_a</code>، و2 bits للـ variant، و62 bit عشوائيين في <code>rand_b</code>. ولإن الوقت في الأول، الترتيب بالقيمة هو نفسه الترتيب بالوقت.</div>
+
+<pre data-file="src/uuid-v7.ts"><code class="language-typescript">import pg from "pg";
+import { v4, v7, version } from "uuid";
+
+const url = process.env.PG_URL;
+if (!url) throw new Error("set PG_URL to a throwaway Postgres 18");
+const db = new pg.Client({ connectionString: url });
+await db.connect();
+
+// (1) من جوه Postgres: الـ id نفسه شايل الوقت
+const id = (await db.query&lt;{ id: string }&gt;("SELECT uuidv7() AS id")).rows[0].id;
+const info = (await db.query("SELECT uuid_extract_version($1::uuid) AS version, uuid_extract_timestamp($1::uuid) AS created_at", [id])).rows[0];
+console.log({ id, version: info.version, createdAt: info.created_at.toISOString() });
+
+// (2) من جوه Node: نفس الـ layout من الـ npm package
+const appId = v7();
+console.log({ appId, version: version(appId) });
+
+// (3) ترتيب جوه process واحد: 200 ألف id في loop أسرع بكتير من ms لكل واحد
+const ids: string[] = [];
+for (let i = 0; i &lt; 200_000; i++) ids.push(v7());
+const outOfOrder = ids.filter((x, i) =&gt; i &gt; 0 &amp;&amp; x &lt;= ids[i - 1]).length;
+console.log("one process:", { ids: ids.length, unique: new Set(ids).size, outOfOrder });
+
+// (4) سيرفرين ساعتهم مختلفة 5 ثواني: الترتيب العام مابقاش مضمون
+const now = Date.now();
+const serverA = v7({ msecs: now });
+const serverB = v7({ msecs: now - 5_000 });
+console.log("server B created it later but it sorts first:", serverB &lt; serverA);
+
+// (5) التكلفة: أي حد معاه الـ id يقدر يعرف وقت الإنشاء من أول 48 bit
+const leakedMs = parseInt(appId.replaceAll("-", "").slice(0, 12), 16);
+console.log("createdAt read from the id alone:", new Date(leakedMs).toISOString());
+
+// (6) الـ v4 مفيهوش وقت، فـ Postgres بيرجّع null
+const v4Info = (await db.query("SELECT uuid_extract_timestamp($1::uuid) AS created_at", [v4()])).rows[0];
+console.log("v4 timestamp:", v4Info.created_at);
+await db.end();</code></pre>
+<pre><code class="language-plaintext">{
+  id: '01a1be5f-f5ca-7630-8bbf-6d55db1f880b',
+  version: 7,
+  createdAt: '2026-11-09T03:35:22.314Z'
+}
+{ appId: '01a1be5f-f5cd-766d-8ffd-f7fc9930f72e', version: 7 }
+one process: { ids: 200000, unique: 200000, outOfOrder: 0 }
+server B created it later but it sorts first: true
+createdAt read from the id alone: 2026-11-09T03:35:22.317Z
+v4 timestamp: null</code></pre>
+  <div class="ar-note">الناتج: الـ version طالع 7 من Postgres ومن الـ npm package. 200 ألف id في process واحد كلهم مختلفين ومرتبين (0 خارج الترتيب). سيرفر ساعته متأخرة 5 ثواني طلّع id بيترتب قبل واحد أقدم منه. السطر قبل الأخير قرأنا وقت الإنشاء من الـ id لوحده. وآخر سطر الـ v4 بيرجّع <code>null</code> لإن مفيهوش وقت.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ UUID v7 (الـ RFC 9562) محتفظ بشكل الـ 128 bit ونوع العمود <code>uuid</code>، بس بيحط في الأول 48 bit وقت Unix بالـ millisecond، وبعدها bits الـ version والـ variant، وبعدها عشوائي. الترتيب بالقيمة بقى هو الترتيب بالوقت، فالـ B-tree بيتصرف زي الـ auto-increment، وفي نفس الوقت أي machine تقدر تولّد IDs لوحدها.</p>
+    <p>Postgres 18 فيه <code>uuidv7()</code> جاهزة، ومعاها <code>uuid_extract_version()</code> و<code>uuid_extract_timestamp()</code>. الـ docs بتقول إن الوقت فيه دقة millisecond وجزء sub-millisecond كمان. وفيه <code>shift</code> interval اختياري بيحرّك الوقت المتسجل. في Node، الـ package بتاع <code>uuid</code> عنده <code>v7()</code> بنفس الشكل، والتوليد في الـ app معناه إنك عارف الـ ID قبل الـ insert، وده مفيد مع صفوف الـ outbox والـ retries اللي لازم تبقى idempotent.</p>
+    <p>فيه حدّين مهمين. الترتيب monotonic جوه generator واحد بس: بين السيرفرات الترتيب قد دقة الساعات، فسيرفر متأخر 5 ثواني بيكتب IDs بتترتب قبل IDs أقدم منها. ماتستخدمش الـ v7 عشان تقرر "مين حصل الأول" في أي حاجة مهمة (شوف <a href="./29-time-clocks-ordering.html">الوقت والساعات</a>). وكمان وقت الإنشاء مكتوب على الـ ID: أي حد معاه يقدر يقرا الصف اتعمل إمتى. ده عادي للـ orders، بس مش عادي لو وقت الإنشاء نفسه حساس، زي medical record أو تاريخ تسجيل user في public profile: خلي الـ v7 مفتاح داخلي واعرض token عشوائي تاني.</p>
+    <p>وللجداول الجديدة، الـ UUID v7 هو الاختيار الافتراضي إلا لو محتاج 64 bit بالتحديد.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      جدول <code>orders</code> جديد في مشروع Node: الـ app بتولّد <code>v7()</code> قبل الـ transaction، فبتحطه في صف <code>orders</code> وفي صف الـ <code>outbox</code> وفي الـ log قبل ما الـ DB ترد. الغلطة الشائعة: ترتيب الأحداث بين خدمتين بالـ id نفسه وتعتبره ترتيب حقيقي، مع إن فرق الساعات بيبوّظه.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks: the ID is a timestamp</b>
+    A public invoice link built on UUID v7 tells anyone when each invoice was created. Combined with enough links, that reveals business hours and volume patterns. Keep the v7 key private and expose an opaque token when the timing matters.
+    <div class="ar-note">لينك فاتورة عام مبني على UUID v7 بيقول لأي حد الفاتورة اتعملت إمتى. ولو جمعت لينكات كفاية، هتعرف مواعيد الشغل وأنماط الحجم. خلي مفتاح الـ v7 داخلي واعرض token غامض لما التوقيت يكون حساس.</div>
+  </div>
+
+  <!-- PART 4 -->
+  <h2 id="p4">Part 4 — ULID, size, and the JavaScript trap <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ ULID والحجم وفخ الـ JavaScript</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>ULID came before UUID v7 and solved the same problem: 48 bits of millisecond time and 80 bits of randomness, the same 128 bits, written as 26 characters of Crockford base32 (no I, L, O or U, to avoid reading mistakes). It sorts lexicographically as a string. <code>monotonicFactory()</code> increments the random part inside the same millisecond to keep order. Compared to v7 it is shorter and nicer in URLs and logs, but it is not an RFC standard and databases have no native type for it. In Postgres, store it in a <code>uuid</code> column as binary and only render it as text at the edge.</p>
+    <p>Width is the real decision. 128 bits vs 64 bits sounds small, but the ID is copied into the PK index, every foreign key column, and every index on those columns. The calculator below counts 8 copies per order across a billion rows. Storing it as text is the worst choice: <code>pg_column_size</code> says 40 bytes for a UUID as text against 16 for the <code>uuid</code> type, a real measurement on Postgres 18.</p>
+    <p>The JavaScript trap: <code>JSON.parse</code> turns numbers into doubles, and anything above 2<sup>53</sup>−1 silently loses precision. A 64-bit Snowflake from a real system is well past that today. It breaks on the client, not the server, so it usually gets noticed as "the wrong order opened". The fix is to send 64-bit IDs as strings. <code>node-pg</code> already does this for you: a <code>bigint</code> column comes back as a string (real output: <code>{ id: '9007199254740993' } string</code>).</p>
+  </section>
+
+<pre data-file="src/ulid-size.ts"><code class="language-typescript">import { decodeTime, monotonicFactory, ulid } from "ulid";
+
+// (1) نفس الـ 128 bit، بس متكتوبة Crockford base32 في 26 حرف
+const id = ulid();
+console.log({ id, length: id.length, createdAt: new Date(decodeTime(id)).toISOString() });
+
+// (2) الـ factory هو اللي بيضمن الترتيب جوه نفس الـ ms
+const next = monotonicFactory();
+const ids = Array.from({ length: 100_000 }, () =&gt; next());
+console.log("monotonic:", { unique: new Set(ids).size, outOfOrder: ids.filter((x, i) =&gt; i &gt; 0 &amp;&amp; x &lt;= ids[i - 1]).length });
+
+// (3) حاسبة: كل نسخة من الـ id بتتكلف كام على مليار صف؟
+const GiB = 1024 ** 3;
+const ROWS = 1_000_000_000;
+// ملحوظة: عمود في الـ ⁦heap +⁩ الـ ⁦PK index +⁩ عمود FK والـ index بتاعه في 3 جداول تانية
+const copiesPerOrder = 1 + 1 + 3 * 2;
+for (const [name, bytes] of [["bigint/Snowflake", 8], ["uuid (binary)", 16], ["ULID as text", 30], ["uuid as text", 40]] as const) {
+  console.log(name.padEnd(17), `${bytes} B per copy`.padEnd(14), `${((ROWS * bytes * copiesPerOrder) / GiB).toFixed(0)} GiB for ${copiesPerOrder} copies`);
+}
+
+// (4) الفخ: رقم 64-bit بيعدّي من JSON.parse
+const wire = '{"orderId": 245678901234567891}';
+console.log("MAX_SAFE_INTEGER:", Number.MAX_SAFE_INTEGER);
+console.log("parsed:", JSON.parse(wire).orderId);
+
+// (5) والعكس: الـ BigInt مش بيتحول JSON لوحده
+try {
+  JSON.stringify({ orderId: 245678901234567891n });
+} catch (e) {
+  console.log((e as Error).name + ":", (e as Error).message);
+}
+
+// (6) الحل: ابعته string وعلى الناحية التانية حوّله BigInt
+const safe = JSON.stringify({ orderId: (245678901234567891n).toString() });
+console.log(safe, BigInt(JSON.parse(safe).orderId) === 245678901234567891n);</code></pre>
+<pre><code class="language-plaintext">{
+  id: '01M6Z607VGDCS0MBQVMSS598ES',
+  length: 26,
+  createdAt: '2026-11-09T03:35:32.976Z'
+}
+monotonic: { unique: 100000, outOfOrder: 0 }
+bigint/Snowflake  8 B per copy   60 GiB for 8 copies
+uuid (binary)     16 B per copy  119 GiB for 8 copies
+ULID as text      30 B per copy  224 GiB for 8 copies
+uuid as text      40 B per copy  298 GiB for 8 copies
+MAX_SAFE_INTEGER: 9007199254740991
+parsed: 245678901234567900
+TypeError: Do not know how to serialize a BigInt
+{"orderId":"245678901234567891"} true</code></pre>
+  <div class="ar-note">الـ ULID طوله 26 حرف وبنقدر نقرا منه الوقت، و100 ألف من الـ factory كلهم مختلفين ومرتبين. الحاسبة بتقول: 8 نسخ من الـ ID على مليار صف = 60 GiB لو 8 bytes، و119 GiB لو uuid binary، و224 لو ULID نص، و298 لو uuid نص. الأرقام من <code>pg_column_size</code>. بعدها <code>parsed</code> طلع 245678901234567900 بدل 245678901234567891: الرقم اتغير من غير أي error. وبعدها الـ <code>TypeError</code> بتاع الـ BigInt، وآخر سطر الحل بالـ string.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ ULID جه قبل الـ UUID v7 وكان بيحل نفس المشكلة: 48 bit وقت بالـ millisecond و80 bit عشوائيين، يعني نفس الـ 128 bit، ومكتوب 26 حرف Crockford base32 (مفيهوش I ولا L ولا O ولا U عشان ماتغلطش في القراية). بيترتب كـ string عادي. والـ <code>monotonicFactory()</code> بيزوّد الجزء العشوائي جوه نفس الـ millisecond عشان الترتيب يفضل. مقارنة بالـ v7 هو أقصر وأشيك في الـ URLs والـ logs، بس مش RFC رسمي ومفيش نوع ليه في الـ databases. في Postgres خزّنه في عمود <code>uuid</code> كـ binary واعرضه نص على الحافة بس.</p>
+    <p>العرض هو القرار الحقيقي. 128 bit مقابل 64 شكلها حاجة صغيرة، بس الـ ID بيتنسخ في الـ PK index، وكل عمود foreign key، وكل index على الأعمدة دي. الحاسبة فوق بتعدّ 8 نسخ لكل order على مليار صف. والتخزين كـ text أسوأ اختيار: <code>pg_column_size</code> بيقول 40 byte لـ UUID كـ text مقابل 16 لنوع <code>uuid</code>، وده قياس حقيقي على Postgres 18.</p>
+    <p>فخ الـ JavaScript: <code>JSON.parse</code> بيحوّل الأرقام لـ double، وأي رقم فوق 2<sup>53</sup>−1 بيخسر دقة من غير ما يقول. Snowflake 64-bit من نظام حقيقي بقى بعيد عن الرقم ده خلاص. الكسر بيحصل عند الـ client مش السيرفر، فغالبًا بيتلاحظ كـ "فتح order غلط". الحل تبعت الـ IDs الـ 64-bit كـ strings. و<code>node-pg</code> بيعمل ده أصلًا: عمود <code>bigint</code> بيرجع string (الناتج الحقيقي: <code>{ id: '9007199254740993' } string</code>).</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      API بيرجّع Snowflake لتطبيق Next: في الـ JSON لازم <code>"orderId": "245678901234567891"</code> كـ string، وفي الـ TypeScript type يبقى <code>string</code> مش <code>number</code>، حتى لو الـ DB عمود <code>bigint</code>. الغلطة الشائعة: عمود <code>id varchar(36)</code> بدل <code>uuid</code>، فالـ index وكل الـ foreign keys بيكبروا أكتر من الضعف.
+    </div>
+  </section>
+
+  <!-- PART 5 -->
+  <h2 id="p5">Part 5 — Snowflake in BigInt <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — Snowflake بالـ BigInt</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Twitter's Snowflake packs an ID into 64 bits: 41 bits of milliseconds since a custom epoch, 10 bits of machine ID, and 12 bits of sequence, with the top bit left as zero so it fits a signed <code>bigint</code>. It sorts by time, generates without any network call, and is half the width of a UUID.</p>
+    <p>The ceiling is 4,096 IDs per millisecond per worker, because the sequence is 12 bits. After that the generator has to wait for the next millisecond. A single Node thread doing BigInt arithmetic reaches that ceiling in this run, and the counter shows how many milliseconds were exhausted. The 41-bit clock lasts 2<sup>41</sup> ms ≈ 69.7 years from your epoch, which is why you pick a recent epoch rather than 1970.</p>
+    <p>What you pay is operations. Every worker needs a unique machine ID, and a duplicated one produces duplicate IDs silently. And the clock is now part of correctness: if time goes backwards the generator must refuse, wait, or switch. The full treatment of clock rollback and multiple datacenters is in the <a href="./46-case-url-shortener-id-generator.html">ID generator case study</a>. Here the code just refuses.</p>
+  </section>
+
+<pre class="diagram">
+  Snowflake (64 bits)
+  +---+------------------------------+------------+--------------+
+  | 0 | time since epoch, ms (41)    | machine(10)| sequence (12)|
+  +---+------------------------------+------------+--------------+
+  sign  about 69.7 years              1024 workers 4096 per ms
+</pre>
+  <div class="ar-note">أول bit للإشارة وبيفضل صفر عشان الرقم يدخل في <code>bigint</code> بعلامة. بعده 41 bit وقت (حوالي 69.7 سنة)، و10 bits للـ machine (1024 worker)، و12 bit للـ sequence (4096 في الـ millisecond).</div>
+
+<pre data-file="src/snowflake.ts"><code class="language-typescript">// الـ layout: bit للإشارة (صفر⁦) + 41⁩ وقت ⁦+ 10 machine + 12 sequence = 64⁩
+// البداية بتاعتنا: أول يناير 2025، وده بيطوّل عمر الـ 41 bit
+const EPOCH = 1_735_689_600_000n;
+const MACHINE_BITS = 10n;
+const SEQUENCE_BITS = 12n;
+const MAX_MACHINE = (1n &lt;&lt; MACHINE_BITS) - 1n;
+const MAX_SEQUENCE = (1n &lt;&lt; SEQUENCE_BITS) - 1n;
+
+export class Snowflake {
+  private lastMs = -1n;
+  private sequence = 0n;
+  exhausted = 0;
+  private readonly machineId: bigint;
+  private readonly now: () =&gt; bigint;
+
+  constructor(machineId: bigint, now: () =&gt; bigint = () =&gt; BigInt(Date.now())) {
+    if (machineId &lt; 0n || machineId &gt; MAX_MACHINE) throw new RangeError(`machineId must be 0..${MAX_MACHINE}`);
+    this.machineId = machineId;
+    this.now = now;
+  }
+
+  next(): bigint {
+    let ms = this.now();
+    // ملحوظة: الساعة رجعت لورا، فالأأمن نرفض بدل ما نكرر ⁦id (⁩الحلول الكاملة في درس الـ case)
+    if (ms &lt; this.lastMs) throw new Error(`clock moved backwards by ${this.lastMs - ms} ms`);
+    if (ms === this.lastMs) {
+      this.sequence = (this.sequence + 1n) &amp; MAX_SEQUENCE;
+      // لو الـ 4096 خلصوا في نفس الـ ms لازم نستنى الـ ms اللي بعدها
+      if (this.sequence === 0n) {
+        this.exhausted++;
+        while (ms &lt;= this.lastMs) ms = this.now();
+      }
+    } else {
+      this.sequence = 0n;
+    }
+    this.lastMs = ms;
+    return ((ms - EPOCH) &lt;&lt; (MACHINE_BITS + SEQUENCE_BITS)) | (this.machineId &lt;&lt; SEQUENCE_BITS) | this.sequence;
+  }
+}
+
+export const decode = (id: bigint) =&gt; ({
+  createdAt: new Date(Number((id &gt;&gt; (MACHINE_BITS + SEQUENCE_BITS)) + EPOCH)).toISOString(),
+  machine: (id &gt;&gt; SEQUENCE_BITS) &amp; MAX_MACHINE,
+  sequence: id &amp; MAX_SEQUENCE,
+});
+
+if (process.argv[1]?.endsWith("snowflake.ts")) {
+  const gen = new Snowflake(42n);
+  const first = gen.next();
+  console.log(first, decode(first));
+  console.log("fits Postgres bigint:", first &lt;= 2n ** 63n - 1n, "| over MAX_SAFE_INTEGER:", first &gt; BigInt(Number.MAX_SAFE_INTEGER));
+
+  // القياس: ثانية كاملة من التوليد في thread واحد
+  const start = performance.now();
+  let count = 0;
+  const sample: bigint[] = [];
+  while (performance.now() - start &lt; 1000) {
+    const id = gen.next();
+    if (count++ &lt; 500_000) sample.push(id);
+  }
+  console.log({ perSecond: count, ceiling: 4096 * 1000, exhaustedMs: gen.exhausted });
+  console.log("first 500k:", { unique: new Set(sample).size, outOfOrder: sample.filter((x, i) =&gt; i &gt; 0 &amp;&amp; x &lt;= sample[i - 1]).length });
+
+  // ملحوظة: الـ ⁦2^41 ms⁩ بتتقسم على عدد الـ ms في السنة
+  const years = 2 ** 41 / (365.25 * 24 * 3600 * 1000);
+  console.log({ years: years.toFixed(1), runsOutOn: new Date(Number(EPOCH) + 2 ** 41).toISOString().slice(0, 10) });
+
+  // تجربة: ساعة مزيفة بترجع لورا 3ms
+  let fake = 1_800_000_000_000n;
+  const skewed = new Snowflake(1n, () =&gt; fake);
+  skewed.next();
+  fake -= 3n;
+  try {
+    skewed.next();
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+}</code></pre>
+<pre><code class="language-plaintext">245390830813224960n { createdAt: '2026-11-09T03:35:33.207Z', machine: 42n, sequence: 0n }
+fits Postgres bigint: true | over MAX_SAFE_INTEGER: true
+{ perSecond: 3858981, ceiling: 4096000, exhaustedMs: 820 }
+first 500k: { unique: 500000, outOfOrder: 0 }
+{ years: '69.7', runsOutOn: '2094-09-07' }
+clock moved backwards by 3 ms</code></pre>
+  <div class="ar-note">الـ id الأول اتفك صح: machine 42 وsequence صفر. بيدخل في <code>bigint</code> وفوق <code>MAX_SAFE_INTEGER</code>. في ثانية واحدة طلع حوالي 3.86 مليون id من أقصى 4.096 مليون، و820 millisecond خلصوا الـ 4096 بتوعهم (يعني وصلنا السقف فعلًا). أول 500 ألف كلهم مختلفين ومرتبين. الـ 41 bit بتخلص في 2094-09-07. وآخر سطر الـ generator رفض لما الساعة رجعت 3ms.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>Snowflake بتاع Twitter بيحط الـ ID في 64 bit: 41 bit milliseconds من epoch بتختاره إنت، و10 bits للـ machine ID، و12 bit للـ sequence، وأول bit بيفضل صفر عشان يدخل في <code>bigint</code> بعلامة. بيترتب بالوقت، بيتولّد من غير أي network call، وعرضه نص UUID.</p>
+    <p>السقف هو 4,096 ID في الـ millisecond لكل worker، لإن الـ sequence 12 bit. بعد كده الـ generator لازم يستنى الـ millisecond اللي بعدها. thread واحد في Node بيعمل حساب BigInt وصل السقف ده في التشغيل، والعدّاد بيوضح كام millisecond اتملت. الساعة الـ 41 bit بتكفّي 2<sup>41</sup> ms ≈ 69.7 سنة من الـ epoch بتاعك، وعشان كده بتختار epoch قريب مش 1970.</p>
+    <p>اللي بتدفعه هو الـ operations. كل worker لازم يبقى له machine ID مختلف، ولو اتكرر هتطلع IDs مكررة من غير ما تعرف. والساعة بقت جزء من الصحة: لو الوقت رجع لورا، الـ generator لازم يرفض، أو يستنى، أو يغيّر. التفاصيل الكاملة بتاعة clock rollback وأكتر من datacenter في <a href="./46-case-url-shortener-id-generator.html">الـ case study بتاع الـ ID generator</a>. هنا الكود بيرفض وخلاص.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو عندك جدول بيكبر لمليارات وعايز 64 bit عشان الـ foreign keys والـ indexes: كل pod في Kubernetes بياخد machine ID من lease في Redis أو الـ DB عند البداية، ويفكّه لما يقف. الغلطة الشائعة: حساب الـ machine ID من hash للـ hostname، فاتنين pods يقعوا على نفس الرقم ويطلّعوا نفس الـ IDs.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Why does Snowflake need a machine ID, and what happens if two workers share one?" → The time and sequence only make an ID unique inside one worker. Two workers with the same machine ID in the same millisecond generate the same IDs, and nothing detects it at generation time. So machine IDs must be assigned by something that can't hand one out twice, such as a lease.
+    <div class="ar-note">"ليه Snowflake محتاج machine ID؟ وإيه اللي يحصل لو اتنين worker ليهم نفس الرقم؟" ← الوقت والـ sequence بيخلّوا الـ ID فريد جوه worker واحد بس. اتنين worker بنفس الـ machine ID في نفس الـ millisecond هيطلّعوا نفس الـ IDs، ومفيش حاجة هتكتشف ده وقت التوليد. فلازم الـ machine ID يتوزع من حاجة ماتدّيش نفس الرقم مرتين، زي lease.</div>
+  </div>
+
+  <!-- PART 6 -->
+  <h2 id="p6">Part 6 — Ticket servers, blocks, and the final table <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 6 — الـ ticket servers والـ blocks والجدول النهائي</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Flickr's "ticket server" is a dedicated database whose only job is issuing numbers: a table with one row and a <code>REPLACE INTO</code> that bumps <code>auto_increment</code>. They ran two of them, one odd and one even, so one could die without stopping the site. It's simple, the IDs fit 64 bits and sort roughly by time, but every ID now needs a network round trip to a central service.</p>
+    <p>The fix for the round trip is <em>blocks</em> (also called hi/lo): take 1,000 IDs at once and hand them out from memory. In my run that was 20 round trips instead of 20,000, about 160× more IDs per second. The price is gaps: a worker that crashes holding a block loses what it hadn't used, 863 values in the run below. Gaps are not duplicates. They are harmless for primary keys, and only a problem if the number has a legal meaning, such as an invoice sequence that must have no holes. A Postgres sequence has gaps anyway, because <code>nextval</code> never rolls back and the WAL logs ahead by 32 values.</p>
+    <p>Single point of failure analysis: one ticket server is a SPOF for all writes. Two servers with odd and even give availability at the cost of order, since one can pull ahead while the other is down. Blocks soften an outage too: workers keep running on what they already hold.</p>
+  </section>
+
+<pre data-file="src/ticket-blocks.ts"><code class="language-typescript">import pg from "pg";
+
+// تحذير: شغّله على Postgres للتجربة بس
+const url = process.env.PG_URL;
+if (!url) throw new Error("set PG_URL to a throwaway Postgres");
+const db = new pg.Client({ connectionString: url });
+await db.connect();
+
+await db.query("CREATE SEQUENCE order_ids");
+await db.query("CREATE SEQUENCE order_id_blocks INCREMENT BY 1000 START WITH 1000");
+
+// الـ hi/lo: روح مرة للـ DB تجيب نهاية block، والـ 1000 id بتوعه بتوزعهم من الـ memory
+class BlockAllocator {
+  private next = 0n;
+  private end = 0n;
+  roundTrips = 0;
+  private readonly client: pg.Client;
+  private readonly sequence: string;
+
+  constructor(client: pg.Client, sequence: string) {
+    this.client = client;
+    this.sequence = sequence;
+  }
+
+  async id(): Promise&lt;bigint&gt; {
+    if (this.next === this.end) {
+      this.roundTrips++;
+      const r = await this.client.query&lt;{ v: string }&gt;("SELECT nextval($1) AS v", [this.sequence]);
+      const hi = BigInt(r.rows[0].v);
+      this.next = hi - 999n;
+      this.end = hi + 1n;
+    }
+    return this.next++;
+  }
+}
+
+const N = 20_000;
+let t0 = performance.now();
+for (let i = 0; i &lt; N; i++) await db.query("SELECT nextval('order_ids')");
+const singleMs = performance.now() - t0;
+
+const allocator = new BlockAllocator(db, "order_id_blocks");
+const ids = new Set&lt;bigint&gt;();
+t0 = performance.now();
+for (let i = 0; i &lt; N; i++) ids.add(await allocator.id());
+const blockMs = performance.now() - t0;
+
+console.log("one nextval per id:", { ids: N, ms: Math.round(singleMs), perSecond: Math.round((N / singleMs) * 1000), roundTrips: N });
+console.log("blocks of 1000:   ", { ids: ids.size, ms: Math.round(blockMs), perSecond: Math.round((N / blockMs) * 1000), roundTrips: allocator.roundTrips });
+
+// الـ worker مات وفي إيده block: الباقي من الـ block ضاع للأبد (gap مش تكرار)
+const dying = new BlockAllocator(db, "order_id_blocks");
+let last = 0n;
+for (let i = 0; i &lt; 137; i++) last = await dying.id();
+const replacement = new BlockAllocator(db, "order_id_blocks");
+const first = await replacement.id();
+console.log({ lastUsedByDeadWorker: last, firstOfNextWorker: first, gap: first - last - 1n });
+
+await db.end();</code></pre>
+<pre><code class="language-plaintext">one nextval per id: { ids: 20000, ms: 1929, perSecond: 10366, roundTrips: 20000 }
+blocks of 1000:    { ids: 20000, ms: 12, perSecond: 1667278, roundTrips: 20 }
+{ lastUsedByDeadWorker: 20137n, firstOfNextWorker: 21001n, gap: 863n }</code></pre>
+  <div class="ar-note">نفس الـ 20,000 id: بـ <code>nextval</code> لكل واحد حوالي 10 آلاف في الثانية و20,000 round trip. بالـ blocks حوالي 1.7 مليون في الثانية و20 round trip بس. آخر سطر: الـ worker مات بعد 137 id، والـ worker اللي بعده بدأ من 21001، يعني 863 رقم ضاعوا. الأوقات تقريبية على جهاز عليه ضغط.</div>
+
+  <p>The sequence behaviour across a real crash, from the same Postgres experiment, with a hard stop by <code>pg_ctl stop -m immediate</code> and SQL run through a Node harness:</p>
+  <div class="ar-note">سلوك الـ sequence بعد crash حقيقي من نفس تجربة Postgres، بإيقاف فوري بـ <code>pg_ctl stop -m immediate</code> والـ SQL اتشغل من Node.</div>
+<pre data-file="sequences.sql"><code class="language-sql">-- بعد 5 مرات nextval اتقفل Postgres بـ pg_ctl stop -m immediate
+-- قبل الـ crash طلع: 1 و2 و3 و4 و5
+SELECT nextval('invoice_no');
+-- أول رقم بعد الرجوع
+SELECT nextval('invoice_no');
+
+-- الـ rollback مش بيرجّع الرقم
+BEGIN;
+SELECT nextval('invoice_no');
+ROLLBACK;
+SELECT nextval('invoice_no');
+
+-- سيرفرين ticket بالفردي والزوجي
+CREATE SEQUENCE tkt INCREMENT BY 2 START WITH 1;  -- السيرفر الأول
+CREATE SEQUENCE tkt INCREMENT BY 2 START WITH 2;  -- السيرفر التاني</code></pre>
+<pre><code class="language-plaintext">before crash [ '1', '2', '3', '4', '5' ] after immediate stop 34
+rolled back 35 next 36
+both up [ '1', '2', '3', '4', '5', '6' ] odd server down: ECONNREFUSED even alone [ '8', '10', '12', '14', '16', '18' ] odd back 67 dups 0</code></pre>
+  <div class="ar-note">بعد الـ crash الرقم بقى 34 مش 6، لإن Postgres بيسجل في الـ WAL أرقام قدّام (32 رقم) عشان مايكتبش كل مرة. الـ rollback ضيّع 35 والرقم بعده 36. والسيرفرين: لما الفردي وقع الزوجي كمّل لوحده لـ 18، ولما الفردي رجع طلع 67 (نفس قفزة الـ WAL)، و0 تكرار، بس الترتيب العام اتبوّظ.</div>
+
+  <table>
+    <tr><th>Scheme</th><th>Size</th><th>Sortable</th><th>Coordination</th><th>Leaks</th><th>Failure mode</th></tr>
+    <tr><td>Auto-increment</td><td>8 B</td><td>Yes, per DB</td><td>Inside one DB</td><td>Volume, enumeration</td><td>Two DBs collide</td></tr>
+    <tr><td>UUID v4</td><td>16 B</td><td>No</td><td>None</td><td>Nothing</td><td>Index and WAL cost at scale</td></tr>
+    <tr><td>UUID v7</td><td>16 B</td><td>Yes, roughly</td><td>None</td><td>Creation time</td><td>Clock skew reorders</td></tr>
+    <tr><td>ULID</td><td>16 B binary, 26 chars</td><td>Yes, roughly</td><td>None</td><td>Creation time</td><td>Stored as text: size</td></tr>
+    <tr><td>Snowflake</td><td>8 B</td><td>Yes, roughly</td><td>Machine ID assignment</td><td>Time, worker</td><td>Clock rollback, duplicated machine ID</td></tr>
+    <tr><td>Ticket server</td><td>8 B</td><td>Yes, roughly</td><td>Central service</td><td>Volume</td><td>SPOF, a network call per ID</td></tr>
+    <tr><td>Blocks (hi/lo)</td><td>8 B</td><td>Only by block</td><td>Central, rarely</td><td>Volume, coarse</td><td>Gaps after a crash</td></tr>
+  </table>
+  <div class="ar-note">الجدول صف صف: <b>auto-increment</b> 8 bytes ومترتب جوه DB واحدة، بيسرّب الحجم والـ enumeration، ولو في اتنين DBs بيخبطوا. <b>v4</b> 16 byte، مش مترتب، من غير تنسيق، مابيسرّبش حاجة، والتكلفة في الـ index والـ WAL. <b>v7</b> 16 byte، مترتب تقريبًا، من غير تنسيق، بيسرّب وقت الإنشاء، وفرق الساعات بيبوّظ ترتيبه. <b>ULID</b> 16 byte كـ binary أو 26 حرف، نفس سلوك الـ v7، ولو اتخزن نص الحجم بيكبر. <b>Snowflake</b> 8 bytes، مترتب تقريبًا، محتاج توزيع machine ID، بيسرّب الوقت والـ worker، وعيبه رجوع الساعة أو تكرار الـ machine ID. <b>Ticket server</b> 8 bytes، مترتب تقريبًا، خدمة مركزية، بيسرّب الحجم، وهو SPOF وكل ID بـ network call. <b>Blocks</b> 8 bytes، مترتب على مستوى الـ block بس، بيروح للمركز نادرًا، بيسرّب الحجم تقريبيًا، وعيبه الـ gaps بعد الـ crash.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ "ticket server" بتاع Flickr هو database مخصصة شغلها الوحيد توزيع أرقام: جدول فيه صف واحد و<code>REPLACE INTO</code> بيزوّد الـ <code>auto_increment</code>. شغّلوا اتنين، واحد فردي وواحد زوجي، عشان لو واحد وقع الموقع يكمّل. بسيط، والـ IDs بتدخل في 64 bit ومترتبة تقريبًا بالوقت، بس كل ID بقى محتاج network round trip لخدمة مركزية.</p>
+    <p>الحل لموضوع الـ round trip هو الـ <em>blocks</em> (بيتقال لها hi/lo): خد 1,000 ID مرة واحدة ووزّعهم من الـ memory. في التجربة بقوا 20 round trip بدل 20,000، وعدد الـ IDs في الثانية زاد حوالي 160 مرة. التمن هو الـ gaps: worker مات وهو ماسك block بيضيّع اللي ماستخدمهوش، 863 رقم في التجربة. الـ gaps مش تكرار. مش مشكلة في الـ primary keys، بس مشكلة لو الرقم له معنى قانوني، زي تسلسل الفواتير اللي لازم يبقى من غير فجوات. وPostgres sequence عنده gaps أصلًا، لإن <code>nextval</code> مابيرجعش مع الـ rollback، والـ WAL بيسجل قدّام 32 قيمة.</p>
+    <p>تحليل الـ SPOF: ticket server واحد هو SPOF لكل الكتابة. اتنين بفردي وزوجي بيدّوك availability على حساب الترتيب، لإن واحد ممكن يسبق وهو التاني واقع. والـ blocks كمان بتخفف الـ outage: الـ workers بتكمّل على اللي في إيدها.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لو بتعمل bulk import لملايين <code>products</code> من Node: استخدم block allocator فوق <code>nextval</code> بدل round trip لكل صف. أما <code>invoice_number</code> اللي مصلحة الضرايب بتطلبه متتالي من غير فجوات، فلازم عدّاد في جدول بيتحدّث جوه نفس الـ transaction، لإن الـ sequence هيسيب فجوات. الغلطة الشائعة: استخدام sequence عادي لرقم الفاتورة القانوني.
+    </div>
+  </section>
+
+  <!-- MISTAKES -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+  <div class="compare">
+    <div class="bad"><b>❌ UUID stored as text</b>
+<pre><code class="language-sql">CREATE TABLE orders (
+  id varchar(36) PRIMARY KEY
+);
+-- حجم القيمة 40 byte بالقياس</code></pre></div>
+    <div class="good"><b>✅ The native type</b>
+<pre><code class="language-sql">CREATE TABLE orders (
+  id uuid PRIMARY KEY DEFAULT uuidv7()
+);
+-- حجم القيمة 16 byte بالقياس</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>varchar(36)</code> بياخد 40 byte لكل نسخة، وده بيتكرر في الـ PK والـ foreign keys وكل index، وعلى مليار صف بـ 8 نسخ بيبقى 298 GiB بدل 119. ✅ نوع <code>uuid</code> بياخد 16 byte، وكمان المقارنة بتبقى أسرع، و<code>DEFAULT uuidv7()</code> بيدّيك ترتيب بالوقت على Postgres 18.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Internal sequence in a public URL</b>
+<pre><code class="language-typescript">// الـ id المتتالي هو نفسه اللي في الـ URL
+app.get("/invoices/:id", async (req, res) =&gt; {
+  res.json(await getInvoice(req.params.id));
+});</code></pre></div>
+    <div class="good"><b>✅ Opaque public id, plus a real check</b>
+<pre><code class="language-typescript">// الـ URL فيه token مش متتالي، والـ owner بيتشيّك برضه
+app.get("/invoices/:publicId", async (req, res) =&gt; {
+  const inv = await getInvoiceByPublicId(req.params.publicId);
+  if (inv?.userId !== req.user.id) return res.sendStatus(404);
+  res.json(inv);
+});</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ URL بالـ id المتتالي بيسرّب عدد الفواتير ويسهّل تجربة أرقام غيرك. ✅ الـ token الغامض بيشيل التخمين، بس لسه لازم تتأكد إن الفاتورة بتاعة الـ user نفسه: الـ ID الصعب مش بديل عن الـ authorization. وبنرجّع 404 مش 403 عشان ماتأكدش وجود الفاتورة أصلًا.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ 64-bit id as a JSON number</b>
+<pre><code class="language-typescript">// الرقم بيوصل للـ client متغير
+res.json({ orderId: Number(row.id) });
+type Order = { orderId: number };</code></pre></div>
+    <div class="good"><b>✅ 64-bit id as a string</b>
+<pre><code class="language-typescript">// الـ pg بيرجّع bigint كـ string أصلًا، سيبه زي ما هو
+res.json({ orderId: row.id });
+type Order = { orderId: string };</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>Number(row.id)</code> بيقطع أي رقم فوق 2<sup>53</sup>−1 من غير أي error، والـ client هيفتح order غلط. ✅ سيب الـ <code>bigint</code> string زي ما <code>pg</code> رجّعه، وخلّي الـ type في الـ TypeScript <code>string</code>.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Machine id from a hash of the hostname</b>
+<pre><code class="language-typescript">// اتنين pods ممكن يطلعوا نفس الرقم
+const machineId = BigInt(hash(os.hostname()) % 1024);
+const ids = new Snowflake(machineId);</code></pre></div>
+    <div class="good"><b>✅ Machine id from a lease that can't repeat</b>
+<pre><code class="language-typescript">// الـ lease في Redis أو الـ DB بيدّي الرقم لواحد بس
+const machineId = await leaseMachineId(redis, 1024);
+const ids = new Snowflake(machineId);</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ hash على 1024 قيمة بيعمل تصادم بسرعة (مع 40 pod الاحتمال حوالي 54%، برضه حساب الـ birthday problem)، والنتيجة IDs مكررة من غير أي تنبيه. ✅ الـ lease بيدّي الرقم لـ pod واحد ويرجعه لما الـ pod يقف، وفيه TTL عشان لو الـ pod مات الرقم يرجع بعد فترة أمان.</p>
+  </section>
+
+  <!-- EXERCISES -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Read the time from the ID <span class="lvl lvl-1">🟢 easy</span></b>
+    Write <code>uuidv7Timestamp(id: string): Date</code>. Reject anything that isn't version 7. Compare your answer with <code>uuid_extract_timestamp</code>.
+    <div class="ar-note">اكتب <code>uuidv7Timestamp(id: string): Date</code>. ارفض أي حاجة مش version 7. وقارن النتيجة بـ <code>uuid_extract_timestamp</code>.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/uuid-ts.ts"><code class="language-typescript">import { v7 } from "uuid";
+
+// الـ 48 bit الأولى = أول 12 حرف hex بعد شيل الشرط
+export const uuidv7Timestamp = (id: string): Date =&gt; {
+  const hex = id.replaceAll("-", "");
+  if (hex.length !== 32 || hex[12] !== "7") throw new Error("not a UUID v7");
+  return new Date(parseInt(hex.slice(0, 12), 16));
+};
+
+const before = Date.now();
+const created = uuidv7Timestamp(v7());
+console.log(created.getTime() &gt;= before, created.getTime() - before &lt; 50);
+try {
+  uuidv7Timestamp("550e8400-e29b-41d4-a716-446655440000");
+} catch (e) {
+  console.log((e as Error).message);
+}</code></pre>
+<pre><code class="language-plaintext">true true
+not a UUID v7</code></pre>
+      <div class="ar-note">أول 12 حرف hex هما الـ 48 bit بتوع الوقت. الحرف رقم 12 (من صفر) هو الـ version. السطرين بيأكدوا إن الوقت قريب من وقت التشغيل، وإن v4 اترفض.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. Multi-datacenter layout <span class="lvl lvl-2">🟡 medium</span></b>
+    Split the 10 machine bits into 5 bits of datacenter and 5 bits of worker. Write <code>make</code> and <code>decode</code>, and check them round-trip. How many workers per datacenter do you get now?
+    <div class="ar-note">قسّم الـ 10 bits بتوع الـ machine لـ 5 للـ datacenter و5 للـ worker. اكتب <code>make</code> و<code>decode</code> واتأكد إنهم بيرجعوا نفس القيم. وكام worker لكل datacenter دلوقتي؟</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/snow-dc.ts"><code class="language-typescript">const EPOCH = 1_735_689_600_000n;
+
+// تقسيمة الـ 10 bit: 5 للـ datacenter و5 للـ worker
+export const make = (ms: bigint, dc: bigint, worker: bigint, seq: bigint) =&gt;
+  ((ms - EPOCH) &lt;&lt; 22n) | (dc &lt;&lt; 17n) | (worker &lt;&lt; 12n) | seq;
+
+export const decode = (id: bigint) =&gt; ({
+  ms: (id &gt;&gt; 22n) + EPOCH,
+  dc: (id &gt;&gt; 17n) &amp; 31n,
+  worker: (id &gt;&gt; 12n) &amp; 31n,
+  seq: id &amp; 4095n,
+});
+
+const id = make(1_800_000_000_123n, 3n, 17n, 99n);
+console.log(id, decode(id));</code></pre>
+<pre><code class="language-plaintext">269737368477962339n { ms: 1800000000123n, dc: 3n, worker: 17n, seq: 99n }</code></pre>
+      <div class="ar-note">الـ datacenter بيبدأ عند bit 17 والـ worker عند bit 12. الناتج رجع نفس القيم بالظبط. الـ 5 bits بتدّيك 32 datacenter و32 worker لكل واحد.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. Fix the block allocator race <span class="lvl lvl-3">🔴 hard</span></b>
+    The <code>BlockAllocator</code> from Part 6 has a concurrency bug: under <code>Promise.all</code> with 5,000 calls, every call sees an empty block and fetches its own. Measure the round trips, then fix it so only one refill runs at a time.
+    <div class="ar-note">الـ <code>BlockAllocator</code> من الجزء 6 فيه bug في الـ concurrency: مع 5,000 call في <code>Promise.all</code> كلهم بيشوفوا الـ block فاضي وكل واحد بيجيب block لوحده. قيس عدد الـ round trips، وبعدين صلّحه عشان refill واحد بس يشتغل في المرة.</div>
+    <details><summary>Hint · تلميح</summary>
+      Keep the in-flight refill as a shared promise, and re-check in a <code>while</code> loop after awaiting it.
+      <div class="ar-note">خلّي الـ refill الشغال promise مشترك، وبعد الـ await اعمل check تاني في <code>while</code> loop.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/block-race.ts"><code class="language-typescript">// تسلسل وهمي في الـ memory بدل Postgres، مع تأخير 1ms زي round trip
+let hi = 0;
+let trips = 0;
+const nextBlock = async () =&gt; {
+  trips++;
+  await new Promise((r) =&gt; setTimeout(r, 1));
+  hi += 1000;
+  return BigInt(hi);
+};
+
+class Buggy {
+  private next = 0n;
+  private end = 0n;
+  async id() {
+    if (this.next === this.end) {
+      const h = await nextBlock();
+      this.next = h - 999n;
+      this.end = h + 1n;
+    }
+    return this.next++;
+  }
+}
+
+class Fixed {
+  private next = 0n;
+  private end = 0n;
+  private refill: Promise&lt;void&gt; | null = null;
+  async id() {
+    while (this.next === this.end) {
+      // الحل: refill واحد بس شغال، والباقي يستنوه
+      this.refill ??= nextBlock()
+        .then((h) =&gt; {
+          this.next = h - 999n;
+          this.end = h + 1n;
+        })
+        .finally(() =&gt; {
+          this.refill = null;
+        });
+      await this.refill;
+    }
+    return this.next++;
+  }
+}
+
+for (const [name, Alloc] of [["buggy", Buggy], ["fixed", Fixed]] as const) {
+  hi = 0;
+  trips = 0;
+  const a = new Alloc();
+  const ids = await Promise.all(Array.from({ length: 5000 }, () =&gt; a.id()));
+  console.log(name, { ids: new Set(ids).size, roundTrips: trips });
+}</code></pre>
+<pre><code class="language-plaintext">buggy { ids: 5000, roundTrips: 5000 }
+fixed { ids: 5000, roundTrips: 5 }</code></pre>
+      <div class="ar-note">الاتنين طلّعوا 5000 id مختلف، بس النسخة الغلط عملت 5000 round trip (يعني ضيّعت معظم الـ blocks)، والنسخة الصح عملت 5 بس. الغلطة هنا مش تكرار، هي هدر: الـ <code>while</code> مهم لإن الـ waiters ممكن يلاقوا الـ block خلص تاني بعد الـ await.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project: an ID decision <span class="lvl lvl-3">🔴 project</span></b>
+    For your side project, write a short ADR covering three IDs: the <code>orders</code> primary key, the ID shown in public URLs, and the legal <code>invoice_number</code>. State the scheme, its size, what it leaks, and how it fails. Then run <code>pgstatindex</code> on your biggest table and record the leaf density.
+    <div class="ar-note">في مشروعك الجانبي، اكتب ADR قصير يغطي 3 IDs: الـ primary key بتاع <code>orders</code>، والـ ID اللي بيظهر في الـ URLs العامة، و<code>invoice_number</code> القانوني. اكتب الـ scheme والحجم وبيسرّب إيه وبيقع إزاي. وبعدين شغّل <code>pgstatindex</code> على أكبر جدول عندك وسجّل الـ leaf density.</div>
+    <details><summary>Hint · تلميح</summary>
+      Expect different answers for the three: v7 for the key, an opaque token for the URL, and a counter updated inside the transaction for the invoice.
+      <div class="ar-note">المتوقع إجابات مختلفة للتلاتة: v7 للمفتاح، token غامض للـ URL، وعدّاد بيتحدّث جوه الـ transaction للفاتورة.</div>
+    </details>
+  </div>
+
+  <!-- SUMMARY -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Auto-increment is ideal on one database. Two databases collide, and the offset-and-step hack doesn't age well.</li>
+    <li>Sequential IDs leak volume and invite enumeration. Keep them internal.</li>
+    <li>UUID v4: random leaf inserts. Measured at 5M rows on Postgres 18: 196 vs 150 MB, 69% vs 90% density, about 3× slower inserts.</li>
+    <li>The difference shows up when the index is bigger than the cache. Test with real sizes.</li>
+    <li>UUID v7 is the default for new tables: time-ordered, generated anywhere, native <code>uuid</code> type, <code>uuidv7()</code> in Postgres 18.</li>
+    <li>v7 exposes creation time and is only monotonic inside one generator.</li>
+    <li>ULID: same 128 bits, 26 chars, Crockford base32. Store as binary.</li>
+    <li>128 vs 64 bits: multiply by every copy in FKs and indexes. Never store as text.</li>
+    <li>JS: 64-bit IDs go in JSON as strings, or they silently change.</li>
+    <li>Snowflake: 41 + 10 + 12 bits, 4,096/ms per worker, about 69.7 years, needs unique machine IDs and a sane clock.</li>
+    <li>Blocks (hi/lo) trade gaps for far fewer round trips. Gaps are fine for keys, not for legal numbering.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ auto-increment ممتاز على database واحدة. مع اتنين بيخبطوا، وحيلة الـ offset والـ step مابتعيشش كتير.</li>
+      <li>الـ IDs المتتالية بتسرّب الحجم وبتسهّل الـ enumeration. خليها داخلية.</li>
+      <li>الـ UUID v4: inserts في leaves عشوائية. القياس عند 5 مليون صف على Postgres 18: 196 مقابل 150 MB، وكثافة 69% مقابل 90%، وinserts أبطأ حوالي 3 مرات.</li>
+      <li>الفرق بيظهر لما الـ index يبقى أكبر من الـ cache. اختبر بأحجام حقيقية.</li>
+      <li>الـ UUID v7 هو الـ default للجداول الجديدة: مرتب بالوقت، بيتولّد في أي مكان، نوع <code>uuid</code> الأصلي، و<code>uuidv7()</code> في Postgres 18.</li>
+      <li>الـ v7 بيكشف وقت الإنشاء، وترتيبه monotonic جوه generator واحد بس.</li>
+      <li>الـ ULID: نفس الـ 128 bit، 26 حرف، Crockford base32. خزّنه binary.</li>
+      <li>128 مقابل 64 bit: اضرب في كل نسخة في الـ FKs والـ indexes. وماتخزّنش نص أبدًا.</li>
+      <li>في JS: الـ IDs الـ 64-bit تتبعت في الـ JSON كـ strings، وإلا هتتغير من غير ما تحس.</li>
+      <li>Snowflake: 41 + 10 + 12 bit، 4,096 في الـ ms لكل worker، حوالي 69.7 سنة، ومحتاج machine IDs مختلفة وساعة سليمة.</li>
+      <li>الـ blocks (hi/lo) بتبدّل الـ gaps بعدد round trips أقل بكتير. الـ gaps عادي للمفاتيح، مش للترقيم القانوني.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 12 · 2.6 — Unique ID generation: auto-increment (مش distributed)، UUID v4 (random — B-tree fragmentation)، UUID v7 (time-ordered)، Snowflake (timestamp + machine ID + sequence — 64-bit sortable)، ticket servers، ULID</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://www.rfc-editor.org/rfc/rfc9562.html">RFC 9562 — Universally Unique IDentifiers (UUIDs)</a></li>
+    <li><a href="https://www.postgresql.org/docs/18/functions-uuid.html">PostgreSQL 18 docs — UUID functions</a></li>
+    <li><a href="https://github.com/ulid/spec">ULID specification</a></li>
+    <li><a href="https://github.com/twitter-archive/snowflake">Twitter Snowflake (archived repository)</a></li>
+    <li><a href="https://code.flickr.net/2010/02/08/ticket-servers-distributed-unique-primary-keys-on-the-cheap/">Flickr — Ticket Servers: Distributed Unique Primary Keys on the Cheap</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./30-idempotency-keys-in-depth.html"><small>← Previous</small>30 · Idempotency</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./32-consensus-raft-coordination.html"><small>Next →</small>32 · Consensus &amp; Raft</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
