@@ -1,0 +1,2263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Algorithms in Production: Diff, Fair Scheduling, GCRA &amp; Jump Hash, Eviction &amp; Geo — 05 Algorithms</title>
+<meta name="section" content="05-Algorithms">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">05 · Algorithms</a></span>
+    <span>·</span>
+    <span>Lesson 18 / 19</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Algorithms in Production: Diff, Fair Scheduling, GCRA &amp; Jump Hash, Eviction &amp; Geo</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 18 of 19 — Algorithms</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Node 22 · TypeScript 7 · Redis 8.10 · git 2.51</span>
+      <span class="chip">Prereq: 10 DP II · 17 Flow &amp; Matching</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>05 · 3.5 — Myers diff algorithm: إزاي <code>git diff</code> بيطلع أقل تعديلات (تنفيذ مبسط)</li>
+        <li>05 · 3.5 — Scheduling: round-robin، weighted fair queuing، و earliest deadline first</li>
+        <li>05 · 3.5 — Rate limiting و consistent hashing كـ algorithms (ربط بالقسم 12)</li>
+        <li>05 · 3.5 — Caching eviction policies (LRU، LFU، ARC كمفهوم) و قياس الـ hit rate على trace حقيقي</li>
+        <li>05 · 3.5 — Geohash و الـ spatial indexing كمفهوم ("أقرب مندوب")</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Myers diff, simplified</a></li>
+      <li><a href="#p2">Part 2 — Scheduling jobs fairly</a></li>
+      <li><a href="#p3">Part 3 — GCRA and jump hash</a></li>
+      <li><a href="#p4">Part 4 — Cache eviction measured on a trace</a></li>
+      <li><a href="#p5">Part 5 — Geohash and the nearest courier</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The algorithms in this lesson already run in your stack: the diff in every pull request, the order your job queue serves tenants in, the rate limiter in front of the API, the hash that decides which Redis node owns a key, the eviction policy of every cache, and the "nearest courier" query. When they surprise you in production, the explanation is in the algorithm: a diff that interleaves two moved functions, a big tenant that starves fifty small ones for three hours, a cache that drops from 45% to 26% hits right after the nightly report, a <code>GEOSEARCH</code> that is 20× slower because of its radius.</p>
+    <p>Each part implements the core in about 15–70 lines of TypeScript, checks it against an oracle (jsdiff, a token bucket, brute force), and measures it on real tools: git 2.51, a private Redis 8.10 and traces captured from it.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ algorithms اللي في الدرس ده شغالة عندك أصلًا: الـ diff في كل pull request، والترتيب اللي الـ job queue بيخدم بيه الـ tenants، والـ rate limiter قدام الـ API، والـ hash اللي بيقرر أنهي Redis node ماسك الـ key، والـ eviction policy بتاعة أي cache، وquery "أقرب مندوب". لما حاجة منهم تفاجئك في production، التفسير جوه الـ algorithm: diff بيخلط دالتين اتنقلوا، tenant كبير بيجوّع 50 tenant صغير 3 ساعات، cache بيقع من 45% hits لـ 26% بعد الـ report الليلي على طول، و<code>GEOSEARCH</code> أبطأ 20 مرة بسبب نص القطر.</p>
+    <p>كل جزء بيكتب القلب بتاع الـ algorithm في حوالي 15 لـ 70 سطر TypeScript، ويقارنه بـ oracle (jsdiff، token bucket، brute force)، ويقيسه على أدوات حقيقية: git 2.51، وRedis 8.10 خاص بالـ lab، وtraces متسجّلة منه.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Myers diff, simplified <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — الـ Myers diff بشكل مبسط</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A line diff is a shortest <b>edit script</b>: the fewest deletions and insertions that turn file a (N lines) into file b (M lines). It is the LCS problem from <a href="./10-dynamic-programming-2.html#p1">lesson 10, part 1</a> (edits = N + M − 2·LCS), but the DP table costs O(N·M) time and memory even when the files are nearly identical. Myers (1986) works on the <b>edit graph</b>: a grid from (0,0) to (N,M) where moving right deletes a[x], moving down inserts b[y], and a diagonal move is free when a[x] = b[y]. A run of diagonals is a <b>snake</b>. The shortest edit script is the path with the fewest non-diagonal moves, D.</p>
+    <p>Number the diagonals k = x − y. A path with d edits ends on a diagonal in {−d, −d+2, …, d}. The greedy algorithm keeps <code>V[k]</code> = the furthest x reached on diagonal k. For d = 0, 1, 2, … and each such k, extend either the d−1 path on k+1 with a down move or the one on k−1 with a right move (whichever reaches further), then follow the snake as far as it goes. The first d that reaches (N,M) is D. Time is O((N+M)·D), so it is fast exactly when the files are similar. To print the script you need the path, so the code keeps a copy of V for each d (only the window −d…d, O(D²) memory) and walks back from (N,M). The unified format groups changes into hunks with 3 lines of context and merges hunks that touch.</p>
+    <p>On a 10,000-line invoice export with 12 scattered changes (D = 16), Myers took ≈3.6 ms with a 1.1 KB trace; the LCS table took ≈848 ms and 200 MB (Uint16Array, 10,001² cells). jsdiff 9 and a DP oracle agree on the edit count on 3,000 random pairs. And minimal isn't always readable: in git 2.51, two similar functions that swapped places give 4 + 4 interleaved lines with <code>myers</code> and <code>minimal</code>, and 8 + 8 lines that read as one moved block with <code>patience</code> and <code>histogram</code>, which anchor on unique lines first. Git's default is Myers with a heuristic that may stop short of the minimum on very expensive diffs; <code>--minimal</code> spends the time.</p>
+  </section>
+
+<pre class="diagram">
+                 a:  x      y      z
+            (0,0) ●──────●──────●──────●         right  →  delete a[x]
+       b:  y      │      │ ╲    │      │         down   ↓  insert b[y]
+                  ●──────●──────●──────●         ╲         a[x] == b[y]: free ("snake")
+           z      │      │      │ ╲    │
+                  ●──────●──────●──────●         D = 2: right (delete x), ╲ y, ╲ z, down (insert w)
+           w      │      │      │      │
+                  ●──────●──────●──────● (3,3)   diagonal k = x − y; V[k] = furthest x after d edits
+
+   d = 0:  V[0] = 0                 (a[0]=x ≠ b[0]=y, no snake)
+   d = 1:  k=-1: down  → (0,1)      k=+1: right → (1,0), snake y,z → (3,2)   V[1] = 3
+   d = 2:  k=0: from k=+1 (V=3), down → (3,3) = (N,M)   done, D = 2
+</pre>
+  <div class="ar-note">a فوق (x و y و z) وb على الشمال (y و z و w). اليمين = امسح سطر من a، تحت = ضيف سطر من b، والـ diagonal ببلاش لما السطرين زي بعض (ده الـ snake). أقصر script هنا D = 2: امسح x، y و z زي ما هما، ضيف w. الـ diagonal رقم k = x − y، و<code>V[k]</code> أبعد x وصلناله بـ d تعديل. في d = 0 مفيش snake لأن x غير y. في d = 1: على k = 1 بنمشي يمين (امسح x) والـ snake بياخدنا لـ (3,2)، فـ V[1] = 3. في d = 2: من k = 1 بننزل لـ (3,3) وده الآخر، يبقى D = 2.</div>
+
+<pre data-file="src/diff/myers.ts"><code class="language-typescript">// كل سطر في الـ ⁦edit script: " "⁩ زي ما هو، ⁦"-"⁩ اتمسح من a، ⁦"+"⁩ اتضاف من b
+export type Op = { op: " " | "-" | "+"; line: string; ai: number; bi: number };
+
+export function myersDiff(a: readonly string[], b: readonly string[]): Op[] {
+  const n = a.length;
+  const m = b.length;
+  const max = n + m;
+  const off = max + 1;
+  // الـ ⁦v[k] =⁩ أبعد x وصلناله على الـ diagonal رقم ⁦k (⁩حيث k = x - y)
+  const v = new Int32Array(2 * max + 3);
+  // لكل d بنحفظ الشباك k من ⁦-d⁩ لـ d بس: الذاكرة ⁦O(D^2)⁩ مش ⁦O(N·M)⁩
+  const trace: Int32Array[] = [];
+  let D = 0;
+  search: for (let d = 0; d &lt;= max; d++) {
+    for (let k = -d; k &lt;= d; k += 2) {
+      // نزول (insert) من k+1 ولا يمين (delete) من k-1؟ خد اللي واصل أبعد
+      const down = k === -d || (k !== d &amp;&amp; v[off + k - 1] &lt; v[off + k + 1]);
+      let x = down ? v[off + k + 1] : v[off + k - 1] + 1;
+      let y = x - k;
+      // الـ snake: امشي على السطور المتطابقة ببلاش
+      while (x &lt; n &amp;&amp; y &lt; m &amp;&amp; a[x] === b[y]) [x, y] = [x + 1, y + 1];
+      v[off + k] = x;
+      if (x &gt;= n &amp;&amp; y &gt;= m) {
+        trace.push(v.slice(off - d, off + d + 1));
+        D = d;
+        break search;
+      }
+    }
+    trace.push(v.slice(off - d, off + d + 1));
+  }
+
+  // ارجع من (n, m) لـ (0, 0) باستخدام الـ trace
+  const ops: Op[] = [];
+  let x = n;
+  let y = m;
+  for (let d = D; d &gt; 0; d--) {
+    const at = (k: number) =&gt; trace[d - 1][k + d - 1];
+    const k = x - y;
+    const prevK = k === -d || (k !== d &amp;&amp; at(k - 1) &lt; at(k + 1)) ? k + 1 : k - 1;
+    const prevX = at(prevK);
+    const prevY = prevX - prevK;
+    while (x &gt; prevX &amp;&amp; y &gt; prevY) {
+      [x, y] = [x - 1, y - 1];
+      ops.push({ op: " ", line: a[x], ai: x, bi: y });
+    }
+    if (x === prevX) ops.push({ op: "+", line: b[(y = y - 1)], ai: x, bi: y });
+    else ops.push({ op: "-", line: a[(x = x - 1)], ai: x, bi: y });
+  }
+  while (x &gt; 0 &amp;&amp; y &gt; 0) {
+    [x, y] = [x - 1, y - 1];
+    ops.push({ op: " ", line: a[x], ai: x, bi: y });
+  }
+  return ops.reverse();
+}
+
+// الـ unified diff: كل hunk فيه التغييرات ⁦+ 3⁩ سطور context قبل وبعد
+export function unified(ops: Op[], context = 3): string {
+  const out: string[] = [];
+  const changed = ops.map((o, i) =&gt; (o.op === " " ? -1 : i)).filter((i) =&gt; i &gt;= 0);
+  let i = 0;
+  while (i &lt; changed.length) {
+    const start = Math.max(0, changed[i] - context);
+    let end = Math.min(ops.length, changed[i] + context + 1);
+    // دمج التغييرات القريبة في hunk واحد
+    while (i + 1 &lt; changed.length &amp;&amp; changed[i + 1] - context &lt;= end) end = Math.min(ops.length, changed[++i] + context + 1);
+    i++;
+    const hunk = ops.slice(start, end);
+    const aLen = hunk.filter((o) =&gt; o.op !== "+").length;
+    const bLen = hunk.filter((o) =&gt; o.op !== "-").length;
+    out.push(`@@ -${hunk[0].ai + 1},${aLen} +${hunk[0].bi + 1},${bLen} @@`);
+    for (const o of hunk) out.push(o.op + o.line);
+  }
+  return out.join("\n");
+}</code></pre>
+
+<pre data-file="ex/l18/p1-config.ts"><code class="language-typescript">import { diffArrays } from "diff";
+import { myersDiff, unified } from "../../src/diff/myers.ts";
+
+// ملف config بتاع الـ payments service في الـ repo، وواحد اتسحب من الـ production: إيه اللي اختلف؟
+const repo = `{
+  "service": "payments",
+  "region": "eu-central-1",
+  "db": { "host": "pg-primary", "pool": 20 },
+  "providers": ["paymob", "fawry"],
+  "retry": { "max": 3, "backoffMs": 200 },
+  "webhooks": { "timeoutMs": 5000 },
+  "features": { "installments": false, "wallets": true },
+  "logLevel": "info"
+}`.split("\n");
+const prod = `{
+  "service": "payments",
+  "region": "eu-central-1",
+  "db": { "host": "pg-primary", "pool": 50 },
+  "providers": ["paymob", "fawry"],
+  "retry": { "max": 3, "backoffMs": 200 },
+  "webhooks": { "timeoutMs": 5000 },
+  "features": { "installments": true, "wallets": true },
+  "logLevel": "debug"
+}`.split("\n");
+
+const ops = myersDiff(repo, prod);
+console.log("--- repo/payments.json\n+++ prod/payments.json");
+console.log(unified(ops));
+const edits = ops.filter((o) =&gt; o.op !== " ").length;
+// الـ oracle: jsdiff لازم يطلع نفس عدد التعديلات (مش لازم نفس الترتيب)
+const oracle = diffArrays(repo, prod).filter((c) =&gt; c.added || c.removed).reduce((s, c) =&gt; s + c.count, 0);
+console.log(`edits: ours ${edits}, jsdiff ${oracle}`);</code></pre>
+<pre><code class="language-plaintext">--- repo/payments.json
++++ prod/payments.json
+@@ -1,10 +1,10 @@
+ {
+   "service": "payments",
+   "region": "eu-central-1",
+-  "db": { "host": "pg-primary", "pool": 20 },
++  "db": { "host": "pg-primary", "pool": 50 },
+   "providers": ["paymob", "fawry"],
+   "retry": { "max": 3, "backoffMs": 200 },
+   "webhooks": { "timeoutMs": 5000 },
+-  "features": { "installments": false, "wallets": true },
+-  "logLevel": "info"
++  "features": { "installments": true, "wallets": true },
++  "logLevel": "debug"
+ }
+edits: ours 6, jsdiff 6</code></pre>
+  <div class="ar-note">الـ config اللي في الـ repo قصاد اللي على الـ production: الـ pool اتغيّر من 20 لـ 50، والـ installments اتفتحت، والـ logLevel بقى debug. التلات تغييرات قريبين من بعض (3 سطور context بس بينهم)، فطلعوا في hunk واحد. وعدد التعديلات 6 عندنا و6 في jsdiff.</div>
+
+<pre data-file="ex/l18/p1-big.ts"><code class="language-typescript">import { myersDiff } from "../../src/diff/myers.ts";
+import { mulberry32, randInt } from "../../src/lib/rand.ts";
+
+// ملف export فيه 10,000 فاتورة، والنسخة الجديدة فيها 12 تعديل متفرّق
+const rnd = mulberry32(18);
+const a = Array.from({ length: 10_000 }, (_, i) =&gt; `INV-${String(i).padStart(6, "0")},cust-${randInt(rnd, 1, 900)},${(rnd() * 5000).toFixed(2)},EGP`);
+const b = [...a];
+for (let e = 0; e &lt; 12; e++) {
+  const at = randInt(rnd, 0, b.length - 1);
+  if (e % 3 === 0) b.splice(at, 1);
+  else if (e % 3 === 1) b.splice(at, 0, `INV-NEW-${e},cust-1,99.00,EGP`);
+  else b[at] = b[at].replace("EGP", "USD");
+}
+
+// الطريقة القديمة: جدول LCS كامل ⁦(n+1)·(m+1)⁩ خانة، Uint16 عشان القيم أقل من 65,536
+function lcsTableEdits(a: string[], b: string[]) {
+  const w = b.length + 1;
+  const dp = new Uint16Array((a.length + 1) * w);
+  for (let i = 1; i &lt;= a.length; i++) {
+    for (let j = 1; j &lt;= b.length; j++) {
+      dp[i * w + j] = a[i - 1] === b[j - 1] ? dp[(i - 1) * w + j - 1] + 1 : Math.max(dp[(i - 1) * w + j], dp[i * w + j - 1]);
+    }
+  }
+  return { edits: a.length + b.length - 2 * dp[a.length * w + b.length], bytes: dp.byteLength };
+}
+
+let t0 = performance.now();
+const ops = myersDiff(a, b);
+const myersMs = performance.now() - t0;
+const edits = ops.filter((o) =&gt; o.op !== " ").length;
+// ذاكرة الـ trace: شباك بطول 2d+1 لكل d من 0 لـ D، كل خانة 4 bytes
+const traceBytes = Array.from({ length: edits + 1 }, (_, d) =&gt; (2 * d + 1) * 4).reduce((x, y) =&gt; x + y, 0);
+console.log(`Myers:     ${edits} edits, ≈${myersMs.toFixed(1)} ms, trace ≈${(traceBytes / 1024).toFixed(1)} KB`);
+
+t0 = performance.now();
+const table = lcsTableEdits(a, b);
+console.log(`LCS table: ${table.edits} edits, ≈${(performance.now() - t0).toFixed(0)} ms, table ${(table.bytes / 1e6).toFixed(0)} MB`);</code></pre>
+<pre><code class="language-plaintext">Myers:     16 edits, ≈3.6 ms, trace ≈1.1 KB
+LCS table: 16 edits, ≈848 ms, table 200 MB</code></pre>
+  <div class="ar-note">10,000 سطر و12 تغيير (4 حذف، 4 إضافة، 4 تعديل والتعديل = حذف + إضافة) يعني 16 edit. Myers خلّص في ≈3.6 ms والـ trace بتاعه 1.1 KB. جدول الـ LCS خد ≈848 ms و200 MB. الاتنين نفس العدد. لو الملفين مختلفين خالص، D بيبقى كبير وMyers نفسه بيقرب من N·M.</div>
+
+<pre data-file="test/diff/myers.test.ts"><code class="language-typescript">import { test } from "node:test";
+import assert from "node:assert/strict";
+import fc from "fast-check";
+import { diffArrays } from "diff";
+import { myersDiff } from "../../src/diff/myers.ts";
+
+// الـ oracle الأول: LCS بالـ DP، وأقصر edit script = n + m - 2·LCS
+function lcs(a: string[], b: string[]): number {
+  const dp = Array.from({ length: a.length + 1 }, () =&gt; new Array&lt;number&gt;(b.length + 1).fill(0));
+  for (let i = 1; i &lt;= a.length; i++)
+    for (let j = 1; j &lt;= b.length; j++)
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+  return dp[a.length][b.length];
+}
+
+// سطور من أبجدية صغيرة عشان التكرار يبقى كتير (أصعب حالة للـ diff)
+const lines = fc.array(fc.constantFrom("{", "}", "total += x", "return sum", ""), { maxLength: 30, size: "medium" });
+
+test("Myers: rebuilds both files and the script is minimal", () =&gt; {
+  fc.assert(
+    fc.property(lines, lines, (a, b) =&gt; {
+      const ops = myersDiff(a, b);
+      assert.deepEqual(ops.filter((o) =&gt; o.op !== "+").map((o) =&gt; o.line), a);
+      assert.deepEqual(ops.filter((o) =&gt; o.op !== "-").map((o) =&gt; o.line), b);
+      const edits = ops.filter((o) =&gt; o.op !== " ").length;
+      assert.equal(edits, a.length + b.length - 2 * lcs(a, b));
+      // الـ oracle التاني: jsdiff 9
+      const jsdiff = diffArrays(a, b).filter((c) =&gt; c.added || c.removed).reduce((s, c) =&gt; s + c.count, 0);
+      assert.equal(edits, jsdiff);
+    }),
+    { seed: 18, numRuns: 3000 },
+  );
+});</code></pre>
+<pre><code class="language-plaintext">ok 1 - Myers: rebuilds both files and the script is minimal
+# tests 1
+# pass 1
+# fail 0</code></pre>
+  <div class="ar-note">الـ test بيتأكد من 3 حاجات على 3,000 pair عشوائي: الـ script بيرجّع a لو أخدت " " و"-"، وبيرجّع b لو أخدت " " و"+"، وعدد التعديلات = N + M − 2·LCS، و= jsdiff. الأبجدية صغيرة (أقواس وسطرين) عشان التكرار يبقى كتير، ودي أصعب حالة.</div>
+
+<pre data-file="ex/l18/swap.sh"><code class="language-bash">#!/usr/bin/env bash
+# نفس الملفين بالأربع algorithms اللي في git، وعدد السطور اللي اتضافت واتمسحت
+cd "$(dirname "$0")/swap"
+for alg in myers minimal patience histogram; do
+  printf "%-10s " "$alg"
+  git -c core.autocrlf=false diff --no-index --numstat --diff-algorithm="$alg" before.ts after.ts || true
+done</code></pre>
+<pre><code class="language-plaintext">myers      4	4	before.ts =&gt; after.ts
+minimal    4	4	before.ts =&gt; after.ts
+patience   8	8	before.ts =&gt; after.ts
+histogram  8	8	before.ts =&gt; after.ts</code></pre>
+<pre><code class="language-plaintext">diff --git a/before.ts b/after.ts
+index f7dbea9..b7cd8ae 100644
+--- a/before.ts
++++ b/after.ts
+@@ -1,11 +1,3 @@
+-export function total(order) {
+-  let sum = 0;
+-  for (const line of order.lines) {
+-    sum += line.price * line.qty;
+-  }
+-  return sum;
+-}
+-
+ export function tax(order) {
+   let sum = 0;
+   for (const line of order.lines) {
+@@ -13,3 +5,11 @@ export function tax(order) {
+   }
+   return sum;
+ }
++
++export function total(order) {
++  let sum = 0;
++  for (const line of order.lines) {
++    sum += line.price * line.qty;
++  }
++  return sum;
++}</code></pre>
+  <div class="ar-note">نفس الملفين (دالة <code>total</code> ودالة <code>tax</code> بدّلوا أماكنهم): <code>myers</code> و<code>minimal</code> طلّعوا 4 إضافات و4 حذف متداخلين (اسم الدالة اتغيّر في النص وسطر الحساب اتغيّر)، وده أقصر بس صعب يتقرا. <code>patience</code> و<code>histogram</code> طلّعوا 8 و8، والـ output بتاع histogram فوق بيتقرا كـ "الدالة total اتشالت من فوق واتحطت تحت". الـ diff بتاعنا وjsdiff الاتنين 4 و4 زي myers:</div>
+
+<pre data-file="ex/l18/p1-swap.ts"><code class="language-typescript">import { readFileSync } from "node:fs";
+import { diffLines } from "diff";
+import { myersDiff } from "../../src/diff/myers.ts";
+
+// نفس الملفين اللي git قارنهم: دالتين شبه بعض بدّلوا أماكنهم
+const read = (f: string) =&gt; readFileSync(new URL(`./swap/${f}`, import.meta.url), "utf8").trimEnd().split("\n");
+const ops = myersDiff(read("before.ts"), read("after.ts"));
+const count = (op: string) =&gt; ops.filter((o) =&gt; o.op === op).length;
+console.log(`our Myers: +${count("+")} -${count("-")}`);
+const changes = diffLines(read("before.ts").join("\n"), read("after.ts").join("\n"));
+const sum = (pick: (c: (typeof changes)[number]) =&gt; boolean) =&gt; changes.filter(pick).reduce((s, c) =&gt; s + c.count, 0);
+console.log(`jsdiff 9 diffLines: +${sum((c) =&gt; c.added)} -${sum((c) =&gt; c.removed)}`);</code></pre>
+<pre><code class="language-plaintext">our Myers: +4 -4
+jsdiff 9 diffLines: +4 -4</code></pre>
+  <div class="ar-note">الـ Myers بتاعنا: +4 −4، وjsdiff 9 <code>diffLines</code>: +4 −4. يعني الاتنين بيدوّروا على الأقصر، زي <code>git diff</code> الافتراضي.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ line diff هو أقصر <b>edit script</b>: أقل عدد حذف وإضافة يحوّل الملف a (N سطر) للملف b (M سطر). دي نفس مسألة الـ LCS من <a href="./10-dynamic-programming-2.html#p1">الدرس 10، الجزء 1</a> (التعديلات = N + M − 2·LCS)، بس جدول الـ DP بياخد O(N·M) وقت وذاكرة حتى لو الملفين شبه بعض. Myers (1986) بيشتغل على الـ <b>edit graph</b>: grid من (0,0) لـ (N,M)، اليمين بيمسح a[x]، تحت بيضيف b[y]، والـ diagonal ببلاش لما a[x] = b[y]. سلسلة diagonals ورا بعض اسمها <b>snake</b>. أقصر script هو الطريق اللي فيه أقل عدد حركات مش diagonal، وده D.</p>
+    <p>رقّم الـ diagonals بـ k = x − y. أي طريق فيه d تعديل بيخلص على diagonal من −d لـ d بخطوة 2. الـ algorithm الـ greedy شايل <code>V[k]</code> = أبعد x وصلناله على الـ diagonal k. لكل d = 0، 1، 2 … ولكل k من دول: مد الطريق بتاع d−1 اللي على k+1 بحركة لتحت، أو اللي على k−1 بحركة يمين (اللي يوصل أبعد)، وبعدين امشي على الـ snake لآخره. أول d يوصل (N,M) هو D. الوقت O((N+M)·D)، يعني سريع بالظبط لما الملفات شبه بعض. وعشان تطبع الـ script محتاج الطريق نفسه، فالكود بيحتفظ بنسخة من V لكل d (الشباك من −d لـ d بس، ذاكرة O(D²)) ويرجع من (N,M) لورا. والـ unified format بيجمّع التغييرات في hunks حواليها 3 سطور context، ويدمج الـ hunks اللي بتلمس بعض.</p>
+    <p>على export فيه 10,000 فاتورة و12 تغيير متفرّق (D = 16): Myers ≈3.6 ms وtrace حجمه 1.1 KB؛ جدول الـ LCS ≈848 ms و200 MB (Uint16Array بـ 10,001² خانة). وjsdiff 9 والـ DP oracle متفقين على عدد التعديلات في 3,000 pair عشوائي. والأقصر مش دايمًا الأوضح: في git 2.51 دالتين شبه بعض بدّلوا أماكنهم طلّعوا 4 + 4 سطور متداخلة مع <code>myers</code> و<code>minimal</code>، و8 + 8 بيتقروا كـ block واحد اتنقل مع <code>patience</code> و<code>histogram</code> اللي بيمسكوا في السطور الـ unique الأول. والـ default في git هو Myers ومعاه heuristic ممكن يوقف قبل الأقل في الـ diffs الغالية جدًا؛ <code>--minimal</code> بيصرف الوقت ده.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      (1) الـ audit log: "إيه اللي اتغيّر في الـ order ده؟": خزّن snapshot قبل وبعد، اعمل JSON بترتيب keys ثابت، وطلّع الـ diff سطر سطر في صفحة الـ admin (التمرين 2). (2) config drift report: job كل ليلة يسحب الـ config من كل environment ويقارنه بالـ repo ويبعت الـ hunks على Slack. (3) في الـ code review: <code>git config diff.algorithm histogram</code> عشان الـ moves تبان moves. الغلطة الشائعة: تعمل جدول LCS كامل لملفات كبيرة فتاكل 200 MB في request، أو تقارن JSON من غير ترتيب keys ثابت فتطلع diffs وهمية.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "How does <code>git diff</code> find a small diff, and why does it sometimes look wrong?" → It finds a shortest edit script with Myers' O((N+M)·D) greedy search on the edit graph (furthest-reaching paths per diagonal), which is fast when D is small. Shortest isn't clearest: with repeated lines (braces, blank lines) many scripts have the same length and Myers may interleave them; <code>--histogram</code>/<code>--patience</code> anchor on unique lines and usually read better.
+    <div class="ar-note">"إزاي <code>git diff</code> بيلاقي diff صغير، وليه ساعات بيبان غلط؟" ← بيدوّر على أقصر edit script بـ Myers بـ O((N+M)·D) على الـ edit graph (أبعد طريق لكل diagonal)، وده سريع لما D صغير. بس الأقصر مش الأوضح: مع السطور المتكررة (أقواس، سطور فاضية) فيه scripts كتير بنفس الطول وMyers ممكن يخلطهم؛ <code>--histogram</code> و<code>--patience</code> بيمسكوا في السطور الـ unique الأول وغالبًا بيتقروا أحسن.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Scheduling jobs fairly <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — توزيع الـ jobs بالعدل</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>One export queue, four workers, many tenants. In the seeded run, megacorp drops 10,000 jobs in the first minute and 50 small shops submit one to three jobs each over the next hour. <b>FIFO</b> serves them in arrival order, so a small shop waits behind megacorp's backlog: p50 10,819 s and p99 12,350 s, about three hours for a one-row export. <b>Round-robin per tenant</b> keeps one queue per tenant and cycles over the non-empty ones: small shops wait p50 2 s, p99 5 s, and megacorp loses almost nothing (p50 6,194 → 6,325 s) because the total work is the same. Starvation is a scheduling problem, not a capacity problem.</p>
+    <p>Round-robin ignores how much each tenant pays for. <b>Weighted fair queuing</b> gives each job a virtual finish time F = max(V, F<sub>last</sub>(tenant)) + size / weight and always serves the smallest F. Here V is the finish time of the job that last entered service (<b>self-clocked</b> fair queuing, the practical form of WFQ; the ideal version simulates bit-by-bit GPS). A tenant with weight 3 gets tags that grow three times slower, so when two tenants are both backlogged a Pro tenant (weight 3) got 75.0% of worker time and a Free one 25.0%, measured; round-robin and FIFO gave 49.8/50.2. Small shops still waited only p50 4 s. Cost: a scan over tenants per pop (or a heap, O(log T)) and one number per tenant.</p>
+    <p><b>Earliest deadline first</b> is for jobs with deadlines ("invoice email must go out by 09:00"). On one worker, EDF is optimal when the load is feasible: at 80% load it met every deadline where FIFO missed 1.6%. Under sustained overload it has the <b>domino effect</b>: the job with the nearest deadline is the one most likely to be already doomed, so EDF spends the worker on it, misses, and the next one is doomed too. At 120% load EDF met 0.5% of deadlines, the same as FIFO: no ordering creates capacity. The fix is shedding 1 − 1/1.2 ≈ 17% of the work on purpose: <b>admission control</b> (test at arrival whether the queue in EDF order still meets every deadline with the new job; reject it at the door otherwise) kept 82.9% on time and rejected 17.1%. Dropping doomed jobs at dispatch kept 84.1%, but those customers find out at the deadline instead of immediately.</p>
+  </section>
+
+<pre class="diagram">
+  tenant     weight   job sizes        virtual finish tags  F = max(V, F_last) + size / weight
+  megacorp      3     6  6  6  6 ...   2    4    6    8   10   12   14 ...
+  freeshop      1     6  6  6 ...      6   12   18 ...
+  served in tag order:  m2  m4  m6 f6  m8  m10  m12 f12  m14 ...  → 3 megacorp jobs per freeshop job
+  a new tenant arriving later starts at the current V, not at 0: no "credit" for having been idle
+</pre>
+  <div class="ar-note">كل job بياخد tag = max(V، آخر tag للـ tenant) + الحجم ÷ الوزن. megacorp وزنه 3 فالـ tags بتاعته بتزيد 2 كل مرة (6 ÷ 3)، وfreeshop وزنه 1 فبتزيد 6. الخدمة بترتيب الـ tags: كل 3 jobs لـ megacorp قصادهم job واحد لـ freeshop. والـ tenant اللي بيدخل متأخر بيبدأ من الـ V الحالي مش من صفر، يعني مفيش "رصيد" عشان كان قاعد ساكت.</div>
+
+<pre data-file="src/sched/queues.ts"><code class="language-typescript">export type Job = { tenant: string; at: number; size: number; start?: number };
+export interface JobQueue {
+  push(job: Job): void;
+  pop(): Job | undefined;
+  readonly size: number;
+}
+
+// (1) الـ FIFO: اللي جه الأول يتخدم الأول، مهما كان مين
+export class Fifo implements JobQueue {
+  private q: Job[] = [];
+  private head = 0;
+  push(job: Job) { this.q.push(job); }
+  pop() { return this.head &lt; this.q.length ? this.q[this.head++] : undefined; }
+  get size() { return this.q.length - this.head; }
+}
+
+// (2) الـ round-robin بين الـ tenants: كل tenant ليه طابور، وبنلف عليهم بالدور
+export class RoundRobin implements JobQueue {
+  private queues = new Map&lt;string, Job[]&gt;();
+  private ring: string[] = [];
+  private count = 0;
+  push(job: Job) {
+    let q = this.queues.get(job.tenant);
+    if (!q) this.queues.set(job.tenant, (q = []));
+    if (q.length === 0) this.ring.push(job.tenant);
+    q.push(job);
+    this.count++;
+  }
+  pop() {
+    const tenant = this.ring.shift();
+    if (tenant === undefined) return undefined;
+    const q = this.queues.get(tenant)!;
+    const job = q.shift()!;
+    if (q.length &gt; 0) this.ring.push(tenant);
+    this.count--;
+    return job;
+  }
+  get size() { return this.count; }
+}
+
+// (3) الـ ⁦weighted fair queuing (⁩نسخة self-clocked): كل job ليه virtual finish time
+// الـ finish = max(V, آخر finish للـ tenant) + size / weight، وبنخدم الأصغر
+export class Wfq implements JobQueue {
+  private queues = new Map&lt;string, { job: Job; finish: number }[]&gt;();
+  private lastFinish = new Map&lt;string, number&gt;();
+  private v = 0;
+  private count = 0;
+  private weightOf: (tenant: string) =&gt; number;
+  constructor(weightOf: (tenant: string) =&gt; number) {
+    this.weightOf = weightOf;
+  }
+  push(job: Job) {
+    const finish = Math.max(this.v, this.lastFinish.get(job.tenant) ?? 0) + job.size / this.weightOf(job.tenant);
+    this.lastFinish.set(job.tenant, finish);
+    let q = this.queues.get(job.tenant);
+    if (!q) this.queues.set(job.tenant, (q = []));
+    q.push({ job, finish });
+    this.count++;
+  }
+  pop() {
+    let best: { job: Job; finish: number }[] | undefined;
+    for (const q of this.queues.values()) if (q.length &amp;&amp; (!best || q[0].finish &lt; best[0].finish)) best = q;
+    if (!best) return undefined;
+    const { job, finish } = best.shift()!;
+    // الـ virtual clock = finish بتاع الـ job اللي دخل الخدمة دلوقتي
+    this.v = finish;
+    this.count--;
+    return job;
+  }
+  get size() { return this.count; }
+}
+
+// محاكاة: workers بيشيلوا من الطابور، والـ jobs لازم تكون مترتبة بوقت الوصول
+export function run(jobs: Job[], queue: JobQueue, workers: number): Job[] {
+  const free = new Array&lt;number&gt;(workers).fill(0);
+  const done: Job[] = [];
+  let i = 0;
+  for (;;) {
+    const w = free.indexOf(Math.min(...free));
+    let t = free[w];
+    if (queue.size === 0) {
+      if (i &gt;= jobs.length) break;
+      t = Math.max(t, jobs[i].at);
+    }
+    while (i &lt; jobs.length &amp;&amp; jobs[i].at &lt;= t) queue.push(jobs[i++]);
+    const job = queue.pop()!;
+    job.start = t;
+    free[w] = t + job.size;
+    done.push(job);
+  }
+  return done;
+}</code></pre>
+
+<pre data-file="ex/l18/p2-fair.ts"><code class="language-typescript">import { Fifo, RoundRobin, Wfq, run, type Job, type JobQueue } from "../../src/sched/queues.ts";
+import { mulberry32, randInt } from "../../src/lib/rand.ts";
+
+// طابور exports واحد و ⁦4 workers: megacorp (Pro)⁩ رمى 10,000 job في أول دقيقة
+// و 50 tenant صغيرين (Free) كل واحد عنده من 1 لـ 3 jobs على مدار أول ساعة
+function day(): Job[] {
+  const rnd = mulberry32(7);
+  const jobs: Job[] = [];
+  for (let i = 0; i &lt; 10_000; i++) jobs.push({ tenant: "megacorp", at: rnd() * 60, size: randInt(rnd, 2, 8) });
+  for (let s = 0; s &lt; 50; s++) {
+    for (let k = randInt(rnd, 1, 3); k &gt; 0; k--) jobs.push({ tenant: `shop-${s}`, at: rnd() * 3600, size: randInt(rnd, 2, 8) });
+  }
+  return jobs.sort((a, b) =&gt; a.at - b.at);
+}
+
+const pct = (xs: number[], p: number) =&gt; [...xs].sort((a, b) =&gt; a - b)[Math.min(xs.length - 1, Math.floor((p / 100) * xs.length))];
+const weight = (t: string) =&gt; (t === "megacorp" || t === "bigshop" ? 3 : 1);
+const queues: [string, () =&gt; JobQueue][] = [["FIFO", () =&gt; new Fifo()], ["round-robin", () =&gt; new RoundRobin()], ["WFQ", () =&gt; new Wfq(weight)]];
+
+console.log("wait in seconds        megacorp p50 / p99      small shops p50 / p99");
+for (const [name, make] of queues) {
+  const done = run(day(), make(), 4);
+  const wait = (big: boolean) =&gt; done.filter((j) =&gt; (j.tenant === "megacorp") === big).map((j) =&gt; j.start! - j.at);
+  const [m, s] = [wait(true), wait(false)];
+  console.log(`${name.padEnd(12)} ${pct(m, 50).toFixed(0).padStart(14)} / ${pct(m, 99).toFixed(0).padEnd(10)} ${pct(s, 50).toFixed(0).padStart(14)} / ${pct(s, 99).toFixed(0)}`);
+}
+
+// الحصة: tenant بـ ⁦Pro (⁩وزن 3) و tenant بـ ⁦Free (⁩وزن 1)، الاتنين عندهم شغل ميخلصش
+console.log("\nshare of worker time in the first 30 min, both backlogged:");
+for (const [name, make] of queues) {
+  const rnd = mulberry32(9);
+  const jobs: Job[] = [];
+  for (let i = 0; i &lt; 4000; i++) jobs.push({ tenant: i % 2 ? "megacorp" : "freeshop", at: i * 0.001, size: randInt(rnd, 2, 8) });
+  const done = run(jobs, make(), 4).filter((j) =&gt; j.start! &lt; 1800);
+  const busy = (t: string) =&gt; done.filter((j) =&gt; j.tenant === t).reduce((s, j) =&gt; s + j.size, 0);
+  const total = busy("megacorp") + busy("freeshop");
+  console.log(`${name.padEnd(12)} megacorp ${((100 * busy("megacorp")) / total).toFixed(1)}%  freeshop ${((100 * busy("freeshop")) / total).toFixed(1)}%`);
+}</code></pre>
+<pre><code class="language-plaintext">wait in seconds        megacorp p50 / p99      small shops p50 / p99
+FIFO                   6194 / 12283               10819 / 12350
+round-robin            6325 / 12413                   2 / 5
+WFQ                    6325 / 12413                   4 / 9
+
+share of worker time in the first 30 min, both backlogged:
+FIFO         megacorp 49.8%  freeshop 50.2%
+round-robin  megacorp 49.8%  freeshop 50.2%
+WFQ          megacorp 75.0%  freeshop 25.0%</code></pre>
+  <div class="ar-note">الانتظار بالثواني: الـ FIFO خلّى المحلات الصغيرة تستنى median 10,819 ثانية وp99 12,350 (حوالي 3 ساعات). الـ round-robin: 2 و5 ثواني. الـ WFQ: 4 و9. وmegacorp تقريبًا زي ما هو في التلاتة. الجزء التاني: tenant بـ Pro وtenant بـ Free الاتنين عندهم شغل كتير: FIFO والـ round-robin قسموا 49.8 و50.2، والـ WFQ قسم 75.0 و25.0 بالظبط زي الأوزان.</div>
+
+<pre data-file="ex/l18/p2-edf.ts"><code class="language-typescript">import { mulberry32 } from "../../src/lib/rand.ts";
+
+// شغلانات ليها ⁦deadline: "⁩ابعت الفاتورة قبل 9:00". worker واحد، والـ job بتتنفّذ للآخر من غير مقاطعة
+type DJob = { at: number; size: number; deadline: number };
+
+function makeJobs(load: number, n = 20_000): DJob[] {
+  const rnd = mulberry32(21);
+  const jobs: DJob[] = [];
+  let t = 0;
+  for (let i = 0; i &lt; n; i++) {
+    // وصول Poisson: متوسط الحجم 1 ثانية، فالمعدل = الـ load
+    t += -Math.log(1 - rnd()) / load;
+    const size = 0.5 + rnd();
+    jobs.push({ at: t, size, deadline: t + 5 + rnd() * 25 });
+  }
+  return jobs;
+}
+
+type Policy = "FIFO" | "EDF" | "EDF + drop doomed" | "EDF + admission";
+
+function simulate(jobs: DJob[], policy: Policy) {
+  const queue: DJob[] = [];
+  let t = 0;
+  let i = 0;
+  let onTime = 0;
+  let late = 0;
+  let rejected = 0;
+  // اختبار القبول: لو ضفنا الـ job دي، كل اللي في الطابور بترتيب EDF هيلحق؟
+  const feasibleWith = (job: DJob, busyUntil: number) =&gt; {
+    const plan = [...queue, job].sort((a, b) =&gt; a.deadline - b.deadline);
+    let clock = busyUntil;
+    for (const j of plan) if ((clock += j.size) &gt; j.deadline) return false;
+    return true;
+  };
+  let busyUntil = 0;
+  while (i &lt; jobs.length || queue.length) {
+    if (queue.length === 0) t = Math.max(t, jobs[i].at);
+    while (i &lt; jobs.length &amp;&amp; jobs[i].at &lt;= t) {
+      const job = jobs[i++];
+      if (policy === "EDF + admission" &amp;&amp; !feasibleWith(job, Math.max(busyUntil, job.at))) rejected++;
+      else queue.push(job);
+    }
+    if (queue.length === 0) continue;
+    let k = 0;
+    if (policy !== "FIFO") for (let j = 1; j &lt; queue.length; j++) if (queue[j].deadline &lt; queue[k].deadline) k = j;
+    const job = queue.splice(k, 1)[0];
+    // تخفيف أرخص: لو الـ job مش هتلحق خلاص، ارميها بدل ما تضيّع وقت الـ worker عليها
+    if (policy === "EDF + drop doomed" &amp;&amp; t + job.size &gt; job.deadline) {
+      rejected++;
+      continue;
+    }
+    t += job.size;
+    busyUntil = t;
+    if (t &lt;= job.deadline) onTime++;
+    else late++;
+  }
+  return { onTime, late, rejected };
+}
+
+for (const load of [0.8, 1.2]) {
+  const jobs = makeJobs(load);
+  for (const policy of ["FIFO", "EDF", "EDF + drop doomed", "EDF + admission"] as const) {
+    const r = simulate(jobs, policy);
+    const p = (x: number) =&gt; ((100 * x) / jobs.length).toFixed(1).padStart(5) + "%";
+    console.log(`load ${String(Math.round(load * 100)).padStart(3)}%  ${policy.padEnd(17)} on time ${p(r.onTime)}  late ${p(r.late)}  rejected ${p(r.rejected)}`);
+  }
+}</code></pre>
+<pre><code class="language-plaintext">load  80%  FIFO              on time  98.4%  late   1.6%  rejected   0.0%
+load  80%  EDF               on time 100.0%  late   0.0%  rejected   0.0%
+load  80%  EDF + drop doomed on time 100.0%  late   0.0%  rejected   0.0%
+load  80%  EDF + admission   on time 100.0%  late   0.0%  rejected   0.0%
+load 120%  FIFO              on time   0.5%  late  99.5%  rejected   0.0%
+load 120%  EDF               on time   0.5%  late  99.5%  rejected   0.0%
+load 120%  EDF + drop doomed on time  84.1%  late   0.0%  rejected  15.9%
+load 120%  EDF + admission   on time  82.9%  late   0.0%  rejected  17.1%</code></pre>
+  <div class="ar-note">20,000 job، worker واحد. عند load 80%: الـ FIFO لحق 98.4% والـ EDF لحق 100%. عند load 120%: الـ FIFO والـ EDF الاتنين لحقوا 0.5% بس. رمي الـ jobs اللي مش هتلحق وقت التنفيذ: 84.1% في الميعاد و15.9% اترموا. الـ admission control: 82.9% في الميعاد و17.1% اترفضوا من الأول.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>طابور exports واحد، 4 workers، وtenants كتير. في الـ run (بـ seed)، megacorp رمى 10,000 job في أول دقيقة، و50 محل صغير كل واحد بعت من job لـ 3 على مدار الساعة اللي بعدها. الـ <b>FIFO</b> بيخدم بترتيب الوصول، فالمحل الصغير بيستنى ورا كل شغل megacorp: median 10,819 ثانية وp99 12,350، يعني حوالي 3 ساعات عشان export فيه صف واحد. الـ <b>round-robin لكل tenant</b> بيعمل طابور لكل tenant ويلف على اللي مش فاضيين: المحلات الصغيرة استنت median ثانيتين وp99 خمسة، وmegacorp تقريبًا مخسرش حاجة (الـ median من 6,194 لـ 6,325 ثانية) لأن الشغل الكلي هو هو. الـ starvation مشكلة scheduling مش مشكلة capacity.</p>
+    <p>الـ round-robin مش فارق معاه كل tenant دافع كام. الـ <b>weighted fair queuing</b> بيدّي كل job virtual finish time: F = max(V، آخر F للـ tenant) + الحجم ÷ الوزن، ودايمًا بيخدم أصغر F. الـ V هنا هو الـ F بتاع آخر job دخل الخدمة (ده <b>self-clocked</b> fair queuing، الشكل العملي للـ WFQ؛ النسخة المثالية بتعمل simulation لـ GPS bit by bit). الـ tenant اللي وزنه 3 الـ tags بتاعته بتزيد أبطأ 3 مرات، فلما اتنين عندهم شغل كتير، الـ Pro (وزن 3) خد 75.0% من وقت الـ workers والـ Free خد 25.0%، بالقياس؛ والـ round-robin والـ FIFO قسموا 49.8 و50.2. والمحلات الصغيرة لسه استنت median 4 ثواني بس. التكلفة: لفة على الـ tenants في كل pop (أو heap بـ O(log T)) ورقم واحد لكل tenant.</p>
+    <p>الـ <b>earliest deadline first</b> للـ jobs اللي ليها deadline ("إيميل الفاتورة لازم يطلع قبل 9:00"). على worker واحد، EDF هو الأمثل طول ما الحمل يتلحق: عند 80% لحق كل الـ deadlines والـ FIFO فوّت 1.6%. تحت ضغط زيادة مستمر بيحصل الـ <b>domino effect</b>: الـ job اللي الـ deadline بتاعه أقرب هو الأكتر احتمالًا إنه خلاص مش هيلحق، فـ EDF بيصرف عليه الـ worker ويفوّته، واللي بعده يبقى مش لاحق برضه. عند 120% الـ EDF لحق 0.5% بس، زي الـ FIFO بالظبط: مفيش ترتيب بيخلق capacity. الحل إنك ترمي حوالي 17% من الشغل بقصد (1 − 1/1.2): الـ <b>admission control</b> (وقت ما الـ job يوصل اختبر: لو ضفناه، الطابور بترتيب EDF هيلحق كل الـ deadlines؟ لو لأ ارفضه على الباب) خلّى 82.9% في الميعاد ورفض 17.1%. ورمي الـ jobs اللي مش هتلحق وقت التنفيذ خلّى 84.1%، بس العملاء دول بيعرفوا عند الـ deadline مش في ساعتها.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      SaaS فيه exports وreports لكل tenant على BullMQ: queue واحد مشترك = FIFO، وأول عميل كبير يعمل bulk export الكل يشتكي. الحل: queue لكل tenant (أو list في Redis لكل tenant) وdispatcher صغير بـ WFQ بالأوزان حسب الـ plan، وهو اللي بيحط الشغل في الـ worker queue (BullMQ نفسه تفاصيله في <a href="../../06-NodeJS/lessons/22-background-jobs-bullmq.html">درس الـ background jobs</a>؛ و BullMQ Pro فيه groups بتلف round-robin بس ده مدفوع ومتشغّلش هنا). وللإيميلات اللي ليها ميعاد: EDF مع admission control، والـ job اللي اترفض يرجع للـ API بـ 429 أو "هيتبعت متأخر" بدل ما يتأخر في السكوت. وده نفس منطق الـ load shedding في <a href="../../12-System-Design/lessons/21-backpressure-dlq-scheduling.html">درس الـ backpressure والـ scheduling</a>. حتى Node <code>cluster</code> بيوزّع الـ connections round-robin افتراضيًا ما عدا على Windows (هنا <code>schedulingPolicy</code> طلعت <code>SCHED_NONE</code>)، تفاصيلها في <a href="../../06-NodeJS/lessons/34-worker-threads-cluster.html#p4">درس الـ cluster، الجزء 4</a>. الغلطة الشائعة: تستخدم priorities بدل العدل؛ الـ priority صارمة، فالـ tenant اللي الـ priority بتاعته واطية ممكن ميتخدمش خالص.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "One job queue serves all tenants and a single big customer delays everyone. Design the fix." → Per-tenant queues plus a fair dispatcher: round-robin for equal shares, weighted fair queuing (virtual finish tags F = max(V, F_last) + size/weight) for plan-based shares. Cap each tenant's concurrency, and for deadline work use EDF with admission control, because under overload no ordering helps and you must shed load explicitly.
+    <div class="ar-note">"queue واحد بيخدم كل الـ tenants، وعميل كبير واحد بيأخّر الكل. صمّم الحل." ← طابور لكل tenant وdispatcher عادل: round-robin لو الحصص متساوية، وweighted fair queuing (tags بـ F = max(V، آخر F) + الحجم ÷ الوزن) لو الحصص حسب الـ plan. حط حد أقصى للـ concurrency لكل tenant، وللشغل اللي ليه deadline استخدم EDF مع admission control، لأن تحت الضغط الزيادة مفيش ترتيب بيفيد ولازم ترمي حمل بوضوح.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — GCRA and jump hash <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ GCRA والـ jump hash</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Rate-limiting algorithms are already taught in <a href="../../03-CS-Fundamentals/lessons/10-ds-for-system-design.html#p5">CS lesson 10, part 5</a>, run side by side on one trace in <a href="../../12-System-Design/lessons/25-rate-limiting-algorithms-distributed.html">system design lesson 25</a> and built as a class in <a href="../../10-Design-Patterns/lessons/24-rate-limiter-idempotent-receiver.html">design patterns lesson 24</a>. The algorithmic view adds <b>GCRA</b> (generic cell rate algorithm, from ATM networks). With an emission interval T = 1/rate and tolerance τ = T·(burst − 1), each key stores one number, the <b>theoretical arrival time</b> TAT. A request at time t is allowed if max(TAT, t) − t ≤ τ, and then TAT = max(TAT, t) + T. That is a leaky bucket seen as a schedule, and it makes the same decisions as a token bucket with capacity <i>burst</i>: take credit = burst·T − (TAT − t)⁺ and both update rules become identical. A property test agrees on every request of 5,000 random traces; in Redis it is six lines of Lua on one string key, and it matched the in-process version on 5,000 of 5,000 requests. The state is smaller: 38 bytes for the GCRA string against 70 for a two-field token-bucket hash in <code>MEMORY USAGE</code>. Use integer units: with a 1000/3 ms interval, float rounding made the two disagree on 2,435 of 600,000 decisions. The <code>redis-cell</code> module implements GCRA as <code>CL.THROTTLE</code>; this Redis build ships only the <code>vectorset</code> module, so it was not run here.</p>
+    <p>Why <code>hash % N</code> breaks and the ring idea are in <a href="../../03-CS-Fundamentals/lessons/10-ds-for-system-design.html#p3">CS lesson 10, parts 3–4</a>; the ring with virtual nodes and rendezvous hashing is built in section 04 · 2.1 (<a href="../../04-Data-Structures/lessons/06-hashing-in-depth-consistent-hashing.html">lesson 06</a>) and measured on Redis-style shards in <a href="../../12-System-Design/lessons/13-partitioning-consistent-hashing.html">system design lesson 13</a>. New here: <b>jump consistent hash</b> (Lamping and Veach, 2014). A few lines, no memory, O(log n) expected steps: a 64-bit LCG seeded by the key decides, bucket by bucket, how far the key "jumps" as buckets are added. Because the LCG multiplies 64-bit numbers, JavaScript needs <code>BigInt</code> (or careful 32-bit limb math). Measured on 10<sup>6</sup> keys: going from 10 to 11 buckets moved exactly 9.09% (= 1/11) and every moved key went to the new bucket; 100 → 101 moved 0.99%; <code>hash % n</code> moved 90.93%. The limit is the price of having no state: buckets are the numbers 0…n−1, so you can add or remove only the last one. Removing node 3 of 10 by renaming bucket 3 to the last node moved 18.92% of keys instead of 10%. Use it for numbered shards that only grow, not for a cache cluster where any node can die.</p>
+  </section>
+
+<pre data-file="src/hash/gcra.ts"><code class="language-typescript">// الـ GCRA: لكل client رقم واحد بس، الـ ⁦TAT (theoretical arrival time)⁩
+// الـ ⁦interval =⁩ كل قد إيه مسموح request، ⁦burst =⁩ كام request ورا بعض مسموح
+export function gcra(intervalMs: number, burst: number) {
+  const tolerance = intervalMs * (burst - 1);
+  let tat = 0;
+  return (now: number): boolean =&gt; {
+    const t = Math.max(tat, now);
+    // جه بدري أكتر من المسموح: ارفض ومتغيّرش الـ state
+    if (t - now &gt; tolerance) return false;
+    tat = t + intervalMs;
+    return true;
+  };
+}
+
+// الـ token bucket بنفس المعايير: رقمين (الرصيد ووقت آخر refill)
+// الرصيد بالـ ms عشان الحساب يفضل integers: token واحد ⁦= intervalMs⁩
+export function tokenBucket(intervalMs: number, burst: number) {
+  const capacity = intervalMs * burst;
+  let credit = capacity;
+  let last = 0;
+  return (now: number): boolean =&gt; {
+    credit = Math.min(capacity, credit + (now - last));
+    last = now;
+    if (credit &lt; intervalMs) return false;
+    credit -= intervalMs;
+    return true;
+  };
+}</code></pre>
+
+<pre data-file="ex/l18/p3-gcra-demo.ts"><code class="language-typescript">import { gcra, tokenBucket } from "../../src/hash/gcra.ts";
+
+// تاجر (merchant) بيضرب الـ API: 10 في الثانية (كل 100 ms)، و burst لحد 5
+const limitA = gcra(100, 5);
+const limitB = tokenBucket(100, 5);
+const trace = [0, 0, 0, 0, 0, 0, 50, 100, 150, 200, 1000, 1000];
+const cells = (xs: string[]) =&gt; xs.map((x) =&gt; x.padStart(5)).join("");
+const row = (f: (t: number) =&gt; boolean) =&gt; cells(trace.map((t) =&gt; (f(t) ? "ok" : "429")));
+console.log("t (ms)      " + cells(trace.map(String)));
+console.log("GCRA        " + row(limitA));
+console.log("token bucket" + row(limitB));</code></pre>
+<pre><code class="language-plaintext">t (ms)          0    0    0    0    0    0   50  100  150  200 1000 1000
+GCRA           ok   ok   ok   ok   ok  429  429   ok  429   ok   ok   ok
+token bucket   ok   ok   ok   ok   ok  429  429   ok  429   ok   ok   ok</code></pre>
+  <div class="ar-note">10 requests في الثانية (كل 100 ms) وburst لحد 5: أول 5 في نفس اللحظة اتقبلوا، السادس والسابع اترفضوا (429)، اللي عند 50 ms اترفض برضه، اللي عند 100 ms اتقبل لأن الوقت ده كفاية لـ token واحد، وهكذا. والـ GCRA والـ token bucket نفس القرار في كل خانة.</div>
+
+<pre data-file="test/hash/gcra.test.ts"><code class="language-typescript">import { test } from "node:test";
+import assert from "node:assert/strict";
+import fc from "fast-check";
+import { gcra, tokenBucket } from "../../src/hash/gcra.ts";
+
+// شوية traces عشوائية: فروق وقت بين الـ ⁦requests (⁩فيها صفر ⁦= burst⁩)، وقيم interval و burst عشوائية
+const trace = fc.record({
+  interval: fc.integer({ min: 1, max: 500 }),
+  burst: fc.integer({ min: 1, max: 20 }),
+  gaps: fc.array(fc.oneof(fc.constant(0), fc.integer({ min: 0, max: 1000 })), { maxLength: 300, size: "large" }),
+});
+
+test("GCRA and token bucket make the same decision on every request", () =&gt; {
+  fc.assert(
+    fc.property(trace, ({ interval, burst, gaps }) =&gt; {
+      const a = gcra(interval, burst);
+      const b = tokenBucket(interval, burst);
+      let now = 0;
+      for (const gap of gaps) {
+        now += gap;
+        assert.equal(a(now), b(now));
+      }
+    }),
+    { seed: 18, numRuns: 5000 },
+  );
+});</code></pre>
+<pre><code class="language-plaintext">ok 1 - GCRA and token bucket make the same decision on every request
+# tests 1
+# pass 1
+# fail 0</code></pre>
+  <div class="ar-note">5,000 trace عشوائي بأحجام كبيرة (<code>size: "large"</code>، لحد 300 request في الـ trace) وقيم interval وburst عشوائية: نفس القرار في كل request.</div>
+
+<pre data-file="ex/l18/p3-gcra-redis.ts"><code class="language-typescript">import { Redis } from "ioredis";
+import { gcra } from "../../src/hash/gcra.ts";
+import { mulberry32, randInt } from "../../src/lib/rand.ts";
+import { redisPort } from "./lab.ts";
+
+// نفس الـ GCRA جوه Redis: key واحد فيه رقم واحد (الـ TAT)، والـ script بيتنفذ atomically
+const GCRA = `
+local now, interval, burst = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3])
+local tat = math.max(tonumber(redis.call('GET', KEYS[1]) or 0), now)
+if tat - now &gt; interval * (burst - 1) then return 0 end
+redis.call('SET', KEYS[1], tat + interval, 'PX', tat + interval - now)
+return 1
+`;
+const redis = new Redis({ host: "127.0.0.1", port: redisPort() });
+await redis.del("rl:api-key:merchant-42");
+
+// الـ clock متحقن: الوقت بييجي من الـ trace مش من الساعة، عشان المقارنة تبقى بالظبط
+const rnd = mulberry32(42);
+// المعدل 10 في الثانية (كل 100 ms)، و burst لحد 5
+const local = gcra(100, 5);
+let now = 1_000_000;
+let same = 0;
+let allowed = 0;
+const N = 5000;
+for (let i = 0; i &lt; N; i++) {
+  now += rnd() &lt; 0.4 ? 0 : randInt(rnd, 1, 250);
+  const inRedis = (await redis.eval(GCRA, 1, "rl:api-key:merchant-42", now, 100, 5)) === 1;
+  if (inRedis === local(now)) same++;
+  if (inRedis) allowed++;
+}
+console.log(`same decision ${same}/${N}, allowed ${allowed}`);
+console.log("state in Redis:", await redis.call("TYPE", "rl:api-key:merchant-42"), await redis.call("MEMORY", "USAGE", "rl:api-key:merchant-42"), "bytes");
+redis.disconnect();</code></pre>
+<pre><code class="language-plaintext">same decision 5000/5000, allowed 3660
+state in Redis: string 49 bytes</code></pre>
+  <div class="ar-note">الـ Lua script في Redis والنسخة اللي في الـ process خدوا نفس القرار في الـ 5,000 request (3,660 اتقبلوا). الـ key نوعه string وحجمه 49 byte ومعاه الـ TTL.</div>
+
+<pre><code class="language-bash"># الـ port من الـ lab بس، ولو فاضي أو default نوقف
+PORT=$(cat lab/redis.port) || exit 1
+case "$PORT" in ''|*[!0-9]*|0|27017|5432|6379) echo "refusing port '$PORT'"; exit 1;; esac
+R="D:/tools/redis/redis-cli.exe"
+# الـ token bucket: hash فيه رقمين، الرصيد ووقت آخر refill
+"$R" -p "$PORT" HSET rl:tb:merchant-42 tokens 4.5 ts 1794539271101 &gt; /dev/null
+"$R" -p "$PORT" MEMORY USAGE rl:tb:merchant-42
+# الـ GCRA: string فيه رقم واحد، الـ TAT
+"$R" -p "$PORT" SET rl:gcra:merchant-42 1794539271201 &gt; /dev/null
+"$R" -p "$PORT" MEMORY USAGE rl:gcra:merchant-42
+"$R" -p "$PORT" DEL rl:tb:merchant-42 rl:gcra:merchant-42</code></pre>
+<pre><code class="language-plaintext">70
+38
+2</code></pre>
+  <div class="ar-note">الـ hash بتاع الـ token bucket خد 70 byte، والـ string بتاع الـ GCRA خد 38 byte (الاتنين من غير TTL)، و2 = الاتنين اتمسحوا. على مليون API key الفرق حوالي 32 MB.</div>
+
+<pre data-file="src/hash/jump.ts"><code class="language-typescript">// الـ ⁦jump consistent hash (Lamping &amp; Veach 2014)⁩: من غير أي ذاكرة، ⁦O(log n)⁩
+// الـ key لازم يكون 64-bit، والـ LCG بيضرب في 64-bit: عشان كده BigInt
+export function jumpHash(key: bigint, buckets: number): number {
+  let b = -1;
+  let j = 0;
+  while (j &lt; buckets) {
+    b = j;
+    key = BigInt.asUintN(64, key * 2862933555777941757n + 1n);
+    // الخطوة الجاية: "اقفز" لأول bucket الـ key ممكن يتنقل له
+    j = Math.floor((b + 1) * (2 ** 31 / (Number(key &gt;&gt; 33n) + 1)));
+  }
+  return b;
+}
+
+// دالة hash سريعة 32-bit (FNV-1a + finalizer بتاع murmur3) لتحويل "user:123" لأرقام
+export function hash32(s: string, seed = 0): number {
+  let h = (0x811c9dc5 ^ seed) &gt;&gt;&gt; 0;
+  for (let i = 0; i &lt; s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  h ^= h &gt;&gt;&gt; 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h &gt;&gt;&gt; 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  return (h ^ (h &gt;&gt;&gt; 16)) &gt;&gt;&gt; 0;
+}
+
+export const key64 = (s: string): bigint =&gt; (BigInt(hash32(s, 1)) &lt;&lt; 32n) | BigInt(hash32(s, 2));</code></pre>
+
+<pre data-file="ex/l18/p3-jump.ts"><code class="language-typescript">import { jumpHash, hash32, key64 } from "../../src/hash/jump.ts";
+
+const N = 1_000_000;
+const names = Array.from({ length: N }, (_, i) =&gt; `user:${i}`);
+const k64 = names.map(key64);
+const k32 = names.map((s) =&gt; hash32(s, 3));
+
+// (1) جمب: من 10 لـ 11 bucket، كام key اتنقل، ولفين؟
+for (const n of [10, 100]) {
+  let moved = 0;
+  let movedElsewhere = 0;
+  for (const k of k64) {
+    const before = jumpHash(k, n);
+    const after = jumpHash(k, n + 1);
+    if (before !== after) moved++;
+    if (before !== after &amp;&amp; after !== n) movedElsewhere++;
+  }
+  console.log(`jump ${n} -&gt; ${n + 1}: moved ${((100 * moved) / N).toFixed(2)}% (ideal ${(100 / (n + 1)).toFixed(2)}%), moved anywhere but the new bucket: ${movedElsewhere}`);
+}
+// المقارنة: hash % n
+const modMoved = k32.filter((h) =&gt; h % 10 !== h % 11).length;
+console.log(`modulo 10 -&gt; 11: moved ${((100 * modMoved) / N).toFixed(2)}%`);
+
+// (2) حد جمب: الـ buckets أرقام 0..n-1، ومتقدرش تشيل node من النص
+// الحل الوحيد: bucket 3 ياخد node اللي في الآخر، وبعدين تقلّل لـ 9 buckets
+const nodes = Array.from({ length: 10 }, (_, i) =&gt; `cache-${i}`);
+const after = [...nodes];
+after[3] = after[9];
+after.pop();
+const movedNode = k64.filter((k) =&gt; nodes[jumpHash(k, 10)] !== after[jumpHash(k, 9)]).length;
+console.log(`jump, remove cache-3 of 10: ${((100 * movedNode) / N).toFixed(2)}% of keys change node (ideal 10%)`);</code></pre>
+<pre><code class="language-plaintext">jump 10 -&gt; 11: moved 9.09% (ideal 9.09%), moved anywhere but the new bucket: 0
+jump 100 -&gt; 101: moved 0.99% (ideal 0.99%), moved anywhere but the new bucket: 0
+modulo 10 -&gt; 11: moved 90.93%
+jump, remove cache-3 of 10: 18.92% of keys change node (ideal 10%)</code></pre>
+  <div class="ar-note">مليون key: من 10 لـ 11 bucket اتنقل 9.09% بالظبط زي المثالي، وولا key اتنقل لحتة غير الـ bucket الجديد. من 100 لـ 101: 0.99%. الـ <code>hash % n</code> من 10 لـ 11 نقل 90.93%. ولما شلنا cache-3 من 10 (سمّينا الـ bucket رقم 3 باسم آخر node وقلّلنا لـ 9) اتنقل 18.92% بدل 10%.</div>
+
+<pre data-file="ex/l18/p3-table.ts"><code class="language-typescript">import { jumpHash, hash32, key64 } from "../../src/hash/jump.ts";
+
+// نسخ صغيرة للمقارنة بس: الـ ring والـ rendezvous متشرحين في section 04 · 2.1
+function ring(n: number, vnodes = 100) {
+  const pts: [number, number][] = [];
+  for (let node = 0; node &lt; n; node++) for (let v = 0; v &lt; vnodes; v++) pts.push([hash32(`node-${node}#${v}`), node]);
+  pts.sort((a, b) =&gt; a[0] - b[0]);
+  const at = Uint32Array.from(pts, (p) =&gt; p[0]);
+  const owner = Int32Array.from(pts, (p) =&gt; p[1]);
+  return {
+    bytes: at.byteLength + owner.byteLength,
+    lookup(h: number) {
+      let lo = 0;
+      let hi = at.length;
+      while (lo &lt; hi) {
+        const mid = (lo + hi) &gt;&gt;&gt; 1;
+        if (at[mid] &lt; h) lo = mid + 1;
+        else hi = mid;
+      }
+      return owner[lo === at.length ? 0 : lo];
+    },
+  };
+}
+// الـ score لكل node: خلط integers بس (من غير strings) عشان القياس يبقى عادل
+const mix = (x: number) =&gt; {
+  x = Math.imul(x ^ (x &gt;&gt;&gt; 16), 0x85ebca6b);
+  x = Math.imul(x ^ (x &gt;&gt;&gt; 13), 0xc2b2ae35);
+  return (x ^ (x &gt;&gt;&gt; 16)) &gt;&gt;&gt; 0;
+};
+const rendezvous = (n: number) =&gt; (h: number) =&gt; {
+  let best = 0;
+  let bestScore = -1;
+  for (let node = 0; node &lt; n; node++) {
+    const score = mix(h ^ Math.imul(node + 1, 0x9e3779b1));
+    if (score &gt; bestScore) [best, bestScore] = [node, score];
+  }
+  return best;
+};
+
+const K = 100_000;
+const names = Array.from({ length: K }, (_, i) =&gt; `order:${i}`);
+const h32 = names.map((s) =&gt; hash32(s, 7));
+const h64 = names.map(key64);
+const time = (fn: (i: number) =&gt; number) =&gt; {
+  let sink = 0;
+  for (let i = 0; i &lt; 2000; i++) sink += fn(i);
+  const t0 = performance.now();
+  for (let i = 0; i &lt; K; i++) sink += fn(i);
+  return { ns: ((performance.now() - t0) * 1e6) / K, sink };
+};
+for (const n of [10, 1000]) {
+  const r = ring(n);
+  const rv = rendezvous(n);
+  const rows = [
+    ["modulo", time((i) =&gt; h32[i] % n).ns, 0],
+    ["ring x100 vnodes", time((i) =&gt; r.lookup(h32[i])).ns, r.bytes],
+    ["rendezvous", time((i) =&gt; rv(h32[i])).ns, 0],
+    ["jump (BigInt)", time((i) =&gt; jumpHash(h64[i], n)).ns, 0],
+  ] as const;
+  for (const [name, ns, bytes] of rows) console.log(`n=${String(n).padEnd(5)} ${name.padEnd(17)} ≈${ns.toFixed(0).padStart(6)} ns/lookup  extra memory ${bytes} bytes`);
+}</code></pre>
+<pre><code class="language-plaintext">n=10    modulo            ≈    19 ns/lookup  extra memory 0 bytes
+n=10    ring x100 vnodes  ≈    68 ns/lookup  extra memory 8000 bytes
+n=10    rendezvous        ≈    55 ns/lookup  extra memory 0 bytes
+n=10    jump (BigInt)     ≈   120 ns/lookup  extra memory 0 bytes
+n=1000  modulo            ≈    13 ns/lookup  extra memory 0 bytes
+n=1000  ring x100 vnodes  ≈   126 ns/lookup  extra memory 800000 bytes
+n=1000  rendezvous        ≈  1531 ns/lookup  extra memory 0 bytes
+n=1000  jump (BigInt)     ≈   296 ns/lookup  extra memory 0 bytes</code></pre>
+  <div class="ar-note">وقت الـ lookup بالـ nanoseconds (تقريبي، على Windows): عند 10 nodes الـ modulo ≈19، الـ ring ≈68، الـ rendezvous ≈55، والـ jump بالـ BigInt ≈120. عند 1,000 node: الـ modulo ≈13، الـ ring ≈126 (وذاكرة 800 KB للنقط)، الـ rendezvous ≈1,531 لأنه بيحسب score لكل node، والـ jump ≈296.</div>
+
+  <table>
+    <thead><tr><th>Scheme</th><th>Lookup ≈ (n = 10 / 1,000)</th><th>Extra memory</th><th>Keys moved, 10 → 11</th><th>What it can't do</th></tr></thead>
+    <tbody>
+      <tr><td><code>hash % n</code></td><td>19 / 13 ns</td><td>none</td><td>90.93% (measured)</td><td>change n without moving almost everything</td></tr>
+      <tr><td>Ring, 100 virtual nodes</td><td>68 / 126 ns</td><td>8 KB / 800 KB of points</td><td>≈ 1/(n+1), uneven with few vnodes</td><td>work without the ring in memory and in sync on every client</td></tr>
+      <tr><td>Rendezvous (HRW)</td><td>55 / 1,531 ns</td><td>none</td><td>≈ 1/(n+1)</td><td>stay fast with thousands of nodes: O(n) per lookup</td></tr>
+      <tr><td>Jump hash</td><td>120 / 296 ns (BigInt)</td><td>none</td><td>9.09%, exactly 1/11 (measured)</td><td>remove a node in the middle (18.92% moved), or weight nodes</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">
+    <p>صف صف: (1) <code>hash % n</code>: ≈19 و13 ns ومن غير ذاكرة، بس من 10 لـ 11 نقل 90.93%، يعني متقدرش تغيّر n من غير ما تنقل تقريبًا كل حاجة. (2) الـ ring بـ 100 virtual node: ≈68 و126 ns، وذاكرة 8 KB لـ 10 nodes و800 KB لـ 1,000؛ بينقل حوالي 1/(n+1) بس مش متساوي لو الـ vnodes قليلة، ومحتاج الـ ring في الذاكرة ومتزامن عند كل client. (3) الـ rendezvous: ≈55 و1,531 ns ومن غير ذاكرة وبينقل حوالي 1/(n+1)، بس O(n) لكل lookup فبيبطأ مع آلاف الـ nodes (مع عشرات كويس). (4) الـ jump: ≈120 و296 ns بالـ BigInt ومن غير ذاكرة، وبينقل 1/11 بالظبط، بس مينفعش تشيل node من النص (اتنقل 18.92%) ومفيش أوزان للـ nodes.</p>
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ rate limiting algorithms متشرحة قبل كده في <a href="../../03-CS-Fundamentals/lessons/10-ds-for-system-design.html#p5">درس الـ CS رقم 10، الجزء 5</a>، ومتجرّبة جنب بعض على نفس الـ trace في <a href="../../12-System-Design/lessons/25-rate-limiting-algorithms-distributed.html">درس الـ system design رقم 25</a>، ومتبنية كـ class في <a href="../../10-Design-Patterns/lessons/24-rate-limiter-idempotent-receiver.html">درس الـ design patterns رقم 24</a>. الجديد هنا من ناحية الـ algorithm هو الـ <b>GCRA</b> (generic cell rate algorithm، جاي من شبكات ATM). لو T = 1 ÷ المعدل وτ = T × (burst − 1)، كل key بيشيل رقم واحد بس: الـ <b>theoretical arrival time</b> أو TAT. الـ request اللي جه في الوقت t يتقبل لو max(TAT، t) − t ≤ τ، وبعدين TAT = max(TAT، t) + T. ده leaky bucket متشاف كـ جدول مواعيد، وبياخد نفس قرارات token bucket سعته burst بالظبط: لو عرّفت الرصيد = burst × T − (TAT − t) (لو موجب) هتلاقي قواعد التحديث هي هي. الـ property test اتفق في كل request على 5,000 trace عشوائي؛ وفي Redis هو 6 سطور Lua على key واحد string، واتفق مع النسخة اللي في الـ process في 5,000 من 5,000. والـ state أصغر: 38 byte للـ GCRA قصاد 70 لـ hash الـ token bucket بـ field اتنين في <code>MEMORY USAGE</code>. استخدم وحدات integers: مع interval قيمته 1000/3 ms، تقريب الكسور خلّى الاتنين يختلفوا في 2,435 قرار من 600,000. والـ module اسمه <code>redis-cell</code> بيعمل GCRA كـ <code>CL.THROTTLE</code>؛ الـ Redis build اللي هنا جاي بـ module واحد بس (<code>vectorset</code>)، فمتشغّلش هنا.</p>
+    <p>ليه <code>hash % N</code> بيبوظ وفكرة الـ ring موجودين في <a href="../../03-CS-Fundamentals/lessons/10-ds-for-system-design.html#p3">درس الـ CS رقم 10، الجزء 3 والجزء 4</a>؛ والـ ring بالـ virtual nodes والـ rendezvous متبنيين في section 04 · 2.1 (<a href="../../04-Data-Structures/lessons/06-hashing-in-depth-consistent-hashing.html">الدرس 06</a>) ومتقاس على shards زي Redis في <a href="../../12-System-Design/lessons/13-partitioning-consistent-hashing.html">درس الـ system design رقم 13</a>. الجديد هنا <b>jump consistent hash</b> (Lamping و Veach، 2014): سطور قليلة، من غير ذاكرة، وO(log n) خطوة في المتوسط: LCG بـ 64-bit بيبدأ من الـ key بيقرر، bucket ورا bucket، الـ key هيـ"نط" لحد فين لما الـ buckets تزيد. ولأن الـ LCG بيضرب أرقام 64-bit، JavaScript محتاج <code>BigInt</code> (أو حساب 32-bit مقسّم بحرص). القياس على مليون key: من 10 لـ 11 bucket اتنقل 9.09% بالظبط (= 1/11) وكل key اتنقل راح للـ bucket الجديد؛ من 100 لـ 101 اتنقل 0.99%؛ و<code>hash % n</code> نقل 90.93%. الحد هو تمن إن مفيش state: الـ buckets هي الأرقام من 0 لـ n−1، فتقدر تزوّد أو تشيل الأخير بس. لما شلنا node رقم 3 من 10 بإننا سمّينا الـ bucket رقم 3 باسم آخر node، اتنقل 18.92% من الـ keys بدل 10%. استخدمه لـ shards مترقّمة بتكبر بس، مش لـ cache cluster أي node فيه ممكن يقع.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      rate limit لكل API key قدام الـ public API بتاعك: GCRA في Lua على Redis = key واحد لكل عميل ورقم واحد، والوقت من <code>redis.call('TIME')</code> في production (عشان ساعات الـ app servers مش متزامنة) ومتحقن في الـ tests. والـ jump hash لو عندك events أو logs متقسّمة على N partition بتزيد بس (partition لكل شهر أو لكل shard في Postgres)، أو client-side sharding لـ storage مترقّم. الغلطة الشائعة: تستخدم jump لـ Redis cache nodes بتقع وتقوم، فأول node يقع في النص بيحرك ضعف الـ keys.
+    </div>
+  </section>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Cache eviction measured on a trace <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ cache eviction متقاسة على trace حقيقي</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>LRU, LFU and FIFO and a simulator for them are in <a href="../../12-System-Design/lessons/16-caching-foundations-strategies.html#p4">system design lesson 16, part 4</a>; choosing the data structure is section 04 · 3.6 (<a href="../../04-Data-Structures/lessons/18-choosing-structures-production.html">lesson 18</a>); O(1) LFU is drilled in <a href="../../16-Interview-Prep/lessons/06-hard-set-two-approaches.html#p5">interview lesson 06, part 5</a>. Two newer policies matter here. <b>ARC</b> (Megiddo and Modha, 2003) keeps two LRU lists of resident keys, T1 (seen once recently) and T2 (seen at least twice), and two <b>ghost</b> lists B1 and B2 holding only the keys recently evicted from each. A hit in B1 means "I evicted a recency key too early", so the target size p of T1 grows; a hit in B2 shrinks it. A scan of one-time keys only churns T1, so T2's frequent keys survive. <b>SIEVE</b> (NSDI 2024) is simpler: a FIFO queue with one "visited" bit per key and a hand that moves from old to new. A hit only sets the bit (no list move, so no lock on the hit path); eviction clears set bits as the hand passes and evicts the first key with the bit clear. New keys enter at the head unvisited, so one-time keys are evicted quickly.</p>
+    <p>Measure on a trace, not on intuition. The trace was captured for real: a seeded cache-aside workload (20,000 products, Zipf s = 0.8, 200,000 reads) against a private Redis, with <code>redis-cli MONITOR</code> writing every command to a file. MONITOR is not free: on this machine one MONITOR client cut throughput from ≈233–250k to ≈145–158k GETs per second, and the Redis docs show more than 50% on their benchmark. In production, sample keys in the application instead. Replaying the 200,000 GETs through four policies at five sizes gives miss-ratio curves: LRU was worst everywhere (55.4% misses at 2,000 entries), and LFU, ARC and SIEVE were within about a point of each other (≈48%). A second trace adds a nightly job that reads all 20,000 products once in the middle. In the first 1,000 requests after it, LRU's hit ratio fell from 44.8% to 25.8%; SIEVE and LFU stayed at 52.9% and ARC dipped from 51.8% to 48.8%. LFU wins on this trace because popularity never changes; when it shifts, plain LFU keeps yesterday's favourites (lesson 16 measured 27.6%). Redis itself approximates LRU and LFU by sampling a few keys per eviction (<code>maxmemory-samples</code>), covered in <a href="../../09-Databases/lessons/38-running-redis.html#p3">databases lesson 38, part 3</a>.</p>
+  </section>
+
+<pre class="diagram">
+  ARC (capacity c)
+  ┌─ ghost B1 ─┐   ┌────── T1 ──────┐   ┌────── T2 ───────┐   ┌─ ghost B2 ─┐
+  │ keys only  │◀──│ seen once, LRU │   │ seen 2+ times,  │──▶│ keys only  │
+  │            │   │                │   │ LRU             │   │            │
+  └────────────┘   └────────────────┘   └─────────────────┘   └────────────┘
+                   ◀── target p ────▶   ◀───── c − p ─────▶
+  hit in B1 → p grows (recency was too small)   hit in B2 → p shrinks
+
+  SIEVE    head (newest)                                  tail (oldest)
+           [k9 0] ─ [k8 1] ─ [k7 0] ─ [k6 1] ─ [k5 0] ─ [k4 1]
+                                       ▲ hand moves toward the head:
+                                         bit 1 → clear it, move on
+                                         bit 0 → evict
+           hit: set the bit, nothing moves
+           new key: insert at the head with bit 0
+</pre>
+  <div class="ar-note">فوق: ARC عنده قايمتين جوه الكاش، T1 (شوفناه مرة) وT2 (مرتين أو أكتر)، وكل واحدة جنبها شبح فيه الـ keys اللي اتطردت منها بس من غير الـ values (B1 وB2). الـ p هو الحجم المستهدف لـ T1: hit في B1 معناه "طردت key جديد بدري" فالـ p يكبر، وhit في B2 يصغّره. تحت: SIEVE طابور FIFO، كل key معاه bit واحد. الـ hand ماشي من القديم للجديد: لو الـ bit بـ 1 يصفّره ويكمّل، ولو بـ 0 يطرده. الـ hit بيعلّم الـ bit بس من غير ما يحرّك حاجة، والـ key الجديد بيدخل في الأول والـ bit بتاعه 0.</div>
+
+<pre data-file="src/cache/policies.ts"><code class="language-typescript">// كل ⁦policy: access(key)⁩ بترجع true لو hit، وبتعمل الـ eviction لوحدها
+export interface Policy {
+  readonly name: string;
+  access(key: string): boolean;
+  // كام key جوه الكاش فعلًا (الأشباح مش محسوبة)
+  size(): number;
+}
+
+// الـ LRU: الـ Map بيحفظ ترتيب الإضافة، فأول ⁦key =⁩ الأقدم استخدامًا
+export function lru(cap: number): Policy {
+  const m = new Map&lt;string, true&gt;();
+  return {
+    name: "LRU",
+    size: () =&gt; m.size,
+    access(k) {
+      const hit = m.delete(k);
+      m.set(k, true);
+      if (m.size &gt; cap) m.delete(m.keys().next().value!);
+      return hit;
+    },
+  };
+}
+
+// الـ LFU في O(1): bucket لكل frequency، وجوه الـ bucket الأقدم يطلع الأول
+export function lfu(cap: number): Policy {
+  const freq = new Map&lt;string, number&gt;();
+  const buckets = new Map&lt;number, Set&lt;string&gt;&gt;();
+  let minF = 0;
+  const bump = (k: string, f: number) =&gt; {
+    freq.set(k, f);
+    if (!buckets.has(f)) buckets.set(f, new Set());
+    buckets.get(f)!.add(k);
+  };
+  return {
+    name: "LFU",
+    size: () =&gt; freq.size,
+    access(k) {
+      const f = freq.get(k);
+      if (f !== undefined) {
+        const b = buckets.get(f)!;
+        b.delete(k);
+        if (b.size === 0 &amp;&amp; minF === f) minF = f + 1;
+        bump(k, f + 1);
+        return true;
+      }
+      if (freq.size &gt;= cap) {
+        const b = buckets.get(minF)!;
+        const victim = b.values().next().value!;
+        b.delete(victim);
+        freq.delete(victim);
+      }
+      bump(k, 1);
+      minF = 1;
+      return false;
+    },
+  };
+}
+
+// الـ ARC: فيه ⁦T1 (⁩شوفناه مرة) و ⁦T2 (⁩مرتين أو أكتر) جوه الكاش، و B1/B2 أشباح (keys بس) للي اتطرد منهم
+// والـ ⁦p =⁩ الحجم المستهدف لـ T1: hit في B1 يكبّره، hit في B2 يصغّره
+export function arc(c: number): Policy {
+  const T1 = new Map&lt;string, true&gt;();
+  const T2 = new Map&lt;string, true&gt;();
+  const B1 = new Map&lt;string, true&gt;();
+  const B2 = new Map&lt;string, true&gt;();
+  let p = 0;
+  const lruOf = (m: Map&lt;string, true&gt;) =&gt; m.keys().next().value!;
+  const replace = (inB2: boolean) =&gt; {
+    if (T1.size &gt; 0 &amp;&amp; (T1.size &gt; p || (inB2 &amp;&amp; T1.size === p) || T2.size === 0)) {
+      const k = lruOf(T1);
+      T1.delete(k);
+      B1.set(k, true);
+    } else {
+      const k = lruOf(T2);
+      T2.delete(k);
+      B2.set(k, true);
+    }
+  };
+  return {
+    name: "ARC",
+    size: () =&gt; T1.size + T2.size,
+    access(x) {
+      if (T1.delete(x) || T2.delete(x)) {
+        T2.set(x, true);
+        return true;
+      }
+      if (B1.has(x)) {
+        p = Math.min(c, p + Math.max(B2.size / B1.size, 1));
+        replace(false);
+        B1.delete(x);
+        T2.set(x, true);
+        return false;
+      }
+      if (B2.has(x)) {
+        p = Math.max(0, p - Math.max(B1.size / B2.size, 1));
+        replace(true);
+        B2.delete(x);
+        T2.set(x, true);
+        return false;
+      }
+      if (T1.size + B1.size === c) {
+        if (T1.size &lt; c) {
+          B1.delete(lruOf(B1));
+          replace(false);
+        } else T1.delete(lruOf(T1));
+      } else if (T1.size + T2.size + B1.size + B2.size &gt;= c) {
+        if (T1.size + T2.size + B1.size + B2.size === 2 * c) B2.delete(lruOf(B2));
+        replace(false);
+      }
+      T1.set(x, true);
+      return false;
+    },
+  };
+}
+
+// الـ ⁦SIEVE (NSDI 2024)⁩: طابور ⁦FIFO + bit "⁩اتزار"، و hand بيمشي من القديم للجديد
+// الـ hit بيعلّم الـ bit بس (من غير تحريك)، والـ hand بيطرد أول واحد الـ bit بتاعه 0
+type SNode = { key: string; visited: boolean; newer: SNode | null; older: SNode | null };
+export function sieve(cap: number): Policy {
+  const index = new Map&lt;string, SNode&gt;();
+  let head: SNode | null = null;
+  let tail: SNode | null = null;
+  let hand: SNode | null = null;
+  const evict = () =&gt; {
+    let o = hand ?? tail!;
+    while (o.visited) {
+      o.visited = false;
+      o = o.newer ?? tail!;
+    }
+    hand = o.newer;
+    if (o.newer) o.newer.older = o.older;
+    else head = o.older;
+    if (o.older) o.older.newer = o.newer;
+    else tail = o.newer;
+    index.delete(o.key);
+  };
+  return {
+    name: "SIEVE",
+    size: () =&gt; index.size,
+    access(k) {
+      const n = index.get(k);
+      if (n) {
+        n.visited = true;
+        return true;
+      }
+      if (index.size &gt;= cap) evict();
+      const node: SNode = { key: k, visited: false, newer: null, older: head };
+      if (head) head.newer = node;
+      head = node;
+      tail ??= node;
+      index.set(k, node);
+      return false;
+    },
+  };
+}</code></pre>
+
+<pre data-file="test/cache/policies.test.ts"><code class="language-typescript">import { test } from "node:test";
+import assert from "node:assert/strict";
+import fc from "fast-check";
+import { arc, lfu, lru, sieve, type Policy } from "../../src/cache/policies.ts";
+
+const all = [lru, lfu, arc, sieve];
+const traceArb = fc.record({
+  cap: fc.integer({ min: 1, max: 8 }),
+  keys: fc.array(fc.integer({ min: 0, max: 15 }).map((k) =&gt; `product:${k}`), { maxLength: 400, size: "large" }),
+});
+
+// الـ oracle للـ LRU: array بسيطة، الأحدث في الآخر
+function naiveLru(cap: number) {
+  const a: string[] = [];
+  return (k: string) =&gt; {
+    const i = a.indexOf(k);
+    if (i &gt;= 0) a.splice(i, 1);
+    a.push(k);
+    if (a.length &gt; cap) a.shift();
+    return i &gt;= 0;
+  };
+}
+
+test("every policy: never above capacity, a hit means seen before, and a big cache only misses cold", () =&gt; {
+  fc.assert(
+    fc.property(traceArb, ({ cap, keys }) =&gt; {
+      for (const make of all) {
+        const p: Policy = make(cap);
+        const big: Policy = make(16);
+        const seen = new Set&lt;string&gt;();
+        for (const k of keys) {
+          const hit = p.access(k);
+          assert.ok(p.size() &lt;= cap, `${p.name} over capacity`);
+          if (hit) assert.ok(seen.has(k), `${p.name} hit on a new key`);
+          assert.equal(big.access(k), seen.has(k), `${big.name} missed a key it must hold`);
+          seen.add(k);
+        }
+      }
+    }),
+    { seed: 18, numRuns: 1500 },
+  );
+});
+
+test("LRU = naive LRU on every access", () =&gt; {
+  fc.assert(
+    fc.property(traceArb, ({ cap, keys }) =&gt; {
+      const p = lru(cap);
+      const o = naiveLru(cap);
+      for (const k of keys) assert.equal(p.access(k), o(k));
+    }),
+    { seed: 18, numRuns: 1500 },
+  );
+});</code></pre>
+<pre><code class="language-plaintext">ok 1 - every policy: never above capacity, a hit means seen before, and a big cache only misses cold
+ok 2 - LRU = naive LRU on every access
+# tests 2
+# pass 2
+# fail 0</code></pre>
+  <div class="ar-note">الـ test على 1,500 trace (لحد 400 access، بـ <code>size: "large"</code>): مفيش policy بتعدّي السعة، والـ hit عمره ما بيحصل على key أول مرة يتشاف، والكاش الكبير (16 والـ keys 16 بس) مش بيعمل miss إلا أول مرة. والـ LRU = LRU بسيط بـ array في كل access.</div>
+
+<pre data-file="ex/l18/lab.ts"><code class="language-typescript">import { readFileSync } from "node:fs";
+
+// الـ port بتاع Redis الخاص بالـ lab: لو فاضي أو default، نوقف فورًا قبل أي connection
+export function redisPort(): number {
+  const raw = readFileSync(new URL("../../lab/redis.port", import.meta.url), "utf8").trim();
+  const n = Number(raw);
+  if (!/^\d+$/.test(raw) || n &lt; 1024 || n &gt; 65535 || [27017, 5432, 6379].includes(n)) throw new Error("refusing port " + raw);
+  return n;
+}</code></pre>
+<pre data-file="ex/l18/p4-workload.ts"><code class="language-typescript">import { Redis } from "ioredis";
+import { mulberry32 } from "../../src/lib/rand.ts";
+import { redisPort } from "./lab.ts";
+
+// كتالوج 20,000 منتج، والطلب عليهم ⁦Zipf (s = 0.8)⁩: قليل منهم عليه أغلب الزيارات
+const PRODUCTS = 20_000;
+const mode = process.argv[2] ?? "normal";
+const rnd = mulberry32(mode === "scan" ? 2 : 1);
+const cdf = new Float64Array(PRODUCTS);
+let acc = 0;
+for (let i = 0; i &lt; PRODUCTS; i++) cdf[i] = acc += 1 / (i + 1) ** 0.8;
+const zipf = () =&gt; {
+  const u = rnd() * acc;
+  let lo = 0;
+  let hi = PRODUCTS - 1;
+  while (lo &lt; hi) {
+    const mid = (lo + hi) &gt;&gt;&gt; 1;
+    if (cdf[mid] &lt; u) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+};
+
+// الطلبات: 200,000 زيارة، وفي وضع scan فيه job ليلي بيقرا كل المنتجات مرة واحدة في النص
+const keys: string[] = [];
+for (let i = 0; i &lt; 200_000; i++) {
+  if (mode === "scan" &amp;&amp; i === 100_000) for (let p = 0; p &lt; PRODUCTS; p++) keys.push(`product:${p}`);
+  keys.push(`product:${zipf()}`);
+}
+
+const redis = new Redis({ host: "127.0.0.1", port: redisPort() });
+await redis.flushdb();
+const t0 = performance.now();
+let misses = 0;
+// نمط cache-aside: GET، ولو مش موجود SET (pipeline بـ 500 أمر عشان السرعة)
+for (let i = 0; i &lt; keys.length; i += 500) {
+  const batch = keys.slice(i, i + 500);
+  const got = await redis.pipeline(batch.map((k) =&gt; ["get", k])).exec();
+  const missed = batch.filter((_, j) =&gt; got![j][1] === null);
+  misses += missed.length;
+  if (missed.length) await redis.pipeline(missed.map((k) =&gt; ["set", k, `{"price":100}`])).exec();
+}
+const secs = (performance.now() - t0) / 1000;
+console.log(`${mode}: ${keys.length} GETs in ≈${secs.toFixed(2)} s (≈${Math.round(keys.length / secs)} GET/s), redis misses ${misses}`);
+redis.disconnect();</code></pre>
+<pre data-file="ex/l18/capture.sh"><code class="language-bash">#!/usr/bin/env bash
+# بيلقط الـ keys من Redis بـ MONITOR والـ workload شغال، وبعدين يقيس تكلفة MONITOR نفسه
+set -e
+PORT=$(cat lab/redis.port) || exit 1
+case "$PORT" in ''|*[!0-9]*|0|27017|5432|6379) echo "refusing port '$PORT'"; exit 1;; esac
+CLI="D:/tools/redis/redis-cli.exe"
+
+for mode in normal scan; do
+  "$CLI" -p "$PORT" MONITOR &gt; "lab/trace-$mode.txt" &amp;
+  MON=$!
+  sleep 1
+  node ex/l18/p4-workload.ts "$mode"
+  sleep 1
+  kill $MON
+  echo "trace-$mode.txt: $(wc -l &lt; "lab/trace-$mode.txt") lines"
+done
+
+# التكلفة: نفس الـ workload من غير MONITOR ومعاه، بالتبادل 3 مرات
+for round in 1 2 3; do
+  echo -n "without MONITOR  "; node ex/l18/p4-workload.ts normal
+  "$CLI" -p "$PORT" MONITOR &gt; /dev/null &amp;
+  MON=$!
+  sleep 1
+  echo -n "with MONITOR     "; node ex/l18/p4-workload.ts normal
+  kill $MON
+done</code></pre>
+<pre><code class="language-plaintext">normal: 200000 GETs in ≈1.27 s (≈158092 GET/s), redis misses 19670
+trace-normal.txt: 219676 lines
+scan: 220000 GETs in ≈1.36 s (≈161877 GET/s), redis misses 20273
+trace-scan.txt: 240279 lines
+without MONITOR  normal: 200000 GETs in ≈0.82 s (≈242954 GET/s), redis misses 19670
+with MONITOR     normal: 200000 GETs in ≈1.27 s (≈157827 GET/s), redis misses 19670
+without MONITOR  normal: 200000 GETs in ≈0.80 s (≈250236 GET/s), redis misses 19670
+with MONITOR     normal: 200000 GETs in ≈1.38 s (≈144528 GET/s), redis misses 19670
+without MONITOR  normal: 200000 GETs in ≈0.86 s (≈232608 GET/s), redis misses 19670
+with MONITOR     normal: 200000 GETs in ≈1.30 s (≈154107 GET/s), redis misses 19670</code></pre>
+<pre><code class="language-plaintext">1794540834.914386 [0 127.0.0.1:62858] "get" "product:2755"
+1794540834.914402 [0 127.0.0.1:62858] "get" "product:0"
+1794540834.918653 [0 127.0.0.1:62858] "set" "product:2755" "{\"price\":100}"</code></pre>
+  <div class="ar-note">الـ trace العادي 219,676 سطر (200,000 GET و19,670 SET للـ misses وشوية أوامر handshake)، والـ trace بتاع الـ scan 240,279. شكل السطر: وقت، ورقم الـ DB وعنوان الـ client، وبعدين الأمر والـ key (ioredis بيبعت الأوامر lowercase). التكلفة: من غير MONITOR ≈233 لـ 250 ألف GET في الثانية، ومعاه ≈145 لـ 158 ألف، يعني أقل بحوالي 35 لـ 40%. الأرقام تقريبية على Windows build.</div>
+
+<pre data-file="ex/l18/p4-replay.ts"><code class="language-typescript">import { readFileSync } from "node:fs";
+import { arc, lfu, lru, sieve, type Policy } from "../../src/cache/policies.ts";
+
+// سطر MONITOR شكله: ⁦1794539271.10 [0 127.0.0.1:57662] "GET" "product:42"⁩
+const readTrace = (file: string) =&gt;
+  readFileSync(new URL(`../../lab/${file}`, import.meta.url), "utf8")
+    .split("\n")
+    .map((line) =&gt; /\] "GET" "([^"]+)"/i.exec(line)?.[1])
+    .filter((k): k is string =&gt; k !== undefined);
+
+const policies = [lru, lfu, arc, sieve];
+const sizes = [200, 500, 1000, 2000, 4000];
+const normal = readTrace("trace-normal.txt");
+console.log(`normal trace: ${normal.length} GETs, ${new Set(normal).size} distinct keys`);
+console.log("miss ratio %   " + sizes.map((s) =&gt; String(s).padStart(7)).join(""));
+for (const make of policies) {
+  const row = sizes.map((size) =&gt; {
+    const p: Policy = make(size);
+    let miss = 0;
+    for (const k of normal) if (!p.access(k)) miss++;
+    return ((100 * miss) / normal.length).toFixed(1).padStart(7);
+  });
+  console.log(make(1).name.padEnd(14) + row.join(""));
+}
+
+// الـ scan الليلي: 20,000 منتج مرة واحدة بعد 100,000 طلب، ونبص على الطلبات اللي بعده على طول
+const scan = readTrace("trace-scan.txt");
+const scanEnd = 100_000 + 20_000;
+const windows = [1000, 5000, 20_000];
+console.log(`\nscan trace: ${scan.length} GETs; hit ratio % at size 2000`);
+console.log("        before scan   " + windows.map((w) =&gt; `first ${w} after`.padStart(18)).join(""));
+for (const make of policies) {
+  const p = make(2000);
+  const hits = scan.map((k) =&gt; p.access(k));
+  const ratio = (from: number, n: number) =&gt; ((100 * hits.slice(from, from + n).filter(Boolean).length) / n).toFixed(1);
+  console.log(`${p.name.padEnd(6)} ${ratio(80_000, 20_000).padStart(10)}     ` + windows.map((w) =&gt; ratio(scanEnd, w).padStart(18)).join(""));
+}</code></pre>
+<pre><code class="language-plaintext">normal trace: 200000 GETs, 19405 distinct keys
+miss ratio %       200    500   1000   2000   4000
+LRU              82.6   73.9   65.5   55.4   42.9
+LFU              72.6   63.9   56.5   48.0   37.5
+ARC              71.8   63.6   56.4   48.2   38.6
+SIEVE            71.7   63.5   56.3   47.9   37.5
+
+scan trace: 220000 GETs; hit ratio % at size 2000
+        before scan     first 1000 after  first 5000 after first 20000 after
+LRU          44.8                   25.8              39.2              43.4
+LFU          52.9                   52.9              53.0              52.9
+ARC          51.8                   48.8              48.9              50.6
+SIEVE        52.9                   52.9              53.0              52.9</code></pre>
+  <div class="ar-note">الجدول الأول نسبة الـ misses على 5 أحجام (200 لـ 4,000 entry): الـ LRU الأسوأ في كل الأحجام (82.6% عند 200 و55.4% عند 2,000 و42.9% عند 4,000)، والـ LFU والـ ARC والـ SIEVE قريبين من بعض (حوالي 72% عند 200 و48% عند 2,000 و37.5 لـ 38.6% عند 4,000). التاني: الـ hit ratio عند 2,000 حوالين الـ scan: الـ LRU كان 44.8% قبله ووقع لـ 25.8% في أول 1,000 request بعده، ورجع 39.2% في أول 5,000. الـ LFU والـ SIEVE فضلوا 52.9%. الـ ARC من 51.8% لـ 48.8%.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ LRU والـ LFU والـ FIFO ومعاهم simulator موجودين في <a href="../../12-System-Design/lessons/16-caching-foundations-strategies.html#p4">درس الـ system design رقم 16، الجزء 4</a>؛ واختيار الـ data structure في section 04 · 3.6 (<a href="../../04-Data-Structures/lessons/18-choosing-structures-production.html">الدرس 18</a>)؛ والـ LFU بـ O(1) متمرّن عليه في <a href="../../16-Interview-Prep/lessons/06-hard-set-two-approaches.html#p5">درس الـ interview رقم 06، الجزء 5</a>. هنا فيه policies أحدث. الـ <b>ARC</b> (Megiddo و Modha، 2003) عنده قايمتين LRU للـ keys اللي جوه الكاش: T1 (اتشاف مرة قريب) وT2 (اتشاف مرتين على الأقل)، وقايمتين <b>أشباح</b> B1 وB2 فيهم الـ keys بس اللي اتطردت قريب من كل واحدة. hit في B1 معناه "طردت key جديد بدري زيادة"، فالحجم المستهدف p لـ T1 بيكبر؛ وhit في B2 بيصغّره. والـ scan بتاع keys بتتشاف مرة واحدة بيلف جوه T1 بس، فالـ keys المتكررة في T2 بتعيش. الـ <b>SIEVE</b> (NSDI 2024) أبسط: طابور FIFO مع bit "اتزار" لكل key، وhand ماشي من القديم للجديد. الـ hit بيعلّم الـ bit بس (من غير تحريك في الـ list، فمفيش lock على مسار الـ hit)؛ والطرد بيصفّر الـ bits اللي بـ 1 والـ hand معدّي ويطرد أول key الـ bit بتاعه 0. والـ keys الجديدة بتدخل في الأول من غير ما تتعلّم، فاللي بيتشاف مرة واحدة بيطلع بسرعة.</p>
+    <p>قيس على trace مش على الإحساس. الـ trace اتسجّل بجد: workload من نوع cache-aside بـ seed (20,000 منتج، Zipf بـ s = 0.8، 200,000 قراية) على Redis خاص، و<code>redis-cli MONITOR</code> بيكتب كل أمر في ملف. الـ MONITOR مش ببلاش: على الجهاز ده client واحد بـ MONITOR نزّل الـ throughput من ما بين 233 و250 ألف لما بين 145 و158 ألف GET في الثانية تقريبًا، والـ docs بتاعة Redis بتوري أكتر من 50% في الـ benchmark بتاعهم. في production خد sample من الـ keys جوه الـ app بدل كده. لما شغّلنا الـ 200,000 GET على 4 policies بـ 5 أحجام طلع miss-ratio curve: الـ LRU الأسوأ في كل حتة (55.4% misses عند 2,000 entry)، والـ LFU والـ ARC والـ SIEVE في حدود نقطة واحدة من بعض (حوالي 48%). الـ trace التاني فيه job بالليل بيقرا الـ 20,000 منتج مرة واحدة في النص. في أول 1,000 request بعده الـ hit ratio بتاع LRU وقع من 44.8% لـ 25.8%؛ الـ SIEVE والـ LFU فضلوا 52.9%، والـ ARC نزل من 51.8% لـ 48.8%. الـ LFU كسبان في الـ trace ده لأن الشعبية مش بتتغير؛ لما بتتغير، الـ LFU العادي بيمسك في مفضّلات امبارح (درس 16 قاس 27.6%). وRedis نفسه بيقرّب LRU وLFU بـ sampling لشوية keys في كل طرد (<code>maxmemory-samples</code>)، ودي في <a href="../../09-Databases/lessons/38-running-redis.html#p3">درس الـ databases رقم 38، الجزء 3</a>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الكاش اللي في الـ process قدام الـ product catalog (<code>lru-cache</code> مثلًا) أو حجم Redis: بدل ما تخمّن الحجم والـ policy، سجّل sample من الـ keys من الـ app (1% من الـ requests في ملف أو stream)، وشغّل الـ replay ده على الأحجام اللي بتفكر فيها، واختار من الـ curve: الفرق بين 2,000 و4,000 entry هنا 10 نقط misses تقريبًا. ولو عندك report أو export بالليل بيعدّي على كل المنتجات، ده بالظبط الـ scan اللي بيوقع الـ LRU: يا تخلي الـ job يقرا من replica أو يتخطى الكاش، يا تستخدم policy مقاومة للـ scan. الغلطة الشائعة: تشغّل <code>MONITOR</code> على production عشان "تشوف الـ keys" فتقلّل الـ throughput بالثلث وأنت في الذروة.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Hit ratio drops every night after the reporting job and recovers slowly. Why, and what do you change?" → The job reads every key once, a scan; LRU treats each read as most recent, so it evicts the hot set (here 44.8% → 25.8% hits right after). Make the job bypass the cache or read from a replica, or use a scan-resistant policy: ARC (ghost lists adapt between recency and frequency), SIEVE (one-time keys are evicted first), or LFU with decay. Verify with a captured trace.
+    <div class="ar-note">"الـ hit ratio بيقع كل ليلة بعد الـ reporting job وبيرجع ببطء. ليه، وهتغيّر إيه؟" ← الـ job بيقرا كل key مرة، يعني scan؛ والـ LRU بيعتبر كل قراية هي الأحدث، فبيطرد الـ hot set (هنا 44.8% لـ 25.8% hits على طول بعده). خلي الـ job يتخطى الكاش أو يقرا من replica، أو استخدم policy مقاومة للـ scan: ARC (الأشباح بتظبط بين الـ recency والـ frequency)، أو SIEVE (الـ keys اللي اتشافت مرة بتطلع الأول)، أو LFU مع decay. واتأكد بـ trace متسجّل.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Geohash and the nearest courier <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ geohash وأقرب مندوب</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Geohash encoding, neighbours and Redis <code>GEOSEARCH</code> at system level are in <a href="../../12-System-Design/lessons/54-case-ride-sharing-proximity.html#p2">system design lesson 54, part 2</a>. Underneath is a <b>Morton (Z-order) code</b>: bisect the longitude range, emit 1 if the point is in the upper half, then do the same for latitude, alternating, longitude first. Interleaving the bits of two coordinates makes one number whose order roughly follows space; geohash prints it 5 bits per base-32 character. Our 25-line encoder agrees with <code>ngeohash</code> on 10,000 of 10,000 points (Tahrir Square is <code>stq4yv3</code>). Each character multiplies precision by 32: 6 characters is a 1.22 × 0.61 km cell at the equator and 1.06 × 0.61 km in Cairo, where longitude degrees are shorter.</p>
+    <p>A shared prefix means the same cell, so near. The converse is false: the Z-order curve jumps at cell boundaries. Two points 20 m apart on the same street in Cairo, <code>stq4zvrvr</code> and <code>stq6bj2jk</code>, share only 3 characters. That's why a "same prefix" query must look at the cell <i>and its eight neighbours</i>, and even then the answer is only guaranteed if the best distance is smaller than the distance to the edge of that 3 × 3 block; otherwise widen to a coarser cell. Searching the order's own cell only (the <code>LIKE 'stq4y%'</code> approach) picked the wrong courier for 78 of 1,000 orders, up to 0.40 km farther.</p>
+    <p>Nearest courier among 100,000 (clustered around six Cairo hotspots), 1,000 orders, all checked against brute force: brute-force haversine scans 100,000 per query (≈1.7 ms); a uniform grid of 0.002° cells that searches rings outward until the best distance is within the searched radius scans 230 (≈12 µs); a sorted array of 52-bit geohashes, searching 9 cells of 36 bits and widening when unsure, scans 57 (≈16 µs, 251 queries widened). All 1,000/1,000 correct. Cell size is the knob: 0.02° cells scanned 9,473 points in the dense hotspots, 38-bit geohash cells widened 545 times in the sparse areas. Structures that adapt to density solve that: quadtrees, k-d trees (split by x then y, prune by distance), R-trees over bounding boxes (PostGIS GiST, not run here), Uber's H3 hexagons and Google's S2 cells on a Hilbert curve (native libraries, not run here). In production Redis does the indexing: <code>GEOSEARCH … ASC COUNT 1</code> picked the brute-force courier in 299 of 300 queries (the 52-bit score quantises positions; distances differed by at most 0.31 m, so one near-tie flipped). A 3 km starting radius took ≈8.5 ms per query and 0.25 km took ≈0.37 ms: without <code>ANY</code>, Redis collects and sorts every member in the radius even for <code>COUNT 1</code>. Start small and double.</p>
+  </section>
+
+<pre class="diagram">
+   lat ▲   2 bits of longitude × 2 bits of latitude → 4-bit Morton code (lon bit first)
+       │   ┌──────┬──────┬──────┬──────┐
+       │   │  5   │  7   │  13  │  15  │      cells 6 (0110) and 12 (1100) touch,
+       │   ├──────┼──────┼──────┼──────┤      but their codes share no leading bit:
+       │   │  4   │  6   │  12  │  14  │      near in space ≠ shared prefix
+       │   ├──────┼──────┼──────┼──────┤
+       │   │  1   │  3   │  9   │  11  │      order 0,1,2,3 → 4,5,6,7 → 8,... traces a "Z"
+       │   ├──────┼──────┼──────┼──────┤      in each 2×2 block, then Z of Zs
+       │   │  0   │  2   │  8   │  10  │
+       │   └──────┴──────┴──────┴──────┘
+       └──────────────────────────────────▶ lon
+</pre>
+  <div class="ar-note">شبكة 4×4: كل خلية رقمها 4 bits، bit من الـ longitude وبعده bit من الـ latitude بالتبادل. الترتيب 0، 1، 2، 3 بيرسم Z في كل مربع 2×2، وبعدين Z من الـ Zs. الخلية 6 (0110) والخلية 12 (1100) جنب بعض على الخريطة، بس أول bit فيهم مختلف، يعني مفيش prefix مشترك خالص: القريب في المكان مش شرط يشارك prefix.</div>
+
+<pre data-file="src/geo/geohash.ts"><code class="language-typescript">// الـ geohash = Morton (Z-order): bits الـ longitude والـ latitude بالتبادل، الأول lon
+// كل ⁦bit = "⁩النص اليمين ولا الشمال؟" من الـ range اللي فاضل. 52 bit يدخلوا في Number بأمان
+export function encodeBits(lat: number, lon: number, bits = 52): number {
+  let [latLo, latHi, lonLo, lonHi] = [-90, 90, -180, 180];
+  let code = 0;
+  for (let i = 0; i &lt; bits; i++) {
+    let bit = 0;
+    if (i % 2 === 0) {
+      const mid = (lonLo + lonHi) / 2;
+      if (lon &gt;= mid) [bit, lonLo] = [1, mid];
+      else lonHi = mid;
+    } else {
+      const mid = (latLo + latHi) / 2;
+      if (lat &gt;= mid) [bit, latLo] = [1, mid];
+      else latHi = mid;
+    }
+    // مش code &lt;&lt; 1: الـ shift في JS بيقص لـ 32 bit
+    code = code * 2 + bit;
+  }
+  return code;
+}
+
+const BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
+// النص المعروف: كل 5 bits حرف
+export function encode(lat: number, lon: number, chars: number): string {
+  let code = encodeBits(lat, lon, chars * 5);
+  let s = "";
+  for (let i = 0; i &lt; chars; i++) {
+    s = BASE32[code % 32] + s;
+    code = Math.floor(code / 32);
+  }
+  return s;
+}
+
+// حدود الخلية لأي prefix من الـ bits: نعيد الـ bisection بالعكس
+export function cellBounds(code: number, bits: number) {
+  let [latLo, latHi, lonLo, lonHi] = [-90, 90, -180, 180];
+  for (let i = 0; i &lt; bits; i++) {
+    const bit = Math.floor(code / 2 ** (bits - 1 - i)) % 2;
+    if (i % 2 === 0) {
+      const mid = (lonLo + lonHi) / 2;
+      if (bit) lonLo = mid;
+      else lonHi = mid;
+    } else {
+      const mid = (latLo + latHi) / 2;
+      if (bit) latLo = mid;
+      else latHi = mid;
+    }
+  }
+  return { latLo, latHi, lonLo, lonHi };
+}
+
+export function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad;
+  const dLon = (lon2 - lon1) * rad;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371.0088 * Math.asin(Math.sqrt(a));
+}</code></pre>
+
+<pre data-file="ex/l18/p5-cells.ts"><code class="language-typescript">import ngeohash from "ngeohash";
+import { encode, encodeBits, haversineKm } from "../../src/geo/geohash.ts";
+
+// (1) تأكيد: الـ interleaving بتاعنا ⁦= ngeohash⁩ على نقط في القاهرة الكبرى
+let agree = 0;
+for (let i = 0; i &lt; 10_000; i++) {
+  const lat = 29.85 + (i % 100) * 0.0035;
+  const lon = 31.05 + Math.floor(i / 100) * 0.005;
+  if (encode(lat, lon, 9) === ngeohash.encode(lat, lon, 9)) agree++;
+}
+console.log(`ours = ngeohash on ${agree}/10000 points; Tahrir Square = ${encode(30.0444, 31.2357, 7)}`);
+
+// (2) طول الـ prefix قصاد حجم الخلية: عند خط الاستواء وفي القاهرة (خط عرض 30)
+console.log("chars  bits  cell at equator (km)   cell in Cairo (km)");
+for (let chars = 1; chars &lt;= 9; chars++) {
+  const bits = chars * 5;
+  const lonDeg = 360 / 2 ** Math.ceil(bits / 2);
+  const latDeg = 180 / 2 ** Math.floor(bits / 2);
+  const h = haversineKm(0, 0, latDeg, 0);
+  const wEq = haversineKm(0, 0, 0, lonDeg);
+  const wCairo = haversineKm(30, 0, 30, lonDeg);
+  const fmt = (x: number) =&gt; (x &gt;= 10 ? x.toFixed(0) : x &gt;= 1 ? x.toFixed(2) : `${(x * 1000).toFixed(1)} m`);
+  console.log(`${String(chars).padStart(5)} ${String(bits).padStart(5)}   ${fmt(wEq).padStart(8)} x ${fmt(h).padEnd(9)}   ${fmt(wCairo).padStart(8)} x ${fmt(h)}`);
+}
+
+// (3) قريب بس مش نفس الـ prefix: دوّر جنب وسط البلد على نقطتين بينهم 20 متر وأقصر prefix مشترك
+const common = (a: string, b: string) =&gt; {
+  let i = 0;
+  while (i &lt; a.length &amp;&amp; a[i] === b[i]) i++;
+  return i;
+};
+let worst = { shared: 99, lon: 0 };
+const lat = 30.0444;
+const step = 20 / (111_320 * Math.cos((lat * Math.PI) / 180));
+for (let lon = 31.15; lon &lt; 31.4; lon += step) {
+  const shared = common(encode(lat, lon, 9), encode(lat, lon + step, 9));
+  if (shared &lt; worst.shared) worst = { shared, lon };
+}
+const [a, b] = [encode(lat, worst.lon, 9), encode(lat, worst.lon + step, 9)];
+console.log(`${a} vs ${b}: ${(haversineKm(lat, worst.lon, lat, worst.lon + step) * 1000).toFixed(1)} m apart, shared prefix ${worst.shared} chars`);
+console.log(`both points' 30-bit cells: ${encodeBits(lat, worst.lon, 30)} vs ${encodeBits(lat, worst.lon + step, 30)}`);</code></pre>
+<pre><code class="language-plaintext">ours = ngeohash on 10000/10000 points; Tahrir Square = stq4yv3
+chars  bits  cell at equator (km)   cell in Cairo (km)
+    1     5       5004 x 5004            4304 x 5004
+    2    10       1251 x 625             1083 x 625
+    3    15        156 x 156              135 x 156
+    4    20         39 x 20                34 x 20
+    5    25       4.89 x 4.89            4.23 x 4.89
+    6    30       1.22 x 610.8 m         1.06 x 610.8 m
+    7    35    152.7 m x 152.7 m      132.2 m x 152.7 m
+    8    40     38.2 m x 19.1 m        33.1 m x 19.1 m
+    9    45      4.8 m x 4.8 m          4.1 m x 4.8 m
+stq4zvrvr vs stq6bj2jk: 20.0 m apart, shared prefix 3 chars
+both points' 30-bit cells: 832246779 vs 832248145</code></pre>
+  <div class="ar-note">الـ encoder بتاعنا اتفق مع ngeohash في 10,000 من 10,000، وميدان التحرير <code>stq4yv3</code>. الجدول: عدد الحروف، الـ bits، وحجم الخلية عند خط الاستواء وفي القاهرة (العرض أضيق في القاهرة لأن درجة الـ longitude أقصر عند خط عرض 30). مثلًا 6 حروف = 1.22 × 0.61 km عند الاستواء و1.06 × 0.61 km في القاهرة، و7 حروف حوالي 150 متر. وآخر سطرين: نقطتين بينهم 20 متر بالظبط في القاهرة، الـ geohash بتاعهم بيشترك في 3 حروف بس.</div>
+
+<pre data-file="ex/l18/couriers.ts"><code class="language-typescript">import { mulberry32 } from "../../src/lib/rand.ts";
+
+// القاهرة الكبرى تقريبًا: lat 29.85..30.20 و lon 31.05..31.55
+export const BOX = { latLo: 29.85, latHi: 30.2, lonLo: 31.05, lonHi: 31.55 };
+// زحمة حقيقية: أغلب المناديب حوالين مناطق معروفة، والباقي متفرّق
+const HOTSPOTS = [
+  [30.0444, 31.2357], [30.0561, 31.3301], [29.9602, 31.2569], [30.0131, 31.2089], [30.0771, 31.0198 + 0.05], [30.1059, 31.3398],
+];
+
+export function makePoints(n: number, seed: number) {
+  const rnd = mulberry32(seed);
+  const lat = new Float64Array(n);
+  const lon = new Float64Array(n);
+  for (let i = 0; i &lt; n; i++) {
+    if (rnd() &lt; 0.7) {
+      const [hl, ho] = HOTSPOTS[Math.floor(rnd() * HOTSPOTS.length)];
+      // توزيع حوالين الـ ⁦hotspot (⁩تقريبًا Gaussian بمتوسط 3 أرقام عشوائية)
+      lat[i] = hl + ((rnd() + rnd() + rnd()) / 3 - 0.5) * 0.06;
+      lon[i] = ho + ((rnd() + rnd() + rnd()) / 3 - 0.5) * 0.06;
+    } else {
+      lat[i] = BOX.latLo + rnd() * (BOX.latHi - BOX.latLo);
+      lon[i] = BOX.lonLo + rnd() * (BOX.lonHi - BOX.lonLo);
+    }
+  }
+  return { lat, lon };
+}</code></pre>
+<pre data-file="src/geo/nearest.ts"><code class="language-typescript">import { cellBounds, encodeBits, haversineKm } from "./geohash.ts";
+
+export type Points = { lat: Float64Array; lon: Float64Array };
+export type Hit = { idx: number; km: number; scanned: number };
+
+// (1) الـ brute force: احسب المسافة لكل مندوب، ⁦O(n)⁩ لكل query
+export function brute(p: Points, qLat: number, qLon: number): Hit {
+  let idx = -1;
+  let km = Infinity;
+  for (let i = 0; i &lt; p.lat.length; i++) {
+    const d = haversineKm(qLat, qLon, p.lat[i], p.lon[i]);
+    if (d &lt; km) [idx, km] = [i, d];
+  }
+  return { idx, km, scanned: p.lat.length };
+}
+
+// (2) شبكة grid منتظمة: خلايا 0.01 درجة، ودوّر في حلقات لحد ما أحسن مسافة تبقى أقل من الحلقة الجاية
+export function buildGrid(p: Points, cellDeg = 0.01, maxLat = 30.2) {
+  const cells = new Map&lt;number, number[]&gt;();
+  const keyOf = (ix: number, iy: number) =&gt; ix * 100_000 + iy;
+  for (let i = 0; i &lt; p.lat.length; i++) {
+    const k = keyOf(Math.floor(p.lon[i] / cellDeg), Math.floor(p.lat[i] / cellDeg));
+    let list = cells.get(k);
+    if (!list) cells.set(k, (list = []));
+    list.push(i);
+  }
+  // أضيق ضلع للخلية بالـ ⁦km (⁩الـ longitude بيضيق ناحية الشمال)، بهامش أمان صغير
+  const minSideKm = 0.999 * Math.min(haversineKm(0, 0, cellDeg, 0), haversineKm(maxLat, 0, maxLat, cellDeg));
+  return (qLat: number, qLon: number): Hit =&gt; {
+    const cx = Math.floor(qLon / cellDeg);
+    const cy = Math.floor(qLat / cellDeg);
+    let idx = -1;
+    let km = Infinity;
+    let scanned = 0;
+    for (let r = 0; ; r++) {
+      for (let dx = -r; dx &lt;= r; dx++) {
+        for (let dy = -r; dy &lt;= r; dy++) {
+          // الحلقة r بس: الخلايا اللي على المحيط
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          for (const i of cells.get(keyOf(cx + dx, cy + dy)) ?? []) {
+            scanned++;
+            const d = haversineKm(qLat, qLon, p.lat[i], p.lon[i]);
+            if (d &lt; km) [idx, km] = [i, d];
+          }
+        }
+      }
+      // أي نقطة لسه مشفناهاش بعيدة على الأقل r خلايا كاملة
+      if (km &lt;= r * minSideKm) return { idx, km, scanned };
+    }
+  };
+}
+
+// (3) الـ geohash مترتب: الـ codes في array مترتبة، والخلية ⁦= range⁩، و 9 خلايا (الخلية وجيرانها)
+export function buildGeohashIndex(p: Points, startBits = 30, maxLat = 30.2) {
+  const n = p.lat.length;
+  const codes = new Float64Array(n);
+  for (let i = 0; i &lt; n; i++) codes[i] = encodeBits(p.lat[i], p.lon[i], 52);
+  const order = Int32Array.from({ length: n }, (_, i) =&gt; i).sort((a, b) =&gt; codes[a] - codes[b]);
+  const sorted = Float64Array.from(order, (i) =&gt; codes[i]);
+  const lowerBound = (x: number) =&gt; {
+    let lo = 0;
+    let hi = n;
+    while (lo &lt; hi) {
+      const mid = (lo + hi) &gt;&gt;&gt; 1;
+      if (sorted[mid] &lt; x) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  let fallbacks = 0;
+  const query = (qLat: number, qLon: number): Hit =&gt; {
+    let scanned = 0;
+    for (let bits = startBits; bits &gt;= 2; bits -= 2) {
+      const b = cellBounds(encodeBits(qLat, qLon, bits), bits);
+      const h = b.latHi - b.latLo;
+      const w = b.lonHi - b.lonLo;
+      let idx = -1;
+      let km = Infinity;
+      const seen = new Set&lt;number&gt;();
+      for (const dLat of [-1, 0, 1]) {
+        for (const dLon of [-1, 0, 1]) {
+          const cell = encodeBits(b.latLo + h / 2 + dLat * h, b.lonLo + w / 2 + dLon * w, bits);
+          if (seen.has(cell)) continue;
+          seen.add(cell);
+          const span = 2 ** (52 - bits);
+          for (let j = lowerBound(cell * span); j &lt; n &amp;&amp; sorted[j] &lt; (cell + 1) * span; j++) {
+            scanned++;
+            const d = haversineKm(qLat, qLon, p.lat[order[j]], p.lon[order[j]]);
+            if (d &lt; km) [idx, km] = [order[j], d];
+          }
+        }
+      }
+      // الإجابة مضمونة بس لو أقرب من أقرب حافة للـ 9 خلايا، غير كده كبّر الخلية
+      const safe = 0.999 * Math.min(
+        haversineKm(qLat, qLon, b.latLo - h, qLon), haversineKm(qLat, qLon, b.latHi + h, qLon),
+        haversineKm(maxLat, qLon, maxLat, b.lonLo - w), haversineKm(maxLat, qLon, maxLat, b.lonHi + w),
+      );
+      if (idx !== -1 &amp;&amp; km &lt;= safe) return { idx, km, scanned };
+      fallbacks++;
+    }
+    return { idx: -1, km: Infinity, scanned };
+  };
+  return { query, fallbacks: () =&gt; fallbacks };
+}</code></pre>
+<pre data-file="ex/l18/p5-nearest.ts"><code class="language-typescript">import { brute, buildGeohashIndex, buildGrid, type Hit } from "../../src/geo/nearest.ts";
+import { makePoints } from "./couriers.ts";
+
+// عندنا 100,000 مندوب فاضي، و 1,000 order عايزين أقرب واحد
+const couriers = makePoints(100_000, 1);
+const orders = makePoints(1000, 2);
+
+let t0 = performance.now();
+const grid = buildGrid(couriers, 0.002);
+const gridBuild = performance.now() - t0;
+t0 = performance.now();
+const gh = buildGeohashIndex(couriers, 36);
+const ghBuild = performance.now() - t0;
+console.log(`build: grid ≈${gridBuild.toFixed(0)} ms, sorted geohash ≈${ghBuild.toFixed(0)} ms`);
+
+const truth: Hit[] = [];
+const run = (name: string, find: (lat: number, lon: number) =&gt; Hit) =&gt; {
+  const t = performance.now();
+  const hits: Hit[] = [];
+  for (let i = 0; i &lt; orders.lat.length; i++) hits.push(find(orders.lat[i], orders.lon[i]));
+  const us = ((performance.now() - t) * 1000) / orders.lat.length;
+  if (truth.length === 0) truth.push(...hits);
+  // صح = نفس المسافة بالظبط (لو فيه اتنين بنفس المسافة، أي واحد فيهم صح)
+  const correct = hits.filter((h, i) =&gt; h.km === truth[i].km).length;
+  const scanned = hits.reduce((s, h) =&gt; s + h.scanned, 0) / hits.length;
+  console.log(`${name.padEnd(16)} ≈${us.toFixed(1).padStart(7)} µs/query  scanned ${scanned.toFixed(0).padStart(6)}  correct ${correct}/${hits.length}`);
+};
+run("brute force", (lat, lon) =&gt; brute(couriers, lat, lon));
+run("grid 0.002°", grid);
+run("geohash 36 bits", gh.query);
+console.log(`geohash queries that had to widen the cell: ${gh.fallbacks()}`);</code></pre>
+<pre><code class="language-plaintext">build: grid ≈13 ms, sorted geohash ≈76 ms
+brute force      ≈ 1671.3 µs/query  scanned 100000  correct 1000/1000
+grid 0.002°      ≈   12.0 µs/query  scanned    230  correct 1000/1000
+geohash 36 bits  ≈   15.6 µs/query  scanned     57  correct 1000/1000
+geohash queries that had to widen the cell: 251</code></pre>
+  <div class="ar-note">بناء الـ grid ≈13 ms والـ geohash المترتب ≈76 ms. الـ brute force ≈1.7 ms لكل order وبيلف على 100,000. الـ grid بخلايا 0.002 درجة ≈12 µs وبيلف على 230 في المتوسط. الـ geohash بـ 36 bit ≈16 µs وبيلف على 57، و251 order منهم احتاجوا يكبّروا الخلية. التلاتة صح في الـ 1,000.</div>
+
+<pre data-file="ex/l18/p5-cellsize.ts"><code class="language-typescript">import { brute, buildGeohashIndex, buildGrid, type Hit } from "../../src/geo/nearest.ts";
+import { makePoints } from "./couriers.ts";
+
+// نفس الـ 100,000 مندوب و 1,000 order: حجم الخلية هو الـ knob
+const couriers = makePoints(100_000, 1);
+const orders = makePoints(1000, 2);
+const truth = Array.from({ length: 1000 }, (_, i) =&gt; brute(couriers, orders.lat[i], orders.lon[i]).km);
+const measure = (label: string, find: (lat: number, lon: number) =&gt; Hit, extra = () =&gt; "") =&gt; {
+  const t = performance.now();
+  let scanned = 0;
+  let ok = 0;
+  for (let i = 0; i &lt; 1000; i++) {
+    const h = find(orders.lat[i], orders.lon[i]);
+    scanned += h.scanned;
+    if (h.km === truth[i]) ok++;
+  }
+  console.log(`${label.padEnd(18)} ≈${(performance.now() - t).toFixed(1).padStart(6)} µs/query  scanned ${String(Math.round(scanned / 1000)).padStart(5)}  correct ${ok}/1000${extra()}`);
+};
+for (const cell of [0.02, 0.01, 0.005, 0.002]) measure(`grid ${cell}°`, buildGrid(couriers, cell));
+for (const bits of [26, 30, 34, 36, 38]) {
+  const gh = buildGeohashIndex(couriers, bits);
+  measure(`geohash ${bits} bits`, gh.query, () =&gt; `  widened ${gh.fallbacks()}`);
+}</code></pre>
+<pre><code class="language-plaintext">grid 0.02°         ≈ 235.7 µs/query  scanned  9473  correct 1000/1000
+grid 0.01°         ≈ 111.0 µs/query  scanned  4249  correct 1000/1000
+grid 0.005°        ≈  35.0 µs/query  scanned  1333  correct 1000/1000
+grid 0.002°        ≈   6.8 µs/query  scanned   230  correct 1000/1000
+geohash 26 bits    ≈ 446.1 µs/query  scanned 12696  correct 1000/1000  widened 0
+geohash 30 bits    ≈ 121.7 µs/query  scanned  2778  correct 1000/1000  widened 0
+geohash 34 bits    ≈  26.2 µs/query  scanned   216  correct 1000/1000  widened 59
+geohash 36 bits    ≈  12.2 µs/query  scanned    57  correct 1000/1000  widened 251
+geohash 38 bits    ≈  12.1 µs/query  scanned    17  correct 1000/1000  widened 545</code></pre>
+  <div class="ar-note">حجم الخلية هو كل حاجة: الـ grid بـ 0.02 درجة لف على 9,473 نقطة لكل query (الخلايا الكبيرة في الزحمة مليانة)، وبـ 0.002 لف على 230 بس. الـ geohash بـ 26 bit لف على 12,696، وبـ 38 bit لف على 17 بس بس اضطر يكبّر الخلية 545 مرة من 1,000 (في المناطق الفاضية). كله صح، والفرق في الشغل بس.</div>
+
+<pre data-file="ex/l18/p5-redis.ts"><code class="language-typescript">import { Redis } from "ioredis";
+import { brute } from "../../src/geo/nearest.ts";
+import { makePoints } from "./couriers.ts";
+import { redisPort } from "./lab.ts";
+
+// نفس الـ 100,000 مندوب في Redis GEO: sorted set والـ score هو geohash بـ 52 bit
+const couriers = makePoints(100_000, 1);
+const orders = makePoints(300, 2);
+const redis = new Redis({ host: "127.0.0.1", port: redisPort() });
+await redis.del("couriers:free");
+for (let i = 0; i &lt; couriers.lat.length; i += 1000) {
+  const args: (string | number)[] = [];
+  for (let j = i; j &lt; Math.min(i + 1000, couriers.lat.length); j++) args.push(couriers.lon[j], couriers.lat[j], `c${j}`);
+  await redis.geoadd("couriers:free", ...args);
+}
+console.log(`members ${await redis.zcard("couriers:free")}, key size ${await redis.call("MEMORY", "USAGE", "couriers:free")} bytes`);
+
+const truth = Array.from({ length: orders.lat.length }, (_, q) =&gt; brute(couriers, orders.lat[q], orders.lon[q]));
+for (const startKm of [3, 0.25]) {
+  let same = 0;
+  let maxDiffM = 0;
+  let ms = 0;
+  for (let q = 0; q &lt; orders.lat.length; q++) {
+    // أقرب واحد جوه الدايرة، ولو مفيش حد كبّر الدايرة للضعف
+    let res: unknown[] = [];
+    const t0 = performance.now();
+    for (let km = startKm; res.length === 0 &amp;&amp; km &lt;= 64; km *= 2) {
+      res = (await redis.call("GEOSEARCH", "couriers:free", "FROMLONLAT", orders.lon[q], orders.lat[q], "BYRADIUS", km, "km", "ASC", "COUNT", 1, "WITHDIST")) as unknown[];
+    }
+    ms += performance.now() - t0;
+    const [member, dist] = res[0] as [string, string];
+    if (member === `c${truth[q].idx}`) same++;
+    maxDiffM = Math.max(maxDiffM, Math.abs(Number(dist) - truth[q].km) * 1000);
+  }
+  console.log(`start radius ${startKm} km: same courier as brute force ${same}/${orders.lat.length}, max distance diff ${maxDiffM.toFixed(2)} m, ≈${(ms / orders.lat.length).toFixed(2)} ms/query`);
+}
+redis.disconnect();</code></pre>
+<pre><code class="language-plaintext">members 100000, key size 7695802 bytes
+start radius 3 km: same courier as brute force 299/300, max distance diff 0.31 m, ≈8.53 ms/query
+start radius 0.25 km: same courier as brute force 299/300, max distance diff 0.31 m, ≈0.37 ms/query</code></pre>
+  <div class="ar-note">100,000 مندوب في key واحد حجمه حوالي 7.7 MB (حوالي 77 byte للمندوب). الـ <code>GEOSEARCH</code> اختار نفس مندوب الـ brute force في 299 من 300، وأكبر فرق في المسافة 0.31 متر (لأن الـ score بـ 52 bit بيقرّب المكان)، فواحد قريب جدًا من التعادل اتقلب. نص قطر بادئ بـ 3 km: ≈8.5 ms لكل query؛ بادئ بـ 0.25 km: ≈0.37 ms.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ geohash encode والجيران و<code>GEOSEARCH</code> بتاع Redis على مستوى الـ system موجودين في <a href="../../12-System-Design/lessons/54-case-ride-sharing-proximity.html#p2">درس الـ system design رقم 54، الجزء 2</a>. اللي تحتهم هو <b>Morton (Z-order) code</b>: قسّم الـ range بتاع الـ longitude نصين، اكتب 1 لو النقطة في النص الأعلى، وبعدين نفس الحكاية للـ latitude، بالتبادل، والـ longitude الأول. لما تداخل bits إحداثيتين بيطلعلك رقم واحد ترتيبه ماشي تقريبًا مع المكان؛ والـ geohash بيكتبه 5 bits في كل حرف base-32. الـ encoder بتاعنا (حوالي 25 سطر) اتفق مع <code>ngeohash</code> في 10,000 من 10,000 نقطة (ميدان التحرير <code>stq4yv3</code>). كل حرف بيضرب الدقة في 32: 6 حروف = خلية 1.22 × 0.61 km عند خط الاستواء، و1.06 × 0.61 km في القاهرة لأن درجة الـ longitude هناك أقصر.</p>
+    <p>الـ prefix المشترك معناه نفس الخلية، يعني قريب. العكس غلط: منحنى الـ Z بينط عند حدود الخلايا. نقطتين بينهم 20 متر في نفس الشارع في القاهرة، <code>stq4zvrvr</code> و<code>stq6bj2jk</code>، بيشتركوا في 3 حروف بس. عشان كده query "نفس الـ prefix" لازم يبص على الخلية <i>وجيرانها التمانية</i>، وحتى ساعتها الإجابة مضمونة بس لو أحسن مسافة أقل من المسافة لحافة المربع 3 × 3 ده؛ غير كده كبّر لخلية أكبر. لما دوّرنا في خلية الـ order بس (طريقة <code>LIKE 'stq4y%'</code>) اختار مندوب غلط لـ 78 order من 1,000، أبعد بلحد 0.40 km.</p>
+    <p>أقرب مندوب من 100,000 (متجمعين حوالين 6 مناطق زحمة في القاهرة)، و1,000 order، وكله متراجع على الـ brute force: الـ brute force بالـ haversine بيلف على 100,000 لكل query (≈1.7 ms)؛ grid منتظم بخلايا 0.002 درجة بيدوّر في حلقات لبره لحد ما أحسن مسافة تبقى جوه اللي اتدوّر فيه، بيلف على 230 (≈12 µs)؛ array مترتبة بـ geohash بـ 52 bit، بتدوّر في 9 خلايا بـ 36 bit وتكبّر لما مش متأكدة، بتلف على 57 (≈16 µs، و251 query كبّروا). كله 1,000 من 1,000 صح. حجم الخلية هو الـ knob: خلايا 0.02 درجة لفّت على 9,473 نقطة في الزحمة، وخلايا geohash بـ 38 bit كبّرت 545 مرة في المناطق الفاضية. الـ structures اللي بتتكيّف مع الزحمة هي اللي بتحل ده: quadtree، وk-d tree (يقسم بـ x وبعدين y ويقص بالمسافة)، وR-tree على bounding boxes (الـ GiST بتاع PostGIS، متشغّلش هنا)، وخلايا H3 السداسية بتاعة Uber وخلايا S2 بتاعة Google على Hilbert curve (libraries native، متشغّلتش هنا). وفي production الـ Redis هو اللي بيعمل الـ indexing: <code>GEOSEARCH … ASC COUNT 1</code> اختار نفس مندوب الـ brute force في 299 من 300 (الـ score بـ 52 bit بيقرّب الأماكن؛ المسافات اختلفت بـ 0.31 متر بالكتير، فحالة قريبة من التعادل اتقلبت). نص قطر بادئ بـ 3 km خد ≈8.5 ms لكل query، و0.25 km خد ≈0.37 ms: من غير <code>ANY</code>، Redis بيجمع ويرتب كل اللي في الدايرة حتى مع <code>COUNT 1</code>. ابدأ صغير وضاعف.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ candidates في الـ dispatch بتاع <a href="./17-network-flow-matching.html#p5">الدرس 17، الجزء 5</a>: لكل order هات أقرب 8 مناديب فاضيين. في Redis: <code>GEOSEARCH couriers:free FROMLONLAT … BYRADIUS 0.25 km ASC COUNT 8</code> وضاعف الدايرة لحد ما تلاقي 8 أو توصل حد. وفي Postgres من غير PostGIS: عمود geohash عليه index وquery على الخلية والـ 8 جيران وبعدين فلتر بالـ haversine الحقيقي. الغلطة الشائعة: <code>WHERE geohash LIKE 'stq4y%'</code> لوحده، فالمندوب اللي على الناحية التانية من الشارع ميظهرش.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Couriers are indexed by geohash. Is 'same 6-character prefix' a correct nearest-courier query?" → No. Same prefix implies the same ~1 km cell, but nearby points across a cell edge can share almost no prefix (20 m apart, 3 shared characters in Cairo). Search the cell and its 8 neighbours, verify with real distance, and widen if the best distance exceeds the distance to the block's edge. In this run, own-cell-only picked the wrong courier for 7.8% of orders.
+    <div class="ar-note">"المناديب متفهرسين بالـ geohash. هل 'نفس أول 6 حروف' query صح لأقرب مندوب؟" ← لأ. نفس الـ prefix معناه نفس الخلية (حوالي 1 km)، بس نقط قريبة على حدود خلية ممكن متشتركش تقريبًا في أي prefix (20 متر و3 حروف بس في القاهرة). دوّر في الخلية والـ 8 جيران، واتأكد بالمسافة الحقيقية، وكبّر لو أحسن مسافة أكبر من المسافة لحافة المربع. في الـ run ده الخلية لوحدها اختارت مندوب غلط لـ 7.8% من الـ orders.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Fractional time units in a rate limiter</b>
+<pre><code class="language-typescript">// الغلط: 3 في الثانية ⁦= 333.333... ms⁩، والكسور بتتقرّب
+const interval = 1000 / 3;
+const limit = gcra(interval, 5);</code></pre></div>
+    <div class="good"><b>✅ Integer units (µs or ms)</b>
+<pre><code class="language-typescript">// الصح: كل الحساب integers، فمفيش تقريب
+const intervalUs = 333_334;
+const limit = gcra(intervalUs, 5); // الوقت بالـ ⁦µs⁩ برضه</code></pre></div>
+  </div>
+<pre data-file="ex/l18/p3-float.ts"><code class="language-typescript">import { gcra, tokenBucket } from "../../src/hash/gcra.ts";
+import { mulberry32, randInt } from "../../src/lib/rand.ts";
+
+// نفس المقارنة، بس الـ interval كسر: 1000/3 ms يعني 3 requests في الثانية
+const rnd = mulberry32(3);
+let diffs = 0;
+let total = 0;
+for (let r = 0; r &lt; 2000; r++) {
+  const interval = 1000 / randInt(rnd, 3, 7);
+  const burst = randInt(rnd, 1, 10);
+  const a = gcra(interval, burst);
+  const b = tokenBucket(interval, burst);
+  let now = 0;
+  for (let i = 0; i &lt; 300; i++) {
+    now += rnd() &lt; 0.3 ? 0 : randInt(rnd, 1, 400);
+    total++;
+    if (a(now) !== b(now)) diffs++;
+  }
+}
+console.log(`fractional interval: ${diffs} of ${total} decisions differ`);</code></pre>
+<pre><code class="language-plaintext">fractional interval: 2435 of 600000 decisions differ</code></pre>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ GCRA والـ token bucket متكافئين رياضيًا، بس لما الـ interval كسر (1000/3 ms) كل واحد بيقرّب بطريقة مختلفة، فاختلفوا في 2,435 قرار من 600,000. ونفس المشكلة بتحصل بين نسخة الـ app ونسخة الـ Lua، أو بين servers.</p>
+    <p>✅ خلي الوحدة صغيرة كفاية إن كل حاجة تبقى integer (µs مثلًا) وخلي الوقت نفسه بنفس الوحدة؛ مع integers الـ property test اتفق في كل الـ 5,000 trace.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Same geohash cell only</b>
+<pre><code class="language-sql">-- الغلط: الخلية بتاعة الـ order بس
+SELECT id FROM couriers
+WHERE geohash LIKE 'stq4y%'
+ORDER BY distance LIMIT 1;</code></pre></div>
+    <div class="good"><b>✅ Cell + 8 neighbours, then verify</b>
+<pre><code class="language-typescript">// الصح: 9 خلايا، والإجابة مقبولة بس لو أقرب من حافة البلوك
+if (idx !== -1 &amp;&amp; km &lt;= safe) return { idx, km, scanned };
+// غير كده: خلية أكبر (bits - 2) وكرر</code></pre></div>
+  </div>
+<pre data-file="ex/l18/p5-prefix-only.ts"><code class="language-typescript">import { encodeBits, haversineKm } from "../../src/geo/geohash.ts";
+import { brute } from "../../src/geo/nearest.ts";
+import { makePoints } from "./couriers.ts";
+
+// الغلطة: "نفس الـ ⁦prefix =⁩ قريب"، فندوّر في خلية الـ order بس (زي ⁦WHERE geohash LIKE 'stq4y%'⁩)
+const couriers = makePoints(100_000, 1);
+const orders = makePoints(1000, 2);
+const BITS = 30;
+const byCell = new Map&lt;number, number[]&gt;();
+for (let i = 0; i &lt; couriers.lat.length; i++) {
+  const c = encodeBits(couriers.lat[i], couriers.lon[i], BITS);
+  const list = byCell.get(c);
+  if (list) list.push(i);
+  else byCell.set(c, [i]);
+}
+let wrong = 0;
+let empty = 0;
+let worstExtraKm = 0;
+for (let q = 0; q &lt; orders.lat.length; q++) {
+  const [lat, lon] = [orders.lat[q], orders.lon[q]];
+  const inCell = byCell.get(encodeBits(lat, lon, BITS)) ?? [];
+  if (inCell.length === 0) {
+    empty++;
+    continue;
+  }
+  const km = Math.min(...inCell.map((i) =&gt; haversineKm(lat, lon, couriers.lat[i], couriers.lon[i])));
+  const best = brute(couriers, lat, lon).km;
+  if (km &gt; best) {
+    wrong++;
+    worstExtraKm = Math.max(worstExtraKm, km - best);
+  }
+}
+console.log(`same-cell only: ${wrong} wrong couriers, ${empty} orders found nobody, worst extra distance ${worstExtraKm.toFixed(2)} km`);</code></pre>
+<pre><code class="language-plaintext">same-cell only: 78 wrong couriers, 0 orders found nobody, worst extra distance 0.40 km</code></pre>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الخلية لوحدها (30 bit، حوالي 1 km) غلطت في 78 order من 1,000، والمندوب اللي اختارته كان أبعد بلحد 0.40 km من الأقرب الحقيقي، لأن الأقرب كان في الخلية اللي جنبها.</p>
+    <p>✅ دوّر في الخلية والـ 8 جيران، واقبل الإجابة بس لو المسافة أقل من المسافة لحافة البلوك 3 × 3؛ غير كده كبّر الخلية. كده كانت 1,000 من 1,000 صح.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A big radius with <code>COUNT 1</code></b>
+<pre><code class="language-typescript">// الغلط: دايرة 3 km في وسط الزحمة عشان "نضمن نلاقي حد"
+await redis.call("GEOSEARCH", "couriers:free", "FROMLONLAT", lon, lat,
+  "BYRADIUS", 3, "km", "ASC", "COUNT", 1);
+// النتيجة: ⁦≈8.5 ms⁩ لكل query</code></pre></div>
+    <div class="good"><b>✅ Start small, double until found</b>
+<pre><code class="language-typescript">// الصح: ابدأ بـ 250 متر وضاعف
+for (let km = 0.25; res.length === 0 &amp;&amp; km &lt;= 64; km *= 2) {
+  res = await geosearch(km);
+}
+// النتيجة: ⁦≈0.37 ms⁩ لكل query</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>COUNT 1</code> مش بيوقف البحث بدري: من غير <code>ANY</code> Redis بيجمع كل الأعضاء اللي في الدايرة ويرتّبهم، ودايرة 3 km في وسط القاهرة فيها آلاف المناديب، فكل query خد ≈8.5 ms (والـ docs بتقول نفس الكلام: المجهود على قد عدد اللي جوه المنطقة).</p>
+    <p>✅ ابدأ بدايرة صغيرة (250 متر) وضاعف لحد ما تلاقي: ≈0.37 ms، أسرع 20 مرة تقريبًا وبنفس النتيجة. و<code>ANY</code> أسرع كمان بس بيرجّع أول اللي يلاقيه مش الأقرب.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ EDF alone under overload</b>
+<pre><code class="language-typescript">// الغلط: كل حاجة بتدخل الطابور، والأقرب deadline بيتخدم الأول
+queue.push(job);
+// عند ⁦load 120%: 0.5%⁩ بس في الميعاد</code></pre></div>
+    <div class="good"><b>✅ Admission control at the door</b>
+<pre><code class="language-typescript">// الصح: لو الطابور بترتيب EDF مش هيلحق مع الـ job ده، ارفضه دلوقتي
+if (!feasibleWith(job, busyUntil)) return reject(job); // يعني 429 أو "اتأجل"
+queue.push(job);
+// عند ⁦load 120%: 82.9%⁩ في الميعاد و17.1% اترفضوا</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ EDF أمثل لما الحمل يتلحق، بس تحت ضغط زيادة مستمر بيصرف الـ worker على الـ jobs اللي خلاص مش هتلحق، فكلهم بيفوتوا ورا بعض (الـ domino effect): 0.5% بس في الميعاد، زي الـ FIFO.</p>
+    <p>✅ اختبر وقت الوصول: لو ضفت الـ job ده، الطابور كله بترتيب EDF هيلحق؟ لو لأ ارفضه على طول (والـ client يعرف في ساعتها ويقدر يعيد بعدين أو يتحوّل). النتيجة 82.9% في الميعاد، والـ 17.1% المرفوضين قريبين من الـ 17% الزيادة عن الـ capacity.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Four algorithms on your own code <span class="lvl lvl-1">🟢 easy</span></b>
+    Take a file from your project, move one function below another and change one line inside it. Run <code>git diff --no-index --numstat</code> with <code>--diff-algorithm=myers</code>, <code>minimal</code>, <code>patience</code> and <code>histogram</code> on the two versions and read the full output of the shortest and the longest. Which would you rather review?
+    <div class="ar-note">خد ملف من مشروعك، انقل دالة تحت دالة تانية وغيّر سطر جواها. شغّل <code>git diff --no-index --numstat</code> بـ <code>--diff-algorithm=myers</code> و<code>minimal</code> و<code>patience</code> و<code>histogram</code> على النسختين، واقرا الـ output الكامل للأقصر وللأطول. أنهي واحد تحب تعمله review؟</div>
+    <details><summary>Hint · تلميح</summary>
+      Use <code>ex/l18/swap.sh</code> as the template and pass <code>-c core.autocrlf=false</code> on Windows so line endings don't show up as changes. If you prefer histogram, set it once: <code>git config --global diff.algorithm histogram</code>.
+      <div class="ar-note">استخدم <code>ex/l18/swap.sh</code> كـ template، وعلى Windows حط <code>-c core.autocrlf=false</code> عشان نهايات السطور متبانش كتغييرات. ولو عجبك histogram، اظبطه مرة واحدة: <code>git config --global diff.algorithm histogram</code>.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. "What changed in this order?" <span class="lvl lvl-2">🟡 medium</span></b>
+    Build the audit view: given two JSON snapshots of an order (keys in any order), print only the changed lines. Use <code>myersDiff</code> from Part 1, and make the JSON stable first.
+    <div class="ar-note">ابني شاشة الـ audit: معاك snapshot قبل وبعد لـ order بصيغة JSON (الـ keys بأي ترتيب)، اطبع السطور اللي اتغيرت بس. استخدم <code>myersDiff</code> من الجزء 1، وخلي الـ JSON ثابت الترتيب الأول.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="ex/l18/ex2-audit.ts"><code class="language-typescript">import { myersDiff } from "../../src/diff/myers.ts";
+
+// الـ JSON بترتيب keys ثابت: من غيره نفس الـ order ممكن يطلع diff وهمي
+const stable = (v: unknown): string =&gt;
+  JSON.stringify(v, (_k, x) =&gt; (x &amp;&amp; typeof x === "object" &amp;&amp; !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) =&gt; a.localeCompare(b))) : x), 2);
+
+const before = { id: "ord_1042", status: "paid", total: 1250, items: [{ sku: "TSHIRT-M", qty: 2 }, { sku: "MUG", qty: 1 }], address: { city: "Cairo", zone: "Maadi" } };
+const after = { status: "refunded", id: "ord_1042", total: 950, items: [{ sku: "TSHIRT-M", qty: 2 }], address: { zone: "Maadi", city: "Cairo" } };
+
+const ops = myersDiff(stable(before).split("\n"), stable(after).split("\n"));
+for (const o of ops) if (o.op !== " ") console.log(o.op + o.line);</code></pre>
+<pre><code class="language-plaintext">-    },
+-    {
+-      "qty": 1,
+-      "sku": "MUG"
+-  "status": "paid",
+-  "total": 1250
++  "status": "refunded",
++  "total": 950</code></pre>
+      <div class="ar-note">الـ status والـ total اتغيروا، والـ MUG اتشال. لاحظ إن الـ diff مسح <code>},</code> و<code>{</code> بتوع العنصرين بدل ما يمسح العنصر التاني كامل بأقواسه: نفس الطول (أقصر script)، بس أصعب في القراية، ودي نفس مشكلة "الأقصر مش الأوضح". من غير الترتيب الثابت، <code>address</code> كان هيطلع متغيّر مع إن قيمته هي هي.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. Prove jump hash moves only to the new bucket <span class="lvl lvl-2">🟡 medium</span></b>
+    Write a fast-check property: for any 64-bit key and any n from 1 to 5,000, <code>jumpHash(key, n)</code> is in [0, n) and <code>jumpHash(key, n + 1)</code> is either the same bucket or n.
+    <div class="ar-note">اكتب property بـ fast-check: لأي key بـ 64-bit وأي n من 1 لحد 5,000، <code>jumpHash(key, n)</code> يكون من 0 لحد n−1، و<code>jumpHash(key, n + 1)</code> يا نفس الـ bucket يا n.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="test/hash/jump.test.ts"><code class="language-typescript">import { test } from "node:test";
+import assert from "node:assert/strict";
+import fc from "fast-check";
+import { jumpHash } from "../../src/hash/jump.ts";
+
+// لما تزوّد bucket: الـ key يا يفضل مكانه يا يروح للـ bucket الجديد بس
+test("jump hash is monotone and in range", () =&gt; {
+  fc.assert(
+    fc.property(fc.bigInt({ min: 0n, max: 2n ** 64n - 1n }), fc.integer({ min: 1, max: 5000 }), (key, n) =&gt; {
+      const before = jumpHash(key, n);
+      const after = jumpHash(key, n + 1);
+      assert.ok(before &gt;= 0 &amp;&amp; before &lt; n);
+      assert.ok(after === before || after === n);
+    }),
+    { seed: 18, numRuns: 20_000 },
+  );
+});</code></pre>
+<pre><code class="language-plaintext">ok 1 - jump hash is monotone and in range
+# tests 1
+# pass 1
+# fail 0</code></pre>
+      <div class="ar-note">عدّى على 20,000 حالة. الخاصية دي هي اللي بتخلي الإضافة تنقل 1/(n+1) بالظبط: محدش بيتنقل بين الـ buckets القديمة.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project: a fair, rate-limited export queue <span class="lvl lvl-3">🔴 project</span></b>
+    In the side project, put a WFQ dispatcher in front of the export workers: one Redis list per tenant, weights from the tenant's plan, and a loop that moves the job with the smallest virtual finish tag into the BullMQ worker queue whenever a worker is free. Protect the export API with GCRA in Lua per API key. Then load it: one tenant posts 2,000 exports, 30 tenants post 2 each, and report small-tenant p50/p99 wait before and after.
+    <div class="ar-note">في المشروع الجانبي حط dispatcher بـ WFQ قدام الـ export workers: list في Redis لكل tenant، والأوزان من الـ plan بتاعه، وloop بيحط الـ job اللي الـ virtual finish tag بتاعه أصغر حاجة في الـ worker queue بتاع BullMQ كل ما worker يفضى. واحمي الـ export API بـ GCRA في Lua لكل API key. وبعدين اضغط عليه: tenant واحد يبعت 2,000 export، و30 tenant كل واحد 2، وطلّع p50 وp99 لانتظار الـ tenants الصغيرين قبل وبعد.</div>
+    <details><summary>Hint · تلميح</summary>
+      Keep the virtual clock V and each tenant's last tag in one Redis hash and update them in the same Lua script that pops the job, so two dispatchers can't race. Write the measured waits into an ADR next to the weights you chose.
+      <div class="ar-note">خلي الـ virtual clock V وآخر tag لكل tenant في hash واحد في Redis، وحدّثهم في نفس الـ Lua script اللي بيشيل الـ job، عشان مفيش dispatcherين يتسابقوا. واكتب أرقام الانتظار اللي قستها في ADR جنب الأوزان اللي اخترتها.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>Myers: edit graph, diagonals k = x − y, V[k] = furthest x per d, follow snakes; O((N+M)·D). 10k lines, D = 16: ≈3.6 ms vs ≈848 ms and 200 MB for the LCS table.</li>
+    <li>Shortest ≠ clearest: moved functions gave 4+4 interleaved (myers) vs 8+8 as a block (histogram). Use histogram for review; stable JSON before diffing data.</li>
+    <li>FIFO lets one tenant starve the rest (small shops waited ≈3 h). Round-robin per tenant: 2 s. WFQ with F = max(V, F_last) + size/weight: 75/25 for weights 3/1.</li>
+    <li>EDF is optimal when feasible (100% at 80% load) and collapses under overload (0.5% at 120%, like FIFO). Admission control: 82.9% on time.</li>
+    <li>GCRA: one TAT per key; allow if max(TAT, t) − t ≤ T·(burst − 1). Same decisions as a token bucket, 38 vs 70 bytes in Redis. Integer units only.</li>
+    <li>Jump hash: no memory, moves exactly 1/(n+1) on add, but only the last bucket can be removed (18.92% moved otherwise); BigInt makes it ≈120–300 ns.</li>
+    <li>ARC: T1/T2 + ghost lists B1/B2 tune p; SIEVE: FIFO + visited bit + hand, no move on hit. Both survive a scan; LRU fell 44.8% → 25.8%.</li>
+    <li>Capture traces in the app, not with MONITOR in production (≈35–40% fewer GETs/s here). Replay at several sizes and pick from the curve.</li>
+    <li>Geohash = Morton code; shared prefix ⇒ near, near ⇏ shared prefix. Search 9 cells and verify; own cell only was wrong for 78/1,000.</li>
+    <li>Cell size is the knob (230 vs 9,473 points scanned). GEOSEARCH: start at 0.25 km and double (≈0.37 ms vs ≈8.5 ms from 3 km).</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ Myers: edit graph، والـ diagonals بـ k = x − y، و<code>V[k]</code> أبعد x لكل d، وامشي على الـ snakes؛ O((N+M)·D). على 10 آلاف سطر وD = 16: ≈3.6 ms قصاد ≈848 ms و200 MB لجدول الـ LCS.</li>
+      <li>الأقصر مش الأوضح: دوال اتنقلت طلعت 4+4 متداخلين (myers) قصاد 8+8 كـ block (histogram). استخدم histogram في الـ review، ورتّب الـ JSON قبل ما تعمل diff للـ data.</li>
+      <li>الـ FIFO بيخلي tenant واحد يجوّع الباقي (المحلات الصغيرة استنت حوالي 3 ساعات). الـ round-robin لكل tenant: ثانيتين. الـ WFQ بـ F = max(V، آخر F) + الحجم ÷ الوزن: 75 و25 للأوزان 3 و1.</li>
+      <li>الـ EDF أمثل لما الحمل يتلحق (100% عند 80%) وبيقع تحت الضغط الزيادة (0.5% عند 120%، زي الـ FIFO). الـ admission control: 82.9% في الميعاد.</li>
+      <li>الـ GCRA: رقم TAT واحد لكل key؛ اقبل لو max(TAT، t) − t ≤ T × (burst − 1). نفس قرارات الـ token bucket، و38 byte قصاد 70 في Redis. وحدات integers بس.</li>
+      <li>الـ jump hash: من غير ذاكرة وبينقل 1/(n+1) بالظبط وقت الإضافة، بس تقدر تشيل آخر bucket بس (غير كده اتنقل 18.92%)؛ والـ BigInt بيخليه حوالي 120 لـ 300 ns.</li>
+      <li>الـ ARC: T1 وT2 وأشباح B1 وB2 بيظبطوا p؛ الـ SIEVE: FIFO وbit زيارة وhand، ومفيش تحريك وقت الـ hit. الاتنين عدّوا الـ scan؛ والـ LRU وقع من 44.8% لـ 25.8%.</li>
+      <li>سجّل الـ traces من الـ app، مش بـ MONITOR في production (الـ GETs في الثانية قلّت حوالي 35 لـ 40% هنا). اعمل replay على أكتر من حجم واختار من الـ curve.</li>
+      <li>الـ geohash = Morton code؛ نفس الـ prefix ← قريب، بس القريب مش شرط نفس الـ prefix. دوّر في 9 خلايا واتأكد؛ الخلية لوحدها غلطت في 78 من 1,000.</li>
+      <li>حجم الخلية هو الـ knob (لف على 230 قصاد 9,473 نقطة). الـ GEOSEARCH: ابدأ بـ 0.25 km وضاعف (≈0.37 ms قصاد ≈8.5 ms لو بدأت بـ 3 km).</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 05 · 3.5 — Myers diff algorithm: إزاي <code>git diff</code> بيطلع أقل تعديلات (تنفيذ مبسط)</label>
+    <label><input type="checkbox" data-key="r2"> 05 · 3.5 — Scheduling: round-robin، weighted fair queuing، و earliest deadline first</label>
+    <label><input type="checkbox" data-key="r3"> 05 · 3.5 — Rate limiting و consistent hashing كـ algorithms (ربط بالقسم 12)</label>
+    <label><input type="checkbox" data-key="r4"> 05 · 3.5 — Caching eviction policies (LRU، LFU، ARC كمفهوم) و قياس الـ hit rate على trace حقيقي</label>
+    <label><input type="checkbox" data-key="r5"> 05 · 3.5 — Geohash و الـ spatial indexing كمفهوم ("أقرب مندوب")</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="http://www.xmailserver.org/diff2.pdf">Myers, An O(ND) Difference Algorithm and Its Variations (1986)</a> · <a href="https://blog.jcoglan.com/2017/02/12/the-myers-diff-algorithm-part-1/">James Coglan — The Myers diff algorithm</a></li>
+    <li><a href="https://git-scm.com/docs/git-diff">git-diff documentation (--diff-algorithm, --minimal)</a></li>
+    <li><a href="https://en.wikipedia.org/wiki/Fair_queuing">Fair queuing</a> · <a href="https://en.wikipedia.org/wiki/Earliest_deadline_first_scheduling">Earliest deadline first scheduling</a> (Wikipedia)</li>
+    <li><a href="https://brandur.org/rate-limiting">Brandur Leach — Rate limiting, cells, and GCRA</a> · <a href="https://arxiv.org/abs/1406.2294">Lamping &amp; Veach — A Fast, Minimal Memory, Consistent Hash Algorithm (2014)</a></li>
+    <li><a href="https://www.usenix.org/conference/fast-03/arc-self-tuning-low-overhead-replacement-cache">ARC (FAST '03)</a> · <a href="https://www.usenix.org/conference/nsdi24/presentation/zhang-yazhuo">SIEVE is Simpler than LRU (NSDI '24)</a></li>
+    <li><a href="https://redis.io/docs/latest/commands/geosearch/">Redis GEOSEARCH</a> · <a href="https://redis.io/docs/latest/commands/monitor/">Redis MONITOR (cost section)</a> · <a href="https://nodejs.org/api/cluster.html">Node.js cluster: how it works</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <!-- ===== Prev / Next (use class="empty" on a span when there is no prev/next) ===== -->
+  <nav class="lesson-nav">
+    <a class="prev" href="./17-network-flow-matching.html"><small>← Previous</small>17 · Flow &amp; Matching</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./19-problem-solving-method.html"><small>Next →</small>19 · Problem-Solving Method</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
