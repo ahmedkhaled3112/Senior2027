@@ -1,7 +1,7 @@
 <!-- AUTO:START -->
-# 13 — Senior Skills (غير التقني — اللي الترقية بتتوقف عليه) — Progress
+# 15 — Senior Skills (غير التقني — اللي الترقية بتتوقف عليه) — Progress
 
-> آخر تحديث: 2026-11-09 · شغّل `node _tools/update-progress.js` بعد أي تعديل.
+> آخر تحديث: 2026-11-13 · شغّل `node _tools/update-progress.js` بعد أي تعديل.
 
 **الإجمالي:** 0 / 109 بند · **0%**
 
