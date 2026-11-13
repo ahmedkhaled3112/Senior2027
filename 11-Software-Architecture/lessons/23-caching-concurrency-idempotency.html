@@ -1,0 +1,1575 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Caching, Concurrency &amp; Idempotency as Architecture — 11 Software Architecture</title>
+<meta name="section" content="11-Software-Architecture">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">11 · Software Architecture</a></span>
+    <span>·</span>
+    <span>Lesson 23 / 40</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+<header>
+    <h1>Caching, Concurrency &amp; Idempotency as Architecture</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 23 of 40 — Software Architecture</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Node 22 · TypeScript 7 · Postgres 18 · Redis 8</span>
+      <span class="chip">Prereq: Lessons 13, 19, 20</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>11 · 2.8 — Caching كطبقة معمارية: فين (decorator على الـ repository؟ على الـ use case؟) والـ consistency implications</li>
+        <li>11 · 2.8 — Concurrency: optimistic (version) vs pessimistic locking في الـ domain، idempotency keys للـ commands</li>
+        <li>11 · 3.5 — Idempotency design على مستوى النظام: idempotency key storage، response caching، TTL</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Where the cache goes</a></li>
+      <li><a href="#p2">Part 2 — Consistency implications</a></li>
+      <li><a href="#p3">Part 3 — Optimistic locking</a></li>
+      <li><a href="#p4">Part 4 — Pessimistic locking</a></li>
+      <li><a href="#p5">Part 5 — Idempotency keys for commands</a></li>
+      <li><a href="#p6">Part 6 — System-level idempotency design</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>All three topics look like implementation details until they cost money. In the runs below, a harmless-looking cache on <code>findById</code> turned a paid order into a cancelled one, a missing version check lost 45 of 50 updates without a single error, and a double click charged a card twice. The mechanics of Redis, row locks and the <code>Idempotency-Key</code> header are taught elsewhere and linked. This lesson asks the architect's question: where does each concern live, so the core stays honest and the guarantee holds from the browser to the payment provider? Everything runs on <a href="./orders-service/">the shared orders service</a> this section grows, with the same <code>Order</code>, <code>OrderRepository</code>, <code>PaymentGateway</code> and <code>makePlaceOrder</code>. The copy in the repo stays as it is, and every addition is shown here so you can make it yourself. Senior interviews return to these three constantly, usually as "design a payment endpoint".</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>التلات مواضيع دول شكلهم تفاصيل تنفيذ، لحد ما يكلفوك فلوس. في التشغيلات اللي تحت: cache شكله بريء على <code>findById</code> حوّل order مدفوع لـ order ملغي، وغياب الـ version check ضيّع 45 update من 50 من غير ولا error، و double click خصم من الكارت مرتين. تفاصيل Redis والـ row locks وheader الـ <code>Idempotency-Key</code> متشرحة في دروس تانية وهتلاقي لينكاتها. الدرس ده بيسأل سؤال الـ architect: كل حاجة من دول مكانها فين، عشان الـ core يفضل نضيف والضمان يفضل ماشي من المتصفح لحد الـ payment provider؟ كل حاجة شغالة على <a href="./orders-service/">الـ orders service المشترك</a> اللي القسم بيكبّره، بنفس <code>Order</code> و<code>OrderRepository</code> و<code>PaymentGateway</code> و<code>makePlaceOrder</code>. النسخة اللي في الـ repo بتفضل زي ما هي، وكل إضافة معروضة هنا عشان تعملها بإيدك. وأسئلة الـ senior interviews بترجع للتلاتة دول كتير، غالبًا في شكل "صمّم payment endpoint".</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Where the cache goes <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 1 — الـ cache مكانه فين</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>This part is about placement only. The patterns (cache-aside, TTL, stampede) are in <a href="../../06-NodeJS/lessons/21-redis-patterns-caching.html">the Redis patterns lesson</a>, and the depth is in section 12: <a href="../../12-System-Design/lessons/16-caching-foundations-strategies.html">strategies</a> and <a href="../../12-System-Design/lessons/17-cache-invalidation-consistency.html">invalidation</a>. The read is a customer dashboard made of three queries: totals for this customer, recent orders for this customer, and top products across everyone. The last one scans all the lines, so it dominates the cost.</p>
+    <p>The same small <code>CacheStore</code> interface serves three placements. <b>A decorator on the repository</b> wraps the read port and implements the same interface, so each query has its own key. <b>A decorator on the query use case</b> has the same signature as the use case and caches the whole composed answer. <b>At HTTP</b> a middleware caches the response body, so its key must cover everything that changes that body, here the URL and <code>Accept-Language</code>. The use case and the route don't change in any of the three: the only difference is one line in the wiring.</p>
+    <p>The run below uses real Postgres (200,000 orders) and real Redis, with the same 800 reads in the same order for each placement. Timings are approximate (≈): a Windows Redis build on a loaded machine, so trust the counts more than the milliseconds. Read the table by the columns that differ most. p50 barely moves between placements (about 1.5 ms), so p50 is not how you choose. What differs is what a miss costs. The repository placement ran 61 queries: 2 for each of the 30 customers, and the shared query only once. The use case ran 90 (3 per customer), and HTTP ran 180 (3 per customer per language). That is why the repository has a p99 of about 8 ms while the others pay about 60–70 ms: a new customer there never re-runs the heavy query. Its price is 3 Redis round trips per read instead of 1.</p>
+    <p>The rule that follows: cache at the lowest layer where the result is expensive and shared, and cache higher when the composed answer itself is hot and the keys are few. Higher placements save more per hit and invalidate worse, because one changed row affects many cached compositions. In every case the core doesn't know: the decorators live in infrastructure and presentation, the composition root wires them, and a new fitness rule proves it.</p>
+  </section>
+
+<pre class="diagram">
+              GET /customers/:email/dashboard
+                          │
+   (c) HTTP middleware ───┤  key: url + language
+                          │  a hit skips the route, the use case, all queries, JSON
+                          ▼
+                     presentation
+                          │
+   (b) use case decorator ┤  key: customer
+                          │  a hit skips the use case and all 3 queries
+                          ▼
+                 application: GetDashboard
+                          │  port: OrderStats
+   (a) repo decorator ────┤  key: one per query
+                          │  a hit skips one query, and can be shared by customers
+                          ▼
+                 infrastructure: SQL
+                          │
+                          ▼
+                       Postgres
+
+   higher = more saved per hit, more keys, harder to invalidate
+   lower  = more reuse, more round trips per read, easier to invalidate
+</pre>
+  <div class="ar-note">نفس الطلب نازل من فوق لتحت، والتلات أماكن عليه. (ج) عند HTTP: الـ key هو الـ url واللغة، والـ hit بيوفّر كل حاجة تحته. (ب) على الـ use case: الـ key هو الـ customer، والـ hit بيوفّر الـ use case والـ 3 queries. (أ) على الـ repository: key لكل query، والـ hit بيوفّر query واحدة بس، بس ممكن تتشارك بين customers. كل ما طلعت لفوق بتوفّر أكتر في الـ hit الواحد، وعدد الـ keys بيزيد، والـ invalidation بيصعب. وكل ما نزلت الـ reuse بيزيد والـ round trips في القراية الواحدة بتزيد والـ invalidation بيسهل.</div>
+
+<pre data-file="src/shared/cache.ts"><code class="language-typescript">// الواجهة الوحيدة اللي التلات أماكن بتستخدمها: decorator على الـ repository وعلى الـ use case وعند HTTP
+export interface CacheStore {
+  get(key: string): Promise&lt;string | null&gt;;
+  set(key: string, value: string, ttlSeconds: number): Promise&lt;void&gt;;
+  del(key: string): Promise&lt;void&gt;;
+}
+
+// النمط cache-aside في سطور قليلة: شرحه الكامل في درس Redis بتاع قسم Node
+export async function cached&lt;T&gt;(store: CacheStore, key: string, ttlSeconds: number, load: () =&gt; Promise&lt;T&gt;): Promise&lt;T&gt; {
+  const hit = await store.get(key);
+  if (hit !== null) return JSON.parse(hit) as T;
+  const value = await load();
+  await store.set(key, JSON.stringify(value), ttlSeconds);
+  return value;
+}</code></pre>
+<pre data-file="src/modules/orders/infrastructure/caching.ts"><code class="language-typescript">import { cached } from "../../../shared/cache.ts";
+import type { CacheStore } from "../../../shared/cache.ts";
+import type { GetDashboard } from "../application/get-dashboard.ts";
+import type { OrderStats } from "../application/ports.ts";
+
+// المكان (أ⁦) decorator⁩ على الـ repository: نفس الـ port بالظبط، وكل method ليها key
+export const withCachedStats = (inner: OrderStats, store: CacheStore, ttl: number): OrderStats =&gt; ({
+  customerTotals: (email) =&gt; cached(store, `stats:totals:${email}`, ttl, () =&gt; inner.customerTotals(email)),
+  recentOrders: (email, limit) =&gt; cached(store, `stats:recent:${email}:${limit}`, ttl, () =&gt; inner.recentOrders(email, limit)),
+  // ده مشترك بين كل الـ customers: أول miss بيدفع والباقي كسبانين
+  topProducts: (limit) =&gt; cached(store, `stats:top:${limit}`, ttl, () =&gt; inner.topProducts(limit)),
+});
+
+// المكان (ب⁦) decorator⁩ على الـ query use case: نفس signature الـ use case
+export const withCachedDashboard =
+  (inner: GetDashboard, store: CacheStore, ttl: number): GetDashboard =&gt;
+  (email) =&gt;
+    cached(store, `dashboard:${email}`, ttl, () =&gt; inner(email));</code></pre>
+<pre data-file="src/modules/orders/presentation/http-cache.ts"><code class="language-typescript">import type { RequestHandler } from "express";
+import type { CacheStore } from "../../../shared/cache.ts";
+
+// المكان (ج) عند HTTP: بيخزّن الـ response كله، فالـ key لازم يفرّق بين كل حاجة بتغيّر الـ body
+export const httpCache =
+  (store: CacheStore, ttl: number): RequestHandler =&gt;
+  async (req, res, next) =&gt; {
+    const key = `http:${req.originalUrl}:${req.header("accept-language") ?? "-"}`;
+    const hit = await store.get(key);
+    if (hit !== null) {
+      res.type("application/json").set("x-cache", "hit").send(hit);
+      return;
+    }
+    const json = res.json.bind(res);
+    res.json = (body) =&gt; {
+      void store.set(key, JSON.stringify(body), ttl);
+      return json(body);
+    };
+    next();
+  };</code></pre>
+<pre data-file="labs/placement.ts"><code class="language-typescript">// نفس الـ use case ونفس الـ route في الأربع حالات: الفرق سطر واحد في التركيب من بره
+await run("none", 100, ({ stats }) =&gt; ({ getDashboard: makeGetDashboard({ stats }) }));
+await run("repository", READS, ({ stats, store }) =&gt; ({ getDashboard: makeGetDashboard({ stats: withCachedStats(stats, store, TTL) }) }));
+await run("use case", READS, ({ stats, store }) =&gt; ({ getDashboard: withCachedDashboard(makeGetDashboard({ stats }), store, TTL) }));
+await run("http", READS, ({ stats, store }) =&gt; ({ getDashboard: makeGetDashboard({ stats }), before: [httpCache(store, TTL)] }));</code></pre>
+<pre><code class="language-plaintext">placement    reads  hit %   redis     db  p50 ms  p99 ms
+none           100       -      0    300    44.3   107.7
+repository     800   97.5%   2400     61     1.7     7.6
+use case       800   96.3%    800     90     1.6    70.5
+http           800   92.5%    800    180     1.4    60.3</code></pre>
+  <div class="ar-note">كل صف: مكان الـ cache، عدد القرايات، نسبة الـ hit، عدد طلبات Redis، عدد الـ queries على Postgres، وبعدين p50 و p99 بالـ ms من الـ client. الأرقام ≈ على Redis build بتاع Windows وجهاز عليه ضغط، فاعتمد على النسب والعدّادات مش الملّي ثانية. <code>none</code> شغال 100 قراية بس لأنه بطيء: 3 queries لكل قراية. <code>repository</code> عنده أعلى hit ratio وأقل queries (61) وأحسن p99، لكن 2400 طلب Redis. <code>use case</code> طلب Redis واحد لكل قراية و 90 query. <code>http</code> نفس الطلب الواحد بس 180 query، لأن كل customer اتخزّن مرتين: مرة لكل لغة.</div>
+
+<pre data-file=".dependency-cruiser.cjs"><code class="language-javascript">{
+  name: "core-knows-no-cache",
+  comment: "the cache is wired from outside: domain and application never see it",
+  severity: "error",
+  from: { path: `${SRC}/modules/[^/]+/(domain|application)` },
+  to: { path: [`${SRC}/shared/cache`, "node_modules/ioredis"] },
+},</code></pre>
+<pre><code class="language-plaintext">clean tree, exit 0
+cruised 26 modules, 53 dependencies, 0 errors
+planted import in application, exit 1
+core-knows-no-cache: after/src/modules/orders/application/zz-plant.ts -&gt; after/src/shared/cache.ts
+cruised 27 modules, 54 dependencies, 1 errors
+planted ioredis in domain, exit 1
+core-knows-no-cache: after/src/modules/orders/domain/zz-plant.ts -&gt; ../node_modules/ioredis/built/index.js
+  domain-stays-pure: after/src/modules/orders/domain/zz-plant.ts -&gt; ../node_modules/ioredis/built/index.js
+cruised 27 modules, 54 dependencies, 2 errors</code></pre>
+  <div class="ar-note">الشجرة النضيفة: 26 module و 0 errors و exit 0. زرعنا <code>import</code> من الـ application لـ <code>shared/cache.ts</code>: الفحص وقع بـ exit 1 باسم القاعدة. وزرعنا <code>ioredis</code> في الـ domain: وقع بقاعدتين. يعني القاعدة نفسها اتجرّبت، مش بس مكتوبة. وعدد الـ modules هنا من ساعة ما شغّلنا الفحص ده، والملفات زادت بعد كده في الجزء 5 و 6 والفحص فضل أخضر.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الجزء ده عن المكان بس. الـ patterns نفسها (cache-aside و TTL و stampede) في <a href="../../06-NodeJS/lessons/21-redis-patterns-caching.html">درس Redis patterns</a>، والعمق في القسم 12: <a href="../../12-System-Design/lessons/16-caching-foundations-strategies.html">الـ strategies</a> و<a href="../../12-System-Design/lessons/17-cache-invalidation-consistency.html">الـ invalidation</a>. القراية هنا dashboard لعميل، معمولة من 3 queries: إجمالي العميل، وآخر orders بتاعته، وأكتر المنتجات مبيعًا عند الكل. التالتة بتقرا كل الـ lines، فهي اللي بتاكل معظم التكلفة.</p>
+    <p>نفس الـ interface الصغير <code>CacheStore</code> بيخدم 3 أماكن. <b>decorator على الـ repository</b>: بيلف الـ read port وبيطبّق نفس الـ interface، فكل query ليها key. <b>decorator على الـ query use case</b>: نفس signature الـ use case، وبيخزّن الإجابة كلها متجمعة. <b>عند HTTP</b>: middleware بيخزّن الـ response body، فالـ key لازم يغطي كل حاجة بتغيّر الـ body، هنا الـ URL و<code>Accept-Language</code>. الـ use case والـ route مش بيتغيروا في أي حالة: الفرق سطر واحد في التركيب.</p>
+    <p>التشغيل على Postgres حقيقي فيه 200 ألف order و Redis حقيقي، بنفس الـ 800 قراية وبنفس الترتيب لكل مكان. الأوقات ≈ لأنها على Redis build بتاع Windows وجهاز عليه ضغط، فثق في العدّادات أكتر من الملّي ثانية. اقرا الجدول بالأعمدة اللي بتختلف بجد. الـ p50 بالكاد بيتحرك بين الأماكن (حوالي 1.5 ms)، فمش ده اللي تختار بيه. اللي بيختلف هو تكلفة الـ miss. الـ repository عمل 61 query: 2 لكل عميل من الـ 30، والـ query المشتركة مرة واحدة. الـ use case عمل 90 (3 لكل عميل)، و HTTP عمل 180 (3 لكل عميل لكل لغة). وده السبب إن p99 في الـ repository حوالي 8 ms والباقي بيدفع حوالي 60 لـ 70 ms: العميل الجديد هناك مش بيعيد الـ query التقيلة أبدًا. وتمنه 3 رحلات لـ Redis في القراية بدل واحدة.</p>
+    <p>القاعدة: خزّن في أوطى طبقة النتيجة فيها غالية ومشتركة، وخزّن أعلى لما الإجابة المتجمعة نفسها عليها طلب كتير وعدد الـ keys قليل. الأماكن العالية بتوفّر أكتر في الـ hit، والـ invalidation فيها أصعب، لأن صف واحد اتغيّر بيأثر على إجابات متخزنة كتير. وفي كل الحالات الـ core مش عارف حاجة: الـ decorators في infrastructure و presentation، والـ composition root هو اللي بيركّبهم، وقاعدة fitness جديدة بتثبت ده.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      صفحة dashboard للـ merchant بطيئة في Next.js ومطلوب منك تسرّعها. متحطش <code>redis.get</code> جوه الـ use case. اسأل الأول: إيه الـ query الغالية؟ ولو نتيجتها مشتركة زي "الأكثر مبيعًا" يبقى decorator على الـ read port، سطر واحد في الـ composition root، والـ tests بتاعة الـ use case مش بتتغير. ولو في code review لقيت <code>import { Redis }</code> في ملف application، ده بالظبط اللي القاعدة <code>core-knows-no-cache</code> بتمنعه في CI.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks: HTTP caching and authorization</b>
+    A response cache in front of the route skips everything after it. Mount it before the auth middleware and an unauthenticated request gets someone's dashboard. Even after auth, a key without the principal or tenant serves one user's body to another. The higher the placement, the more of your checks it can bypass.
+    <div class="ar-note">الـ response cache اللي قدام الـ route بيتخطى كل اللي بعده. لو ركّبته قبل الـ auth middleware، طلب من غير login هياخد dashboard بتاع واحد تاني. وحتى بعد الـ auth، لو الـ key مفيهوش الـ principal أو الـ tenant، هيدي body مستخدم لمستخدم تاني. كل ما المكان يعلى، الـ checks اللي ممكن يتخطاها بتزيد.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Your service is hexagonal. Where do you add a cache?" → Behind the same interface, as a decorator wired in the composition root, so the core doesn't change. On a read port when the expensive result is shared; on the query use case when the composed answer is hot; at HTTP or a CDN for public, identical responses. Never on the load path of a command. Prove the core doesn't know with a dependency rule.
+    <div class="ar-note">"الـ service بتاعك hexagonal. هتحط الـ cache فين؟" ← ورا نفس الـ interface، كـ decorator بيتركّب في الـ composition root، فالـ core مش بيتغير. على الـ read port لما النتيجة الغالية مشتركة، وعلى الـ query use case لما الإجابة المتجمعة عليها طلب كتير، وعند HTTP أو CDN للردود العامة المتطابقة. وأبدًا مش في طريق التحميل بتاع command. وتثبت إن الـ core مش عارف بقاعدة dependency.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Consistency implications <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 2 — تأثير الـ cache على الـ consistency</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A cache on the read side gives you stale reads, and most screens tolerate those. A cache on the write side gives you stale <em>decisions</em>. The tempting version is a decorator on <code>OrderRepository.findById</code>, because commands call it often. The scenario: instance A read an order, a webhook on instance B marked it paid, and now the customer's cancel request lands on A. The aggregate's rule says only a <code>placed</code> order can be cancelled.</p>
+    <p>The three runs show the three possible outcomes. With no version check, A decides on the stale <code>placed</code> and overwrites <code>paid</code> with <code>cancelled</code>: money taken, order cancelled, no error anywhere. With the version check, the data is safe but the command can never succeed, since every retry reloads the same stale version from the cache: 5 attempts, 5 conflicts, until the TTL runs out. With no cache on the write path, the first attempt loads the truth and the aggregate rejects it correctly with <code>cancel-only-placed</code>. So the rule is short: <b>cache read models, never the aggregate you decide with</b>.</p>
+    <p>For read models you still choose how they get fresh. The stale window is the time from commit to the first correct read, measured below over 14 commits at random points in the entry's life. The TTL is 2 s here only to keep the run short, and the window scales with it. TTL alone leaves the reader wrong for up to the whole TTL. <code>DEL</code> right after commit is the fastest, but a process that dies between commit and <code>DEL</code> never invalidates. An event handler on the outbox is slower by the poll interval, and it survives that crash because the relay retries, and a repeated <code>DEL</code> is harmless. Most systems should use events for freshness and keep a TTL as the safety net.</p>
+    <p>Two orderings stay wrong however fast you are. <code>DEL</code> inside the transaction: a reader arriving before the commit sees the old row and caches it again, so the stale value lives for the whole TTL (2008 ms in the run). And the classic cache-aside race: a slow reader that loaded the old row before the commit writes it after your <code>DEL</code>. The TTL is what heals that one, which is why you keep it. Finally, cache keys must carry the tenant (<a href="./22-security-flags-multitenancy.html">lesson 22</a>): a key without it served one tenant's revenue to another in the run. Build keys through a function that requires the tenant, so forgetting it doesn't compile.</p>
+  </section>
+
+<pre data-file="labs/cached-aggregate.ts"><code class="language-typescript">// ❌ شكله تحسين بريء: findById بقت أسرع، والـ save زي ما هي
+const withCachedAggregate = (inner: OrderRepository, store: CacheStore, ttl: number): OrderRepository =&gt; ({
+  ...inner,
+  async findById(id) {
+    const hit = await store.get(`order:${id}`);
+    if (hit) return Order.rehydrate(revive(JSON.parse(hit)));
+    const order = await inner.findById(id);
+    if (order) await store.set(`order:${id}`, JSON.stringify(flatten(order.state)), ttl);
+    return order;
+  },
+});</code></pre>
+<pre data-file="labs/cached-aggregate.ts"><code class="language-typescript">// السيناريو: instance A قرا الـ order، وبعدين webhook على instance B علّمه paid
+const scenario = async (name: string, repoA: OrderRepository) =&gt; {
+  const id = await seed();
+  await repoA.findById(id);
+  const b = await plain.findById(id);
+  b!.markPaid("ch_1", clock.now());
+  await plain.save(b!);
+
+  // دلوقتي العميل داس cancel، والطلب وصل instance A
+  let attempts = 0;
+  const cancel = withRetryOnStale(makeCancelOrder({ orders: repoA, clock }), { maxAttempts: 5, baseDelayMs: 5, onConflict: (n) =&gt; (attempts = n) });
+  let outcome: string;
+  try {
+    await cancel({ orderId: id, reason: "changed my mind" });
+    outcome = "cancelled, no error";
+  } catch (err) {
+    if (err instanceof StaleOrderError) outcome = `StaleOrderError after ${attempts} attempts`;
+    else if (err instanceof OrderRuleViolation) outcome = `422 ${err.rule}`;
+    else throw err;
+  }
+  const row = await status(id);
+  console.log(`${name.padEnd(34)} ${outcome.padEnd(36)} db status: ${row.status}`);
+};
+await scenario("cached aggregate, no version check", withCachedAggregate(noVersionCheck(plain, lab.pool), store, 60));
+await scenario("cached aggregate, version check", withCachedAggregate(plain, store, 60));
+await scenario("no cache on the write path", plain);</code></pre>
+<pre><code class="language-plaintext">cached aggregate, no version check cancelled, no error                  db status: cancelled
+cached aggregate, version check    StaleOrderError after 5 attempts     db status: paid
+no cache on the write path         422 cancel-only-placed               db status: paid</code></pre>
+  <div class="ar-note">الصف الأول: الـ cache ومن غير version check. الأمر نجح من غير أي error، والـ DB بقت <code>cancelled</code> على order مدفوع. دي أسوأ نتيجة: الفلوس اتخصمت والـ order اتلغى ومحدش عرف. الصف التاني: الـ cache مع version check. الـ data سليمة (<code>paid</code>)، بس الأمر مش هينجح أبدًا: 5 محاولات و 5 conflicts لحد ما الـ TTL يخلص. الصف التالت: من غير cache في طريق الكتابة: أول محاولة قرت الحقيقة، والـ aggregate رفض صح بـ <code>cancel-only-placed</code>.</div>
+
+<pre><code class="language-plaintext">ttl 2s, 14 trials each
+strategy                     p50 ms   max ms
+ttl only                       1400     1980
+del after commit                  2        8
+outbox handler (50ms poll)       63       79
+del before commit: stale right after commit = true, fresh after 2008 ms (the whole ttl)
+slow reader sets old value after del: stale = true, healed by ttl after 2014 ms</code></pre>
+  <div class="ar-note">الـ stale window بالـ ms، من الـ commit لأول قراية صح. <code>ttl only</code>: الـ p50 حوالي 1.4 ثانية والأقصى قريب من الـ TTL كله. <code>del after commit</code>: حوالي 2 ms. <code>outbox handler</code>: حوالي 63 ms مع poll كل 50 ms. آخر سطرين هما الترتيبين الغلط: DEL قبل الـ commit، وقارئ بطيء كتب القيمة القديمة بعد الـ DEL، والاتنين فضلوا غلط لحد ما الـ TTL خلص (حوالي 2 ثانية). كل الأرقام ≈ على جهاز عليه ضغط.</div>
+
+<pre data-file="labs/stale-window.ts"><code class="language-typescript">// ❌ الـ DEL جوه الـ transaction: قارئ بييجي بعده بيشوف القيمة القديمة ويخزّنها تاني
+const value = `v${++version}`;
+await redis.del(KEY);
+await readSummary();
+const committedAt = await write(value, {
+  beforeCommit: async () =&gt; {
+    await store.del(KEY);
+    await readSummary();
+  },
+});
+const staleAfterCommit = (await readSummary()) !== value;
+let tries = 0;
+while ((await readSummary()) !== value) {
+  tries++;
+  await sleep(5);
+}
+console.log(`del before commit: stale right after commit = ${staleAfterCommit}, fresh after ${(performance.now() - committedAt).toFixed(0)} ms (the whole ttl)`);</code></pre>
+<pre data-file="labs/tenant-key.ts"><code class="language-typescript">// ❌ مفيش tenant في الـ key: أول tenant بيملا الـ cache للكل
+const badReport = (tenant: string) =&gt; cached(store, "report:today", 60, async () =&gt; ({ tenant, revenueMinor: revenue[tenant] }));
+
+// ✅ النوع بيجبرك: مفيش طريقة تعمل key من غير tenant
+type CacheKey = string &amp; { readonly __brand: "CacheKey" };
+const tenantKey = (tenant: string, ...parts: string[]): CacheKey =&gt; `t:${tenant}:${parts.join(":")}` as CacheKey;
+
+const goodReport = (tenant: string) =&gt; cached(store, tenantKey(tenant, "report", "today"), 60, async () =&gt; ({ tenant, revenueMinor: revenue[tenant] }));</code></pre>
+<pre><code class="language-plaintext">bad  t-acme: { tenant: 't-acme', revenueMinor: 1250000 }
+bad  t-nile: { tenant: 't-acme', revenueMinor: 1250000 }
+good t-acme: { tenant: 't-acme', revenueMinor: 1250000 }
+good t-nile: { tenant: 't-nile', revenueMinor: 48000 }
+keys: [ 'report:today', 't:t-acme:report:today', 't:t-nile:report:today' ]</code></pre>
+  <div class="ar-note">في الـ key الغلط: <code>t-nile</code> سأل عن تقريره وخد أرقام <code>t-acme</code> كاملة، وده تسريب data بين tenants مش مجرد bug. في الـ key الصح كل tenant شاف رقمه، وآخر سطر بيوضح إن كل tenant ليه key لوحده.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ cache في ناحية القراية بيديك قراءات قديمة، ومعظم الشاشات بتستحمل ده. الـ cache في ناحية الكتابة بيديك <em>قرارات</em> قديمة. النسخة المغرية هي decorator على <code>OrderRepository.findById</code>، لأن الـ commands بتناديها كتير. السيناريو: instance A قرا order، و webhook على instance B علّمه paid، ودلوقتي طلب cancel من العميل وصل A. والـ aggregate قاعدته إن الـ order اللي حالته <code>placed</code> بس هو اللي يتلغي.</p>
+    <p>التلات تشغيلات بيوروا التلات نتايج الممكنة. من غير version check: A بيقرر على <code>placed</code> القديمة وبيكتب <code>cancelled</code> فوق <code>paid</code>: الفلوس اتاخدت والـ order اتلغى ومفيش error في أي حتة. مع version check: الـ data في أمان بس الأمر مستحيل ينجح، لأن كل retry بيحمّل نفس الـ version القديم من الـ cache: 5 محاولات و 5 conflicts لحد ما الـ TTL يخلص. ومن غير cache في طريق الكتابة: أول محاولة بتحمّل الحقيقة، والـ aggregate بيرفض صح بـ <code>cancel-only-placed</code>. القاعدة قصيرة: <b>خزّن الـ read models، وعمرك ما تخزّن الـ aggregate اللي بتقرر بيه</b>.</p>
+    <p>وفي الـ read models لسه لازم تختار هتبقى fresh إزاي. الـ stale window هو الوقت من الـ commit لأول قراية صح، ومتقاس تحت على 14 commit في لحظات عشوائية من عمر الـ entry. الـ TTL هنا 2 ثانية بس عشان التشغيل يبقى قصير، والـ window بيكبر معاه. الـ TTL لوحده بيسيب القارئ غلطان لحد الـ TTL كله. الـ <code>DEL</code> بعد الـ commit مباشرة هو الأسرع، بس process يموت بين الـ commit والـ <code>DEL</code> عمره ما هيعمل invalidate. الـ event handler على الـ outbox أبطأ بمقدار الـ poll interval، وبيستحمل الـ crash ده لأن الـ relay بيعيد، و<code>DEL</code> مكرر مش بيضر. معظم الأنظمة المفروض تستخدم الـ events عشان الـ freshness، وتسيب TTL كشبكة أمان.</p>
+    <p>فيه ترتيبين بيفضلوا غلط مهما كنت سريع. <code>DEL</code> جوه الـ transaction: قارئ وصل قبل الـ commit بيشوف الصف القديم ويخزّنه تاني، فالقيمة القديمة بتعيش الـ TTL كله (2008 ms في التشغيل). والسباق المشهور بتاع cache-aside: قارئ بطيء حمّل الصف القديم قبل الـ commit وكتبه بعد الـ <code>DEL</code> بتاعك. الـ TTL هو اللي بيعالج الحالة دي، وعشان كده بتسيبه. وأخيرًا الـ cache keys لازم فيها الـ tenant (<a href="./22-security-flags-multitenancy.html">الدرس 22</a>): key من غيره إدّى إيراد tenant لـ tenant تاني في التشغيل. اعمل الـ keys من خلال function بتطلب الـ tenant، فالنسيان ميعديش من الـ compiler.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      incident حقيقي الشكل: عميل بيقول "لغيت الطلب وبعدين لقيته مدفوع ومتلغي". بتدوّر تلاقي حد عمل <code>findById</code> بـ cache عشان "الـ DB بتتضرب". في الـ review: أي decorator على method بتغذي command ارفضه. واللي عايز يسرّع، يسرّع الـ read model اللي بيغذي الشاشة، ويعمل invalidate من handler بيسمع <code>OrderPaid</code> و<code>OrderPaymentFailed</code>. الغلطة الشائعة هنا: <code>DEL</code> جوه الـ transaction، وشكلها صح في كل test لأن مفيش قارئ في النص.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: read-your-own-writes</b>
+    Even with a 63 ms window, a user who just paid and immediately refreshes can hit the old value. If that screen matters, read that one user's first page after a write straight from the database, or return the fresh state in the command's response. Don't shrink the window for everyone to solve it for one person.
+    <div class="ar-note">حتى مع window قدها 63 ms، مستخدم لسه دافع وعمل refresh على طول ممكن يشوف القيمة القديمة. لو الشاشة دي مهمة، خلّي أول قراية بعد الكتابة للمستخدم ده من الـ DB مباشرة، أو رجّع الحالة الجديدة في رد الـ command نفسه. متصغّرش الـ window للكل عشان تحل مشكلة واحد.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Optimistic locking <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 3 — الـ optimistic locking</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A use case that reads an aggregate, decides, and writes has a gap between the read and the write. Two writers in that gap produce a <b>lost update</b>: both start from the same state, and the second write erases the first. To measure it, the order gets a small new behaviour, <code>applyDiscount</code>. Without a version check, two writers who both applied 100 stored 100. Under load it's worse, and it's silent: 7 of 10 updates and 45 of 50 vanished with no error. Notice the run with 2 concurrent writers happened to lose nothing, while the forced interleaving did. That is why this bug survives testing.</p>
+    <p>Optimistic locking adds one condition: <code>UPDATE ... WHERE id = $1 AND version = $5</code>, with <code>version = version + 1</code>. The <code>after</code> service already has it. If someone else committed first, the update matches no row, and the repository throws <code>StaleOrderError</code>. In Read Committed, Postgres blocks the second <code>UPDATE</code> until the first commits and then re-checks its <code>WHERE</code>, so this works at the default isolation level. The levels themselves are in <a href="../../09-Databases/lessons/13-isolation-anomalies-retries.html">section 09 · 2.4</a>.</p>
+    <p>There's an architecture detail hiding here. The retry belongs in the application layer, and the application layer can't import infrastructure: the planted import below fails <code>arch-check</code>. In the <code>after</code> code <code>StaleOrderError</code> lives in the Postgres adapter, so it has to move to <code>ports.ts</code>. That's correct on its own terms, since "this can fail with a conflict" is part of the port's contract, and the in-memory adapter must throw the same error for the contract to hold.</p>
+    <p>The retry itself has three rules. Reload and decide again, because retrying the save alone conflicts forever, and because the rule may now say no. Bound it. And add jitter, so the losers don't collide again in lockstep. The table shows the real cost at 2, 10 and 50 writers on one row. At 2, about 1.5 attempts per success. At 10, about 3. At 50 with a bound of 5, only 22 writers succeeded and 28 gave up. Raising the bound to 30 got all 50 through at about 5.8 attempts each, the worst writer needed 9, and the whole batch took about 1.9 s. Optimistic locking degrades sharply under contention, and it degrades into errors or latency, never into wrong data.</p>
+  </section>
+
+<pre class="diagram">
+  time   writer A                          writer B
+   │     read order: version 3
+   │                                       read order: version 3
+   │     decide: discount 100
+   │                                       decide: discount 100
+   │     UPDATE ... WHERE version = 3
+   │       1 row, now version 4, COMMIT
+   │                                       UPDATE ... WHERE version = 3
+   │                                         0 rows: StaleOrderError
+   │                                       read order: version 4, discount 100
+   │                                       decide: discount 200
+   │                                       UPDATE ... WHERE version = 4
+   ▼                                         1 row, now version 5, COMMIT
+</pre>
+  <div class="ar-note">A و B قروا نفس الـ version 3، وكل واحد قرر خصم 100. A كتب الأول: الـ update لقى صف واحد والـ version بقى 4. B كتب بشرط version 3: ملقاش صف، فـ <code>StaleOrderError</code>. B حمّل من الأول فلقى version 4 وخصم 100، قرر تاني فبقى الخصم 200، وكتب بشرط version 4 ونجح. مفيش حد قفل حاجة، والخسران بس هو اللي بيدفع.</div>
+
+<pre data-file="src/modules/orders/infrastructure/pg-order-repository.ts"><code class="language-typescript">const writeUpdate = async (client: PoolClient, order: Order): Promise&lt;void&gt; =&gt; {
+  const s = order.state;
+  // الشرط version هو الـ optimistic lock كله: لو حد سبقك الـ update مش هيلاقي صف
+  const r = await client.query(
+    "update orders.orders set status = $2, discount_minor = $3, total_minor = $4, version = version + 1 where id = $1 and version = $5",
+    [s.id, s.status, s.discount.minor, s.total.minor, s.version],
+  );
+  if (r.rowCount !== 1) throw new StaleOrderError(s.id);
+};</code></pre>
+<pre data-file="src/modules/orders/application/change-order.ts"><code class="language-typescript">export const makeApplyDiscount =
+  ({ orders, clock }: ChangeDeps) =&gt;
+  async (cmd: { orderId: string; amountMinor: number; currency: string }): Promise&lt;void&gt; =&gt; {
+    // كل محاولة بتقرا من الأول: الـ retry من غير reload هيفشل تاني بنفس الـ version
+    const order = await orders.findById(cmd.orderId);
+    if (!order) throw new Error(`no order ${cmd.orderId}`);
+    order.applyDiscount(Money.of(cmd.amountMinor, cmd.currency), clock.now());
+    await orders.save(order);
+  };</code></pre>
+<pre data-file="src/modules/orders/application/change-order.ts"><code class="language-typescript">export interface RetryOptions {
+  maxAttempts: number;
+  baseDelayMs: number;
+  onConflict?: (attempt: number) =&gt; void;
+}
+
+// الـ decorator ده في الـ application: بيعيد الـ use case كله، قراية وقرار وكتابة، بعدد محدود
+export const withRetryOnStale =
+  &lt;C&gt;(useCase: (cmd: C) =&gt; Promise&lt;void&gt;, opts: RetryOptions) =&gt;
+  async (cmd: C): Promise&lt;number&gt; =&gt; {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await useCase(cmd);
+        return attempt;
+      } catch (err) {
+        if (!(err instanceof StaleOrderError)) throw err;
+        opts.onConflict?.(attempt);
+        if (attempt &gt;= opts.maxAttempts) throw err;
+        // الـ full jitter: من غيره الكل بيرجع في نفس اللحظة ويتخانق تاني
+        await new Promise((r) =&gt; setTimeout(r, Math.random() * opts.baseDelayMs * 2 ** attempt));
+      }
+    }
+  };</code></pre>
+<pre data-file="labs/optimistic.ts"><code class="language-typescript">// ❌ نفس الـ repository من غير شرط الـ version: آخر كاتب بيكسب في صمت
+const noVersion: OrderRepository = {
+  ...orders,
+  async save(order) {
+    const s = order.state;
+    await pool.query("update orders.orders set discount_minor = $2, total_minor = $3, version = version + 1 where id = $1", [s.id, s.discount.minor, s.total.minor]);
+    order.markSaved();
+  },
+};</code></pre>
+<pre data-file="labs/optimistic.ts"><code class="language-typescript">// اتنين حمّلوا نفس الـ order قبل ما حد فيهم يكتب: ده الـ lost update من غير حظ
+const id2 = await seedOrder(orders);
+const first = await noVersion.findById(id2);
+const second = await noVersion.findById(id2);
+first!.applyDiscount(Money.of(AMOUNT, "EGP"), clock.now());
+second!.applyDiscount(Money.of(AMOUNT, "EGP"), clock.now());
+await noVersion.save(first!);
+await noVersion.save(second!);
+console.log("two writers, both applied 100, stored:", await discountOf(pool, id2));</code></pre>
+<pre><code class="language-plaintext">two writers, both applied 100, stored: 100
+
+writers  expected  stored  lost updates   (no version check)
+      2       200     200             0
+     10      1000     300             7
+     50      5000     500            45
+
+first conflict, no retry:
+  StaleOrderError: order &lt;id&gt; was changed by someone else
+
+writers  ok  gave up  stored  conflicts  attempts/ok  worst  total ms  p50 ms  p95 ms   (maxAttempts 5)
+      2   2        0     200          1          1.5      2        16      16      16
+     10  10        0    1000         22          3.2      5       107      46     107
+     50  22       28    2200        206         10.4      5       200     136     200
+
+writers  ok  gave up  stored  conflicts  attempts/ok  worst  total ms  p50 ms  p95 ms   (maxAttempts 30)
+      2   2        0     200          1          1.5      2        14      14      14
+     10  10        0    1000         21          3.1      6       200      29     200
+     50  50        0    5000        240          5.8      9      1871     246    1058</code></pre>
+  <div class="ar-note">أول سطر: اتنين طبّقوا 100 والمتخزن 100، يعني واحد ضاع. الجدول بعده من غير version: مع 2 الحظ خلّى مفيش ضياع، ومع 10 ضاع 7، ومع 50 ضاع 45، وكل ده من غير error. بعد كده <code>StaleOrderError</code> لما مفيش retry. جدول الـ retry بحد 5 محاولات: مع 50 writer نجح 22 بس و 28 استسلموا، والمتخزن 2200 مظبوط على عدد اللي نجحوا، يعني مفيش data غلط. جدول الـ retry بحد 30: الـ 50 نجحوا كلهم، بمتوسط حوالي 5.8 محاولة، وأسوأ واحد 9 محاولات، والدفعة كلها حوالي 1.9 ثانية. الأوقات ≈ والعدّادات حقيقية وبتتغير شوية من تشغيل للتاني.</div>
+
+<pre><code class="language-plaintext">  application-not-to-outer-layers: after/src/modules/orders/application/zz-plant.ts -&gt; after/src/modules/orders/infrastructure/pg-order-repository.ts
+cruised 30 modules, 77 dependencies, 1 errors
+exit 1</code></pre>
+  <div class="ar-note">ده الفحص لما زرعنا <code>import</code> من الـ application لملف الـ Postgres adapter: exit 1 والقاعدة <code>application-not-to-outer-layers</code>. عشان كده الـ error اتنقل لـ <code>ports.ts</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ use case اللي بيقرا aggregate ويقرر ويكتب عنده فجوة بين القراية والكتابة. اتنين في الفجوة دي بيعملوا <b>lost update</b>: الاتنين بيبدأوا من نفس الحالة، والكتابة التانية بتمسح الأولى. عشان نقيسها، الـ order خد سلوك صغير جديد هو <code>applyDiscount</code>. من غير version check، اتنين طبّقوا 100 والمتخزن 100. وتحت الضغط أوحش وفي صمت: 7 من 10 و 45 من 50 اختفوا من غير error. لاحظ إن التشغيل بـ 2 writers متزامنين بالصدفة ماضيّعش حاجة، والترتيب المفروض ضيّع. وده السبب إن الـ bug ده بيعدّي من الـ testing.</p>
+    <p>الـ optimistic locking بيضيف شرط واحد: <code>UPDATE ... WHERE id = $1 AND version = $5</code> مع <code>version = version + 1</code>. الـ <code>after</code> فيه ده أصلًا. لو حد تاني عمل commit قبلك، الـ update مش هيلاقي صف، والـ repository بيرمي <code>StaleOrderError</code>. وفي Read Committed، Postgres بيوقف الـ <code>UPDATE</code> التاني لحد ما الأول يعمل commit وبعدين يعيد فحص الـ <code>WHERE</code>، فده شغال على الـ isolation level الافتراضي. الـ levels نفسها في <a href="../../09-Databases/lessons/13-isolation-anomalies-retries.html">القسم 09 · 2.4</a>.</p>
+    <p>فيه تفصيلة architecture مستخبية هنا. الـ retry مكانه الـ application layer، والـ application مينفعش يعمل import من infrastructure: الـ import المزروع تحت بيوقّع <code>arch-check</code>. في كود <code>after</code>، الـ <code>StaleOrderError</code> موجود في الـ Postgres adapter، فلازم يتنقل لـ <code>ports.ts</code>. وده صح في حد ذاته، لأن "ده ممكن يفشل بـ conflict" جزء من عقد الـ port، والـ in-memory adapter لازم يرمي نفس الـ error عشان العقد يفضل صحيح.</p>
+    <p>الـ retry نفسه ليه 3 قواعد. حمّل وقرر من الأول، لأن إعادة الـ save لوحدها هتعمل conflict للأبد، ولأن القاعدة ممكن دلوقتي تقول لأ. وحطله حد. وضيف jitter عشان الخسرانين ميتخانقوش تاني في نفس اللحظة. الجدول بيوري التكلفة الحقيقية مع 2 و 10 و 50 writer على صف واحد. مع 2: حوالي 1.5 محاولة لكل نجاح. مع 10: حوالي 3. مع 50 بحد 5: نجح 22 بس و 28 استسلموا. لما رفعنا الحد لـ 30 الـ 50 عدّوا كلهم بحوالي 5.8 محاولة، وأسوأ واحد احتاج 9، والدفعة كلها خدت حوالي 1.9 ثانية. الـ optimistic locking بيتدهور بسرعة تحت الـ contention، والتدهور بيبقى errors أو latency، عمره ما بيبقى data غلط.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      شاشة admin بيعدّل فيها اتنين من الـ support نفس الـ order، أو webhook من الـ payment بييجي مع طلب cancel من العميل. <code>version</code> في الـ aggregate، و<code>withRetryOnStale</code> حوالين الـ use case في الـ composition root، وبعد الـ bound رد <code>409</code>. ولو القراية عند المستخدم نفسه والـ form مفتوحة دقايق، الـ version بيروح للـ client ويرجع معاه (زي <code>If-Match</code> في HTTP)، وده <a href="https://martinfowler.com/eaaCatalog/optimisticOfflineLock.html">Optimistic Offline Lock</a> عند Fowler. الغلطة الشائعة: تعيد الـ <code>save</code> بس من غير reload.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Two requests update the same order at once. What happens, and what do you do?" → Without protection the last write wins silently: a lost update. Add a version column checked in the <code>UPDATE</code>; the loser gets zero rows and a conflict error defined on the port. Retry in the application layer by reloading and deciding again, bounded, with jitter, then answer 409. Keep any external side effect out of the retried block.
+    <div class="ar-note">"طلبين بيعدّلوا نفس الـ order في نفس الوقت. إيه اللي بيحصل وهتعمل إيه؟" ← من غير حماية آخر كتابة بتكسب في صمت: lost update. ضيف version column بيتفحص في الـ <code>UPDATE</code>، والخسران بياخد 0 صفوف و conflict error متعرّف على الـ port. اعمل retry في الـ application layer بإعادة التحميل والقرار، بحد و jitter، وبعدها رد 409. وخلّي أي side effect خارجي بره الجزء اللي بيتعاد.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — Pessimistic locking <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 4 — الـ pessimistic locking</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Pessimistic locking closes the gap by holding the row: <code>SELECT ... FOR UPDATE</code> makes every other locker wait until commit. The architectural move is to put that behind a port method, <code>updateLocked(id, decide)</code>. The application says "change this order while you hold it", and the aggregate receives an <code>Order</code> and decides as usual, with no idea a lock exists. Row-lock modes and how to see who blocks whom are in <a href="../../09-Databases/lessons/15-locks-deadlocks-advisory.html">the locks lesson</a>, and the baseline comparison on plain SQL is in <a href="../../09-Databases/lessons/16-concurrency-patterns-skip-locked.html">the concurrency patterns lesson</a>. Here it's the same use case and the same concurrency as Part 3.</p>
+    <p>On one contended row at 50 writers, pessimistic took about 200 ms with exactly 50 attempts, and optimistic took about 1.6 s with 279 attempts. Give each attempt 20 ms of decision work (a pricing rule, a remote quote) and it's about 1.9 s vs 5.1 s, with 393 attempts: 343 × 20 ms of work thrown away. The latency column is nearly all waiting on the lock. But contention is per row. The same 50 writers on 50 different orders cost the same either way (about 14 vs 18 ms here, which is noise) with zero conflicts, and optimistic holds no lock while it reads. So at low contention, optimistic costs nothing and gives you shorter locks.</p>
+    <p>Pessimistic has its own failure modes. <b>Pool starvation</b>: a waiter holds a pool connection the whole time, so 50 writers queuing on one row made an unrelated <code>select 1</code> go from about 0.1 ms to about 1.2 s on a pool of 10. That's how one hot row takes down the health check. <b>Deadlocks</b>: merging two orders locks both. If callers lock in the order they were given, a real <code>40P01</code> appears after <code>deadlock_timeout</code> (1 s by default, 1121 ms in the run), and under stress 52 of 60 merges failed and took 21 s in total. Sorting the IDs before locking gave 0 deadlocks and 0.9 s. Lock ordering is a design rule, and the safe place for it is one function.</p>
+    <p>Two variants change the waiting policy. <code>NOWAIT</code> fails immediately with <code>55P03</code>, which maps cleanly to a <code>409</code> when you'd rather answer than queue. <code>SKIP LOCKED</code> takes the next row nobody holds, which makes it a work queue: 4 workers claimed 22 orders with 22 distinct IDs. <code>drainOutbox</code> in the composition root already uses it, and the queue is taught in <a href="../../09-Databases/lessons/16-concurrency-patterns-skip-locked.html">the same lesson</a>. And don't forget the third option from <code>catalog.reserve</code>: if the whole decision fits in one conditional <code>UPDATE</code>, there's no gap and no lock to reason about.</p>
+  </section>
+
+<pre data-file="src/modules/orders/infrastructure/pg-order-repository.ts"><code class="language-typescript">async updateLocked(id, decide, opts = {}) {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    // الـ SQL ده هو كل الفرق: الصف بيتقفل لحد الـ commit، والـ domain مش حاسس بحاجة
+    const lock = opts.nowait ? "for update nowait" : "for update";
+    const order = await load(client, `select * from orders.orders where id = $1 ${lock}`, id);
+    if (!order) throw new Error(`no order ${id}`);
+    const out = await decide(order);
+    await writeUpdate(client, order);
+    await writeEvents(client, order);
+    await client.query("commit");
+    order.markSaved();
+    return out;
+  } catch (err) {
+    await client.query("rollback");
+    throw err;
+  } finally {
+    client.release();
+  }
+},</code></pre>
+<pre data-file="labs/pessimistic.ts"><code class="language-typescript">// نفس القرار بالظبط: الـ application بيطلب "عدّل وإنت قافل"، والـ domain مش عارف حاجة عن SQL
+const applyDiscountLocked = (orderId: string, workMs = 0) =&gt;
+  orders.updateLocked(orderId, async (order) =&gt; {
+    if (workMs) await sleep(workMs);
+    order.applyDiscount(AMOUNT, clock.now());
+  });</code></pre>
+<pre><code class="language-plaintext">decision work: 0 ms per attempt
+strategy     writers applied  failed  attempts  total ms  p50 ms  p95 ms
+pessimistic        2       2       0         2        11      11      11
+optimistic         2       2       0         3        22      21      21
+pessimistic       10      10       0        10        35      20      35
+optimistic        10      10       0        33       133      55     133
+pessimistic       50      50       0        50       199     105     190
+optimistic        50      50       0       279      1634     216    1103
+
+decision work: 20 ms per attempt
+strategy     writers applied  failed  attempts  total ms  p50 ms  p95 ms
+pessimistic        2       2       0         2        59      59      59
+optimistic         2       2       0         3        76      76      76
+pessimistic       10      10       0        10       309     183     309
+optimistic        10      10       0        47       654     327     654
+pessimistic       50      50       0        50      1850    1021    1787
+optimistic        50      50       0       393      5088    1180    4885
+
+pessimistic  50 writers on 50 orders, total   14 ms, p50  14 ms, p95  14 ms
+optimistic   50 writers on 50 orders, total   18 ms, p50  17 ms, p95  18 ms
+optimistic attempts: 50 (no conflicts, every first attempt won)
+
+pool max 10, unrelated select 1: idle p50 0.1 ms, while 50 writers queue on one row 1223 ms</code></pre>
+  <div class="ar-note">الجدول الأول قرار من غير شغل، والتاني 20 ms شغل في كل محاولة. <code>applied</code> اللي اتطبق فعلًا، و<code>attempts</code> إجمالي المحاولات. مع 2 writers الفرق صغير. مع 50 على صف واحد: pessimistic حوالي 200 ms بـ 50 محاولة بالظبط، و optimistic حوالي 1.6 ثانية بـ 279 محاولة. ومع 20 ms شغل حوالي 1.9 ثانية ضد 5.1 ثانية بـ 393 محاولة. بعدهم 50 writer على 50 order مختلفين: الاتنين تقريبًا زي بعض ومفيش ولا conflict، يعني الفرق كله جاي من الـ contention. وآخر سطر: pool فيه 10 connections و 50 writer مستنيين على صف واحد، فـ <code>select 1</code> ملهاش علاقة خدت حوالي 1.2 ثانية بدل 0.1 ms. الأوقات ≈.</div>
+
+<pre class="diagram">
+  opposite lock order                    sorted lock order
+
+  T1: lock A ──── wants B ──┐            T1: lock A ── lock B ── COMMIT
+                            │ cycle                  │
+  T2: lock B ──── wants A ──┘            T2: wants A, waits here ──▶ lock A ── lock B
+                                         no cycle: T2 waits at its first lock
+  after deadlock_timeout Postgres
+  kills one with 40P01
+</pre>
+  <div class="ar-note">شمال: T1 قفل A وعايز B، و T2 قفل B وعايز A. ده cycle، وبعد الـ <code>deadlock_timeout</code>، Postgres بيقتل واحد بـ <code>40P01</code>. يمين: الاتنين بيقفلوا بنفس الترتيب. T2 بيستنى عند أول lock من غير ما يكون ماسك حاجة، فمفيش cycle ممكن يتكوّن.</div>
+
+<pre data-file="labs/deadlock.ts"><code class="language-typescript">// ❌ دمج order في order: كل واحد بيقفل الـ source الأول، فالترتيب بيعتمد على الـ caller
+const mergeUnordered = async (source: string, target: string, holdMs: number) =&gt; {
+  const c = await pool.connect();
+  try {
+    await c.query("begin");
+    await c.query("select id from orders.orders where id = $1 for update", [source]);
+    if (holdMs) await sleep(holdMs);
+    await c.query("select id from orders.orders where id = $1 for update", [target]);
+    await c.query("update orders.orders set version = version + 1 where id = any($1)", [[source, target]]);
+    await c.query("commit");
+  } catch (err) {
+    await c.query("rollback");
+    throw err;
+  } finally {
+    c.release();
+  }
+};
+
+// ✅ نفس الكلام، بس الـ locks دايمًا بنفس الترتيب: الترتيب بالـ ID مش بدور كل caller
+const mergeOrdered = async (source: string, target: string, holdMs: number) =&gt; {
+  const [first, second] = [source, target].sort();
+  const c = await pool.connect();
+  try {
+    await c.query("begin");
+    await c.query("select id from orders.orders where id = $1 for update", [first]);
+    if (holdMs) await sleep(holdMs);
+    await c.query("select id from orders.orders where id = $1 for update", [second]);
+    await c.query("update orders.orders set version = version + 1 where id = any($1)", [[source, target]]);
+    await c.query("commit");
+  } finally {
+    c.release();
+  }
+};</code></pre>
+<pre data-file="labs/deadlock.ts"><code class="language-typescript">const holder = await pool.connect();
+await holder.query("begin");
+await holder.query("select id from orders.orders where id = $1 for update", [a]);
+try {
+  // الـ NOWAIT: مفيش انتظار خالص، نرد 409 على طول بدل ما الـ connection تستنى
+  await orders.updateLocked(a, (order) =&gt; order.cancel("x", clock.now()), { nowait: true });
+} catch (err) {
+  const e2 = err as { code?: string; message?: string };
+  console.log(`NOWAIT while locked: code ${e2.code}: ${e2.message}`);
+}
+await holder.query("rollback");
+holder.release();</code></pre>
+<pre><code class="language-plaintext">opposite order: 1 of 2 failed after 1121 ms
+  code 40P01: deadlock detected
+  Process N waits for ShareLock on transaction N; blocked by process N.
+opposite order   60 merges, deadlocks: 52, total 21477 ms
+sorted by id     60 merges, deadlocks:  0, total 940 ms
+NOWAIT while locked: code 55P03: could not obtain lock on row in relation "orders"
+SKIP LOCKED, 4 workers: [ 5, 6, 6, 5 ] claimed: 22 distinct: 22</code></pre>
+  <div class="ar-note">الأول: تشغيلة واحدة بترتيب معكوس: واحد من 2 وقع بعد حوالي 1.1 ثانية بكود <code>40P01</code> والرسالة الحقيقية. بعدها تحت ضغط: 60 merge بترتيب معكوس فيهم 52 deadlock وخدوا حوالي 21 ثانية، و 60 بترتيب ثابت فيهم 0 وخدوا أقل من ثانية. <code>NOWAIT</code> وقع فورًا بـ <code>55P03</code>. و <code>SKIP LOCKED</code> مع 4 workers: كل واحد خد نصيبه، والـ 22 كلهم مختلفين، يعني مفيش order اتاخد مرتين.</div>
+
+  <table>
+    <thead><tr><th>Situation</th><th>Pick</th><th>Why (from the runs above)</th></tr></thead>
+    <tbody>
+      <tr><td>Short update, conflicts are rare (order status, profile)</td><td>Optimistic</td><td>Same cost with no contention; no lock is held while reading or deciding</td></tr>
+      <tr><td>Many writers on one row (a voucher, a shared balance)</td><td>Pessimistic</td><td>50 attempts vs 279, and no writer gives up</td></tr>
+      <tr><td>A retry is expensive (20 ms of decision work or more)</td><td>Pessimistic, or do the work before the transaction</td><td>393 attempts × 20 ms vs 50 × 20 ms</td></tr>
+      <tr><td>The read happens in a form open for minutes</td><td>Optimistic, with the version through the client</td><td>A lock can't span two requests</td></tr>
+      <tr><td>The whole decision fits in one statement</td><td>Atomic conditional <code>UPDATE</code></td><td>No gap, as in <code>catalog.reserve</code></td></tr>
+      <tr><td>You'd rather answer than wait</td><td><code>NOWAIT</code> → 409</td><td><code>55P03</code> with no waiting</td></tr>
+      <tr><td>Workers pulling the next job</td><td><code>SKIP LOCKED</code></td><td>No duplicates and no queueing behind a held row</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">صف صف: (1) update قصير و conflicts نادرة، زي حالة order أو profile: <b>optimistic</b>، نفس التكلفة من غير contention ومفيش lock وقت القراية والقرار. (2) writers كتير على صف واحد، زي voucher أو رصيد مشترك: <b>pessimistic</b>، 50 محاولة ضد 279 ومحدش بيستسلم. (3) الـ retry غالي (20 ms شغل أو أكتر): <b>pessimistic</b>، أو اعمل الشغل قبل الـ transaction، 393 محاولة × 20 ms ضد 50 × 20 ms. (4) القراية في form مفتوحة دقايق: <b>optimistic</b> والـ version يروح مع الـ client، لأن الـ lock مينفعش يعيش عبر طلبين. (5) القرار كله في statement واحد: <b>UPDATE شرطي atomic</b>، مفيش فجوة أصلًا زي <code>catalog.reserve</code>. (6) عايز ترد ومتستناش: <b>NOWAIT</b> وبعدها 409، و<code>55P03</code> من غير انتظار. (7) workers بتسحب الشغل اللي بعده: <b>SKIP LOCKED</b>، مفيش تكرار ومفيش طابور ورا صف مقفول.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ pessimistic locking بيقفل الفجوة بإنه يمسك الصف: <code>SELECT ... FOR UPDATE</code> بيخلي أي حد تاني عايز يقفل يستنى لحد الـ commit. الحركة المعمارية إنك تحط ده ورا port method، <code>updateLocked(id, decide)</code>. الـ application بيقول "غيّر الـ order ده وإنت ماسكه"، والـ aggregate بياخد <code>Order</code> ويقرر عادي، ومش عارف إن فيه lock أصلًا. أنواع الـ row locks وإزاي تشوف مين بيوقف مين في <a href="../../09-Databases/lessons/15-locks-deadlocks-advisory.html">درس الـ locks</a>، والمقارنة الأساسية على SQL عادي في <a href="../../09-Databases/lessons/16-concurrency-patterns-skip-locked.html">درس الـ concurrency patterns</a>. هنا نفس الـ use case ونفس الـ concurrency بتاع الجزء 3.</p>
+    <p>على صف واحد عليه زحمة مع 50 writer: الـ pessimistic خد حوالي 200 ms بـ 50 محاولة بالظبط، والـ optimistic خد حوالي 1.6 ثانية بـ 279 محاولة. ولو كل محاولة فيها 20 ms شغل قرار (قاعدة تسعير أو سعر من بره)، يبقى حوالي 1.9 ثانية ضد 5.1 ثانية، بـ 393 محاولة: يعني 343 × 20 ms شغل راحوا في الهوا. عمود الـ latency معظمه انتظار على الـ lock. بس الـ contention لكل صف لوحده. نفس الـ 50 writer على 50 order مختلفين كلفتهم واحدة في الطريقتين (حوالي 14 ضد 18 ms هنا، وده noise) و 0 conflicts، والـ optimistic مش بيمسك lock وهو بيقرا. فمع contention قليل، الـ optimistic مش بيكلف حاجة وبيديك locks أقصر.</p>
+    <p>وللـ pessimistic أعطاله. <b>pool starvation</b>: اللي مستني ماسك connection من الـ pool طول الوقت، فـ 50 writer مستنيين على صف واحد خلّوا <code>select 1</code> ملهاش علاقة تروح من حوالي 0.1 ms لحوالي 1.2 ثانية على pool فيه 10. وكده صف واحد سخن بيوقّع الـ health check. <b>deadlocks</b>: دمج orderين بيقفل الاتنين. لو كل caller بيقفل بالترتيب اللي جاله، بيظهر <code>40P01</code> حقيقي بعد <code>deadlock_timeout</code> (ثانية بالـ default، و 1121 ms في التشغيل)، وتحت الضغط 52 من 60 merge وقعوا وخدوا 21 ثانية. ترتيب الـ IDs قبل القفل إدّى 0 deadlocks و 0.9 ثانية. ترتيب الـ locks قاعدة تصميم، ومكانها الآمن function واحدة.</p>
+    <p>فيه نوعين بيغيروا سياسة الانتظار. <code>NOWAIT</code> بيقع فورًا بـ <code>55P03</code>، وده بيتحول لـ <code>409</code> بسهولة لما تفضّل ترد على إنك تقف في طابور. <code>SKIP LOCKED</code> بياخد الصف اللي بعده اللي محدش ماسكه، فبيبقى work queue: 4 workers خدوا 22 order بـ 22 ID مختلف. <code>drainOutbox</code> في الـ composition root بيستخدمه أصلًا، والـ queue متشرح في <a href="../../09-Databases/lessons/16-concurrency-patterns-skip-locked.html">نفس الدرس</a>. ومتنساش الاختيار التالت من <code>catalog.reserve</code>: لو القرار كله يتحط في <code>UPDATE</code> شرطي واحد، مفيش فجوة ومفيش lock تفكر فيه.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      voucher محدود عليه طلب كبير وقت عرض: الـ optimistic هنا هيطلّع errors كتير، فـ <code>updateLocked</code> أو <code>UPDATE</code> شرطي أحسن. ونقل رصيد بين محفظتين: رتّب الـ IDs قبل القفل في function واحدة وارفض في الـ review أي مكان بيقفل صفين بطريقة تانية. ولو شايف في production الـ pool كله waiting و <code>pg_stat_activity</code> مليان <code>Lock</code>، فكّر في <code>lock_timeout</code> أو <code>NOWAIT</code> بدل الانتظار المفتوح.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Optimistic or pessimistic for order status changes? For a flash-sale voucher?" → Order status: optimistic, since conflicts are rare and a retry is cheap. Flash-sale voucher: many writers on one row, so optimistic turns into retries and give-ups. Use a single conditional <code>UPDATE</code> if the rule fits, otherwise a short <code>FOR UPDATE</code>. Either way the choice is hidden behind the port, and you watch pool usage because waiters hold connections.
+    <div class="ar-note">"optimistic ولا pessimistic لتغيير حالة order؟ ولـ voucher في flash sale؟" ← حالة الـ order: optimistic، الـ conflicts نادرة والـ retry رخيص. الـ voucher في flash sale: writers كتير على صف واحد، فالـ optimistic بيتحول لـ retries واستسلام. استخدم <code>UPDATE</code> شرطي واحد لو القاعدة تتحط فيه، وإلا <code>FOR UPDATE</code> قصير. وفي الحالتين الاختيار مستخبي ورا الـ port، وبتراقب الـ pool لأن اللي مستني ماسك connection.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — Idempotency keys for commands <span class="lvl lvl-2">🟡 Intermediate</span><span class="ar-sub">الجزء 5 — الـ idempotency keys للـ commands</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Locks protect one order from two writers. They do nothing against two requests that each create their own order. On the unchanged <code>after</code> service, a double click gave two 201s, 2 orders and 2 charges, counted with <code>lab.charges()</code>. A client that timed out at 100 ms and retried, while the server was still talking to a 300 ms provider, also produced 2 charges. The HTTP mechanics are in <a href="../../06-NodeJS/lessons/14-rest-api-design.html">the REST lesson, Part 6</a>, the pattern's code is in <a href="../../10-Design-Patterns/lessons/24-rate-limiter-idempotent-receiver.html">section 10 · 3.2</a>, and the depth is in <a href="../../12-System-Design/lessons/30-idempotency-keys-in-depth.html">section 12 · 2.6</a>. The angle here is where it lives in the architecture.</p>
+    <p><b>It's a decorator in the application layer, not Express middleware.</b> <code>withIdempotency(useCase)</code> gives the same guarantee to any driving adapter: HTTP, a CLI, a queue consumer. It also fingerprints the validated command rather than raw bytes, so whitespace and JSON key order don't look like a different request. Storage sits behind a port, like everything else.</p>
+    <p><b>Store the key in the aggregate's transaction where you can.</b> When a command has no external call, the key row and the aggregate can commit together, and you have exactly-once locally. Placing an order has a provider call in the middle, so a single transaction can't cover it. The next best thing: derive the order ID from the client key with UUID v5. Now the order's primary key is itself the guard: two concurrent inserts can't both succeed, the loser gets <code>23505</code>, which the adapter turns into <code>DuplicateOrderError</code>, and the use case releases its stock and continues on the winner's order. This guard is permanent, with no TTL.</p>
+    <p><b>Make the use case resumable, and pass the guarantee on.</b> <code>makePlaceOrder</code> now starts by loading the order for this key. If it exists, the use case continues from where that order stopped, so a <code>paid</code> order returns without charging again. The gateway sends <code>order-&lt;id&gt;</code> as the provider's idempotency key. It's derived from the order ID rather than the client key, so the provider's view doesn't depend on any one client's format, and the port's contract becomes "charging the same order twice takes the money once". Run again, the double click makes 1 order and 1 charge, and the timed-out client gets a 409 while the first attempt runs, then the original result.</p>
+    <p><b>The primary key is the last guard, not the front door.</b> The final run removes the key table and calls <code>makePlaceOrder</code> 20 times at once with the same key. There is always 1 order and the stock ends right. But nothing picks one executor: some callers hit <code>StaleOrderError</code>, some get a false <code>out_of_stock</code> because the others hold the stock for a moment, and with a provider that ignores keys there are 10 real captures. Choosing one owner up front is what the table in Part 6 adds.</p>
+  </section>
+
+<pre><code class="language-plaintext">double click : [ 201, 201 ] orders: 2 charges: 2 stock: 8
+timeout retry: TimeoutError then 201 orders: 4 provider captures: 2 stock: 6</code></pre>
+  <div class="ar-note">ده الـ <code>after</code> من غير أي تعديل. double click: اتنين 201 و 2 orders و 2 charges والـ stock نزل مرتين. الـ retry بعد timeout: الـ client زهق بـ <code>TimeoutError</code> وبعت تاني، والـ provider سجّل خصمتين، وعدد الـ orders وصل 4 (2 من التجربة اللي فاتت و 2 من دي).</div>
+
+<pre data-file="src/modules/orders/application/with-idempotency.ts"><code class="language-typescript">// الـ decorator في الـ application layer: أي driving adapter (HTTP أو CLI أو queue) بياخد نفس الضمان
+import { createHash } from "node:crypto";
+
+export type Claim =
+  | { kind: "owner" }
+  | { kind: "replay"; response: unknown }
+  | { kind: "in_progress"; retryAfterSeconds: number }
+  | { kind: "mismatch" };
+
+export interface IdempotencyStore {
+  claim(q: { tenant: string; key: string; fingerprint: string; leaseMs: number; ttlMs: number }): Promise&lt;Claim&gt;;
+  complete(q: { tenant: string; key: string; response: unknown }): Promise&lt;void&gt;;
+  release(q: { tenant: string; key: string }): Promise&lt;void&gt;;
+}
+
+export type IdempotentOutcome&lt;R&gt; =
+  | { kind: "executed"; result: R }
+  | { kind: "replayed"; result: R }
+  | { kind: "in_progress"; retryAfterSeconds: number }
+  | { kind: "key_reused" };
+
+// ترتيب الـ keys جوه الـ JSON مش معناه طلب مختلف: بنرتبهم قبل الـ hash
+const canonical = (v: unknown): unknown =&gt; {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (v &amp;&amp; typeof v === "object") {
+    return Object.fromEntries(Object.entries(v).sort(([a], [b]) =&gt; (a &lt; b ? -1 : 1)).map(([k, x]) =&gt; [k, canonical(x)]));
+  }
+  return v;
+};
+export const fingerprintOf = (cmd: unknown): string =&gt; createHash("sha256").update(JSON.stringify(canonical(cmd))).digest("hex");
+
+export const withIdempotency =
+  &lt;C extends object, R&gt;(
+    useCase: (cmd: C &amp; { requestKey: string }) =&gt; Promise&lt;R&gt;,
+    deps: { store: IdempotencyStore; leaseMs: number; ttlMs: number; isFinalError: (err: unknown) =&gt; boolean },
+  ) =&gt;
+  async ({ tenant, key, cmd }: { tenant: string; key: string; cmd: C }): Promise&lt;IdempotentOutcome&lt;R&gt;&gt; =&gt; {
+    const claim = await deps.store.claim({ tenant, key, fingerprint: fingerprintOf(cmd), leaseMs: deps.leaseMs, ttlMs: deps.ttlMs });
+    if (claim.kind === "mismatch") return { kind: "key_reused" };
+    if (claim.kind === "in_progress") return { kind: "in_progress", retryAfterSeconds: claim.retryAfterSeconds };
+    if (claim.kind === "replay") return { kind: "replayed", result: claim.response as R };
+
+    try {
+      const result = await useCase({ ...cmd, requestKey: `${tenant}:${key}` });
+      await deps.store.complete({ tenant, key, response: result });
+      return { kind: "executed", result };
+    } catch (err) {
+      // فشل محدد قبل أي side effect: نفك الـ key عشان نفس الـ key يتصلّح ويتبعت تاني
+      if (deps.isFinalError(err)) await deps.store.release({ tenant, key });
+      // أي حاجة تانية مجهولة: الـ key يفضل in_progress لحد ما الـ lease يخلص، والإعادة تكمّل
+      throw err;
+    }
+  };</code></pre>
+<pre data-file="src/modules/orders/application/place-order.ts"><code class="language-typescript">export const makePlaceOrder = ({ orders, payments, catalog, clock, ids }: PlaceOrderDeps) =&gt; {
+  // الجزء ده بيتنفذ بعد ما الـ order يبقى موجود، ولو order قديم بيكمّل من مكان ما وقف
+  const settle = async (order: Order, lines: PlaceOrderCommand["lines"]): Promise&lt;PlaceOrderResult&gt; =&gt; {
+    const { id, status, total } = order.state;
+    if (status === "paid") return { kind: "paid", orderId: id, totalMinor: total.minor };
+    if (status === "payment_failed") return { kind: "payment_failed", orderId: id, reason: "previously_declined" };
+
+    // الـ gateway بيبعت نفس الـ provider key لنفس الـ order، فالإعادة هنا مش خصم جديد
+    const charge = await payments.charge(id, total);
+    if (charge.ok) {
+      order.markPaid(charge.ref, clock.now());
+      await orders.save(order);
+      return { kind: "paid", orderId: id, totalMinor: total.minor };
+    }
+    order.markPaymentFailed(charge.reason, clock.now());
+    await orders.save(order);
+    await catalog.release(lines);
+    return { kind: "payment_failed", orderId: id, reason: charge.reason };
+  };
+
+  return async (cmd: PlaceOrderCommand): Promise&lt;PlaceOrderResult&gt; =&gt; {
+    // السلسلة: client key بيدي order ID ثابت، والـ primary key هو الحارس الأخير
+    const orderId = cmd.requestKey ? ids.forKey(cmd.requestKey) : ids.next();
+    const existing = await orders.findById(orderId);
+    if (existing) return settle(existing, cmd.lines);
+
+    const prices = await catalog.quote(cmd.lines.map((l) =&gt; l.sku));
+    const lines = [];
+    for (const l of cmd.lines) {
+      const unitPrice = prices.get(l.sku);
+      if (!unitPrice) return { kind: "unknown_sku", sku: l.sku };
+      lines.push({ sku: l.sku, qty: l.qty, unitPrice });
+    }
+    const order = Order.place({ id: orderId, customerEmail: cmd.customerEmail, lines, now: clock.now() });
+    if (!(await catalog.reserve(cmd.lines))) return { kind: "out_of_stock" };
+    try {
+      await orders.save(order);
+    } catch (err) {
+      if (!(err instanceof DuplicateOrderError)) throw err;
+      // خسرنا السباق على الـ primary key: نرجّع الـ stock ونكمّل على الـ order اللي كسب
+      await catalog.release(cmd.lines);
+      const winner = await orders.findById(orderId);
+      if (!winner) throw err;
+      return settle(winner, cmd.lines);
+    }
+    return settle(order, cmd.lines);
+  };
+};</code></pre>
+<pre data-file="src/modules/orders/infrastructure/http-payment-gateway.ts"><code class="language-typescript">// الملف الوحيد اللي عارف الـ provider. والـ provider key جاي من الـ order ID، مش من الـ client key
+import type { PaymentGateway } from "../application/ports.ts";
+
+export const makeHttpPaymentGateway = (baseUrl: string): PaymentGateway =&gt; ({
+  async charge(orderId, amount) {
+    const res = await fetch(baseUrl + "/charge", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": `order-${orderId}` },
+      body: JSON.stringify({ orderId, amountCents: amount.minor, currency: amount.currency }),
+      signal: AbortSignal.timeout(2_000),
+    });
+    const body = (await res.json()) as { ref?: string; error?: string };
+    return res.ok &amp;&amp; body.ref ? { ok: true, ref: body.ref } : { ok: false, reason: body.error ?? `http_${res.status}` };
+  },
+});</code></pre>
+<pre data-file="src/composition-root.ts"><code class="language-typescript">// الـ UUID v5 حسب RFC 9562: نفس الـ namespace ونفس الاسم بيدوا نفس الـ ID على أي process
+const ORDERS_NAMESPACE = "6ba7b811-9dad-11d1-80b4-00c04fd430c8";
+export const uuidV5 = (name: string, namespace = ORDERS_NAMESPACE): string =&gt; {
+  const hash = createHash("sha1").update(Buffer.from(namespace.replaceAll("-", ""), "hex")).update(name).digest();
+  hash[6] = (hash[6]! &amp; 0x0f) | 0x50;
+  hash[8] = (hash[8]! &amp; 0x3f) | 0x80;
+  const h = hash.subarray(0, 16).toString("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+};</code></pre>
+<pre data-file="src/composition-root.ts"><code class="language-typescript">const placeOrder = makePlaceOrder({
+  orders: (w.orders ?? id)(makePgOrderRepository(deps.pool)),
+  payments: (w.payments ?? id)(makeHttpPaymentGateway(deps.paymentsUrl)),
+  catalog: (w.catalog ?? id)(makeCatalog(deps.pool)),
+  clock: { now: () =&gt; new Date() },
+  ids: over.ids ?? { next: () =&gt; randomUUID(), forKey: (k) =&gt; uuidV5(k) },
+});
+const idempotentPlaceOrder = withIdempotency(placeOrder, {
+  store: (w.store ?? id)(makePgIdempotencyStore(deps.pool)),
+  // الـ lease لازم يكون أطول من أطول وقت ممكن للـ use case، و gateway timeout عندنا 2 ثانية
+  leaseMs: over.leaseMs ?? 10_000,
+  // الـ TTL لازم يكون أطول من أطول retry window عند الـ clients
+  ttlMs: over.ttlMs ?? 24 * 60 * 60 * 1000,
+  isFinalError: (err) =&gt; err instanceof OrderRuleViolation,
+});</code></pre>
+<pre><code class="language-plaintext">uuid v5 test vector (RFC 9562, www.example.com in the DNS namespace): 2ed6657d-e927-568b-95e1-2665a8aea6a2
+double click : [ 201, 201 ] orders: 1 charges: 1 stock: 9
+timeout retry: TimeoutError then 409 retry-after: 10 { error: 'request_in_progress' }
+  later      : 201 replayed: true provider captures: 1</code></pre>
+  <div class="ar-note">أول سطر test vector من الـ RFC، عشان نتأكد إن الـ UUID v5 اليدوي صح. وبعده نفس السيناريوهين بعد الإصلاح: double click بقى order واحد و charge واحدة، وفي التشغيل ده الطلب التاني وصل بعد ما الأول خلص فخد replay بـ 201. والـ client اللي عمل timeout: وهو بيعيد خد <code>409</code> مع <code>retry-after</code> لأن الأول لسه شغال، وبعدين خد النتيجة الأصلية replayed، والـ provider سجّل خصمة واحدة.</div>
+
+<pre><code class="language-plaintext">provider dedupes           orders: 1 stock: 9 captures: 1 {"paid":17,"StaleOrderError":2,"out_of_stock":1}
+provider ignores the key   orders: 1 stock: 9 captures: 10 {"StaleOrderError":9,"out_of_stock":10,"paid":1}</code></pre>
+  <div class="ar-note">هنا من غير جدول الـ keys: 20 نداء مباشر متزامن. في الصفين order واحد والـ stock 9، يعني الـ primary key عمل شغله. الصف الأول (provider بيشيل التكرار): خصمة واحدة، بس فيه <code>StaleOrderError</code> و <code>out_of_stock</code> غلط رغم إن الـ stock 10. الصف التاني (provider بيتجاهل الـ key): 10 خصمات حقيقية. الأعداد بتتغير من تشغيل للتاني. ولو الـ lease في الجزء 6 أقصر من وقت الـ use case، هترجع للحالة دي.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ locks بتحمي order واحد من اتنين بيكتبوا. مش بتعمل حاجة قدام طلبين كل واحد فيهم بيعمل order لوحده. على الـ <code>after</code> من غير تعديل، double click إدّى اتنين 201 و 2 orders و 2 charges، متعدودين بـ <code>lab.charges()</code>. و client عمل timeout عند 100 ms وبعت تاني، والـ server لسه بيكلم provider بياخد 300 ms، برضو عمل خصمتين. تفاصيل HTTP في <a href="../../06-NodeJS/lessons/14-rest-api-design.html">درس REST، الجزء 6</a>، وكود الـ pattern في <a href="../../10-Design-Patterns/lessons/24-rate-limiter-idempotent-receiver.html">القسم 10 · 3.2</a>، والعمق في <a href="../../12-System-Design/lessons/30-idempotency-keys-in-depth.html">القسم 12 · 2.6</a>. الزاوية هنا هي مكانها في الـ architecture.</p>
+    <p><b>ده decorator في الـ application layer، مش Express middleware.</b> <code>withIdempotency(useCase)</code> بيدي نفس الضمان لأي driving adapter: HTTP أو CLI أو queue consumer. وكمان بيعمل fingerprint للـ command بعد الـ validation مش للـ bytes الخام، فالمسافات وترتيب الـ keys في الـ JSON مش بيبانوا طلب مختلف. والتخزين ورا port زي أي حاجة تانية.</p>
+    <p><b>خزّن الـ key في transaction الـ aggregate لو تقدر.</b> لو الـ command مفيهوش call خارجي، صف الـ key والـ aggregate يعملوا commit مع بعض، وتبقى exactly-once محليًا. عمل order فيه provider call في النص، فـ transaction واحدة مش هتغطيه. أحسن حاجة بعدها: اشتق الـ order ID من الـ client key بـ UUID v5. كده الـ primary key بتاع الـ order نفسه هو الحارس: insert متزامنين مش هينجحوا الاتنين، والخسران بياخد <code>23505</code>، والـ adapter بيحوّله لـ <code>DuplicateOrderError</code>، والـ use case بيرجّع الـ stock بتاعه ويكمّل على order اللي كسب. والحارس ده دايم، مالوش TTL.</p>
+    <p><b>خلّي الـ use case يقدر يكمّل، ووصّل الضمان لبعد كده.</b> <code>makePlaceOrder</code> دلوقتي بيبدأ بتحميل الـ order بتاع الـ key ده. لو موجود، بيكمّل من مكان ما وقف، فالـ order الـ <code>paid</code> بيرجع من غير خصم تاني. والـ gateway بيبعت <code>order-&lt;id&gt;</code> كـ idempotency key للـ provider. متشتق من الـ order ID مش من الـ client key، فنظرة الـ provider مش معتمدة على شكل key بتاع client معين، وعقد الـ port بقى "خصم نفس الـ order مرتين بياخد الفلوس مرة". لما شغّلناه تاني: double click عمل order واحد و charge واحدة، والـ client اللي عمل timeout خد 409 والمحاولة الأولى شغالة، وبعدين النتيجة الأصلية.</p>
+    <p><b>الـ primary key هو آخر حارس، مش الباب الأمامي.</b> التشغيل الأخير بيشيل جدول الـ keys وبينادي <code>makePlaceOrder</code> 20 مرة في نفس اللحظة بنفس الـ key. دايمًا order واحد والـ stock في الآخر مظبوط. بس مفيش حد بيختار منفّذ واحد: ناس بتاخد <code>StaleOrderError</code>، وناس بتاخد <code>out_of_stock</code> غلط لأن الباقيين ماسكين الـ stock لحظة، ومع provider بيتجاهل الـ keys فيه 10 خصمات حقيقية. اختيار owner واحد من الأول هو اللي جدول الجزء 6 بيضيفه.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      أي POST بيحرّك فلوس أو بيبعت حاجة: checkout، refund، إرسال SMS، إنشاء subscription. في Next.js ولّد الـ key لما الـ checkout form تتفتح (مش في الـ retry)، وابعته في الـ server action أو الـ header. وفي الـ backend الـ decorator بيتركّب مرة في الـ composition root، فالـ BullMQ worker اللي بيعيد job بعد crash بياخد نفس الضمان بنفس الكود، وده مش هيحصل لو الكود في Express middleware.
+    </div>
+  </section>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — System-level idempotency design <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — تصميم الـ idempotency على مستوى النظام</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The primary key prevents the double charge, but a good API also needs fast answers: the original response, a clear conflict while the first attempt runs, and a rejection when a key is reused for something else. That's the job of the table: key, tenant, request fingerprint, status, response, and <code>expires_at</code>, plus a lease so a dead owner doesn't hold the key forever. The claim is one atomic <code>INSERT ... ON CONFLICT DO UPDATE ... WHERE expires_at &lt; now()</code>: exactly one request gets a row back. Everyone else reads the row and takes a branch. The statuses follow the IETF draft: 400 for a missing key, 422 for a different payload, 409 while in progress. It stores the use case's <em>result</em> rather than HTTP bytes, so status mapping stays in presentation.</p>
+    <p>The run: 20 concurrent duplicates gave 1 charge and 1 stock change. Their statuses were a mix of 201 (the owner, plus replays that arrived after it finished) and 409, and that mix changes run to run while the charge count doesn't. The same key with a different body gets 422. The same body with its JSON keys swapped is a replay, because the fingerprint is taken on the command. The same key under another tenant is a separate order, since the primary key includes the tenant. A rule violation releases the key, so a corrected request can reuse it. A decline is a business answer: it's stored and replayed with 0 new provider calls, and a new attempt takes a new key.</p>
+    <p><b>TTL vs retry window.</b> The TTL must outlast the longest time any client may retry, including queues and offline mobile apps. If it's shorter, a retry looks new. The run shows what then decides your fate: with a random order ID per attempt you get 2 orders and 2 charges; with the ID derived from the key you get 1 and 1, because the aggregate is still there after the key row is gone. And the key must not outlive what the provider remembers: Stripe's API v1 docs say keys may be removed after at least 24 hours, and a resume after that is a new charge. The purge job only reclaims disk, since the claim statement already treats expired rows as free. It deletes in small batches so no long transaction holds the table: 25,000 expired rows in 5 batches, with 5,000 live rows untouched.</p>
+    <p><b>The chain, and what breaks.</b> The guarantee is only as long as its weakest link: client key → order ID → provider key → event ID. Consumers are the last link. The relay is at-least-once, so a consumer records the event ID and its effect in one transaction, and 3 deliveries become 1 notification. The hard failure is a crash between the charge and the store, which no local transaction can close. The matrix below injects a crash at every step. The key stays <code>in_progress</code>, a retry within the lease gets 409, and after the lease the use case resumes. With a provider that dedupes on your key, the crash after the charge costs nothing: 1 capture. With a provider that ignores the key: 2 captures, and no code on your side can see it. Note the first row, which is still wrong: a crash between <code>catalog.reserve</code> and the order insert leaks one unit of stock (8, not 9), because the reservation has no key of its own. Exercise 3 closes it.</p>
+  </section>
+
+<pre class="diagram">
+  browser        key created when the checkout form opens
+     │           Idempotency-Key: k-1
+     ▼
+  idempotency_keys (tenant, k-1)     one owner, stored result, TTL
+     │           uuidV5("tenant:k-1")
+     ▼
+  orders.id                          one order, forever (primary key)
+     │           "order-&lt;id&gt;"
+     ▼
+  provider Idempotency-Key           one capture, while the provider remembers
+     │
+     ▼
+  outbox.id  ─▶  processed_events (consumer, event_id)   one effect per consumer
+</pre>
+  <div class="ar-note">السلسلة من فوق لتحت، وكل حلقة ليها ضمان مختلف. المتصفح بيولّد الـ key لما الـ form تتفتح. جدول الـ keys: owner واحد ونتيجة متخزنة و TTL. <code>uuidV5</code> بيدي order ID ثابت: order واحد للأبد بالـ primary key. <code>order-&lt;id&gt;</code> بيروح للـ provider: خصمة واحدة طول ما الـ provider فاكر. وآخر حلقة: <code>outbox.id</code> بيوصل للـ consumer، و<code>processed_events</code> بيضمن effect واحد لكل consumer.</div>
+
+<pre data-file="src/modules/orders/infrastructure/pg-idempotency-store.ts"><code class="language-typescript">// الـ adapter بتاع الجدول: الـ primary key هو الحكم، و statement واحد بيفصل بين الطلبات
+import type { Pool } from "pg";
+import type { Claim, IdempotencyStore } from "../application/with-idempotency.ts";
+
+export const makePgIdempotencyStore = (pool: Pool): IdempotencyStore =&gt; ({
+  async claim({ tenant, key, fingerprint, leaseMs, ttlMs }): Promise&lt;Claim&gt; {
+    // الخطوة 1: لو مفيش صف، أو الصف انتهى الـ TTL بتاعه، الـ statement ده بيرجّع صف وإنت الـ owner
+    const won = await pool.query(
+      `insert into orders.idempotency_keys (tenant_id, key, fingerprint, status, locked_until, expires_at)
+       values ($1, $2, $3, 'in_progress', now() + make_interval(secs =&gt; $4), now() + make_interval(secs =&gt; $5))
+       on conflict (tenant_id, key) do update
+         set fingerprint = excluded.fingerprint, status = 'in_progress', response = null,
+             locked_until = excluded.locked_until, created_at = now(), expires_at = excluded.expires_at
+         where orders.idempotency_keys.expires_at &lt; now()
+       returning key`,
+      [tenant, key, fingerprint, leaseMs / 1000, ttlMs / 1000],
+    );
+    if (won.rowCount === 1) return { kind: "owner" };
+
+    // الخطوة 2: الـ key محجوز، فنقرا حالته
+    const { rows } = await pool.query(
+      `select fingerprint, status, response, ceil(extract(epoch from locked_until - now()))::int as wait
+       from orders.idempotency_keys where tenant_id = $1 and key = $2`,
+      [tenant, key],
+    );
+    const row = rows[0];
+    if (!row) return { kind: "in_progress", retryAfterSeconds: 1 };
+    if (row.fingerprint !== fingerprint) return { kind: "mismatch" };
+    if (row.status === "completed") return { kind: "replay", response: row.response };
+
+    // الخطوة 3: لسه شغال؟ ولا الـ owner مات والـ lease خلص؟ واحد بس هياخده
+    const takeover = await pool.query(
+      `update orders.idempotency_keys set locked_until = now() + make_interval(secs =&gt; $3)
+       where tenant_id = $1 and key = $2 and status = 'in_progress' and locked_until &lt; now()
+       returning key`,
+      [tenant, key, leaseMs / 1000],
+    );
+    if (takeover.rowCount === 1) return { kind: "owner" };
+    return { kind: "in_progress", retryAfterSeconds: Math.max(1, row.wait) };
+  },
+
+  async complete({ tenant, key, response }) {
+    await pool.query("update orders.idempotency_keys set status = 'completed', response = $3 where tenant_id = $1 and key = $2", [tenant, key, JSON.stringify(response)]);
+  },
+
+  async release({ tenant, key }) {
+    await pool.query("delete from orders.idempotency_keys where tenant_id = $1 and key = $2 and status = 'in_progress'", [tenant, key]);
+  },
+});
+
+// الـ purge job: دفعات صغيرة عشان مفيش transaction طويلة ولا lock كبير على الجدول
+export const purgeExpiredKeys = async (pool: Pool, batchSize: number): Promise&lt;{ deleted: number; batches: number }&gt; =&gt; {
+  let deleted = 0;
+  let batches = 0;
+  for (;;) {
+    const r = await pool.query(
+      `delete from orders.idempotency_keys
+       where ctid = any(array(select ctid from orders.idempotency_keys where expires_at &lt; now() limit $1))`,
+      [batchSize],
+    );
+    if (!r.rowCount) return { deleted, batches };
+    deleted += r.rowCount;
+    batches++;
+  }
+};</code></pre>
+
+  <table>
+    <thead><tr><th>Key state</th><th>Fingerprint</th><th>Response</th><th>Runs the use case?</th></tr></thead>
+    <tbody>
+      <tr><td>No row, or expired</td><td>Any</td><td>The real result</td><td>Yes: this request is the owner</td></tr>
+      <tr><td>Any row</td><td>Different</td><td>422 <code>idempotency_key_reused</code></td><td>No</td></tr>
+      <tr><td><code>completed</code></td><td>Same</td><td>Stored result, <code>idempotent-replayed: true</code></td><td>No</td></tr>
+      <tr><td><code>in_progress</code>, lease alive</td><td>Same</td><td>409 + <code>Retry-After</code></td><td>No</td></tr>
+      <tr><td><code>in_progress</code>, lease expired</td><td>Same</td><td>The real result</td><td>Yes: takes over and resumes</td></tr>
+    </tbody>
+  </table>
+  <div class="ar-note">صف صف: (1) مفيش صف أو الصف انتهى: الطلب ده هو الـ owner وبيشغّل الـ use case ويرجّع النتيجة الحقيقية. (2) أي صف بـ fingerprint مختلف: 422 ومن غير تشغيل. (3) <code>completed</code> بنفس الـ fingerprint: النتيجة المتخزنة مع header الـ replay ومن غير تشغيل. (4) <code>in_progress</code> والـ lease لسه شغال: 409 مع <code>Retry-After</code> ومن غير تشغيل. (5) <code>in_progress</code> والـ lease خلص: الـ owner مات، فالطلب ده بياخد مكانه ويكمّل.</div>
+
+<pre><code class="language-plaintext">20 concurrent duplicates: { '201': 9, '409': 11 } new charges: 1 stock change: -1
+finished one replays    : 201 replayed: true paid
+same key, other body    : 422 { error: 'idempotency_key_reused' }
+same body, keys swapped : 201 replayed: true
+no key at all           : 400 { error: 'idempotency_key_required' }
+same key, other tenant  : 201 new charges: 1
+rule violation          : 422 positive-qty
+same key after the fix  : 201
+
+declined, then same key : 402 402 replayed: true provider calls added: 0
+new key for a new try   : 201
+
+┌─────────┬─────────────┬─────────────┬────────────┬─────────────┬──────────────────┬───────────┐
+│ (index) │ tenant_id   │ key         │ fp         │ status      │ result           │ ttl_hours │
+├─────────┼─────────────┼─────────────┼────────────┼─────────────┼──────────────────┼───────────┤
+│ 0       │ 't-default' │ 'burst-1'   │ 'e97b583f' │ 'completed' │ 'paid'           │ 24        │
+│ 1       │ 't-nile'    │ 'burst-1'   │ 'e97b583f' │ 'completed' │ 'paid'           │ 24        │
+│ 2       │ 't-default' │ 'decline-1' │ 'e97b583f' │ 'completed' │ 'payment_failed' │ 24        │
+└─────────┴─────────────┴─────────────┴────────────┴─────────────┴──────────────────┴───────────┘</code></pre>
+  <div class="ar-note">كل سطر حالة: 20 طلب متزامن بنفس الـ key إدّوا خليط 201 و 409، و charge واحدة و stock نزل مرة. طلب بعد ما خلص: replay. نفس الـ key بـ body مختلف: 422. نفس الـ body بترتيب keys مختلف: replay. من غير key: 400. نفس الـ key في tenant تاني: order جديد و charge جديدة. rule violation: 422 والـ key اتفك، فنفس الـ key بعد التصليح نجح بـ 201. decline: 402 متخزن و replay ومن غير أي call جديد للـ provider، و key جديد لمحاولة جديدة. والجدول تحت بيوري الصفوف نفسها: الـ fingerprint بتاع الـ tenantين واحد، والـ TTL 24 ساعة.</div>
+
+<pre data-file="labs/consumer.ts"><code class="language-typescript">// ❌ كل توصيلة بتبعت إشعار: الـ relay لو وقع قبل ما يعلّم published هيبعت تاني
+const naiveConsumer = (pool: Pool) =&gt; async (e: Delivered) =&gt; {
+  await pool.query("insert into notifications.sent (order_id, body) values ($1, 'order confirmed')", [e.orderId]);
+};
+
+// ✅ تسجيل الـ event ID والـ effect في transaction واحدة: الـ primary key بيختار توصيلة واحدة
+const dedupingConsumer = (pool: Pool, consumer: string) =&gt; async (e: Delivered) =&gt; {
+  const c = await pool.connect();
+  try {
+    await c.query("begin");
+    const first = await c.query("insert into notifications.processed_events (consumer, event_id) values ($1, $2) on conflict do nothing returning event_id", [consumer, e.id]);
+    if (first.rowCount === 1) {
+      await c.query("insert into notifications.sent (order_id, body) values ($1, 'order confirmed')", [e.orderId]);
+    }
+    await c.query("commit");
+  } catch (err) {
+    await c.query("rollback");
+    throw err;
+  } finally {
+    c.release();
+  }
+};</code></pre>
+<pre><code class="language-plaintext">naive consumer, same event delivered 3 times, notifications: 3
+deduping consumer, same event delivered 3 times, notifications: 1</code></pre>
+  <div class="ar-note">نفس الـ event اتوصّل 3 مرات (2 منهم في نفس اللحظة). الـ consumer العادي بعت 3 إشعارات، واللي بيسجّل الـ event ID بعت إشعار واحد.</div>
+
+<pre><code class="language-plaintext">ttl 200 ms, the client retries after 400 ms
+order id random per attempt            201 201 orders: 2 charges: 2
+order id derived from the key          201 201 orders: 1 charges: 1
+
+purge: { deleted: 25000, batches: 5 } left: 5000 ≈ 18 ms</code></pre>
+  <div class="ar-note">الـ TTL هنا 200 ms عشان نشوف الأثر، والـ client بيعيد بعد 400 ms، فالـ key بقى منتهي. بـ order ID عشوائي: 2 orders و 2 charges. بـ order ID متشتق من الـ key: order واحد و charge واحدة، لأن الحارس الدايم لسه موجود. والـ purge مسح 25 ألف صف منتهي في 5 دفعات وساب الـ 5 آلاف الشغالين.</div>
+
+<pre data-file="labs/crash-matrix.ts"><code class="language-typescript">// الـ crash بيتعمل بـ throw في اللحظة دي بالظبط، فمفيش سطر بعدها بيتنفذ، زي موت الـ process
+const crashOnce = () =&gt; {
+  let done = false;
+  return () =&gt; {
+    if (done) return;
+    done = true;
+    throw new SimulatedCrash("process died here");
+  };
+};
+const points: Record&lt;string, () =&gt; NonNullable&lt;Overrides["wrap"]&gt;&gt; = {
+  "after reserve, before insert": () =&gt; {
+    const die = crashOnce();
+    return { catalog: (c: Catalog): Catalog =&gt; ({ ...c, reserve: async (l) =&gt; { const r = await c.reserve(l); die(); return r; } }) };
+  },
+  "after insert, before charge": () =&gt; {
+    const die = crashOnce();
+    return { orders: (o: OrderRepository): OrderRepository =&gt; ({ ...o, save: async (x) =&gt; { await o.save(x); die(); } }) };
+  },
+  "after charge, before paid saved": () =&gt; {
+    const die = crashOnce();
+    return { payments: (p: PaymentGateway): PaymentGateway =&gt; ({ charge: async (id, a) =&gt; { const r = await p.charge(id, a); die(); return r; } }) };
+  },
+  "after paid saved, before key done": () =&gt; {
+    const die = crashOnce();
+    let n = 0;
+    return { orders: (o: OrderRepository): OrderRepository =&gt; ({ ...o, save: async (x) =&gt; { await o.save(x); if (++n === 2) die(); } }) };
+  },
+  "after key done, before response": () =&gt; {
+    const die = crashOnce();
+    return { store: (s: IdempotencyStore): IdempotencyStore =&gt; ({ ...s, complete: async (q) =&gt; { await s.complete(q); die(); } }) };
+  },
+};</code></pre>
+<pre><code class="language-plaintext">provider dedupes on our key
+crash point                        1st now later  captures  orders status  stock
+after reserve, before insert       500 409 201         1       1  paid        8
+after insert, before charge        500 409 201         1       1  paid        9
+after charge, before paid saved    500 409 201         1       1  paid        9
+after paid saved, before key done  500 409 201         1       1  paid        9
+after key done, before response    500 201 201         1       1  paid        9
+
+same crash, provider ignores the key
+after charge, before paid saved    500 409 201         2       1  paid        9</code></pre>
+  <div class="ar-note">كل صف crash في نقطة مختلفة، والـ crash بيتعمل بـ throw في اللحظة دي بالظبط (مش قتل process حقيقي) فمفيش سطر بعدها بيتنفذ. الأعمدة: رد أول طلب، ورد إعادة فورية، ورد إعادة بعد الـ lease، وبعدين الخصمات الفعلية، وعدد الـ orders، والحالة، والـ stock (بدأ 10 والصح 9). كل الصفوف خلصت بـ 201 وخصمة واحدة. الصف الأول لسه غلط: الـ stock بقى 8 لأن الحجز مالوش key. صف "after key done": الإعادة الفورية replay بـ 201 لأن الـ key اتسجل. وآخر سطر نفس الـ crash مع provider بيتجاهل الـ key: خصمتين، وده اللي مفيش كود عندك يقدر يشوفه.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ primary key بيمنع الخصم المزدوج، بس الـ API الكويس محتاج كمان ردود سريعة: الرد الأصلي، و conflict واضح والمحاولة الأولى شغالة، ورفض لو الـ key اتستخدم لحاجة تانية. ده شغل الجدول: key و tenant و request fingerprint و status و response و<code>expires_at</code>، ومعاهم lease عشان owner مات ميمسكش الـ key للأبد. الـ claim عبارة عن <code>INSERT ... ON CONFLICT DO UPDATE ... WHERE expires_at &lt; now()</code> واحد atomic: طلب واحد بالظبط بياخد صف راجع. الباقي بيقرا الصف ويمشي في فرع. الـ statuses ماشية مع الـ IETF draft: 400 لو مفيش key، و 422 لو الـ payload مختلف، و 409 وهو لسه شغال. وبيخزّن <em>نتيجة</em> الـ use case مش bytes الـ HTTP، فتحويل الـ status يفضل في الـ presentation.</p>
+    <p>التشغيل: 20 طلب متزامن إدّوا charge واحدة وتغيير stock واحد. الـ statuses كانت خليط 201 (الـ owner، و replays وصلوا بعد ما خلص) و 409، والخليط ده بيتغير من تشغيل للتاني وعدد الـ charges لأ. نفس الـ key بـ body مختلف بياخد 422. نفس الـ body بترتيب keys مختلف replay، لأن الـ fingerprint على الـ command. نفس الـ key في tenant تاني order منفصل، لأن الـ primary key فيه الـ tenant. الـ rule violation بيفك الـ key، فطلب متصلّح يقدر يستخدمه. والـ decline إجابة business: بيتخزن وبيتعاد من غير أي call جديد للـ provider، والمحاولة الجديدة بـ key جديد.</p>
+    <p><b>الـ TTL ضد الـ retry window.</b> الـ TTL لازم يعيش أكتر من أطول وقت ممكن أي client يعيد فيه، بما فيهم الـ queues وتطبيقات الموبايل اللي كانت offline. لو أقصر، الإعادة بتبان طلب جديد. والتشغيل بيوري إيه اللي بيقرر مصيرك ساعتها: بـ order ID عشوائي لكل محاولة 2 orders و 2 charges، وبـ ID متشتق من الـ key واحد وواحدة، لأن الـ aggregate لسه موجود بعد ما صف الـ key راح. والـ key كمان ميعيشش أكتر من ذاكرة الـ provider: docs بتاعة Stripe API v1 بتقول إن الـ keys ممكن تتشال بعد 24 ساعة على الأقل، وأي resume بعدها خصم جديد. والـ purge job بيوفّر disk بس، لأن الـ claim بيعتبر الصفوف المنتهية فاضية أصلًا. بيمسح دفعات صغيرة عشان مفيش transaction طويلة تمسك الجدول: 25 ألف صف منتهي في 5 دفعات، و 5 آلاف صف شغال ماتلمسوش.</p>
+    <p><b>السلسلة، وإيه اللي بيكسر.</b> الضمان طوله قد أضعف حلقة: client key ← order ID ← provider key ← event ID. الـ consumers هما آخر حلقة. الـ relay بيوصّل at-least-once، فالـ consumer بيسجّل الـ event ID والـ effect في transaction واحدة، و 3 توصيلات بقوا إشعار واحد. العطل الصعب هو crash بين الخصم والتخزين، وده مفيش local transaction تقفله. الجدول تحت بيعمل crash في كل خطوة. الـ key بيفضل <code>in_progress</code>، وإعادة جوه الـ lease بتاخد 409، وبعد الـ lease الـ use case بيكمّل. مع provider بيشيل التكرار بالـ key بتاعك، الـ crash بعد الخصم مش بيكلف حاجة: خصمة واحدة. مع provider بيتجاهل الـ key: خصمتين، ومفيش كود عندك يقدر يشوف ده. ولاحظ الصف الأول اللي لسه غلط: crash بين <code>catalog.reserve</code> وإدخال الـ order بيضيّع قطعة stock (8 مش 9)، لأن الحجز مالوش key لوحده. تمرين 3 بيقفلها.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      صمّم الـ checkout كده: جدول keys بـ TTL 24 ساعة ولو الموبايل بيعيد أكتر ظبّطه، و cron بيعمل <code>purgeExpiredKeys</code>، و alert على صفوف <code>in_progress</code> قديمة لأنها معناها crash محتاج نظر. ولما تختار payment provider، اقرا docs الـ idempotency بتاعته وشوف بيفتكر الـ key قد إيه، لأن ده الحد الأعلى للـ resume عندك. وفي postmortem عن خصم مزدوج، أول سؤال: كل حلقة في السلسلة بتستخدم key ثابت ولا لأ؟
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: replay the failure, or finish the work?</b>
+    Stripe's API v1, per its docs, saves the first response once execution begins and replays it, even a 500. Its API v2 instead retries failed work to completion when it can. The design here is closer to v2: a thrown error leaves the key <code>in_progress</code>, and a later retry resumes. It serves customers better after a crash, and it requires a use case that can really resume, which is more code than replaying a stored error.
+    <div class="ar-note">Stripe API v1 حسب الـ docs بتاعته بيحفظ أول رد بعد ما التنفيذ يبدأ ويعيده، حتى لو 500. و API v2 بيعيد الشغل الفاشل لحد ما يخلص لو يقدر. التصميم هنا أقرب لـ v2: الـ error بيسيب الـ key <code>in_progress</code>، وإعادة بعدها بتكمّل. ده أحسن للعميل بعد crash، بس محتاج use case يقدر يكمّل بجد، وده كود أكتر من إعادة error متخزن.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "Design an idempotent payment endpoint. What happens if the process dies after the provider charged the card?" → The client sends one key per intent. A table with a unique <code>(tenant, key)</code>, fingerprint, status, stored result, lease and TTL picks one owner atomically; duplicates get replay, 409 or 422. The order ID derives from the key, so the order itself can't duplicate. The provider gets a stable key from the order ID. On that crash the key stays in progress; after the lease a retry resumes, calls the provider with the same key, gets the same charge, and finishes. Without a provider that honours keys you can't close this gap, only detect it by reconciliation.
+    <div class="ar-note">"صمّم payment endpoint idempotent. إيه اللي يحصل لو الـ process مات بعد ما الـ provider خصم من الكارت؟" ← الـ client بيبعت key واحد لكل نية. جدول فيه unique على <code>(tenant, key)</code> و fingerprint و status ونتيجة متخزنة و lease و TTL بيختار owner واحد atomically، والمكرر بياخد replay أو 409 أو 422. الـ order ID متشتق من الـ key، فالـ order نفسه مينفعش يتكرر. والـ provider بياخد key ثابت من الـ order ID. في الـ crash ده الـ key بيفضل in progress، وبعد الـ lease الإعادة بتكمّل، وبتنادي الـ provider بنفس الـ key، وبتاخد نفس الخصمة، وبتخلّص. ومن غير provider بيحترم الـ keys مش هتقدر تقفل الفجوة دي، هتقدر تكتشفها بس بالـ reconciliation.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A cache on the command's load path</b>
+<pre><code class="language-typescript">// القرار هيتاخد على نسخة قديمة
+const findById = async (id: string): Promise&lt;Order | null&gt; =&gt; {
+  const hit = await store.get(`order:${id}`);
+  return hit ? revive(hit) : orders.findById(id);
+};</code></pre>
+</div>
+    <div class="good"><b>✅ Cache the read port, load commands from the database</b>
+<pre><code class="language-typescript">// الـ cache على الـ read port بس، والـ command بيقرا من الـ DB
+const cachedStats = withCachedStats(stats, store, 60);
+const applyDiscount = makeApplyDiscount({ orders, clock });</code></pre>
+</div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ command بيقرر على نسخة من الـ cache، فيا قرار غلط من غير error، يا conflicts لحد ما الـ TTL يخلص، زي ما شفنا في الجزء 2. ✅ الـ cache على الـ read port اللي بيغذي الشاشات بس، والـ command دايمًا بيقرا من الـ DB ويقرر على الحقيقة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>DEL</code> inside the transaction</b>
+<pre><code class="language-typescript">const c = await pool.connect();
+await c.query("begin");
+await c.query("update orders.orders set status = $2 where id = $1", [id, status]);
+// قارئ بين السطرين دول هيخزّن القيمة القديمة لمدة الـ TTL كلها
+await store.del(`summary:${id}`);
+await c.query("commit");
+c.release();</code></pre>
+</div>
+    <div class="good"><b>✅ The event commits with the change, <code>DEL</code> comes after</b>
+<pre><code class="language-typescript">const c = await pool.connect();
+await c.query("begin");
+await c.query("update orders.orders set status = $2 where id = $1", [id, status]);
+// الـ event في نفس الـ transaction، والـ DEL بييجي من الـ relay بعد الـ commit
+await c.query("insert into orders.outbox (type, payload, occurred_at) values ('OrderChanged', $1, now())", [JSON.stringify({ orderId: id })]);
+await c.query("commit");
+c.release();</code></pre>
+</div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ قارئ جه بين الـ <code>DEL</code> والـ commit بيشوف الصف القديم ويخزّنه تاني، والقيمة الغلط بتعيش الـ TTL كله. والـ tests مش بتمسكها لأن مفيش قارئ في النص. ✅ الـ event بيتكتب في نفس الـ transaction، والـ relay بيعمل <code>DEL</code> بعد الـ commit، ولو وقع بيعيد.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A conflict retry around a charge</b>
+<pre><code class="language-typescript">// الـ use case فيه charge، والـ retry بيعيده كله بـ order ID جديد
+const placeOrder = makePlaceOrder(deps);
+const retried = withRetryOnStale(async (cmd: Parameters&lt;typeof placeOrder&gt;[0]) =&gt; {
+  await placeOrder(cmd);
+}, { maxAttempts: 5, baseDelayMs: 5 });</code></pre>
+</div>
+    <div class="good"><b>✅ Retry only the part with no side effects</b>
+<pre><code class="language-typescript">// الـ retry حوالين الجزء اللي من غير side effects بس
+const markPaid = async (cmd: { orderId: string; ref: string }) =&gt; {
+  const order = await orders.findById(cmd.orderId);
+  order?.markPaid(cmd.ref, clock.now());
+  if (order) await orders.save(order);
+};
+const retried = withRetryOnStale(markPaid, { maxAttempts: 5, baseDelayMs: 5 });</code></pre>
+</div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ <code>StaleOrderError</code> ممكن ييجي في الـ save التاني، بعد الخصم. والـ retry بيعيد الـ use case كله من الأول بـ order ID جديد، فخصمة جديدة. ✅ الـ retry حوالين القراية والقرار والكتابة بس. والـ charge إما بره خالص، أو الـ gateway بيضمن إن نفس الـ order مش بيتخصم مرتين.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A new key per attempt</b>
+<pre><code class="language-typescript">// كل محاولة بـ key جديد: الـ server شايف طلبات مختلفة
+for (let attempt = 0; attempt &lt; 3; attempt++) {
+  const res = await fetch(url, { method: "POST", body, headers: { "idempotency-key": randomUUID() } });
+  if (res.ok) return res;
+}</code></pre>
+</div>
+    <div class="good"><b>✅ One key per intent</b>
+<pre><code class="language-typescript">// الـ key بيتولد مرة واحدة لكل نية: لما الـ form اتفتح، وكل المحاولات بتستخدمه
+const key = randomUUID();
+for (let attempt = 0; attempt &lt; 3; attempt++) {
+  const res = await fetch(url, { method: "POST", body, headers: { "idempotency-key": key } });
+  if (res.ok || res.status &lt; 500) return res;
+}</code></pre>
+</div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ كل retry بـ key جديد، فالـ server شايف طلبات مختلفة والـ header ملوش أي فايدة. ✅ الـ key بيتولد مرة لكل نية، زي فتح صفحة الـ checkout، وكل المحاولات بتستخدمه. والـ retry هنا بس على 5xx، لأن 4xx مش هيتغير بالإعادة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Holding a row lock across a provider call</b>
+<pre><code class="language-typescript">// الصف مقفول والـ connection محجوزة طول مدة الكلام مع الـ provider
+await orders.updateLocked(id, async (order) =&gt; {
+  const charge = await payments.charge(id, order.state.total);
+  if (charge.ok) order.markPaid(charge.ref, clock.now());
+});</code></pre>
+</div>
+    <div class="good"><b>✅ Call first, then a short locked transaction</b>
+<pre><code class="language-typescript">// الكلام مع الـ provider بره الـ transaction، والقرار على state جديدة في transaction قصيرة
+const before = await orders.findById(id);
+if (!before) return;
+const charge = await payments.charge(id, before.state.total);
+await orders.updateLocked(id, (order) =&gt; {
+  if (charge.ok) order.markPaid(charge.ref, clock.now());
+});</code></pre>
+</div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ provider بياخد ثواني، والصف مقفول والـ connection محجوزة طول الوقت ده. شفنا في الجزء 4 إن 20 ms بس في القفل خلّت <code>select 1</code> تستنى أكتر من ثانية مع 50 writer. ✅ كلّم الـ provider بره، وبعدين transaction قصيرة بتقرر على الحالة الجديدة. والـ idempotency key هو اللي بيحمي من التكرار، مش الـ lock.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Retry without reload <span class="lvl lvl-1">🟢 easy</span></b>
+    Take two copies of one order. Save the first. Then retry saving the second five times without reloading, and count the conflicts. Fix it by reloading.
+    <div class="ar-note">هات نسختين من نفس الـ order. احفظ الأولى. وبعدين أعد حفظ التانية 5 مرات من غير reload، وعدّ الـ conflicts. وبعدين صلّحها بالـ reload.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="labs/no-reload.ts"><code class="language-typescript">// ❌ الـ retry من غير reload: نفس الـ Order في الـ memory، فنفس الـ version القديم كل مرة
+stale!.applyDiscount(Money.of(100, "EGP"), clock.now());
+let conflicts = 0;
+for (let attempt = 1; attempt &lt;= 5; attempt++) {
+  try {
+    await orders.save(stale!);
+    break;
+  } catch (err) {
+    if (!(err instanceof StaleOrderError)) throw err;
+    conflicts++;
+  }
+}
+console.log("save only, 5 attempts, conflicts:", conflicts);
+
+// ✅ الـ retry مع reload: قرار جديد على state جديدة
+for (let attempt = 1; attempt &lt;= 5; attempt++) {
+  const fresh = await orders.findById(id);
+  fresh!.applyDiscount(Money.of(100, "EGP"), clock.now());
+  await orders.save(fresh!);
+  console.log("reload and decide again, succeeded on attempt:", attempt);
+  break;
+}</code></pre>
+<pre><code class="language-plaintext">save only, 5 attempts, conflicts: 5
+reload and decide again, succeeded on attempt: 1</code></pre>
+      <div class="ar-note">نفس الـ <code>Order</code> في الـ memory معاه نفس الـ version القديم، فكل محاولة بتلاقي 0 صفوف: 5 conflicts من 5. لما حمّلنا من الأول نجحت من أول مرة.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Invalidate the dashboard from events <span class="lvl lvl-2">🟡 medium</span></b>
+    Use <code>withCachedStats</code> with a one-hour TTL. Pay an order, read the totals (still old), run the relay, read again (fresh). The trap: the outbox event has no customer email, but the keys need one.
+    <div class="ar-note">استخدم <code>withCachedStats</code> بـ TTL ساعة. ادفع order، واقرا الإجمالي (لسه قديم)، وشغّل الـ relay، واقرا تاني (جديد). الفخ: الـ outbox event مفيهوش email العميل، والـ keys محتاجاه.</div>
+    <details><summary>Hint · تلميح</summary>
+      Either the handler looks the email up by <code>orderId</code>, or the event carries it. A lookup is simple, and an event with the email couples every consumer to that field.
+      <div class="ar-note">يا الـ handler يجيب الـ email بالـ <code>orderId</code>، يا الـ event يشيله. الـ lookup بسيط، والـ event اللي فيه email بيربط كل consumer بالحقل ده.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="labs/event-invalidation.ts"><code class="language-typescript">// الـ event مفيهوش email، فالـ handler بيجيبه بالـ orderId، ده اللي بيربط الـ event بالـ keys
+const makeStatsInvalidator = (pool: Pool, store: CacheStore) =&gt; async (event: { orderId: string }) =&gt; {
+  const r = await pool.query("select customer_email from orders.orders where id = $1", [event.orderId]);
+  const email = r.rows[0]?.customer_email as string | undefined;
+  if (!email) return;
+  await store.del(`stats:totals:${email}`);
+  await store.del(`stats:recent:${email}:5`);
+};
+
+// الـ relay: at-least-once، والـ DEL نفسه idempotent فالتكرار مش مشكلة
+const drain = async (pool: Pool, handle: (e: { orderId: string }) =&gt; Promise&lt;void&gt;) =&gt; {
+  const r = await pool.query("update orders.outbox set published_at = now() where published_at is null returning payload");
+  for (const row of r.rows) await handle(row.payload);
+  return r.rowCount ?? 0;
+};</code></pre>
+<pre><code class="language-plaintext">before pay : { paidCount: 0, paidTotalMinor: 0 }
+after pay, before relay: { paidCount: 0, paidTotalMinor: 0 }
+relay drained: 1
+after relay: { paidCount: 1, paidTotalMinor: 33500 }</code></pre>
+      <div class="ar-note">بعد الدفع وقبل الـ relay الإجمالي لسه صفر، وده الـ stale window. الـ relay خلّص event واحد وعمل <code>DEL</code>، فالقراية اللي بعدها جابت الرقم الصح من Postgres. والـ TTL فضل ساعة كشبكة أمان.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Close the first row of the crash matrix <span class="lvl lvl-3">🔴 hard</span></b>
+    A crash between <code>catalog.reserve</code> and the order insert leaked one unit. Make the reservation idempotent: give it the order ID, and record it in the same transaction as the stock change. Then a retry can't take stock twice.
+    <div class="ar-note">الـ crash بين <code>catalog.reserve</code> وإدخال الـ order ضيّع قطعة. خلّي الحجز idempotent: إدّيله الـ order ID، وسجّله في نفس transaction تغيير الـ stock. كده الإعادة مش هتاخد stock مرتين.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="labs/reservation.ts"><code class="language-typescript">// الجدول: كل حجز ليه order ID، فالـ primary key هو اللي بيمنع الخصم مرتين
+const RESERVATIONS = `
+  create table catalog.reservations (
+    order_id uuid not null,
+    sku      text not null references catalog.products(sku),
+    qty      int  not null check (qty &gt; 0),
+    primary key (order_id, sku)
+  );`;
+
+const makeReservingCatalog = (pool: Pool) =&gt; ({
+  async reserve(orderId: string, lines: readonly { sku: string; qty: number }[]): Promise&lt;boolean&gt; {
+    const c = await pool.connect();
+    try {
+      await c.query("begin");
+      for (const l of lines) {
+        const first = await c.query("insert into catalog.reservations values ($1, $2, $3) on conflict do nothing returning sku", [orderId, l.sku, l.qty]);
+        // السطر ده اتحجز قبل كده: إعادة بعد crash، فمفيش خصم جديد
+        if (first.rowCount === 0) continue;
+        const r = await c.query("update catalog.products set stock = stock - $2 where sku = $1 and stock &gt;= $2", [l.sku, l.qty]);
+        if (r.rowCount !== 1) {
+          await c.query("rollback");
+          return false;
+        }
+      }
+      await c.query("commit");
+      return true;
+    } finally {
+      c.release();
+    }
+  },
+});</code></pre>
+<pre><code class="language-plaintext">start stock: 10
+reserve   : true stock: 9
+retry     : true stock: 9
+same time : [ true, true ] stock: 8</code></pre>
+      <div class="ar-note">الـ retry رجّع <code>true</code> والـ stock فضل 9. وحتى طلبين في نفس اللحظة بنفس الـ order ID خصموا مرة واحدة (من 9 لـ 8). <code>release</code> لازم يمسح صف الحجز كمان، و<code>Catalog</code> port بياخد <code>orderId</code>، فـ <code>makePlaceOrder</code> والـ fakes في الـ tests هيتعدلوا.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project / at work <span class="lvl lvl-3">🔴 project</span></b>
+    Pick one POST in your side project or job that moves money or sends something. Add <code>withIdempotency</code> with its table and a purge job. Write a test that fires 20 concurrent duplicates and asserts one effect. Then grep for any cache on a method a command calls, and any place that locks two rows, and record what you find in an ADR.
+    <div class="ar-note">اختار POST واحد في مشروعك الجانبي أو شغلك بيحرّك فلوس أو بيبعت حاجة. ضيف <code>withIdempotency</code> بالجدول بتاعه و purge job. اكتب test بيضرب 20 طلب متزامن ويتأكد إن فيه effect واحد. وبعدين دوّر على أي cache على method بيناديها command، وأي مكان بيقفل صفين، وسجّل اللي لقيته في ADR.</div>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>A cache is a decorator behind the same interface, wired in the composition root. A dependency rule proves the core doesn't know.</li>
+    <li>Repository: most reuse, cheapest misses, more round trips. Use case: one round trip, whole answer. HTTP: most saved per hit, most keys, can bypass auth. Choose by miss cost, since p50 barely differs.</li>
+    <li>Cache read models, never the aggregate you decide with: a stale <code>findById</code> gives wrong decisions or endless conflicts.</li>
+    <li>Invalidate after commit from an event handler and keep a TTL as the safety net. <code>DEL</code> inside the transaction stays stale for the whole TTL. Keys carry the tenant.</li>
+    <li>Lost updates are silent. A version in the <code>WHERE</code> turns them into a conflict error, which belongs on the port so the application can catch it.</li>
+    <li>A retry reloads, decides again, is bounded, has jitter, and contains no external side effect.</li>
+    <li>Pessimistic goes behind a port method. High contention or expensive retries favour it; rare conflicts favour optimistic. Waiters hold pool connections.</li>
+    <li>Lock several rows in a fixed order. <code>40P01</code> deadlock, <code>55P03</code> from <code>NOWAIT</code>, <code>SKIP LOCKED</code> for queues, and a single conditional <code>UPDATE</code> beats all of them when it fits.</li>
+    <li><code>withIdempotency</code> is an application-layer decorator, so every driving adapter gets it. Fingerprint the command, store the result, keep HTTP mapping in presentation.</li>
+    <li>Table: <code>(tenant, key)</code>, fingerprint, status, response, lease, <code>expires_at</code>. New → run; other body → 422; running → 409; done → replay; lease over → resume.</li>
+    <li>Your retry window ≤ your TTL, and any resume must happen while the provider still remembers the key. Purge in batches.</li>
+    <li>The chain is client key → order ID → provider key → event ID. A crash between charge and store is only safe when the provider dedupes on your key.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ cache عبارة عن decorator ورا نفس الـ interface، بيتركّب في الـ composition root. وقاعدة dependency بتثبت إن الـ core مش عارف.</li>
+      <li>الـ repository: أكتر reuse وأرخص miss ورحلات أكتر. الـ use case: رحلة واحدة وإجابة كاملة. الـ HTTP: أكتر توفير في الـ hit وأكتر keys وممكن يتخطى الـ auth. اختار بتكلفة الـ miss، لأن الـ p50 بالكاد بيختلف.</li>
+      <li>خزّن الـ read models، وعمرك ما تخزّن الـ aggregate اللي بتقرر بيه: <code>findById</code> قديمة بتدي قرارات غلط أو conflicts مش بتخلص.</li>
+      <li>اعمل invalidate بعد الـ commit من event handler، وسيب TTL كشبكة أمان. <code>DEL</code> جوه الـ transaction بيفضل قديم الـ TTL كله. والـ keys فيها الـ tenant.</li>
+      <li>الـ lost updates في صمت. الـ version في الـ <code>WHERE</code> بيحوّلها لـ conflict error، ومكانه الـ port عشان الـ application يمسكه.</li>
+      <li>الـ retry بيحمّل من الأول، ويقرر تاني، وليه حد، وفيه jitter، ومفيهوش side effect خارجي.</li>
+      <li>الـ pessimistic ورا port method. الـ contention العالي أو الـ retry الغالي بيخلوه أحسن، والـ conflicts النادرة بتخلي الـ optimistic أحسن. واللي مستني ماسك connection من الـ pool.</li>
+      <li>اقفل الصفوف بترتيب ثابت. <code>40P01</code> معناها deadlock، و<code>55P03</code> من <code>NOWAIT</code>، و<code>SKIP LOCKED</code> للـ queues، و<code>UPDATE</code> شرطي واحد أحسن منهم كلهم لو ينفع.</li>
+      <li><code>withIdempotency</code> decorator في الـ application layer، فكل driving adapter بياخده. اعمل fingerprint للـ command، وخزّن النتيجة، وسيب تحويل HTTP في الـ presentation.</li>
+      <li>الجدول: <code>(tenant, key)</code> و fingerprint و status و response و lease و <code>expires_at</code>. جديد ← شغّل، body مختلف ← 422، لسه شغال ← 409، خلص ← replay، الـ lease خلص ← كمّل.</li>
+      <li>الـ retry window عندك أصغر من أو يساوي الـ TTL، وأي resume لازم يحصل والـ provider لسه فاكر الـ key. والـ purge بدفعات.</li>
+      <li>السلسلة: client key ← order ID ← provider key ← event ID. والـ crash بين الخصم والتخزين آمن بس لو الـ provider بيشيل التكرار بالـ key بتاعك.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 11 · 2.8 — Caching كطبقة معمارية: فين (decorator على الـ repository؟ على الـ use case؟) والـ consistency implications</label>
+    <label><input type="checkbox" data-key="r2"> 11 · 2.8 — Concurrency: optimistic (version) vs pessimistic locking في الـ domain، idempotency keys للـ commands</label>
+    <label><input type="checkbox" data-key="r3"> 11 · 3.5 — Idempotency design على مستوى النظام: idempotency key storage، response caching، TTL</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/">IETF draft: The Idempotency-Key HTTP Header Field</a></li>
+    <li><a href="https://docs.stripe.com/api/idempotent_requests">Stripe docs: Idempotent requests</a></li>
+    <li><a href="https://brandur.org/idempotency-keys">Brandur Leach: Implementing Stripe-like idempotency keys in Postgres</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/explicit-locking.html">PostgreSQL docs: Explicit locking</a></li>
+    <li><a href="https://martinfowler.com/eaaCatalog/optimisticOfflineLock.html">Martin Fowler: Optimistic Offline Lock</a> · <a href="https://martinfowler.com/eaaCatalog/pessimisticOfflineLock.html">Pessimistic Offline Lock</a></li>
+    <li><a href="https://www.rfc-editor.org/rfc/rfc9562">RFC 9562: UUIDs (including v5)</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./22-security-flags-multitenancy.html"><small>← Previous</small>22 · Security, Flags &amp; Tenancy</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./24-money-time-i18n.html"><small>Next →</small>24 · Money, Time &amp; i18n</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
