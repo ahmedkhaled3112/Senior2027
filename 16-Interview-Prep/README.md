@@ -1,4 +1,4 @@
-# 14 — Interview Prep و إثبات المستوى للسوق
+# 16 — Interview Prep و إثبات المستوى للسوق
 
 > **ليه القسم ده:** كل الأقسام اللي فاتت بتبني المستوى. القسم ده بيحوّله لـ **أدلة السوق بتفهمها**: coding interviews بثقة، system design بمنهجية وتوقيت، behavioral بقصص حقيقية، CV/portfolio بيعكس المستوى، ومقالات/open source بتتفحص أكتر من أي شهادة. حتى لو مش هتغيّر شغلك، الـ mock interviews أفضل طريقة تكتشف الفجوات.
 >
@@ -49,7 +49,7 @@
 - [ ] الـ format: 45–60 دقيقة، سؤال مفتوح، السبورة (أو Excalidraw)
 - [ ] **المنهجية** (من 10): requirements (5 دقايق) → estimation (5) → API + data model (5) → high-level (10) → deep dive (15) → trade-offs & bottlenecks (10)
 - [ ] تسأل قبل ما تفترض، تقول الـ assumptions بصوت عالي، تبدأ بسيط
-- [ ] تتمرن على **الـ 5 الأساسية** من case studies القسم 10 (URL shortener، rate limiter، notification، key-value store، ID generator) بتوقيت
+- [ ] تتمرن على **الـ 5 الأساسية** من case studies القسم 12 (URL shortener، rate limiter، notification، key-value store، ID generator) بتوقيت
 
 ---
 
@@ -63,10 +63,10 @@
 - [ ] Practical coding (الأشهر في product companies): implement LRU cache، rate limiter، event emitter، promise pool، debounce، deep clone، JSON parser، URL parser — **كلهم في TypeScript بـ tests**
 - [ ] Debugging interview: يدّوك كود فيه bugs — منهجية (reproduce → isolate → fix → verify)
 - [ ] Code review interview: يدّوك PR تراجعه — design، edge cases، security، naming
-- [ ] Node-specific questions: event loop output prediction، streams، error handling، `async` pitfalls — كلها من قسم 04
+- [ ] Node-specific questions: event loop output prediction، streams، error handling، `async` pitfalls — كلها من قسم 06
 
 ### 2.2 System design — المستوى التاني
-- [ ] **الـ 6 التانية** من القسم 10 بتوقيت: news feed، chat، autocomplete، web crawler، file storage، video streaming
+- [ ] **الـ 6 التانية** من القسم 12 بتوقيت: news feed، chat، autocomplete، web crawler، file storage، video streaming
 - [ ] تتمرن على **الـ deep dive**: الـ interviewer بيقول "خش في الـ X" — تقدر تنزل 3 مستويات (الـ DB schema، الـ index، الـ failure mode)
 - [ ] تتمرن على الـ **pushback**: "ليه مش Kafka؟" "إيه اللي يحصل لو الـ cache وقع؟" "الـ load ×10؟" — إجابة بـ trade-off مش دفاع
 - [ ] **Mock interviews** (الأهم): مع زميل سنيور أو على interviewing.io/Pramp — 5 على الأقل، مسجّلة
@@ -77,7 +77,7 @@
 ### 2.3 Behavioral — المستوى التاني
 - [ ] القصص متوافقة مع **Senior expectations**: scope كبير، تأثير على الفريق، قرارات، ownership للـ production
 - [ ] أسئلة الـ Senior الصعبة: "قرار تقني اتخذته وطلع غلط"، "خلاف مع manager"، "إزاي بتتعامل مع زميل أداؤه ضعيف"، "feature رفضت تبنيها"، "إزاي بتوازن quality vs speed"
-- [ ] أسئلة عن الـ AI (جديدة ومتوقعة): "إزاي بتستخدم AI في شغلك؟"، "إزاي بتراجع كود الـ AI؟"، "AI feature بنيتها؟" — إجابات من القسم 12 بأمثلة
+- [ ] أسئلة عن الـ AI (جديدة ومتوقعة): "إزاي بتستخدم AI في شغلك؟"، "إزاي بتراجع كود الـ AI؟"، "AI feature بنيتها؟" — إجابات من القسم 14 بأمثلة
 - [ ] **أسئلتك إنت** للـ interviewer (بتتقيّم): عن الـ on-call، الـ tech debt، إزاي القرارات بتتاخد، الـ review culture، الـ growth path
 - [ ] تتمرن مع حد بيسألك follow-ups مزعجة ("وإنت شخصيًا عملت إيه؟" "والنتيجة بالأرقام؟")
 
@@ -105,7 +105,7 @@
 - [ ] Mock coding interviews: 5 على الأقل مع feedback
 
 ### 3.2 System design — المستوى التالت
-- [ ] **الـ 9 الأصعب** من القسم 10: ride sharing، payment، booking، message queue، metrics، ad aggregation، email، stock exchange، multi-tenant SaaS
+- [ ] **الـ 9 الأصعب** من القسم 12: ride sharing، payment، booking، message queue، metrics، ad aggregation، email، stock exchange، multi-tenant SaaS
 - [ ] تقدر تعمل **estimation دقيقة** بسرعة وتربطها بالقرارات ("12K writes/sec → Postgres واحدة مش كفاية → sharding by X")
 - [ ] تتكلم عن **consistency و failure modes** تلقائيًا من غير ما يسألوك
 - [ ] تعرف 2–3 أمثلة حقيقية من engineering blogs لكل design ("Discord عملوا كده لأن...")
@@ -129,7 +129,7 @@
 
 ### 3.5 الترقية الداخلية (لو هتفضل في شغلك)
 - [ ] تفهم الـ **leveling guide** في شركتك (لو موجود) أو تطلبه — إيه المتوقع من Senior بالظبط
-- [ ] **Promotion packet**: لكل expectation → دليل (RFC، incident، mentee، feature owned) — من القسم 13
+- [ ] **Promotion packet**: لكل expectation → دليل (RFC، incident، mentee، feature owned) — من القسم 15
 - [ ] تتكلم مع الـ manager بدري: "عايز Senior في X شهور، إيه الفجوات؟" — وتتابع كل شهر
 - [ ] تعمل شغل الـ Senior **قبل** اللقب لـ 6 شهور على الأقل (ده اللي بيتقيّم)
 - [ ] تطلب feedback من peers و seniors بشكل رسمي قبل الـ cycle
@@ -144,7 +144,7 @@
 3. **NeetCode tracker**: 150 مسألة بحالة كل واحدة (solved/revisit) ووقت الحل — Easy كلها، Medium كلها، 20+ Hard.
 4. **`practical-coding/`**: 10 implementations بـ TypeScript + tests (LRU، rate limiter، event emitter، promise pool، debounce، deep clone، JSON parser، semaphore، retry، LFU).
 5. **15 mock interviews مسجّلة** (5 coding، 7 system design، 3 behavioral) مع ملاحظات التحسن.
-6. **`system-design-interviews/`**: الـ 20 design docs من القسم 10 بصيغة interview (45 دقيقة، السبورة) + ملاحظات الـ mock.
+6. **`system-design-interviews/`**: الـ 20 design docs من القسم 12 بصيغة interview (45 دقيقة، السبورة) + ملاحظات الـ mock.
 7. **Take-home sample**: مشروع صغير production-grade (README، tests، Docker، ADR) تقدر تستخدمه كمرجع.
 8. **6+ مقالات منشورة** + **2 PRs open source مقبولة** + **talk واحد**.
 9. **Promotion packet** (لو داخلي) أو **target companies list** مع الـ loop بتاع كل واحدة (لو خارجي).
