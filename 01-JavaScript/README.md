@@ -1,4 +1,4 @@
-# 02 — JavaScript من الصفر للاحتراف
+# 01 — JavaScript من الصفر للاحتراف
 
 > **ليه القسم ده:** JS هي اللغة اللي كل حاجة بعدها (TS، Node، React، Next) مبنية عليها. السنيور مش بس بيستخدمها، بيعرف إزاي بتشتغل من جوه: الـ event loop، الـ closures، الـ prototype chain، والـ memory.
 >
