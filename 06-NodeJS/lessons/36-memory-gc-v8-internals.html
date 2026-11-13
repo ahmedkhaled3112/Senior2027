@@ -1,0 +1,2026 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>Memory, GC &amp; V8 Internals in Production — 06 Node.js</title>
+<meta name="section" content="06-NodeJS">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">06 · Node.js</a></span>
+    <span>·</span>
+    <span>Lesson 36 / 39</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+<!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>Memory, GC &amp; V8 Internals in Production</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 36 of 39 — 06 Node.js</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Node 22.19 · V8 12.4 · Express 5.3 · autocannon 8 · TypeScript 7</span>
+      <span class="chip">Prereq: 02-JS 18 Memory &amp; V8, 35 Profiling</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>06 · 3.2 — Memory: heap snapshots في production (<code>v8.writeHeapSnapshot</code>)، <code>--max-old-space-size</code> في containers (وليه Node بيتقتل بـ OOM لو مظبطتوش مع الـ container limit)، leak detection بالـ snapshots المتتالية</li>
+        <li>06 · 3.2 — <code>--heapsnapshot-near-heap-limit</code></li>
+        <li>06 · 3.9 — V8 internals للـ debugging: hidden classes، inline caching، deoptimization، <code>--trace-opt --trace-deopt</code></li>
+        <li>06 · 3.9 — V8 GC: Scavenger (young)، Mark-Compact (old)، <code>--trace-gc</code>، وعلاقة الـ GC pauses بالـ p99 latency</li>
+        <li>06 · 3.9 — Node internals: <code>lib/</code> vs <code>src/</code>، إزاي الـ <code>fs.readFile</code> بيوصل لـ libuv</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Heap snapshots in production</a></li>
+      <li><a href="#p2">Part 2 — --heapsnapshot-near-heap-limit</a></li>
+      <li><a href="#p3">Part 3 — Heap limits &amp; containers</a></li>
+      <li><a href="#p4">Part 4 — GC &amp; tail latency</a></li>
+      <li><a href="#p5">Part 5 — V8 internals for debugging</a></li>
+      <li><a href="#p6">Part 6 — Node internals</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><a href="../../01-JavaScript/lessons/18-memory-v8-performance.html">JS lesson 18</a> taught how V8's memory works: generations, leaks, hidden classes. This lesson is what you do with that on a server that's running. The diagnostic tools can be the outage. A snapshot of a 268 MB heap froze the process for ≈15 s and needed ≈2.8 GB of extra memory, far more than the docs' rule of thumb. A process limited to a 64 MB heap happily grew to ≈966 MB of RSS. And a 5× slowdown from megamorphic code turned out to be invisible over HTTP.</p>
+    <p>A senior engineer knows which of these numbers matter. By the end you'll be able to take a snapshot without hurting users, tell a V8 OOM from a kernel kill, read a <code>--trace-gc</code> line, decide when V8 tuning is worth your time, and follow a Node API from <code>lib/</code> down to libuv.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><a href="../../01-JavaScript/lessons/18-memory-v8-performance.html">درس JS رقم 18</a> شرح الـ memory في V8 بتشتغل إزاي: الـ generations والـ leaks والـ hidden classes. الدرس ده هو اللي تعمله بالكلام ده على server شغال. أدوات التشخيص نفسها ممكن تبقى هي الـ outage. Snapshot لـ heap حجمه 268 MB وقّف الـ process ≈15 ثانية واحتاج ≈2.8 GB memory زيادة، أكتر بكتير من القاعدة اللي في الـ docs. و process الـ heap بتاعها محدود بـ 64 MB كبرت عادي لـ ≈966 MB RSS. وبطء 5 مرات من كود megamorphic طلع مش باين خالص على HTTP.</p>
+    <p>السنيور عارف أنهي رقم من دول مهم. في آخر الدرس هتعرف تاخد snapshot من غير ما تأذي الـ users، وتفرّق بين V8 OOM و kernel kill، وتقرا سطر <code>--trace-gc</code>، وتقرر إمتى الـ tuning بتاع V8 يستاهل وقتك، وتمشي ورا أي Node API من <code>lib/</code> لحد libuv.</p>
+  </section>
+
+  <div class="callout warn">
+    <b>How to read the numbers in this lesson</b>
+    Everything ran on Node 22.19 on Windows 11 on a machine with other jobs running. The same test moved by up to 20× between a busy and a quiet moment, so timings carry an ≈. Counts, such as scavenges per 1,000 requests or constructor counts, stayed stable, and they're what the conclusions rest on. There's no container here, so anything about containers comes from docs or source and is labelled.
+    <div class="ar-note">كل حاجة اتشغلت على Node 22.19 على Windows 11، على جهاز عليه شغل تاني. نفس التجربة كانت بتتغير لحد 20 مرة بين وقت زحمة ووقت هادي، فالأوقات عليها ≈. أما الأعداد، زي الـ scavenges لكل 1000 request أو عدد الـ objects لكل constructor، ففضلت ثابتة، وهي اللي الاستنتاجات مبنية عليها. ومفيش container هنا، فأي كلام عن الـ containers جاي من الـ docs أو الـ source ومكتوب عليه كده.</div>
+  </div>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Heap snapshots in production <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — الـ heap snapshots في الـ production</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><a href="../../01-JavaScript/lessons/18-memory-v8-performance.html">JS lesson 18, part 3</a> covers reading a snapshot: shallow vs retained size, the comparison view, retainers. What's new here is the cost of taking one. <code>v8.writeHeapSnapshot()</code> is synchronous, so nothing else runs until the file is written. The table below measures that. The docs say it needs "about twice the size of the heap". On this heap of many small objects, the extra memory was ≈8–10× the heap. So measure it on your own heap shape before you trust any multiplier: a 268 MB heap needed ≈2.8 GB more, and in a 1 GB container that's a kill.</p>
+    <p>That gives you the procedure. Take one instance out of the load balancer by failing its readiness check, and wait until traffic has stopped. The wait has to come before the snapshot, because during the snapshot the loop is frozen and nobody can read your 503. Then take the snapshot, ship the file off the machine, and restart the instance. Treat the file as production data: it holds every string in the heap, and the test below found an API key and a customer email in it.</p>
+    <p>To find a leak, use the <b>three-snapshot technique</b>. Warm up first, so one-time allocations (JIT, lazy modules, connection setup) are out of the way, then take S1. Apply load and take S2. Apply the same load again and take S3. A one-time allocation grows once and stops. A leak grows in <b>both</b> windows, by an amount proportional to the load. The script below diffs constructor counts and walks the shortest path from the GC roots to one instance, as the DevTools Retainers tab does. It names <code>CachedProductPage</code> (3,000 → 8,000 → 13,000, exactly 5,000 per 5,000 requests) held by <code>routeCache</code>. The <code>Array</code> row growing by one per window is noise, which is why you look at the size of the growth and not only its presence.</p>
+  </section>
+
+<pre data-file="snapshot-cost.ts"><code class="language-typescript">// شغّله كده: node --max-old-space-size=3000 snapshot-cost.ts 2000000
+// بنقيس تمن الـ snapshot نفسه: الوقت اللي الـ event loop واقف فيه، وحجم الملف، والـ memory الزيادة
+import { statSync, rmSync } from "node:fs";
+import { monitorEventLoopDelay } from "node:perf_hooks";
+import { setTimeout as sleep } from "node:timers/promises";
+import { writeHeapSnapshot } from "node:v8";
+
+type Order = { id: number; status: string; customerEmail: string; items: { sku: string; qty: number }[] };
+
+const mb = (bytes: number) =&gt; Math.round(bytes / 1048576);
+const count = Number(process.argv[2] ?? 500_000);
+
+// الـ heap مليان objects صغيرة كتير: ده الشكل اللي بيخلي الـ snapshot غالي
+const orders: Order[] = Array.from({ length: count }, (_, i) =&gt; ({
+  id: i,
+  status: i % 2 ? "paid" : "pending",
+  customerEmail: `customer${i}@example.com`,
+  items: [{ sku: `SKU-${i % 800}`, qty: 1 }],
+}));
+
+const lag = monitorEventLoopDelay({ resolution: 10 });
+lag.enable();
+await sleep(100);
+
+const before = process.memoryUsage();
+const peakBefore = process.resourceUsage().maxRSS / 1024;
+const started = performance.now();
+const file = writeHeapSnapshot(`cost-${count}.heapsnapshot`);
+const blockedMs = performance.now() - started;
+await sleep(100);
+lag.disable();
+
+console.log({
+  orders: orders.length,
+  heapUsedMb: mb(before.heapUsed),
+  rssBeforeMb: mb(before.rss),
+  peakRssBeforeMb: Math.round(peakBefore),
+  peakRssAfterMb: Math.round(process.resourceUsage().maxRSS / 1024),
+  blockedMs: Math.round(blockedMs),
+  loopMaxLagMs: Math.round(lag.max / 1e6),
+  fileMb: mb(statSync(file).size),
+});
+rmSync(file);
+</code></pre>
+
+  <table>
+    <tr><th>Orders</th><th>heapUsed, MB</th><th>Loop blocked</th><th>Peak RSS, MB</th><th>Extra ÷ heap</th><th>File, MB</th></tr>
+    <tr><td>50,000</td><td>22</td><td>≈763 ms</td><td>91 → 267</td><td>≈8×</td><td>31</td></tr>
+    <tr><td>200,000</td><td>61</td><td>≈2.6 s (≈11.4 s when busy)</td><td>150 → 715</td><td>≈9×</td><td>111</td></tr>
+    <tr><td>1,000,000</td><td>268</td><td>≈15.2 s (≈63 s when busy)</td><td>355 → 3,175</td><td>≈10.5×</td><td>548</td></tr>
+  </table>
+  <div class="ar-note">الجدول صف صف. <b>50 ألف order:</b> heap بـ 22 MB، الـ loop وقف ≈763 ms، والـ peak RSS طلع من 91 لـ 267 MB. <b>200 ألف:</b> heap بـ 61 MB، وقف ≈2.6 ثانية (و≈11.4 ثانية والجهاز زحمة)، والـ RSS من 150 لـ 715 MB. <b>مليون:</b> heap بـ 268 MB، وقف ≈15.2 ثانية (و≈63 ثانية في الزحمة)، والـ RSS من 355 لـ 3175 MB، والملف 548 MB. عمود "Extra ÷ heap" هو الـ memory الزيادة مقسومة على حجم الـ heap: ≈8–10 مرات، مش مرتين. ده heap مليان objects صغيرة، وشكل الـ heap عندك ممكن يدّي رقم مختلف، فقيسه.</div>
+
+<pre class="diagram">
+ 1. fail /ready          2. wait            3. snapshot            4. ship, restart
+ ┌───────────────┐      ┌──────────────┐   ┌─────────────────┐    ┌──────────────────┐
+ │ LB sees 503   │ ───▶ │ traffic = 0  │──▶│ loop FROZEN     │───▶│ encrypted bucket │
+ │ loop still on │      │ in-flight ok │   │ RSS jumps ≈10×  │    │ restart instance │
+ └───────────────┘      └──────────────┘   └─────────────────┘    └──────────────────┘
+        ▲ must happen BEFORE step 3: nobody can read a 503 from a frozen loop
+</pre>
+  <div class="ar-note">الخطوات من الشمال لليمين. <b>1:</b> تخلي <code>/ready</code> يرد 503 والـ loop لسه شغال، فالـ load balancer يشوفها. <b>2:</b> تستنى لحد ما الـ traffic يبقى صفر والـ requests اللي شغالة تخلص. <b>3:</b> تاخد الـ snapshot، والـ loop هنا واقف والـ RSS بينط حوالي 10 مرات حجم الـ heap. <b>4:</b> تبعت الملف لمكان مشفّر وتعمل restart. والسهم اللي تحت هو أهم نقطة: الخطوة 1 لازم تحصل قبل 3، لأن مفيش حد يقدر يقرا 503 من loop واقف.</div>
+
+<pre data-file="leaky-catalog-api.ts"><code class="language-typescript">// شغّله كده: ADMIN_TOKEN=dev node leaky-catalog-api.ts
+// الـ route ده عليه cache بيكبر مع كل query جديد: حد حط req.originalUrl في الـ key ومحدش بيمسح
+import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+import { writeHeapSnapshot } from "node:v8";
+import express from "express";
+
+class CachedProductPage {
+  renderedAt = Date.now();
+  url: string;
+  html: string;
+  constructor(url: string, html: string) {
+    this.url = url;
+    this.html = html;
+  }
+}
+
+const routeCache = new Map&lt;string, CachedProductPage&gt;();
+
+function renderProductPage(productId: string, url: string): CachedProductPage {
+  // الـ repeat بيعمل string حقيقي على الـ heap لكل صفحة (بيتبني بالـ join عشان ميبقاش rope)
+  const html = [`&lt;h1&gt;Product ${productId}&lt;/h1&gt;`, url, "x".repeat(2_000)].join("");
+  return new CachedProductPage(url, html);
+}
+
+const app = express();
+
+app.get("/products/:id", (req, res) =&gt; {
+  const key = req.originalUrl;
+  let page = routeCache.get(key);
+  if (!page) {
+    page = renderProductPage(req.params.id, key);
+    routeCache.set(key, page);
+  }
+  res.type("html").send(page.html);
+});
+
+// الـ load balancer بيقرا ⁦/ready⁩: لما يرد 503 بيوقف يبعت traffic للـ instance دي
+let serving = true;
+app.get("/ready", (_req, res) =&gt; {
+  res.status(serving ? 200 : 503).end();
+});
+app.post("/admin/heap-snapshot", async (req, res) =&gt; {
+  if (req.get("x-admin-token") !== process.env.ADMIN_TOKEN) return res.status(403).end();
+  const label = String(req.query.label ?? "snapshot");
+  serving = false;
+  // لازم نستنى قبل الـ snapshot: وهو شغال الـ loop واقف ومحدش هيقدر يقرا الـ 503
+  await sleep(Number(process.env.DRAIN_MS ?? 100));
+  const started = performance.now();
+  const file = writeHeapSnapshot(`${label}.heapsnapshot`);
+  serving = true;
+  res.json({ file, blockedMs: Math.round(performance.now() - started), cacheSize: routeCache.size });
+});
+
+const server = app.listen(0, "127.0.0.1", () =&gt; {
+  process.send?.({ port: (server.address() as AddressInfo).port });
+});
+process.on("disconnect", () =&gt; process.exit(0));
+</code></pre>
+<pre data-file="three-snapshots.ts"><code class="language-typescript">// شغّله كده: node three-snapshots.ts
+// الـ warm-up الأول، وبعدين snapshot، وضغط، وsnapshot، وضغط، وsnapshot
+import { fork } from "node:child_process";
+import { once } from "node:events";
+import autocannon from "autocannon";
+
+const api = fork("leaky-catalog-api.ts", { env: { ...process.env, ADMIN_TOKEN: "dev" } });
+const [{ port }] = (await once(api, "message")) as [{ port: number }];
+const base = `http://127.0.0.1:${port}`;
+
+let visit = 0;
+async function traffic(amount: number): Promise&lt;void&gt; {
+  const requests = [
+    {
+      setupRequest: (req: autocannon.Request) =&gt; ({ ...req, path: `/products/${visit % 50}?utm_campaign=${visit++}` }),
+    },
+  ];
+  const result = await autocannon({ url: base, connections: 10, amount, requests });
+  if (result.non2xx || result.errors) throw new Error("load failed");
+}
+
+async function snapshot(label: string): Promise&lt;void&gt; {
+  const res = await fetch(`${base}/admin/heap-snapshot?label=${label}`, {
+    method: "POST",
+    headers: { "x-admin-token": "dev" },
+  });
+  console.log(label, await res.json());
+}
+
+// الـ warm-up: الـ JIT والـ lazy modules بتخلق objects مرة واحدة، ومش عايزينها في الـ diff
+await traffic(3000);
+await snapshot("s1");
+await traffic(5000);
+await snapshot("s2");
+await traffic(5000);
+await snapshot("s3");
+api.disconnect();
+</code></pre>
+
+  <details><summary>Full script: diff-snapshots.ts · السكريبت كامل</summary>
+    <div class="ar-note">بيقرا الـ 3 ملفات، ويطبع الـ constructors اللي كبرت في الفترتين، وبيمشي BFS من الـ root لأول instance عشان يطلّع الـ retainer path. لو عايز الـ retained size والـ dominator tree، السكريبت الأكبر في <a href="../../01-JavaScript/lessons/18-memory-v8-performance.html">درس JS رقم 18، الجزء 3</a>.</div>
+<pre data-file="diff-snapshots.ts"><code class="language-typescript">// شغّله كده: node --max-old-space-size=4096 diff-snapshots.ts s1.heapsnapshot s2.heapsnapshot s3.heapsnapshot
+// الـ leak الحقيقي بيكبر في الفترتين، أما الـ objects اللي اتخلقت مرة واحدة بتكبر في الأولى بس
+import { readFileSync } from "node:fs";
+
+type Raw = {
+  snapshot: {
+    meta: {
+      node_fields: string[];
+      node_types: [string[], ...unknown[]];
+      edge_fields: string[];
+      edge_types: [string[], ...unknown[]];
+    };
+  };
+  nodes: number[];
+  edges: number[];
+  strings: string[];
+};
+
+function load(file: string) {
+  const raw = JSON.parse(readFileSync(file, "utf8")) as Raw;
+  const { node_fields: nf, node_types: nt, edge_fields: ef, edge_types: et } = raw.snapshot.meta;
+  return {
+    raw,
+    NF: nf.length,
+    EF: ef.length,
+    TYPE: nf.indexOf("type"),
+    NAME: nf.indexOf("name"),
+    SELF: nf.indexOf("self_size"),
+    EDGES: nf.indexOf("edge_count"),
+    EDGE_TYPE: ef.indexOf("type"),
+    EDGE_NAME: ef.indexOf("name_or_index"),
+    EDGE_TO: ef.indexOf("to_node"),
+    OBJECT: nt[0].indexOf("object"),
+    edgeTypes: et[0],
+  };
+}
+
+// الـ summary: كل constructor عنده كام instance وكام byte
+function countByConstructor(file: string): Map&lt;string, { count: number; bytes: number }&gt; {
+  const s = load(file);
+  const totals = new Map&lt;string, { count: number; bytes: number }&gt;();
+  for (let i = 0; i &lt; s.raw.nodes.length; i += s.NF) {
+    if (s.raw.nodes[i + s.TYPE] !== s.OBJECT) continue;
+    const name = s.raw.strings[s.raw.nodes[i + s.NAME]!]!;
+    const entry = totals.get(name) ?? { count: 0, bytes: 0 };
+    entry.count++;
+    entry.bytes += s.raw.nodes[i + s.SELF]!;
+    totals.set(name, entry);
+  }
+  return totals;
+}
+
+// الـ retainer path: أقصر طريق من الـ root لأول instance، زي تبويب Retainers في الـ DevTools
+function retainerPath(file: string, target: string): string[] {
+  const s = load(file);
+  const { nodes, edges, strings } = s.raw;
+  const nodeCount = nodes.length / s.NF;
+  const firstEdge = new Uint32Array(nodeCount + 1);
+  for (let n = 0; n &lt; nodeCount; n++) firstEdge[n + 1] = firstEdge[n]! + nodes[n * s.NF + s.EDGES]!;
+
+  const cameFrom = new Int32Array(nodeCount).fill(-1);
+  const viaEdge = new Int32Array(nodeCount).fill(-1);
+  const queue = [0];
+  cameFrom[0] = 0;
+  for (let head = 0; head &lt; queue.length; head++) {
+    const n = queue[head]!;
+    if (nodes[n * s.NF + s.TYPE] === s.OBJECT &amp;&amp; strings[nodes[n * s.NF + s.NAME]!] === target) {
+      const path: string[] = [];
+      for (let cur = n; cur !== 0; cur = cameFrom[cur]!) {
+        const e = viaEdge[cur]!;
+        const kind = s.edgeTypes[edges[e * s.EF + s.EDGE_TYPE]!]!;
+        const raw = edges[e * s.EF + s.EDGE_NAME]!;
+        const edge = kind === "element" || kind === "hidden" ? `[${raw}]` : strings[raw]!;
+        path.unshift(`${edge} -&gt; ${strings[nodes[cur * s.NF + s.NAME]!]!.slice(0, 40)}`);
+      }
+      return path;
+    }
+    for (let e = firstEdge[n]!; e &lt; firstEdge[n + 1]!; e++) {
+      if (s.edgeTypes[edges[e * s.EF + s.EDGE_TYPE]!] === "weak") continue;
+      const to = edges[e * s.EF + s.EDGE_TO]! / s.NF;
+      if (cameFrom[to] !== -1) continue;
+      cameFrom[to] = n;
+      viaEdge[to] = e;
+      queue.push(to);
+    }
+  }
+  return [];
+}
+
+const [f1, f2, f3] = process.argv.slice(2) as [string, string, string];
+const [a, b, c] = [countByConstructor(f1), countByConstructor(f2), countByConstructor(f3)];
+
+const growing = [...c.keys()]
+  .map((name) =&gt; ({
+    name,
+    s1: a.get(name)?.count ?? 0,
+    s2: b.get(name)?.count ?? 0,
+    s3: c.get(name)?.count ?? 0,
+    kb: Math.round((c.get(name)?.bytes ?? 0) / 1024),
+  }))
+  .filter((row) =&gt; row.s2 &gt; row.s1 &amp;&amp; row.s3 &gt; row.s2)
+  .sort((x, y) =&gt; y.s3 - y.s2 - (x.s3 - x.s2))
+  .slice(0, 6);
+
+console.log("constructors that grew in BOTH windows:");
+console.table(growing);
+
+const suspect = growing.find((row) =&gt; !/^\(|^(Object|Array|system)/.test(row.name)) ?? growing[0];
+if (!suspect) {
+  console.log("nothing grew in both windows: no leak of this kind");
+  process.exit(0);
+}
+console.log(`retainer path of one ${suspect.name}:`);
+for (const step of retainerPath(f3, suspect.name)) console.log("  ", step);
+</code></pre>
+  </details>
+
+<pre><code class="language-plaintext">s1 { file: 's1.heapsnapshot', blockedMs: 298, cacheSize: 3000 }
+s2 { file: 's2.heapsnapshot', blockedMs: 367, cacheSize: 8000 }
+s3 { file: 's3.heapsnapshot', blockedMs: 506, cacheSize: 13000 }
+constructors that grew in BOTH windows:
+┌─────────┬─────────────────────┬──────┬──────┬───────┬─────┐
+│ (index) │ name                │ s1   │ s2   │ s3    │ kb  │
+├─────────┼─────────────────────┼──────┼──────┼───────┼─────┤
+│ 0       │ 'CachedProductPage' │ 3000 │ 8000 │ 13000 │ 609 │
+│ 1       │ 'Array'             │ 1630 │ 1631 │ 1632  │ 51  │
+└─────────┴─────────────────────┴──────┴──────┴───────┴─────┘
+retainer path of one CachedProductPage:
+   [1] -> (GC roots)
+   [19] -> (Stack roots)
+   34 -> system / Context
+   routeCache -> Map
+   table ->
+   8196 -> CachedProductPage
+</code></pre>
+  <div class="ar-note">أول 3 سطور: كل snapshot وقّف الـ loop ≈300–500 ms على heap صغير. الجدول: <code>CachedProductPage</code> زاد 5000 في كل فترة، بالظبط قد الـ requests، وده شكل الـ leak. و<code>Array</code> زاد واحد بس، وده مش leak. عمود <code>kb</code> هو الـ self size بس: الـ 609 KB دي الـ objects نفسها، والـ strings اللي ماسكاها هي اللي بتكبّر الـ retained size. آخر جزء هو الطريق: الـ GC roots ← الـ Context بتاع الـ module ← <code>routeCache</code> ← جدول الـ Map ← الـ object. يعني عندك اسم الـ class واسم المتغيّر اللي ماسكه.</div>
+
+<pre data-file="secret-in-snapshot.ts"><code class="language-typescript">// شغّله كده: node secret-in-snapshot.ts
+// الـ snapshot بيحتوي كل الـ strings اللي في الـ heap: بما فيها الـ secrets وبيانات الـ users
+import { readFileSync, rmSync } from "node:fs";
+import { writeHeapSnapshot } from "node:v8";
+
+process.env.STRIPE_KEY = "sk_live_51Hx_this_is_a_demo_value";
+const session = { userId: 42, email: "mona@example.com", token: process.env.STRIPE_KEY };
+
+const file = writeHeapSnapshot("secret-check.heapsnapshot");
+const text = readFileSync(file, "utf8");
+console.log({
+  containsApiKey: text.includes("sk_live_51Hx_this_is_a_demo_value"),
+  containsEmail: text.includes("mona@example.com"),
+  sessionUser: session.userId,
+});
+rmSync(file);
+</code></pre>
+<pre><code class="language-plaintext">{ containsApiKey: true, containsEmail: true, sessionUser: 42 }
+</code></pre>
+  <div class="ar-note">الملف فيه الـ API key والـ email كنص عادي. يعني الـ snapshot بيانات production حساسة: متحطوش في ticket ولا في Slack، وشفّره، وامسحه بعد ما تخلص.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><a href="../../01-JavaScript/lessons/18-memory-v8-performance.html">درس JS رقم 18، الجزء 3</a> بيشرح تقرا الـ snapshot إزاي: الـ shallow والـ retained size، والـ comparison view، والـ retainers. الجديد هنا هو تمن إنك تاخده. <code>v8.writeHeapSnapshot()</code> sync، فمفيش حاجة تانية بتشتغل لحد ما الملف يتكتب. الجدول فوق بيقيس ده. الـ docs بتقول إنه محتاج "حوالي ضعف حجم الـ heap". على الـ heap ده المليان objects صغيرة، الـ memory الزيادة كانت ≈8–10 أضعاف الـ heap. فقيسها على شكل الـ heap بتاعك قبل ما تثق في أي رقم: heap بـ 268 MB احتاج ≈2.8 GB زيادة، وفي container بـ 1 GB ده معناه kill.</p>
+    <p>من هنا بتطلع الخطوات. تشيل instance واحدة من الـ load balancer بإنك تفشّل الـ readiness check بتاعها، وتستنى لحد ما الـ traffic يقف. الانتظار لازم يبقى قبل الـ snapshot، لأن أثناء الـ snapshot الـ loop متجمّد ومحدش هيقدر يقرا الـ 503 بتاعك. وبعدين تاخد الـ snapshot، وتبعت الملف برّه الجهاز، وتعمل restart للـ instance. وتعامل مع الملف على إنه بيانات production: فيه كل string في الـ heap، والتجربة فوق لقت فيه API key و email بتاع عميل.</p>
+    <p>عشان تلاقي leak، استخدم <b>الـ three-snapshot technique</b>. اعمل warm-up الأول عشان الـ allocations اللي بتحصل مرة واحدة (الـ JIT، والـ lazy modules، وتجهيز الـ connections) تعدي، وخد S1. اضغط وخد S2. واضغط نفس الضغط تاني وخد S3. الـ allocation اللي بتحصل مرة واحدة بتكبر مرة وتقف. أما الـ leak فبيكبر في <b>الفترتين</b>، بكمية متناسبة مع الضغط. السكريبت بيقارن عدد الـ objects لكل constructor، وبيمشي أقصر طريق من الـ GC roots لـ instance واحدة، زي تبويب Retainers في الـ DevTools. وبيسمّي <code>CachedProductPage</code> (3000 ← 8000 ← 13000، يعني 5000 بالظبط لكل 5000 request) وماسكها <code>routeCache</code>. وصف الـ <code>Array</code> اللي بيزيد واحد في كل فترة ده دوشة، وعشان كده بتبص على حجم الزيادة مش وجودها بس.</p>
+    <p>الغلطة الشائعة: تاخد snapshot واحد وتدوّر على أكبر حاجة فيه، فتلاقي strings و arrays ومتفهمش حاجة. الـ leak بيبان من المقارنة مش من الصورة الواحدة. وغلطة تانية: تعمل الـ snapshot على instance بتاخد traffic، فكل الـ users عليها يقفوا.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ RSS بتاع الـ catalog API بيطلع 200 MB كل يوم وبيتعمله restart بالليل. على instance واحدة في الـ production: تفشّل <code>/ready</code>، تاخد S1، ترجّعها للـ traffic ساعة، تكرر S2 و S3. الـ diff بيقولك <code>CachedProductPage</code> وإن اللي ماسكها <code>routeCache</code>، فتروح للكود وتلاقي <code>req.originalUrl</code> في الـ key: كل <code>utm_campaign</code> بقى صفحة جديدة في الـ cache. ده أسرع بكتير من إنك تقرا الكود كله وتخمّن.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: how do you find a memory leak in production without hurting users?</b>
+    "I take one instance out of the load balancer and wait for traffic to stop, because the snapshot is synchronous and needs a lot of extra memory. I take three snapshots with real load between them, and only compare after warm-up. Whatever grows in both windows, in proportion to traffic, is the leak, and the retainer path names who holds it. The files contain production data, so they stay encrypted and get deleted afterwards."
+    <div class="ar-note"><b>السؤال: إزاي تلاقي memory leak في الـ production من غير ما تأذي الـ users؟</b> "بشيل instance واحدة من الـ load balancer وأستنى الـ traffic يقف، لأن الـ snapshot sync ومحتاج memory زيادة كتير. باخد 3 snapshots بينهم load حقيقي، وبقارن بعد الـ warm-up بس. اللي بيكبر في الفترتين بما يتناسب مع الـ traffic هو الـ leak، والـ retainer path بيقول مين ماسكه. والملفات فيها بيانات production، فبتفضل مشفّرة وبتتمسح بعدها."</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — --heapsnapshot-near-heap-limit <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — الـ --heapsnapshot-near-heap-limit</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Some leaks only show after days, and the process dies at 3 a.m. <code>--heapsnapshot-near-heap-limit=N</code> writes up to N snapshots as the heap approaches its limit, before the crash, so the evidence survives. Add <code>--diagnostic-dir</code> for the location and <code>--report-on-fatalerror</code> for a JSON report of the crash. The Node docs mark the flag as no longer experimental from v22.22.1. It worked on 22.19.</p>
+    <p>The price is at the worst possible moment. To make room, Node raises the heap limit. In <a href="https://github.com/nodejs/node/blob/v22.19.0/src/env.cc#L2138"><code>src/env.cc</code></a> the new limit is the current one plus the young generation size, and the comment there says this can effectively raise the limit for good. Measured: with <code>--max-old-space-size=64</code>, a plain crash came at ≈53 MB of heap after ≈0.7 s. With one snapshot it came at ≈119 MB after ≈10.7 s, the report showed a <code>memoryLimit</code> of 160 MB, and peak RSS reached ≈347 MB. That's a process you limited to 64 MB using more than five times that much. In a tight container, the kernel may kill it during the snapshot and leave nothing behind. The same section of the source skips the snapshot if it estimates there isn't enough memory available. The process is also frozen for those seconds, and it needs disk: 43 MB and 83 MB files here, from heaps that small.</p>
+    <p>A trap I hit on the first run: <code>--diagnostic-dir</code> doesn't cover reports. The snapshots went to <code>diag/</code> but the report landed in the current directory, so add <code>--report-directory</code> too. Also, the report's <code>environmentVariables</code> section holds your secrets. <code>--report-exclude-env</code> removed that section when I tested it on 22.19, but the command line stays in the report header, so don't pass secrets as arguments. And the report's JavaScript stack read <code>No stack</code> here, so don't count on it to name the allocating code. That's the snapshot's job.</p>
+  </section>
+
+<pre data-file="near-limit.ts"><code class="language-typescript">// الـ leak سريع عن قصد، عشان الـ process توصل للـ limit في ثواني
+type AuditEntry = { orderId: number; actor: string; payload: number[] };
+
+const auditTrail: AuditEntry[] = [];
+const started = performance.now();
+
+setInterval(() =&gt; {
+  for (let i = 0; i &lt; 2_000; i++) {
+    auditTrail.push({ orderId: auditTrail.length, actor: `user-${i}`, payload: new Array(50).fill(i) });
+  }
+  const heapMb = Math.round(process.memoryUsage().heapUsed / 1048576);
+  if (auditTrail.length % 40_000 === 0) {
+    console.log(`${Math.round(performance.now() - started)} ms: entries=${auditTrail.length} heapUsed=${heapMb} MB`);
+  }
+}, 5);
+</code></pre>
+
+<pre data-file="run.sh"><code class="language-bash"># الـ run من غير أي تشخيص: بيموت وخلاص
+node --max-old-space-size=64 near-limit.ts
+
+# الـ run اللي بيسيب دليل: snapshot قبل الموت، وتقرير JSON في نفس الفولدر
+node --max-old-space-size=64 --heapsnapshot-near-heap-limit=1 --diagnostic-dir=diag --report-on-fatalerror --report-directory=diag --report-exclude-env near-limit.ts
+</code></pre>
+
+<pre><code class="language-plaintext">217 ms: entries=40000 heapUsed=29 MB
+513 ms: entries=80000 heapUsed=50 MB
+Wrote snapshot to diag\Heap.20261104.013430.14544.0.001.heapsnapshot
+8971 ms: entries=120000 heapUsed=66 MB
+9499 ms: entries=160000 heapUsed=86 MB
+9960 ms: entries=200000 heapUsed=107 MB
+
+&lt;--- Last few GCs ---&gt;
+
+[14544:000001850F215000]    10680 ms: Mark-Compact (reduce) 118.9 (141.3) -&gt; 118.8 (123.3) MB, pooled: 0 MB, 288.15 / 0.00 ms [...]
+
+&lt;--- JS stacktrace ---&gt;
+
+FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory
+
+Writing Node.js report to file: report.20261104.013440.14544.0.002.json
+Node.js report completed
+----- Native stack trace -----
+[...]
+exit code: 134
+
+report sections: header javascriptStack javascriptHeap nativeStack resourceUsage uvthreadResourceUsage libuv workers environmentVariables sharedObjects
+event: Allocation failed - JavaScript heap out of memory | trigger: OOMError
+javascriptHeap: {"totalMemory":129306624,"usedMemory":124611552,"memoryLimit":167772160}
+stack: No stack. [ 'Unavailable.' ]
+rss: 231239680 maxRss 363765760
+</code></pre>
+  <div class="ar-note">هتلاقي الـ heap عدّى الـ 64 MB عادي بعد الـ snapshot، ووصل ≈119 MB قبل الموت. الوقفة بين 513 ms و8971 ms هي الـ snapshot نفسه، حوالي 8 ثواني والـ process واقفة. الـ <code>FATAL ERROR</code> هو الرسالة الحقيقية بتاعة V8، والـ exit code هنا 134 على Windows. من التقرير: <code>memoryLimit</code> بقى 160 MB بدل 64، و<code>maxRss</code> ≈347 MB، و<code>stack</code> طلع <code>No stack</code>. الـ report ده من run من غير <code>--report-exclude-env</code>، وعشان كده قسم <code>environmentVariables</code> ظاهر. الناتج من run حقيقي، و[...] معناها إني قصّرت سطر طويل.</div>
+
+  <table>
+    <tr><th>Run, all with a 64 MB limit</th><th>Died after</th><th>Heap at death</th><th>Left behind</th></tr>
+    <tr><td>Plain</td><td>≈0.7 s</td><td>≈53 MB</td><td>Nothing, only stderr</td></tr>
+    <tr><td><code>--heapsnapshot-near-heap-limit=1</code>, report on</td><td>≈10.7 s</td><td>≈119 MB</td><td>43 MB snapshot, 22 KB report</td></tr>
+    <tr><td><code>--heapsnapshot-near-heap-limit=2</code>, report on</td><td>≈27.6 s</td><td>≈158 MB</td><td>43 MB and 83 MB snapshots, report</td></tr>
+  </table>
+  <div class="ar-note">نفس الـ leak ونفس الـ limit في التلاتة. <b>من غير تشخيص:</b> بيموت بعد ≈0.7 ثانية عند ≈53 MB ومش بيسيب غير رسالة الـ error. <b>بـ snapshot واحد:</b> بيموت بعد ≈10.7 ثانية عند ≈119 MB، وبيسيب snapshot بـ 43 MB وتقرير صغير. <b>بـ 2 snapshots:</b> بيموت بعد ≈27.6 ثانية عند ≈158 MB، وبيسيب ملفين. يعني كل snapshot زيادة بيطوّل الوقفة وبيعلّي الـ memory الحقيقية فوق الـ limit اللي إنت حددته.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>فيه leaks مش بتبان غير بعد أيام، والـ process بتموت الساعة 3 الفجر. <code>--heapsnapshot-near-heap-limit=N</code> بيكتب لحد N snapshots لما الـ heap يقرّب من الـ limit، قبل الـ crash، فالدليل بيفضل موجود. ضيف <code>--diagnostic-dir</code> للمكان، و<code>--report-on-fatalerror</code> لتقرير JSON عن الـ crash. الـ docs بتقول إن الـ flag مبقاش experimental من v22.22.1، وهو اشتغل عادي على 22.19.</p>
+    <p>التمن بييجي في أسوأ وقت. عشان يعمل مساحة، Node بيرفع الـ heap limit. في <a href="https://github.com/nodejs/node/blob/v22.19.0/src/env.cc#L2138"><code>src/env.cc</code></a> الـ limit الجديد هو الحالي زائد حجم الـ young generation، والـ comment هناك بيقول إن ده ممكن يرفع الـ limit بشكل فعلي على طول. القياس: بـ <code>--max-old-space-size=64</code>، الـ crash العادي جه عند ≈53 MB heap بعد ≈0.7 ثانية. وبـ snapshot واحد جه عند ≈119 MB بعد ≈10.7 ثانية، والتقرير قال <code>memoryLimit</code> 160 MB، والـ peak RSS وصل ≈347 MB. يعني process إنت حددتها بـ 64 MB استخدمت أكتر من 5 أضعاف كده. وفي container ضيق، الـ kernel ممكن يقتلها أثناء الـ snapshot ومفيش حاجة تفضل. ونفس الجزء من الـ source بيلغي الـ snapshot لو حسب إن الـ memory المتاحة مش كفاية. وكمان الـ process بتبقى واقفة الثواني دي، ومحتاجة disk: ملفات 43 MB و83 MB هنا، من heaps بالصغر ده.</p>
+    <p>فخ وقعت فيه في أول run: <code>--diagnostic-dir</code> مش بيغطي الـ reports. الـ snapshots راحت <code>diag/</code> والتقرير نزل في الـ current directory، فضيف <code>--report-directory</code> كمان. وكمان قسم <code>environmentVariables</code> في التقرير فيه الـ secrets بتاعتك. <code>--report-exclude-env</code> شال القسم ده لما جربته على 22.19، بس الـ command line بيفضل في الـ header بتاع التقرير، فمتبعتش secrets كـ arguments. والـ JavaScript stack في التقرير طلع <code>No stack</code> هنا، فمتعتمدش عليه يسمّي الكود اللي عمل الـ allocation. ده شغل الـ snapshot.</p>
+    <p>الغلطة الشائعة: تحط الـ flag في الـ Dockerfile وتفتكر إن الدليل مضمون، من غير ما تجرب في container بنفس الـ limit. لو الـ kernel قتل الـ process الأول، أو الـ disk مش persistent، مش هتلاقي حاجة.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      service في Kubernetes بتموت كل 3 أيام بـ <code>FATAL ERROR: Reached heap limit</code>. تحط <code>--heapsnapshot-near-heap-limit=1</code> و<code>--diagnostic-dir</code> على volume ثابت، وتخلّي <code>--max-old-space-size</code> أقل من الـ container limit بمسافة كافية للـ snapshot، على instance واحدة بس مش الكل. المرة الجاية هتصحى تلاقي ملف تفتحه، بدل ما تقعد تستنى المشكلة تتكرر.
+    </div>
+  </section>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Heap limits &amp; containers <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — حدود الـ heap والـ containers</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><code>v8.getHeapStatistics().heap_size_limit</code> is the real ceiling: 4,144 MB by default on this 31.7 GB machine. It's the old space limit plus the young generation, which is three semi-spaces. So <code>--max-old-space-size=512</code> gives 560 (512 + 3×16), and adding <code>--max-semi-space-size=64</code> to a 1,536 MB old space gives 1,728 (1,536 + 3×64). That formula comes from these measurements.</p>
+    <p>The flag caps the V8 heap and nothing else. The measurement below has a 64 MB limit and a process at ≈966 MB of RSS, with no error, because Buffers live outside the heap. A container limit counts RSS, so <code>--max-old-space-size</code> can't protect you from it. That means two different failures, in the table below. A <b>V8 OOM</b> gives you a fatal message and a chance at diagnostics, as in Part 2. A <b>kernel OOM kill</b> is a <code>SIGKILL</code>: exit 137, reason <code>OOMKilled</code>, nothing logged.</p>
+    <p>So set <code>--max-old-space-size</code> below the container limit, commonly around 75% as <a href="../../01-JavaScript/lessons/18-memory-v8-performance.html">JS lesson 18, part 4</a> explains, leaving room for Buffers, stacks, code and the young generation. If you set it equal to or above the limit, V8 sees no reason to collect hard, RSS crosses the limit first, and you get the silent kill. On the default: the docs for <code>process.constrainedMemory()</code> describe the OS limit, but neither that page nor the CLI page mentions cgroups or says how it relates to the default heap. The source does: <a href="https://github.com/nodejs/node/blob/v22.19.0/src/api/environment.cc#L203"><code>src/api/environment.cc</code></a> takes the smaller of total memory and <code>uv_get_constrained_memory()</code> and passes it to V8's <code>ConfigureDefaults</code>. So the default follows the limit that libuv detects, but it doesn't leave room for your Buffers, and that's why you still set the flag.</p>
+    <p><code>--max-old-space-size-percentage</code> is newer: 22.19 rejects it with <code>bad option</code>. The changelogs show it landed in v24.6.0 and was backported to v22.21.0. The docs define it as a percentage of "available system memory", so check what it resolves to inside your container before relying on it, by printing <code>heap_size_limit</code> at startup.</p>
+  </section>
+
+<pre data-file="rss-vs-heap.ts"><code class="language-typescript">// شغّله كده: node --max-old-space-size=64 rss-vs-heap.ts
+// الـ heap صغير ومحدود بـ 64 MB، والـ process بتكبر برضه: لأن الـ uploads في Buffers برّه الـ heap
+import { getHeapStatistics } from "node:v8";
+
+const mb = (bytes: number) =&gt; Math.round(bytes / 1048576);
+const uploads: Buffer[] = [];
+
+function report(label: string): void {
+  const { rss, heapUsed, heapTotal, external, arrayBuffers } = process.memoryUsage();
+  console.log(
+    label.padEnd(14),
+    `rss=${mb(rss)} heapUsed=${mb(heapUsed)} heapTotal=${mb(heapTotal)} external=${mb(external)} arrayBuffers=${mb(arrayBuffers)}`,
+  );
+}
+
+console.log({
+  heap_size_limit_MB: mb(getHeapStatistics().heap_size_limit),
+  constrainedMemory: process.constrainedMemory(),
+  availableMemory_MB: mb(process.availableMemory()),
+});
+
+report("start");
+for (const step of [1, 2, 3]) {
+  // كل خطوة 300 file مرفوع، كل واحد 1 MB لسه في الـ memory
+  for (let i = 0; i &lt; 300; i++) uploads.push(Buffer.alloc(1048576, step));
+  report(`${uploads.length} uploads`);
+}
+</code></pre>
+
+<pre><code class="language-plaintext">{
+  heap_size_limit_MB: 112,
+  constrainedMemory: 0,
+  availableMemory_MB: 16939
+}
+start          rss=71 heapUsed=9 heapTotal=10 external=12 arrayBuffers=3
+300 uploads    rss=369 heapUsed=9 heapTotal=12 external=309 arrayBuffers=300
+600 uploads    rss=665 heapUsed=4 heapTotal=6 external=609 arrayBuffers=600
+900 uploads    rss=966 heapUsed=4 heapTotal=7 external=909 arrayBuffers=900
+exit code: 0
+
+[] heap_size_limit = 4144 MB
+[--max-old-space-size=512] heap_size_limit = 560 MB
+[--max-old-space-size=1536] heap_size_limit = 1584 MB
+[--max-old-space-size=1536 --max-semi-space-size=64] heap_size_limit = 1728 MB
+
+$ node --max-old-space-size-percentage=50 -e "console.log(1)"
+C:\Program Files\nodejs\node.exe: bad option: --max-old-space-size-percentage=50
+</code></pre>
+  <div class="ar-note">الـ limit 112 MB (64 زائد 3×16)، والـ <code>constrainedMemory</code> صفر لأن مفيش container. بعدين 900 file مرفوع: الـ <code>rss</code> وصل 966 MB و<code>heapUsed</code> 4 MB بس، والـ process خلصت بـ exit 0 من غير أي error. الجزء التاني بيأكد المعادلة: الـ <code>heap_size_limit</code> = الـ old space + 3 × الـ semi-space. وآخر سطر هو الرفض الحقيقي بتاع 22.19 للـ flag الجديد.</div>
+
+<pre class="diagram">
+ container limit (cgroup): counts all of RSS
+ ┌───────────────────────────────────────────────────────────────┐
+ │ RSS                                                           │
+ │ ┌───────────────────────────────┐ ┌─────────────┐ ┌─────────┐ │
+ │ │ V8 heap                       │ │ external    │ │ code,   │ │
+ │ │ ┌───────────┐ ┌─────────────┐ │ │ Buffers,    │ │ stacks, │ │
+ │ │ │ young     │ │ old space   │ │ │ addons,     │ │ libuv,  │ │
+ │ │ │ 3 × semi  │ │ --max-old-  │ │ │ TLS         │ │ malloc  │ │
+ │ │ │           │ │ space-size  │ │ │ NOT capped  │ │         │ │
+ │ │ └───────────┘ └─────────────┘ │ │ by V8 flags │ │         │ │
+ │ └───────────────────────────────┘ └─────────────┘ └─────────┘ │
+ └───────────────────────────────────────────────────────────────┘
+   V8 OOM: old space is full            Kernel kill: RSS hits the limit
+</pre>
+  <div class="ar-note">الصندوق الكبير هو الـ container limit، وده بيعد الـ RSS كله. جواه تلات حاجات: الـ V8 heap (الـ young وهو 3 × الـ semi-space، والـ old space اللي بيحدده <code>--max-old-space-size</code>)، والـ external (الـ Buffers والـ addons والـ TLS، ومفيش flag من بتوع V8 بيحدها)، وباقي الـ process (الكود والـ stacks والـ libuv و malloc). تحت: V8 OOM بيحصل لما الـ old space يتملي، و kernel kill بيحصل لما الـ RSS يوصل للـ limit، ودول حدين مستقلين.</div>
+
+  <table>
+    <tr><th></th><th>V8 OOM</th><th>Kernel OOM kill</th></tr>
+    <tr><td>Trigger</td><td>Old space full, GC frees nothing</td><td>RSS reaches the cgroup limit</td></tr>
+    <tr><td>What you see</td><td><code>FATAL ERROR: Reached heap limit</code> on stderr</td><td>Nothing from the process; <code>OOMKilled</code> in the orchestrator</td></tr>
+    <tr><td>Exit</td><td>134 here (run on Windows)</td><td>137, meaning 128 + SIGKILL (from the docs)</td></tr>
+    <tr><td>Diagnostics</td><td>Snapshot and report are possible</td><td>None, the process can't react</td></tr>
+    <tr><td>Typical cause</td><td>A JS leak, or a limit set too low</td><td>Buffers, or a limit above the container's</td></tr>
+  </table>
+  <div class="ar-note">الجدول صف صف. <b>السبب المباشر:</b> V8 OOM لما الـ old space يتملي والـ GC ميحررش حاجة، و kernel kill لما الـ RSS يوصل لحد الـ cgroup. <b>اللي بتشوفه:</b> الأول رسالة <code>FATAL ERROR</code> على stderr، والتاني مفيش حاجة من الـ process وبس <code>OOMKilled</code> عند الـ orchestrator. <b>الـ exit:</b> الأول 134 هنا (اتشغل على Windows)، والتاني 137 يعني 128 + SIGKILL (من الـ docs). <b>التشخيص:</b> الأول ممكن snapshot وتقرير، والتاني مفيش لأن الـ process مش بتلحق تعمل حاجة. <b>السبب المعتاد:</b> الأول leak في JS أو limit واطي، والتاني Buffers أو limit أعلى من بتاع الـ container.</div>
+
+  <div class="callout warn">
+    <b>Not run here: anything inside a container</b>
+    There's no Docker on this machine, so the kernel OOM column and the cgroup behaviour are from the <a href="https://kubernetes.io/docs/tasks/configure-pod-container/assign-memory-resource/">Kubernetes docs</a> and from Node's source at tag v22.19.0, not from a run. <code>constrainedMemory: 0</code> above only shows there's no limit here. To check yours, run <code>node -p "[process.constrainedMemory(), require('v8').getHeapStatistics().heap_size_limit]"</code> inside the container.
+    <div class="ar-note">مفيش Docker على الجهاز ده، فعمود الـ kernel OOM وسلوك الـ cgroup جايين من <a href="https://kubernetes.io/docs/tasks/configure-pod-container/assign-memory-resource/">docs بتاعة Kubernetes</a> ومن source بتاع Node عند tag v22.19.0، مش من تشغيل. و<code>constrainedMemory: 0</code> اللي فوق بيوضّح بس إن مفيش limit هنا. عشان تتأكد عندك، شغّل <code>node -p "[process.constrainedMemory(), require('v8').getHeapStatistics().heap_size_limit]"</code> جوه الـ container.</div>
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><code>v8.getHeapStatistics().heap_size_limit</code> هو السقف الحقيقي: 4144 MB افتراضيًا على الجهاز ده اللي فيه 31.7 GB. وهو عبارة عن limit الـ old space زائد الـ young generation، اللي هو 3 semi-spaces. فـ <code>--max-old-space-size=512</code> بيدّي 560 (512 + 3×16)، ولو ضفت <code>--max-semi-space-size=64</code> على old space بـ 1536 MB بيدّي 1728 (1536 + 3×64). المعادلة دي جاية من القياسات دي.</p>
+    <p>الـ flag بيحدد الـ V8 heap وبس. القياس فوق فيه limit بـ 64 MB و process عند ≈966 MB RSS من غير أي error، لأن الـ Buffers عايشة برّه الـ heap. والـ container limit بيعد الـ RSS، فـ <code>--max-old-space-size</code> مش هيحميك منه. وده معناه نوعين مختلفين من الفشل، في الجدول فوق. <b>الـ V8 OOM</b> بيدّيك رسالة fatal وفرصة للتشخيص، زي الجزء 2. أما <b>الـ kernel OOM kill</b> فهو <code>SIGKILL</code>: exit 137، والسبب <code>OOMKilled</code>، ومفيش أي log.</p>
+    <p>فحط <code>--max-old-space-size</code> أقل من الـ container limit، غالبًا حوالي 75% زي ما <a href="../../01-JavaScript/lessons/18-memory-v8-performance.html">درس JS رقم 18، الجزء 4</a> بيشرح، عشان تسيب مكان للـ Buffers والـ stacks والكود والـ young generation. لو حطيته قد الـ limit أو أعلى، V8 مش هيشوف سبب يجمّع بقوة، والـ RSS هيعدّي الـ limit الأول، وتاخد الـ kill الصامت. وعن الـ default: الـ docs بتاعة <code>process.constrainedMemory()</code> بتوصف الحد بتاع الـ OS، بس لا الصفحة دي ولا صفحة الـ CLI بيجيبوا سيرة الـ cgroups ولا بيقولوا ده مرتبط إزاي بالـ heap الافتراضي. الـ source هو اللي بيقول: <a href="https://github.com/nodejs/node/blob/v22.19.0/src/api/environment.cc#L203"><code>src/api/environment.cc</code></a> بياخد الأصغر بين الـ memory الكلية و<code>uv_get_constrained_memory()</code> وبيدّيه لـ <code>ConfigureDefaults</code> بتاع V8. يعني الـ default بيمشي مع الـ limit اللي libuv بيكتشفه، بس مش بيسيب مكان للـ Buffers بتاعتك، وعشان كده لسه بتحط الـ flag.</p>
+    <p><code>--max-old-space-size-percentage</code> أحدث: 22.19 بيرفضه بـ <code>bad option</code>. الـ changelogs بتقول إنه نزل في v24.6.0 واترجّع لـ v22.21.0. والـ docs بتعرّفه كنسبة من "available system memory"، فاتأكد بيطلع كام جوه الـ container بتاعك قبل ما تعتمد عليه، بإنك تطبع <code>heap_size_limit</code> وقت الـ startup.</p>
+    <p>الغلطة الشائعة: تحط <code>--max-old-space-size</code> بنفس رقم الـ container limit، أو تفتكر إنه بيحدد الـ memory كلها، فتتفاجئ بـ <code>OOMKilled</code> والـ heap لسه فاضي.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      pod بـ 1 GiB limit بيتقتل بـ exit 137 ومفيش ولا سطر في الـ logs، والـ heap في الـ dashboard 300 MB بس. ده مش leak في JS: بص على <code>external</code> و<code>arrayBuffers</code> في الـ metrics، وهتلاقي غالبًا uploads أو PDF generation ماسكين Buffers. الحل هو streaming وحد لعدد الـ uploads مع بعض، مع <code>--max-old-space-size=768</code> للـ heap. وصدّر الـ <code>rss</code> والـ <code>external</code> مع الـ <code>heapUsed</code> في كل service، عشان تفرّق بينهم من أول نظرة.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: a pod keeps dying with exit 137 and no logs, but the heap graph looks fine. What do you check?</b>
+    "Exit 137 is SIGKILL, so the kernel killed it, and that's why there's no message. The container limit counts RSS, not the V8 heap, so I look at <code>external</code> and <code>arrayBuffers</code>: Buffers from uploads, compression or PDFs don't appear in <code>heapUsed</code>. I also check that <code>--max-old-space-size</code> is below the limit with room to spare. The fix is usually streaming plus a concurrency limit, not a bigger heap."
+    <div class="ar-note"><b>السؤال: pod بيموت بـ exit 137 من غير logs، والـ heap شكله تمام. هتبص على إيه؟</b> "الـ exit 137 هو SIGKILL، يعني الـ kernel هو اللي قتله، وعشان كده مفيش رسالة. الـ container limit بيعد الـ RSS مش الـ V8 heap، فهبص على <code>external</code> و<code>arrayBuffers</code>: الـ Buffers بتاعة الـ uploads أو الضغط أو الـ PDFs مش بتظهر في <code>heapUsed</code>. وهتأكد كمان إن <code>--max-old-space-size</code> أقل من الـ limit بمسافة كويسة. الحل غالبًا streaming مع حد للتزامن، مش heap أكبر."</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — GC &amp; tail latency <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ GC والـ tail latency</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>The generations themselves are in <a href="../../01-JavaScript/lessons/18-memory-v8-performance.html">JS lesson 18, part 1</a> and <a href="../../03-CS-Fundamentals/lessons/12-io-models-event-loop.html">CS lesson 12, part 7</a>: young objects are collected by the Scavenger and survivors are promoted, while the old space is handled by Mark-Compact. What's new is reading what your server actually does. <code>--trace-gc</code> prints one line per collection, and the table below reads a real line from this server under load, token by token.</p>
+    <p>A trace tells you GC happened. To blame GC for latency, you have to line the two up. A <code>PerformanceObserver</code> on <code>'gc'</code> gives each pause a start and a duration, so you can check whether your slowest requests overlapped one. On the quiet run in the table, 96 of the 143 slowest requests at 16 MB overlapped a GC, against 6% of normal ones. So GC is a real contributor to that tail, but about a third of the outliers had nothing to do with it. In busy rounds, fewer still overlapped a GC (about 4 of 11), because the machine's own noise was the bigger cause. Always measure this before tuning.</p>
+    <p>Then come the two levers. <code>--max-semi-space-size</code> makes the young generation bigger, so scavenges are rarer. Going from 16 to 64 MB cut them about 4× (116 → 28 per 1,000 requests), and that count held across every round. But it cost ≈90 MB of peak RSS, and p99 barely moved: ≈10 vs ≈11 ms on the quiet round. On busy rounds it was mostly about 10–25% better, and one round came out worse. Going down to 1 MB shows the other extreme: nearly 2 scavenges per request and every request touched by GC. The bigger lever is <b>allocating less</b>. The same answer computed in one loop with typed arrays needs 0.9 scavenges per 1,000 requests, gives ≈22,700 rps against ≈1,800, and has a p99 of ≈1 ms. No flag gets near that.</p>
+    <p><b>Object pools</b> look like the obvious next step, and they usually aren't. Young objects that die are almost free to collect, because a scavenge only copies survivors. A pooled object survives, gets promoted to the old space, and stays there. In the test below, the pool halved scavenges but gained no measurable time (≈19–24 ms vs ≈19–21 ms). It also added a real bug: a forgotten reset handed one tenant's coupon code to another tenant. Pools make sense for large Buffers and for objects that are expensive to construct. They rarely help with small DTOs.</p>
+  </section>
+
+<pre data-file="alloc-server.ts"><code class="language-typescript">// شغّله كده: node --trace-gc alloc-server.ts
+// عندنا route بيعمل garbage كتير في كل request، و cache كبير عايش في الـ old space
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { constants, PerformanceObserver, type PerformanceEntry } from "node:perf_hooks";
+
+type Order = { id: number; tenantId: number; status: string; totalCents: number; tags: string[] };
+
+// (1) الـ data الأساسية: 3000 order لكل request بتتبني من الأول
+function loadOrders(seed: number): Order[] {
+  return Array.from({ length: 3000 }, (_, i) =&gt; ({
+    id: seed + i,
+    tenantId: (seed + i) % 20,
+    status: i % 3 ? "paid" : "pending",
+    totalCents: (i * 7919) % 100_000,
+    tags: [`region-${i % 5}`, `channel-${i % 3}`],
+  }));
+}
+
+// ❌ كل خطوة بتعمل array جديد و objects جديدة: شكله حلو وغالي في الـ allocation
+function summarizeFunctional(seed: number): string {
+  const byTenant = loadOrders(seed)
+    .filter((o) =&gt; o.status === "paid")
+    .map((o) =&gt; ({ ...o, totalEgp: o.totalCents / 100, label: `${o.tenantId}:${o.status}` }))
+    .reduce&lt;Record&lt;string, { count: number; total: number }&gt;&gt;((acc, o) =&gt; {
+      const entry = acc[o.tenantId] ?? { count: 0, total: 0 };
+      return { ...acc, [o.tenantId]: { count: entry.count + 1, total: entry.total + o.totalEgp } };
+    }, {});
+  return JSON.stringify(byTenant);
+}
+
+// ✅ نفس الإجابة بالظبط: loop واحد ومن غير objects في النص
+const counts = new Int32Array(20);
+const totals = new Float64Array(20);
+function summarizeLean(seed: number): string {
+  counts.fill(0);
+  totals.fill(0);
+  for (let i = 0; i &lt; 3000; i++) {
+    if (i % 3 === 0) continue;
+    const tenant = (seed + i) % 20;
+    counts[tenant]!++;
+    totals[tenant]! += ((i * 7919) % 100_000) / 100;
+  }
+  const out: Record&lt;string, { count: number; total: number }&gt; = {};
+  for (let t = 0; t &lt; 20; t++) if (counts[t]) out[t] = { count: counts[t]!, total: totals[t]! };
+  return JSON.stringify(out);
+}
+
+// (2) الـ cache الكبير: عشان الـ Mark-Compact يبقى عنده شغل حقيقي
+const catalog = Array.from({ length: 400_000 }, (_, i) =&gt; ({ sku: `SKU-${i}`, priceCents: i % 9000 }));
+
+// (3) بنسجّل كل GC وكل request، وبعدين نشوف مين وقع جوه مين
+const gcEvents: { start: number; end: number; kind: number }[] = [];
+new PerformanceObserver((list) =&gt; {
+  for (const entry of list.getEntries() as (PerformanceEntry &amp; { detail: { kind: number } })[]) {
+    gcEvents.push({ start: entry.startTime, end: entry.startTime + entry.duration, kind: entry.detail.kind });
+  }
+}).observe({ entryTypes: ["gc"] });
+
+const requests: { start: number; ms: number }[] = [];
+let seed = 0;
+
+const server = createServer((req, res) =&gt; {
+  if (req.url === "/report") return res.end(JSON.stringify(buildReport()));
+  if (req.url === "/reset") {
+    gcEvents.length = 0;
+    requests.length = 0;
+    return res.end("ok");
+  }
+  const start = performance.now();
+  const body = req.url === "/summary/lean" ? summarizeLean(seed++) : summarizeFunctional(seed++);
+  res.setHeader("content-type", "application/json");
+  res.end(body);
+  requests.push({ start, ms: performance.now() - start });
+});
+
+function buildReport() {
+  const pause = (kind: number) =&gt; gcEvents.filter((g) =&gt; g.kind === kind).map((g) =&gt; g.end - g.start);
+  const sum = (xs: number[]) =&gt; xs.reduce((a, b) =&gt; a + b, 0);
+  const scavenges = pause(constants.NODE_PERFORMANCE_GC_MINOR);
+  const marks = pause(constants.NODE_PERFORMANCE_GC_MAJOR);
+  const sorted = requests.map((r) =&gt; r.ms).sort((a, b) =&gt; a - b);
+  const p99 = sorted[Math.floor(sorted.length * 0.99)] ?? 0;
+  // الـ outliers: الـ 1% الأبطأ من الـ requests، كام واحد منهم GC حصل جواه؟
+  const outliers = requests.filter((r) =&gt; r.ms &gt;= p99);
+  const hit = outliers.filter((r) =&gt; gcEvents.some((g) =&gt; g.start &lt; r.start + r.ms &amp;&amp; g.end &gt; r.start));
+  const normal = requests.filter((r) =&gt; r.ms &lt; p99);
+  const normalHit = normal.filter((r) =&gt; gcEvents.some((g) =&gt; g.start &lt; r.start + r.ms &amp;&amp; g.end &gt; r.start));
+  return {
+    catalogSize: catalog.length,
+    peakRssMb: Math.round(process.resourceUsage().maxRSS / 1024),
+    handled: requests.length,
+    handlerP50: Number((sorted[Math.floor(sorted.length / 2)] ?? 0).toFixed(1)),
+    handlerP99: Number(p99.toFixed(1)),
+    handlerMax: Number((sorted.at(-1) ?? 0).toFixed(1)),
+    scavenges: scavenges.length,
+    scavengeTotalMs: Math.round(sum(scavenges)),
+    scavengeMaxMs: Number(Math.max(0, ...scavenges).toFixed(1)),
+    markCompacts: marks.length,
+    markTotalMs: Math.round(sum(marks)),
+    markMaxMs: Number(Math.max(0, ...marks).toFixed(1)),
+    outliers: outliers.length,
+    outliersWithGc: hit.length,
+    normalWithGcPct: Math.round((100 * normalHit.length) / Math.max(1, normal.length)),
+  };
+}
+
+server.listen(0, "127.0.0.1", () =&gt; process.send?.({ port: (server.address() as AddressInfo).port }));
+process.on("disconnect", () =&gt; process.exit(0));
+</code></pre>
+<pre data-file="trace-gc-run.ts"><code class="language-typescript">// شغّله كده: node trace-gc-run.ts
+// بنشغّل السيرفر بـ ⁦--trace-gc⁩، ونضربه 4 ثواني، ونمسك السطور اللي طلعت
+import { fork } from "node:child_process";
+import { once } from "node:events";
+import autocannon from "autocannon";
+
+const child = fork("alloc-server.ts", { execArgv: ["--trace-gc"], stdio: ["ignore", "pipe", "inherit", "ipc"] });
+let out = "";
+child.stdout!.on("data", (chunk) =&gt; (out += chunk));
+const [{ port }] = (await once(child, "message")) as [{ port: number }];
+const r = await autocannon({ url: `http://127.0.0.1:${port}/summary`, connections: 10, duration: 4 });
+child.disconnect();
+await once(child, "exit");
+
+const lines = out.split("\n").filter(Boolean);
+const scavenges = lines.filter((l) =&gt; l.includes("Scavenge"));
+const marks = lines.filter((l) =&gt; l.includes("Mark-Compact"));
+console.log({ requests: r.requests.total, scavengeLines: scavenges.length, markCompactLines: marks.length });
+console.log(scavenges.at(-1));
+console.log(marks.at(-1));
+</code></pre>
+
+<pre><code class="language-plaintext">{ requests: 7856, scavengeLines: 928, markCompactLines: 1 }
+[24484:000001F840273000]     4179 ms: Scavenge 65.7 (83.8) -&gt; 50.1 (83.8) MB, pooled: 0 MB, 0.22 / 0.00 ms  (average mu = 0.987, current mu = 0.987) allocation failure;
+[24484:000001F840273000]      169 ms: Mark-Compact 43.6 (70.3) -&gt; 42.5 (76.0) MB, pooled: 0 MB, 2.12 / 0.00 ms  (+ 0.3 ms in 0 steps since start of marking, biggest step 0.0 ms, walltime since start of marking 19 ms) (average mu = 0.987, current mu = 0.987) finalize incremental marking via task; GC in old space requested
+</code></pre>
+  <div class="ar-note">دي سطور حقيقية من السيرفر تحت الضغط: 928 scavenge و Mark-Compact واحد بس في 7856 request. الجدول اللي جاي بيقرا السطر الأول كلمة كلمة. والـ Mark-Compact كان وقت الـ startup لما اتبنى الـ cache الكبير، و<code>(+ 0.3 ms in 0 steps ...)</code> هو شغل الـ incremental marking اللي حصل قبل الوقفة.</div>
+
+  <table>
+    <tr><th>Token</th><th>Meaning</th></tr>
+    <tr><td><code>[24484:000001F840273000]</code></td><td>Process id and isolate address. A different isolate address means a worker thread.</td></tr>
+    <tr><td><code>4179 ms</code></td><td>Time since the process started</td></tr>
+    <tr><td><code>Scavenge</code></td><td>The type: young generation here, or <code>Mark-Compact</code> for the old space</td></tr>
+    <tr><td><code>65.7 (83.8)</code></td><td>Heap used before, with committed memory in brackets, in MB</td></tr>
+    <tr><td><code>-&gt; 50.1 (83.8) MB</code></td><td>Same two numbers after. It freed ≈15.6 MB.</td></tr>
+    <tr><td><code>pooled: 0 MB</code></td><td>Freed pages V8 kept for reuse rather than returning to the OS</td></tr>
+    <tr><td><code>0.22 / 0.00 ms</code></td><td>The pause on the main thread, then time spent in external callbacks. Compare this with your p99.</td></tr>
+    <tr><td><code>average mu = 0.987, current mu = 0.987</code></td><td>Mutator utilization: the share of time spent running your JS rather than GC. Well below 1 means GC is eating your CPU.</td></tr>
+    <tr><td><code>allocation failure</code></td><td>The reason: the young space was full. This is normal, not an error.</td></tr>
+  </table>
+  <div class="ar-note">الجدول كلمة كلمة. <code>[24484:…]</code> رقم الـ process وعنوان الـ isolate، ولو العنوان مختلف يبقى worker thread. <code>4179 ms</code> الوقت من أول الـ process. <code>Scavenge</code> النوع: young هنا، أو <code>Mark-Compact</code> للـ old space. <code>65.7 (83.8)</code> الـ heap المستخدم قبل، وبين القوسين الـ committed، بالـ MB. <code>-&gt; 50.1 (83.8) MB</code> نفس الرقمين بعد، يعني حرر ≈15.6 MB. <code>pooled</code> صفحات فاضية V8 محتفظ بيها بدل ما يرجعها للـ OS. <code>0.22 / 0.00 ms</code> الوقفة على الـ main thread، وبعدها وقت الـ external callbacks، وده اللي تقارنه بالـ p99. <code>mu</code> هي الـ mutator utilization: نسبة الوقت اللي بيتصرف في الـ JS بتاعك مش في الـ GC، ولو بعيدة عن 1 يبقى الـ GC واكل الـ CPU. <code>allocation failure</code> السبب: الـ young space اتملى، وده طبيعي مش error.</div>
+
+<pre data-file="gc-lab.ts"><code class="language-typescript">// شغّله كده: node gc-lab.ts
+// نفس الـ load: مرة بـ semi-space أكبر، ومرة بكود بيعمل allocation أقل
+import { fork } from "node:child_process";
+import { once } from "node:events";
+import autocannon from "autocannon";
+
+async function run(label: string, flags: string[], path: string) {
+  const child = fork("alloc-server.ts", { execArgv: flags });
+  const [{ port }] = (await once(child, "message")) as [{ port: number }];
+  const base = `http://127.0.0.1:${port}`;
+  // إحماء: الـ JIT والـ heap يوصلوا لحالتهم الثابتة قبل ما نبدأ نعد
+  await autocannon({ url: base + path, connections: 10, duration: 3 });
+  await fetch(`${base}/reset`);
+  const r = await autocannon({ url: base + path, connections: 10, duration: 8 });
+  const report = (await (await fetch(`${base}/report`)).json()) as Record&lt;string, number&gt;;
+  child.disconnect();
+  // الجهاز عليه شغل تاني، فبنقارن بالعدد لكل 1000 request مش بالوقت المطلق
+  const per1k = (n: number) =&gt; ((1000 * n) / report.handled!).toFixed(1).padStart(6);
+  console.log(
+    label.padEnd(24),
+    `rps=${String(Math.round(r.requests.average)).padStart(5)} p50=${String(r.latency.p50).padStart(4)} p99=${String(r.latency.p99).padStart(4)}`,
+    `handlerP99=${String(report.handlerP99).padStart(5)}`,
+    `| per 1000 req: scavenges=${per1k(report.scavenges!)} gcMs=${per1k(report.scavengeTotalMs! + report.markTotalMs!)}`,
+    `| maxPause=${Math.max(report.scavengeMaxMs!, report.markMaxMs!)}`,
+    `| peakRss=${report.peakRssMb} | outliers=${report.outliers} withGc=${report.outliersWithGc} normalWithGc=${report.normalWithGcPct}%`,
+  );
+}
+
+for (let round = 0; round &lt; Number(process.env.ROUNDS ?? 2); round++) {
+  await run("functional, semi 1 MB", ["--max-semi-space-size=1"], "/summary");
+  await run("functional, semi 16 MB", ["--max-semi-space-size=16"], "/summary");
+  await run("functional, semi 64 MB", ["--max-semi-space-size=64"], "/summary");
+  await run("lean, semi 16 MB", ["--max-semi-space-size=16"], "/summary/lean");
+}
+</code></pre>
+
+  <table>
+    <tr><th>Same answer, quiet round</th><th>rps</th><th>p50 / p99, ms</th><th>Scavenges per 1,000 req</th><th>GC ms per 1,000 req</th><th>Peak RSS, MB</th><th>Slowest 1% that overlapped a GC</th></tr>
+    <tr><td>Functional, semi 1 MB</td><td>≈633</td><td>13 / 47</td><td>1,917</td><td>≈849</td><td>306</td><td>51 of 51</td></tr>
+    <tr><td>Functional, semi 16 MB (default)</td><td>≈1,784</td><td>5 / 10</td><td>116</td><td>≈45</td><td>160</td><td>96 of 143</td></tr>
+    <tr><td>Functional, semi 64 MB</td><td>≈1,867</td><td>4 / 11</td><td>28</td><td>≈20</td><td>243</td><td>86 of 150</td></tr>
+    <tr><td>Lean loop, semi 16 MB</td><td>≈22,661</td><td>0 / 1</td><td>0.9</td><td>≈0.3</td><td>184</td><td>0 of 1,814</td></tr>
+  </table>
+  <div class="ar-note">الجدول صف صف، من الجولة الهادية. <b>semi 1 MB:</b> حوالي 2 scavenges لكل request، وكل الـ outliers جواها GC، والـ RSS أعلى لأن الـ garbage بيترقّى للـ old space. <b>semi 16 MB (الافتراضي):</b> 116 لكل 1000 request، و96 من 143 outlier جواهم GC. <b>semi 64 MB:</b> الـ scavenges ربع العدد، بس RSS زاد ≈90 MB والـ p99 تقريبًا هو هو. <b>الـ lean:</b> نفس الإجابة بـ loop واحد: rps حوالي 13 مرة أكتر، و p99 ≈1 ms، و0.9 scavenge لكل 1000 request. عمود الـ outliers معناه الأبطأ 1%، وكام واحد منهم حصل GC جواه. وفي الجولات الزحمة نزل الـ rps لـ ≈88–138، بس الـ scavenges لكل 1000 فضلت ≈115 و≈28 و≈1: عشان كده بنقارن بالعدد. وفي الزحمة دي الـ semi 64 حسّن الـ p99 ≈10–25% في أغلب الجولات، وجولة واحدة طلعت أوحش.</div>
+
+<pre data-file="pool-vs-alloc.ts"><code class="language-typescript">// شغّله كده: node pool-vs-alloc.ts
+// بنقارن objects جديدة لكل request بـ object pool، وبنوري الـ bug اللي الـ pool بيجيبه
+import { execFileSync } from "node:child_process";
+import { constants, PerformanceObserver, type PerformanceEntry } from "node:perf_hooks";
+
+type LineItem = { sku: string; qty: number; priceCents: number; couponCode: string | null };
+
+const ROUNDS = 6000;
+const ITEMS = 500;
+
+function runFresh(): number {
+  let total = 0;
+  for (let round = 0; round &lt; ROUNDS; round++) {
+    const items: LineItem[] = [];
+    for (let i = 0; i &lt; ITEMS; i++) items.push({ sku: "SKU", qty: 1 + (i % 3), priceCents: i, couponCode: null });
+    for (const item of items) total += item.qty * item.priceCents;
+  }
+  return total;
+}
+
+function runPooled(): number {
+  const free: LineItem[] = Array.from({ length: ITEMS }, () =&gt; ({ sku: "", qty: 0, priceCents: 0, couponCode: null }));
+  let total = 0;
+  for (let round = 0; round &lt; ROUNDS; round++) {
+    const items: LineItem[] = [];
+    for (let i = 0; i &lt; ITEMS; i++) {
+      const item = free.pop()!;
+      item.sku = "SKU";
+      item.qty = 1 + (i % 3);
+      item.priceCents = i;
+      items.push(item);
+    }
+    for (const item of items) total += item.qty * item.priceCents;
+    for (const item of items) free.push(item);
+  }
+  return total;
+}
+
+if (process.argv[2]) {
+  let scavenges = 0;
+  const observer = new PerformanceObserver((list) =&gt; {
+    for (const entry of list.getEntries() as (PerformanceEntry &amp; { detail: { kind: number } })[]) {
+      if (entry.detail.kind === constants.NODE_PERFORMANCE_GC_MINOR) scavenges++;
+    }
+  });
+  observer.observe({ entryTypes: ["gc"] });
+  const fn = process.argv[2] === "fresh" ? runFresh : runPooled;
+  fn();
+  const started = performance.now();
+  const total = fn();
+  const ms = performance.now() - started;
+  await new Promise((resolve) =&gt; setTimeout(resolve, 20));
+  observer.disconnect();
+  console.log(JSON.stringify({ ms: Math.round(ms), scavenges, total }));
+} else {
+  for (const mode of ["fresh", "pooled"]) {
+    const runs = Array.from({ length: 5 }, () =&gt;
+      JSON.parse(execFileSync(process.execPath, [process.argv[1]!, mode], { encoding: "utf8" })) as { ms: number; scavenges: number },
+    );
+    console.log(mode.padEnd(8), "ms per run:", runs.map((r) =&gt; r.ms).join(" "), "| scavenges:", runs.map((r) =&gt; r.scavenges).join(" "));
+  }
+
+  // الـ bug: الـ reset نسي حقل واحد، فالـ coupon بتاع tenant بيوصل لـ tenant تاني
+  const pool: LineItem[] = [{ sku: "", qty: 0, priceCents: 0, couponCode: null }];
+  function buildItem(sku: string, couponCode?: string): LineItem {
+    const item = pool.pop() ?? { sku: "", qty: 0, priceCents: 0, couponCode: null };
+    item.sku = sku;
+    item.qty = 1;
+    item.priceCents = 1000;
+    if (couponCode) item.couponCode = couponCode;
+    return item;
+  }
+  const tenantA = buildItem("SKU-A", "TENANT-A-VIP50");
+  pool.push(tenantA);
+  const tenantB = buildItem("SKU-B");
+  console.log("tenant B item:", tenantB);
+}
+</code></pre>
+
+<pre><code class="language-plaintext">fresh    ms per run: 20 23 19 19 24 | scavenges: 238 238 238 238 238
+pooled   ms per run: 21 19 19 21 20 | scavenges: 104 104 103 109 109
+tenant B item: {
+  sku: 'SKU-B',
+  qty: 1,
+  priceCents: 1000,
+  couponCode: 'TENANT-A-VIP50'
+}
+</code></pre>
+  <div class="ar-note">الـ pool قلّل الـ scavenges للنص تقريبًا، بس الوقت هو هو (≈19–24 ms مقابل ≈19–21 ms)، لأن الـ scavenge بينسخ اللي عايش بس، والـ objects الميتة تقريبًا ببلاش. وآخر 6 سطور هي الـ bug الحقيقي: tenant B خد <code>couponCode</code> بتاع tenant A، عشان الـ reset نسي حقل واحد. ده مش بطء، ده تسريب بيانات بين الـ tenants.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ generations نفسها موجودة في <a href="../../01-JavaScript/lessons/18-memory-v8-performance.html">درس JS رقم 18، الجزء 1</a> و<a href="../../03-CS-Fundamentals/lessons/12-io-models-event-loop.html">درس CS رقم 12، الجزء 7</a>: الـ objects الصغيرة الـ Scavenger بيجمعها واللي بيعيش بيترقّى، والـ old space بيتعامل معاه الـ Mark-Compact. الجديد هو إنك تقرا السيرفر بتاعك بيعمل إيه فعلًا. <code>--trace-gc</code> بيطبع سطر لكل collection، والجدول فوق بيقرا سطر حقيقي من السيرفر ده تحت الضغط كلمة كلمة.</p>
+    <p>الـ trace بيقولك إن GC حصل. عشان تتهم الـ GC بالبطء، لازم تحط الاتنين جنب بعض. <code>PerformanceObserver</code> على <code>'gc'</code> بيدّي كل وقفة بداية ومدة، فتشوف إذا كانت أبطأ الـ requests وقعت معاها. في الجولة الهادية في الجدول، 96 من الـ 143 الأبطأ عند 16 MB كانوا مع GC، مقابل 6% من العاديين. يعني الـ GC مساهم فعلًا في الـ tail ده، بس حوالي تلت الـ outliers ملهمش علاقة بيه. وفي الجولات الزحمة عدد أقل كمان كان مع GC (حوالي 4 من 11)، لأن دوشة الجهاز نفسها كانت السبب الأكبر. فقيس ده دايمًا قبل أي tuning.</p>
+    <p>بعدها عندك رافعتين. <code>--max-semi-space-size</code> بيكبّر الـ young generation، فالـ scavenges بتقل. من 16 لـ 64 MB قلّلهم حوالي 4 مرات (116 ← 28 لكل 1000 request)، والعدد ده ثبت في كل الجولات. بس كلّف ≈90 MB في الـ peak RSS، والـ p99 بالكاد اتحرك: ≈10 مقابل ≈11 ms في الجولة الهادية. وفي الجولات الزحمة كان غالبًا أحسن حوالي 10–25%، وجولة واحدة طلعت أوحش. والنزول لـ 1 MB بيوريك الطرف التاني: حوالي 2 scavenges لكل request، وكل request فيه GC. الرافعة الأكبر هي <b>إنك تعمل allocation أقل</b>. نفس الإجابة بـ loop واحد و typed arrays محتاجة 0.9 scavenge لكل 1000 request، وبتدّي ≈22700 rps مقابل ≈1800، و p99 ≈1 ms. مفيش flag بيقرّب من كده.</p>
+    <p><b>الـ object pools</b> شكلها الخطوة الجاية الواضحة، وغالبًا مش كده. الـ objects الصغيرة اللي بتموت جمعها تقريبًا ببلاش، لأن الـ scavenge بينسخ اللي عايش بس. أما الـ object اللي في pool فبيعيش، ويترقّى للـ old space، ويفضل هناك. في التجربة فوق، الـ pool قلّل الـ scavenges للنص، بس مكسبناش وقت يتقاس (≈19–24 ms مقابل ≈19–21 ms). وكمان جاب bug حقيقي: reset ناسي حقل ادّى كود الخصم بتاع tenant لـ tenant تاني. الـ pools ليها معنى في Buffers كبيرة و objects غالية في البناء، ونادرًا ما بتفيد في DTOs صغيرة.</p>
+    <p>الغلطة الشائعة: تشوف p99 عالي فتقول "ده أكيد الـ GC" وترفع <code>--max-semi-space-size</code> من غير قياس. الأول اعمل المقارنة بالـ <code>PerformanceObserver</code>، وبعدين دوّر على الـ allocations في الكود.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      route بيبني dashboard بـ <code>.map().filter().reduce()</code> و<code>{...acc}</code> على آلاف الصفوف، و p99 بتاعه مش مستقر. صدّر الـ GC metrics من تمرين 3، وشوف الـ scavenges زادت مع الـ traffic ولا لأ. لو الـ outliers واقعة مع الـ GC، أول حل مش flag: اطلب الـ aggregation من Postgres بـ <code>GROUP BY</code>، أو اكتب loop واحد. الـ flag ييجي بعد كده لو لسه محتاج، وتراقب معاه الـ RSS.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: <code>--max-semi-space-size</code></b>
+    A bigger young generation means fewer scavenges and fewer short-lived objects promoted by accident. The cost is RSS, up to 3 × the semi-space, and the benefit only shows if GC really is your problem. Measure scavenges per 1,000 requests, peak RSS and p99 before and after, and keep it only if p99 moves.
+    <div class="ar-note">الـ young generation الأكبر معناه scavenges أقل، و objects قصيرة العمر أقل بتترقّى بالغلط. التمن هو الـ RSS، لحد 3 × الـ semi-space، والفايدة مش بتبان غير لو الـ GC هو مشكلتك فعلًا. قيس الـ scavenges لكل 1000 request والـ peak RSS والـ p99 قبل وبعد، وسيبه بس لو الـ p99 اتحرك.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — V8 internals for debugging <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — الـ V8 internals للـ debugging</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><a href="../../01-JavaScript/lessons/18-memory-v8-performance.html">JS lesson 18, parts 5 and 6</a> explain the JIT, hidden classes, inline caches and deopts. Here's how they appear in a real handler. A serializer gets rows from several places: the DB driver, a cache, a DTO class, an older code path with an extra column. Same fields, but a different creation order or an extra key means a different hidden class. So a property read in that function starts <b>monomorphic</b> (1 shape), turns <b>polymorphic</b> (2–4 shapes) and then <b>megamorphic</b> (5 or more), where V8 stops caching per shape at that site.</p>
+    <p>The measurement shows exactly that step: ≈0.97 ns per row with 1 shape, ≈2.12 ns with 4, and a jump to ≈5.38 ns at 5. That's about 5.5× slower, and a 5th shape costs far more than the 2nd. <code>--trace-opt --trace-deopt</code> shows the moment it happens on a live server. After 1,500 requests of one shape, a row from another code path arrives, and V8 prints <code>bailout (kind: deopt-eager, reason: wrong map)</code>. It throws the optimized code away, runs slower for a while, and recompiles with the new shape included. <code>wrong map</code> is the reason to look for, since "map" is V8's internal name for a hidden class.</p>
+    <p><code>delete</code> has a similar effect on one object. <code>delete body.password</code> on a property that isn't the last one switches the object to dictionary mode: <code>%HasFastProperties</code> returned false, and reading its fields cost ≈16 ns against ≈2–3 ns. A rest copy or setting the field to <code>undefined</code> avoids that, but only the rest copy actually removes the key.</p>
+    <p><b>Now the important part: when is this worth your time?</b> Over HTTP, a page of 2,000 rows showed no visible difference between 1 and 8 shapes (≈1,425–1,892 vs ≈1,258–1,714 rps, and the ranges overlap). The arithmetic explains why: (5.4 − 1.0) ns × 2,000 rows ≈ 9 µs per request, whereas one 5 ms query is 5,000 µs, about 570 times more. So look for one avoidable query first. Reach for shapes only when a profile shows a property-heavy function as a plateau, as in a hot loop over millions of rows, a parser or a serializer library.</p>
+  </section>
+
+<pre data-file="serializer-server.ts"><code class="language-typescript">// شغّله كده: SHAPES=1 node --trace-opt --trace-deopt serializer-server.ts
+// عندنا serializer واحد بياخد صفوف من أكتر من مصدر: الـ DB، والـ cache، و DTO، وكل واحد شكله مختلف
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+
+type OrderLike = { id: number; status: string; totalCents: number };
+
+class OrderDto {
+  id: number;
+  status: string;
+  totalCents: number;
+  constructor(id: number, status: string, totalCents: number) {
+    this.id = id;
+    this.status = status;
+    this.totalCents = totalCents;
+  }
+}
+
+// كل factory بتطلّع نفس الحقول، بس بـ hidden class مختلف
+const shapes: ((i: number) =&gt; OrderLike)[] = [
+  (i) =&gt; ({ id: i, status: "paid", totalCents: i % 9000 }),
+  (i) =&gt; new OrderDto(i, "paid", i % 9000),
+  (i) =&gt; ({ status: "paid", id: i, totalCents: i % 9000 }),
+  (i) =&gt; ({ totalCents: i % 9000, id: i, status: "paid" }),
+  (i) =&gt; ({ id: i, status: "paid", totalCents: i % 9000, couponCode: null } as OrderLike),
+  (i) =&gt; ({ id: i, tenantId: 7, status: "paid", totalCents: i % 9000 } as OrderLike),
+  (i) =&gt; ({ tenantId: 7, id: i, status: "paid", totalCents: i % 9000 } as OrderLike),
+  (i) =&gt; ({ id: i, status: "paid", refundedAt: null, totalCents: i % 9000 } as OrderLike),
+];
+
+const SHAPES = Number(process.env.SHAPES ?? 1);
+const page = Array.from({ length: 2000 }, (_, i) =&gt; shapes[i % SHAPES]!(i));
+const lateRow = shapes[1]!(1);
+
+export function serializeOrder(order: OrderLike): string {
+  return `{"id":${order.id},"status":"${order.status}","total":${order.totalCents / 100}}`;
+}
+
+let handled = 0;
+const server = createServer((req, res) =&gt; {
+  if (req.url === "/stats") return res.end(JSON.stringify({ handled }));
+  handled++;
+  // بعد 1500 request بييجي صف من code path تاني: زي deploy ضاف DTO جديد
+  const parts = page.map(serializeOrder);
+  if (process.env.LATE_SHAPE &amp;&amp; handled &gt; 1500) parts.push(serializeOrder(lateRow));
+  res.setHeader("content-type", "application/json");
+  res.end(`[${parts.join(",")}]`);
+});
+
+server.listen(0, "127.0.0.1", () =&gt; process.send?.({ port: (server.address() as AddressInfo).port }));
+process.on("disconnect", () =&gt; process.exit(0));
+</code></pre>
+<pre data-file="deopt-run.ts"><code class="language-typescript">// شغّله كده: node deopt-run.ts
+// بنضرب السيرفر وهو شغال بـ ⁦--trace-opt --trace-deopt⁩، ونمسك السطور بتاعة serializeOrder بس
+import { fork } from "node:child_process";
+import { once } from "node:events";
+import autocannon from "autocannon";
+
+const child = fork("serializer-server.ts", {
+  execArgv: ["--trace-opt", "--trace-deopt"],
+  env: { ...process.env, SHAPES: "1", LATE_SHAPE: "1" },
+  stdio: ["ignore", "pipe", "inherit", "ipc"],
+});
+let out = "";
+child.stdout!.on("data", (chunk) =&gt; (out += chunk));
+const [{ port }] = (await once(child, "message")) as [{ port: number }];
+const r = await autocannon({ url: `http://127.0.0.1:${port}/orders`, connections: 5, amount: 4000 });
+child.disconnect();
+await once(child, "exit");
+
+console.log({ requests: r.requests.total, non2xx: r.non2xx });
+const shorten = (line: string) =&gt;
+  line
+    .replace(/0x[0-9a-f]+/g, "0x…")
+    .replace(/file:\/\/\/\S*\/l36\//g, "./")
+    .slice(0, 220);
+for (const line of out.split("\n").filter((l) =&gt; l.includes("serializeOrder"))) console.log(shorten(line));
+</code></pre>
+
+<pre><code class="language-plaintext">{ requests: 4000, non2xx: 0 }
+[marking 0x… &lt;JSFunction serializeOrder (sfi = 0000013CD63E9429)&gt; for optimization to TURBOFAN, ConcurrencyMode::kConcurrent, reason: hot and stable]
+[compiling method 0x… &lt;JSFunction serializeOrder (sfi = 0000013CD63E9429)&gt; (target TURBOFAN), mode: ConcurrencyMode::kConcurrent]
+[completed compiling 0x… &lt;JSFunction serializeOrder (sfi = 0000013CD63E9429)&gt; (target TURBOFAN) - took 0.009, 1.168, 0.011 ms]
+[completed optimizing 0x… &lt;JSFunction serializeOrder (sfi = 0000013CD63E9429)&gt; (target TURBOFAN)]
+[bailout (kind: deopt-eager, reason: wrong map): begin. deoptimizing 0x… &lt;JSFunction serializeOrder (sfi = 0000013CD63E9429)&gt;, 0x… &lt;Code TURBOFAN&gt;, opt id 0, bytecode offset 3, deopt exit 1, FP to SP delta 64, caller SP [...]
+[marking 0x… &lt;JSFunction serializeOrder (sfi = 0000013CD63E9429)&gt; for optimization to TURBOFAN, ConcurrencyMode::kConcurrent, reason: hot and stable]
+[compiling method 0x… &lt;JSFunction serializeOrder (sfi = 0000013CD63E9429)&gt; (target TURBOFAN), mode: ConcurrencyMode::kConcurrent]
+[completed compiling 0x… &lt;JSFunction serializeOrder (sfi = 0000013CD63E9429)&gt; (target TURBOFAN) - took 0.004, 0.749, 0.013 ms]
+[completed optimizing 0x… &lt;JSFunction serializeOrder (sfi = 0000013CD63E9429)&gt; (target TURBOFAN)]
+</code></pre>
+  <div class="ar-note">دي القصة كاملة بالترتيب، والعناوين اتبدلت بـ <code>0x…</code> عشان السطور تتقرا. الأول V8 شاف الـ function سخنة (<code>hot and stable</code>) وعملها compile بـ TurboFan. بعدين بعد 1500 request وصل صف بشكل جديد، فطلع سطر <code>bailout</code> بالسبب: <code>wrong map</code>. والكود المتحسّن اترمى. وبعدها V8 علّمها تاني وعمل compile بالشكل الجديد واستقرت. الـ deopt حصل مرة واحدة ومش مشكلة في حد ذاته: المشكلة لو نفس السطر بيتكرر طول الوقت.</div>
+
+<pre data-file="shapes-bench.ts"><code class="language-typescript">// شغّله كده: node shapes-bench.ts
+// كل حالة في process جديدة، عشان الـ inline cache يبدأ من الصفر
+import { execFileSync } from "node:child_process";
+
+if (process.argv[2] === "child") {
+  const count = Number(process.argv[3]);
+  const makers: ((i: number) =&gt; Record&lt;string, unknown&gt;)[] = [
+    (i) =&gt; ({ id: i, status: "paid", totalCents: i % 9000 }),
+    (i) =&gt; ({ status: "paid", id: i, totalCents: i % 9000 }),
+    (i) =&gt; ({ totalCents: i % 9000, id: i, status: "paid" }),
+    (i) =&gt; ({ id: i, status: "paid", totalCents: i % 9000, couponCode: null }),
+    (i) =&gt; ({ id: i, tenantId: 7, status: "paid", totalCents: i % 9000 }),
+    (i) =&gt; ({ tenantId: 7, id: i, status: "paid", totalCents: i % 9000 }),
+    (i) =&gt; ({ id: i, status: "paid", refundedAt: null, totalCents: i % 9000 }),
+    (i) =&gt; ({ channel: "web", id: i, status: "paid", totalCents: i % 9000 }),
+  ];
+  const rows = Array.from({ length: 8000 }, (_, i) =&gt; makers[i % count]!(i)) as { totalCents: number; id: number }[];
+
+  // بنقرا property واحدة بس: عشان نقيس الـ inline cache مش الـ string concat
+  function readTotals(batch: { totalCents: number; id: number }[]): number {
+    let sum = 0;
+    for (let i = 0; i &lt; batch.length; i++) sum += batch[i]!.totalCents + batch[i]!.id;
+    return sum;
+  }
+
+  for (let warm = 0; warm &lt; 400; warm++) readTotals(rows);
+  const started = process.hrtime.bigint();
+  let guard = 0;
+  const rounds = 3000;
+  for (let round = 0; round &lt; rounds; round++) guard += readTotals(rows);
+  const ns = Number(process.hrtime.bigint() - started) / (rounds * rows.length);
+  console.log(JSON.stringify({ ns: Number(ns.toFixed(2)), guard: guard &gt; 0 }));
+} else {
+  const runOnce = (count: number) =&gt; {
+    const out = execFileSync(process.execPath, [process.argv[1]!, "child", String(count)], { encoding: "utf8" });
+    return (JSON.parse(out) as { ns: number }).ns;
+  };
+  console.log("shapes  ns per row (5 runs, median)   runs");
+  for (const count of [1, 2, 4, 5, 8]) {
+    const runs = Array.from({ length: 5 }, () =&gt; runOnce(count)).sort((a, b) =&gt; a - b);
+    console.log(String(count).padStart(6), String(runs[2]).padStart(10), "                  ", runs.join(" "));
+  }
+}
+</code></pre>
+<pre><code class="language-plaintext">shapes  ns per row (5 runs, median)   runs
+     1       0.97                    0.95 0.96 0.97 0.98 0.99
+     2       1.39                    1.36 1.38 1.39 1.45 1.46
+     4       2.12                    2 2.07 2.12 2.12 2.2
+     5       5.38                    5.33 5.36 5.38 5.4 5.51
+     8       5.52                    5.13 5.37 5.52 5.65 5.88
+</code></pre>
+  <div class="ar-note">كل صف عدد أشكال مختلف، وكل حالة في process جديدة 5 مرات. من 1 لـ 4 الزيادة تدريجية (polymorphic)، وعند 5 فيه قفزة لـ ≈5.38 ns (megamorphic)، ومن 5 لـ 8 الرقم ثابت تقريبًا لأن الـ cache خلاص مبقاش لكل شكل. والأرقام هنا مستقرة جدًا حتى والجهاز زحمة، لأن التجربة بتقرا properties بس.</div>
+
+<pre data-file="delete-bench.ts"><code class="language-typescript">// شغّله كده: node --allow-natives-syntax delete-bench.ts
+// الـ middleware بيشيل الـ password من الـ body قبل الـ logging: بأربع طرق
+import { execFileSync } from "node:child_process";
+
+type SignupBody = { email: string; password?: string; plan: string; country: string; referrer: string; marketing: boolean };
+
+const makeBody = (i: number): SignupBody =&gt; ({
+  email: `user${i}@example.com`,
+  password: "hunter2",
+  plan: "pro",
+  country: "EG",
+  referrer: "ads",
+  marketing: i % 2 === 0,
+});
+
+const strategies: Record&lt;string, (i: number) =&gt; Partial&lt;SignupBody&gt;&gt; = {
+  // ❌ الـ delete على property مش الأخيرة بيحوّل الـ object لـ dictionary mode
+  deleteMiddle: (i) =&gt; {
+    const body = makeBody(i);
+    delete body.password;
+    return body;
+  },
+  // ✅ الـ rest بيعمل object جديد بشكل ثابت
+  restCopy: (i) =&gt; {
+    const { password: _password, ...safe } = makeBody(i);
+    return safe;
+  },
+  // ✅ الـ undefined مش بيغيّر الشكل، بس المفتاح لسه موجود
+  setUndefined: (i) =&gt; {
+    const body = makeBody(i);
+    body.password = undefined;
+    return body;
+  },
+  untouched: (i) =&gt; makeBody(i),
+};
+
+if (process.argv[2] === "child") {
+  const name = process.argv[3]!;
+  const strategy = strategies[name]!;
+  const hasFast = new Function("o", "return %HasFastProperties(o)") as (o: object) =&gt; boolean;
+
+  const rows = Array.from({ length: 4000 }, (_, i) =&gt; strategy(i));
+  const fast = hasFast(rows[0]!);
+
+  // الـ logger بيقرا الحقول: دي القراية اللي بتدفع التمن
+  function readFields(batch: Partial&lt;SignupBody&gt;[]): number {
+    let n = 0;
+    for (let i = 0; i &lt; batch.length; i++) {
+      const row = batch[i]!;
+      if (row.plan === "pro" &amp;&amp; row.country === "EG" &amp;&amp; row.marketing) n++;
+    }
+    return n;
+  }
+  for (let warm = 0; warm &lt; 300; warm++) readFields(rows);
+  const t0 = process.hrtime.bigint();
+  let guard = 0;
+  for (let round = 0; round &lt; 3000; round++) guard += readFields(rows);
+  const readNs = Number(process.hrtime.bigint() - t0) / (3000 * rows.length);
+
+  // وتمن الخطوة نفسها: بنشيل الـ password من 200 ألف body
+  const t1 = process.hrtime.bigint();
+  let keep = 0;
+  for (let i = 0; i &lt; 200_000; i++) keep += Object.keys(strategy(i)).length &gt; 0 ? 1 : 0;
+  const stripNs = Number(process.hrtime.bigint() - t1) / 200_000;
+
+  console.log(JSON.stringify({ fast, readNs: Number(readNs.toFixed(2)), stripNs: Math.round(stripNs), guard: guard &gt; 0 &amp;&amp; keep &gt; 0 }));
+} else {
+  console.log("strategy        fastProps  read ns/row  strip+keys ns/body (median of 5)");
+  for (const name of Object.keys(strategies)) {
+    const runs = Array.from({ length: 5 }, () =&gt;
+      JSON.parse(
+        execFileSync(process.execPath, ["--allow-natives-syntax", process.argv[1]!, "child", name], { encoding: "utf8" }),
+      ) as { fast: boolean; readNs: number; stripNs: number },
+    );
+    const mid = (k: "readNs" | "stripNs") =&gt; runs.map((r) =&gt; r[k]).sort((a, b) =&gt; a - b)[2];
+    console.log(name.padEnd(15), String(runs[0]!.fast).padEnd(10), String(mid("readNs")).padStart(10), String(mid("stripNs")).padStart(14));
+  }
+}
+</code></pre>
+<pre><code class="language-plaintext">strategy        fastProps  read ns/row  strip+keys ns/body (median of 5)
+deleteMiddle    false           16.15            556
+restCopy        true             2.78            241
+setUndefined    true             1.55             70
+untouched       true             1.82             81
+</code></pre>
+  <div class="ar-note">صف صف. <b><code>deleteMiddle</code>:</b> الـ object بقى dictionary mode (<code>fastProps=false</code>)، والقراية ≈16 ns، يعني حوالي 6–10 مرات أبطأ. <b><code>restCopy</code>:</b> شكل ثابت وقراية ≈2.8 ns، وده اللي بيشيل المفتاح فعلًا. <b><code>setUndefined</code>:</b> الأرخص، بس المفتاح لسه موجود، فـ <code>JSON.stringify</code> بس هو اللي هيتجاهله. <b><code>untouched</code>:</b> الـ object زي ما هو للمقارنة. <code>%HasFastProperties</code> موجودة بالـ flag ده للاستكشاف بس، ومكانها مش الـ production.</div>
+
+<pre><code class="language-plaintext">round 1 shapes=1 { rps: 1647, p50: 2, p99: 8 }
+round 1 shapes=8 { rps: 1714, p50: 2, p99: 5 }
+round 2 shapes=1 { rps: 1892, p50: 2, p99: 5 }
+round 2 shapes=8 { rps: 1258, p50: 3, p99: 8 }
+round 3 shapes=1 { rps: 1425, p50: 3, p99: 7 }
+round 3 shapes=8 { rps: 1422, p50: 3, p99: 7 }
+</code></pre>
+  <div class="ar-note">نفس الـ serializer على HTTP حقيقي بصفحة 2000 order: الجولة الأولى الـ megamorphic كسب، والتانية خسر، والتالتة تعادل. يعني الـ 5 مرات اللي شفناها في القياس المعزول مش باينة هنا، لأن الفرق ≈9 µs لكل request، وسط شغل HTTP و JSON بياخد مئات الـ µs، ودوشة الجهاز أكبر منه.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><a href="../../01-JavaScript/lessons/18-memory-v8-performance.html">درس JS رقم 18، الجزئين 5 و6</a> بيشرحوا الـ JIT والـ hidden classes والـ inline caches والـ deopts. هنا هتشوفهم في handler حقيقي. serializer بياخد صفوف من كذا مكان: الـ DB driver، وcache، و DTO class، و code path قديم فيه عمود زيادة. نفس الحقول، بس ترتيب الإنشاء المختلف أو مفتاح زيادة معناه hidden class مختلف. فقراية الـ property في الـ function دي بتبدأ <b>monomorphic</b> (شكل واحد)، وتبقى <b>polymorphic</b> (من 2 لـ 4 أشكال)، وبعدين <b>megamorphic</b> (5 أو أكتر)، وهنا V8 بيبطّل يعمل cache لكل شكل في المكان ده.</p>
+    <p>القياس بيوري الخطوة دي بالظبط: ≈0.97 ns للصف بشكل واحد، و≈2.12 ns بـ 4، وقفزة لـ ≈5.38 ns عند 5. يعني حوالي 5.5 مرات أبطأ، والشكل الخامس بيكلف أكتر بكتير من التاني. و<code>--trace-opt --trace-deopt</code> بيوريك اللحظة دي على server حي. بعد 1500 request بشكل واحد، بيوصل صف من code path تاني، و V8 بيطبع <code>bailout (kind: deopt-eager, reason: wrong map)</code>. بيرمي الكود المتحسّن، ويشتغل أبطأ شوية، ويعمل compile تاني ومعاه الشكل الجديد. <code>wrong map</code> هو السبب اللي تدوّر عليه، لأن "map" هو اسم الـ hidden class جوه V8.</p>
+    <p><code>delete</code> ليها تأثير شبه كده على object واحد. <code>delete body.password</code> على property مش الأخيرة بيحوّل الـ object لـ dictionary mode: <code>%HasFastProperties</code> رجّعت false، وقراية الحقول كلفت ≈16 ns مقابل ≈2–3 ns. الـ rest copy أو إنك تحط <code>undefined</code> بيتجنبوا ده، بس الـ rest copy بس هو اللي بيشيل المفتاح فعلًا.</p>
+    <p><b>ودلوقتي أهم نقطة: إمتى ده يستاهل وقتك؟</b> على HTTP، صفحة 2000 صف موضحتش فرق بين شكل واحد و8 أشكال (≈1425–1892 مقابل ≈1258–1714 rps، والنطاقين متداخلين). والحساب بيفسر ليه: (5.4 − 1.0) ns × 2000 صف ≈ 9 µs لكل request، أما query واحد بـ 5 ms فهو 5000 µs، يعني حوالي 570 مرة أكتر. فدوّر على query تتشال الأول. وارجع للأشكال بس لما الـ profile يوريك function بتقرا properties كتير كـ plateau، زي loop سخن على ملايين الصفوف، أو parser، أو مكتبة serializer.</p>
+    <p>الغلطة الشائعة: تعيد كتابة كود كويس عشان "hidden classes" من غير profile، أو تعمل <code>delete</code> على كل request في middleware وتنسى إن الـ logger اللي بعده بيقرا نفس الـ object.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      مكتبة serializer داخلية عندكم بتمشي على ملايين الصفوف في export ليلي، والـ flame graph بيوريها plateau عريض. شغّلها بـ <code>--trace-deopt</code> وفلتر على اسم الـ function: لو <code>wrong map</code> بيتكرر، وحّد شكل الصفوف بـ factory واحدة أو class واحد. أما في route عادي بيعمل 3 queries، فمتضيعش وقتك هنا: شيل query واحدة أو حط index، وهتكسب مئات المرات أكتر.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: what's a deopt, and when should you care?</b>
+    "TurboFan compiles a function on assumptions about types and shapes. When an assumption breaks, say a new hidden class arrives, V8 throws the optimized code away and goes back to slower code: that's a deopt, and <code>--trace-deopt</code> prints the reason, often <code>wrong map</code>. One deopt is normal. I care when the same function keeps deopting, or when a profile shows it as a plateau. In a typical API handler, one avoided query is worth hundreds of times more."
+    <div class="ar-note"><b>السؤال: يعني إيه deopt، وإمتى يهمك؟</b> "الـ TurboFan بيعمل compile للـ function على افتراضات عن الأنواع والأشكال. لما افتراض يتكسر، زي hidden class جديد يوصل، V8 بيرمي الكود المتحسّن ويرجع لكود أبطأ: ده الـ deopt، و<code>--trace-deopt</code> بيطبع السبب، وغالبًا <code>wrong map</code>. deopt واحد طبيعي. بيهمني لما نفس الـ function تفضل تعمل deopt، أو لما الـ profile يوريها plateau. في API handler عادي، query واحدة أشيلها بتساوي مئات المرات أكتر."</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — Node internals <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — الـ Node internals</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Node's repository has three layers you need to recognise. <code>lib/</code> is the JavaScript you import, compiled into the binary. <code>src/</code> is the C++ that connects it to V8 and to native libraries. <code>deps/</code> holds those libraries, including libuv (<code>deps/uv</code>). The bridge from JavaScript to C++ is <code>internalBinding('fs')</code>, an object of native functions set up in <code>src/</code>. Your code can't reach it normally, and <code>--expose-internals</code> opens it for exploring.</p>
+    <p>Here's the path of <code>fs.readFile</code>, with each link pinned to tag v22.19.0. In <code>lib/</code>, <code>readFile</code> creates a <code>ReadFileContext</code> and a request object, then calls <code>binding.open(path, flags, mode, req)</code>. Passing <code>req</code> is what selects the async path. In <code>src/node_file.cc</code>, <code>Open</code> sees that argument and calls <code>AsyncCall(..., uv_fs_open, ...)</code>, which dispatches to libuv with <code>AfterInteger</code> as the callback. In libuv, <code>uv_fs_open</code> reaches the <code>POST</code> macro, which calls <code>uv__work_submit</code> and queues the work. A pool thread picks it up in <code>worker()</code>, runs the blocking syscall through <code>w-&gt;work(w)</code>, and wakes the loop with <code>uv_async_send</code>. Back on the main thread, <code>uv__work_done</code> runs the done callback, <code>AfterInteger</code> resolves, and <code>MakeCallback</code> calls your <code>oncomplete</code>.</p>
+    <p>That's one round trip, and <code>readFile</code> makes several: open, fstat, reads of up to 512 KB each (<code>kReadFileBufferLength</code>), and close. The two traces below confirm it for a 1.4 MB file: six requests through the pool. So <code>readFile</code> is a chain of small jobs with event loop turns in between, not one long job on a thread. On Linux, libuv's <code>uv_fs_open</code> first tries <code>uv__iou_fs_open</code>, but <a href="https://github.com/nodejs/node/blob/v22.19.0/deps/uv/src/unix/linux.c#L770">a comment in this libuv</a> says that ring isn't created unless the loop is configured for it, so by default the request falls through to the thread pool (read from the source, not run on Linux here). <code>readFileSync(path, "utf8")</code> takes a shortcut with no pool at all, <code>binding.readFileUtf8</code>.</p>
+    <p>Two tools let you see this without reading any source. <code>NODE_DEBUG=http,net</code> turns on the debug logs already written inside <code>lib/</code>, with no code changes, but Node warns it can expose sensitive data. <code>--trace-sync-io</code> prints a stack trace for sync I/O after the first event loop turn. <b>It has a blind spot, tested here</b>: <code>readFileSync(path)</code> gives four warnings (open, fstat, read, close) and <code>statSync</code>, <code>writeFileSync</code>, <code>pbkdf2Sync</code> and <code>gzipSync</code> are all caught, but <code>readFileSync(path, "utf8")</code> and <code>existsSync</code> print nothing. So a clean run doesn't prove you have no sync I/O. Reading the source makes this a quick check: <code>PrintSyncTrace</code> lives in the generic sync call helpers, and the UTF-8 fast path doesn't go through them.</p>
+  </section>
+
+<pre class="diagram">
+ YOUR CODE     fs.readFile(path, cb)
+                  │
+ lib/fs.js        │  new FSReqCallback(); binding.open(path, flags, mode, req)
+ ─────────────────┼───────────────────── internalBinding('fs') ──────────────
+ src/node_file.cc │  Open() → AsyncCall(..., uv_fs_open, ...)
+ ─────────────────┼───────────────────── libuv ──────────────────────────────
+ deps/uv/.../fs.c │  uv_fs_open() → POST → uv__work_submit()
+                  │
+                  ▼  queue                       pool thread (default 4)
+ threadpool.c     post() ───────────────────▶  worker(): w->work(w)
+                                                 blocking open() syscall
+                                                       │ uv_async_send
+ main thread      uv__work_done() ◀────────────────────┘
+ (event loop)     │  w->done → AfterInteger → MakeCallback(oncomplete)
+                  ▼
+ lib/fs.js        readFileAfterOpen → fstat → read × N → close → your cb
+</pre>
+  <div class="ar-note">اقرا من فوق لتحت. الكود بتاعك بينادي <code>fs.readFile</code>. <code>lib/fs.js</code> بيعمل request object وينادي <code>binding.open</code>، وده الحد بين JavaScript و C++. <code>src/node_file.cc</code> بينادي <code>uv_fs_open</code> في libuv. الـ <code>POST</code> بيحط الشغل في طابور عن طريق <code>uv__work_submit</code>. thread من الـ pool (الافتراضي 4) بياخده وينفذ الـ syscall الـ blocking، وبعدين يصحّي الـ loop بـ <code>uv_async_send</code>. على الـ main thread، <code>uv__work_done</code> بيشغّل الـ callback لحد ما يوصل لـ <code>oncomplete</code>. وآخر سطر: ده كله open بس، وبعده fstat و reads و close بنفس الطريق، وفي الآخر الـ callback بتاعك.</div>
+
+  <table>
+    <tr><th>Step</th><th>File and line at v22.19.0</th></tr>
+    <tr><td><code>readFile</code> entry</td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/lib/fs.js#L362">lib/fs.js#L362</a></td></tr>
+    <tr><td>Calls the binding</td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/lib/fs.js#L387">lib/fs.js#L387</a></td></tr>
+    <tr><td>After open: fstat</td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/lib/fs.js#L307">lib/fs.js#L307</a></td></tr>
+    <tr><td>After stat: start reading</td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/lib/fs.js#L337">lib/fs.js#L337</a></td></tr>
+    <tr><td>The read loop</td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/lib/internal/fs/read/context.js#L109">lib/internal/fs/read/context.js#L109</a></td></tr>
+    <tr><td>512 KB chunk size</td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/lib/internal/fs/utils.js#L143">lib/internal/fs/utils.js#L143</a></td></tr>
+    <tr><td>Binding registered</td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/src/node_file.cc#L3798">src/node_file.cc#L3798</a></td></tr>
+    <tr><td>C++ <code>Open</code></td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/src/node_file.cc#L2057">src/node_file.cc#L2057</a>, async branch <a href="https://github.com/nodejs/node/blob/v22.19.0/src/node_file.cc#L2081">#L2081</a></td></tr>
+    <tr><td>Dispatch to libuv</td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/src/node_file-inl.h#L316">src/node_file-inl.h#L316</a></td></tr>
+    <tr><td><code>uv_fs_open</code></td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/deps/uv/src/unix/fs.c#L1999">deps/uv/src/unix/fs.c#L1999</a>, Windows <a href="https://github.com/nodejs/node/blob/v22.19.0/deps/uv/src/win/fs.c#L3224">win/fs.c#L3224</a></td></tr>
+    <tr><td><code>POST</code> queues the work</td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/deps/uv/src/unix/fs.c#L139">deps/uv/src/unix/fs.c#L139</a>, Windows <a href="https://github.com/nodejs/node/blob/v22.19.0/deps/uv/src/win/fs.c#L82">win/fs.c#L82</a></td></tr>
+    <tr><td>Pool: submit, then default size</td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/deps/uv/src/threadpool.c#L266">threadpool.c#L266</a>, <a href="https://github.com/nodejs/node/blob/v22.19.0/deps/uv/src/threadpool.c#L39">#L39</a>, <a href="https://github.com/nodejs/node/blob/v22.19.0/deps/uv/src/threadpool.c#L201">UV_THREADPOOL_SIZE #L201</a></td></tr>
+    <tr><td>Pool thread runs it, wakes the loop</td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/deps/uv/src/threadpool.c#L123">threadpool.c#L123</a>, <a href="https://github.com/nodejs/node/blob/v22.19.0/deps/uv/src/threadpool.c#L129">#L129</a></td></tr>
+    <tr><td>Main thread runs the done callback</td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/deps/uv/src/threadpool.c#L330">threadpool.c#L330</a></td></tr>
+    <tr><td>Back to JavaScript</td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/src/node_file.cc#L807">AfterInteger #L807</a>, <a href="https://github.com/nodejs/node/blob/v22.19.0/src/node_file.cc#L710">MakeCallback #L710</a></td></tr>
+    <tr><td>Sync UTF-8 shortcut</td><td><a href="https://github.com/nodejs/node/blob/v22.19.0/lib/fs.js#L441">lib/fs.js#L441</a></td></tr>
+  </table>
+  <div class="ar-note">الجدول هو نفس الرحلة بلينكات لسطور حقيقية عند tag v22.19.0، والسطور اتراجعت على الملفات عند الـ tag ده. افتحهم بالترتيب: مدخل <code>readFile</code> ← نداء الـ binding ← الـ fstat بعد الـ open ← بداية القراية ← الـ read loop ← حجم الـ 512 KB ← تسجيل الـ binding ← <code>Open</code> في C++ ← الإرسال لـ libuv ← <code>uv_fs_open</code> لـ Unix و Windows ← الـ <code>POST</code> ← الـ pool وحجمه الافتراضي ← الـ thread بتنفذ وتصحّي الـ loop ← الـ main thread بيشغّل الـ callback ← الرجوع لـ JavaScript. وآخر صف هو الاختصار بتاع <code>readFileSync</code> بالـ utf8. الأرقام هتتغير في أي إصدار تاني، فخلي اللينك على tag دايمًا مش على <code>main</code>.</div>
+
+<pre data-file="trace-readfile.ts"><code class="language-typescript">// شغّله كده: node trace-readfile.ts
+// بنسجّل كل async resource بيتخلق وقت readFile: كل واحد فيهم request رايح للـ thread pool
+import { createHook } from "node:async_hooks";
+import { readFile, writeFileSync, writeSync } from "node:fs";
+import { threadId } from "node:worker_threads";
+
+const FILE = new URL("./invoice.txt", import.meta.url);
+writeFileSync(FILE, "x".repeat(1_400_000));
+
+// الـ console.log نفسه async، فبنكتب بـ writeSync جوه الـ hooks
+const log = (line: string) =&gt; writeSync(1, `${line}\n`);
+const started = performance.now();
+const at = () =&gt; `${(performance.now() - started).toFixed(1).padStart(6)} ms`;
+const fsRequests = new Set&lt;number&gt;();
+
+createHook({
+  init(asyncId, type) {
+    if (type !== "FSREQCALLBACK") return;
+    fsRequests.add(asyncId);
+    log(`${at()}  submit  FSREQCALLBACK #${fsRequests.size}`);
+  },
+  before(asyncId) {
+    if (fsRequests.has(asyncId)) log(`${at()}  callback on thread ${threadId}`);
+  },
+}).enable();
+
+readFile(FILE, (err, data) =&gt; {
+  log(`${at()}  your callback: ${data.length} bytes, err=${err}`);
+});
+log(`${at()}  readFile() returned`);
+</code></pre>
+<pre data-file="trace-events-readfile.cjs"><code class="language-javascript">// شغّله كده زي الأمر اللي تحت: ملف واحد 1.4 MB و readFile واحد بس
+const { readFile, writeFileSync } = require("node:fs");
+writeFileSync("invoice.txt", "x".repeat(1_400_000));
+setTimeout(() =&gt; readFile("invoice.txt", () =&gt; {}), 50);
+</code></pre>
+<pre><code class="language-plaintext">   0.7 ms  submit  FSREQCALLBACK #1
+   5.8 ms  readFile() returned
+   7.6 ms  callback on thread 0
+   7.7 ms  submit  FSREQCALLBACK #2
+   7.9 ms  callback on thread 0
+   9.6 ms  submit  FSREQCALLBACK #3
+  10.6 ms  callback on thread 0
+  10.9 ms  submit  FSREQCALLBACK #4
+  11.5 ms  callback on thread 0
+  11.7 ms  submit  FSREQCALLBACK #5
+  12.3 ms  callback on thread 0
+  12.9 ms  submit  FSREQCALLBACK #6
+  13.0 ms  callback on thread 0
+  13.4 ms  your callback: 1400000 bytes, err=null
+
+$ node --trace-event-categories node.fs.async --trace-event-file-pattern 'te-${pid}.json' trace-events-readfile.cjs
+b open  0.00ms    e open  3.15ms
+b fstat 3.23ms    e fstat 3.29ms
+b read  3.59ms    e read  4.49ms
+b read  4.70ms    e read  5.09ms
+b read  5.12ms    e read  5.37ms
+b close 5.56ms    e close 5.66ms
+</code></pre>
+  <div class="ar-note">البلوك الأول من <code>async_hooks</code>: <code>readFile()</code> رجعت بعد أول request على طول، وبعدها 6 requests، كل واحد ليه callback على الـ main thread (thread 0)، وبينهم الـ loop بياخد دور، والـ callback بتاعك في الآخر. البلوك التاني من الـ trace events المبنية في Node، وبيسمّي الـ 6: <code>open</code> و<code>fstat</code> و3 <code>read</code> و<code>close</code>. والـ 3 reads منطقية: 1.4 MB ÷ 512 KB. ورتّبت الناتج ده في أعمدة عشان يتقرا، و<code>b</code> بداية و<code>e</code> نهاية.</div>
+
+<pre data-file="peek-internals.cjs"><code class="language-javascript">// شغّله كده: node --expose-internals peek-internals.cjs
+// الـ flag ده بيفتح الـ modules الداخلية للاستكشاف بس، ومكانه مش الـ production
+const { internalBinding } = require("internal/test/binding");
+const fs = require("node:fs");
+
+const binding = internalBinding("fs");
+const wanted = ["open", "fstat", "read", "close", "readFileUtf8"];
+console.log(Object.keys(binding).length, "entries in internalBinding('fs')");
+console.log(wanted.map((name) =&gt; `${name}: ${typeof binding[name]}`).join(", "));
+
+// كود ⁦lib/⁩ متخزن جوه الـ binary، وتقدر تقراه من الـ process نفسها
+console.log(fs.readFile.toString().split("\n").slice(0, 3).join("\n"));
+
+// أما اللي في ⁦src/⁩ فده ⁦C++⁩ جاهز، ومفيش منه source تقراه هنا
+console.log(binding.open.toString());
+</code></pre>
+<pre><code class="language-plaintext">53 entries in internalBinding('fs')
+open: function, fstat: function, read: function, close: function, readFileUtf8: function
+function readFile(path, options, callback) {
+  callback ||= options;
+  validateFunction(callback, 'cb');
+function open() { [native code] }
+(node:5992) internal/test/binding: These APIs are for internal testing only. Do not use them.
+</code></pre>
+  <div class="ar-note">نفس الحد بين الطبقتين قدامك: <code>fs.readFile.toString()</code> بيطبع كود JavaScript حقيقي من <code>lib/</code>، و<code>binding.open.toString()</code> بيقول <code>[native code]</code> لأنه C++ من <code>src/</code>. وآخر سطر تحذير حقيقي من Node: الـ APIs دي للاستكشاف بس.</div>
+
+<pre data-file="sync-io-server.ts"><code class="language-typescript">// شغّله كده: node --trace-sync-io sync-io-server.ts
+// الغلطة اللي عايزين نمسكها: قراية ملف sync جوه الـ handler
+import { readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+
+writeFileSync("pricing-rules.json", JSON.stringify({ taxPercent: 14 }));
+
+// (1) ده sync وقت الـ startup، والـ flag مش بيعدّه: بيبدأ بعد أول دورة في الـ event loop
+const defaults = JSON.parse(readFileSync("pricing-rules.json", "utf8"));
+
+// (2) الـ handler بيقرا الملف من غير encoding
+function loadRulesAsBuffer(): { taxPercent: number } {
+  return JSON.parse(readFileSync("pricing-rules.json").toString());
+}
+
+// (3) نفس الغلطة بالظبط، بس بالـ utf8
+function loadRulesAsUtf8(): { taxPercent: number } {
+  return JSON.parse(readFileSync("pricing-rules.json", "utf8"));
+}
+
+const server = createServer((req, res) =&gt; {
+  const rules = req.url === "/buffer" ? loadRulesAsBuffer() : loadRulesAsUtf8();
+  res.end(JSON.stringify({ tax: rules.taxPercent ?? defaults.taxPercent }));
+});
+
+server.listen(0, "127.0.0.1", async () =&gt; {
+  const { port } = server.address() as AddressInfo;
+  process.stderr.write("--- GET /utf8\n");
+  await (await fetch(`http://127.0.0.1:${port}/utf8`)).text();
+  process.stderr.write("--- GET /buffer\n");
+  await (await fetch(`http://127.0.0.1:${port}/buffer`)).text();
+  server.close();
+  server.closeAllConnections();
+});
+</code></pre>
+<pre><code class="language-plaintext">--- GET /utf8
+(node:10512) WARNING: Detected use of sync API
+    at node:internal/net:61:5
+    at writeOrBuffer (node:internal/streams/writable:572:12)
+    at _write (node:internal/streams/writable:501:10)
+    at Writable.write (node:internal/streams/writable:510:10)
+    at ./sync-io-server.ts:31:18
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+
+--- GET /buffer
+(node:10512) WARNING: Detected use of sync API
+    at openSync (node:fs:561:18)
+    at readFileSync (node:fs:445:35)
+    at loadRulesAsBuffer (./sync-io-server.ts:14:21)
+    at ./sync-io-server.ts:23:41
+    at emit (node:events:519:28)
+    at parserOnIncoming (node:_http_server:1168:12)
+    at parserOnHeadersComplete (node:_http_common:117:17)
+[3 more warnings with the same stack: tryStatSync, readSync, closeSync]
+</code></pre>
+  <div class="ar-note">تحت <code>/utf8</code> التحذير الوحيد من <code>process.stderr.write</code> بتاعنا إحنا (الكتابة على pipe هنا sync)، ومفيش أي تحذير عن <code>readFileSync</code> نفسها: ده الـ blind spot. تحت <code>/buffer</code> نفس الغلطة اتمسكت 4 مرات، والـ stack بيوصلك لـ <code>loadRulesAsBuffer</code> والسطر 14. وآخر سطر مني أنا: اختصرت التحذيرات التلاتة الباقية. وكمان <code>readFileSync</code> اللي في أول الملف متعدتش، لأن الـ flag بيبدأ بعد أول دورة.</div>
+
+<pre data-file="node-debug-demo.ts"><code class="language-typescript">// شغّله كده: NODE_DEBUG=http,net node node-debug-demo.ts
+// الـ flag ده مش بيحتاج أي تعديل في الكود: اللي بيطبع هو ⁦lib/⁩ نفسه
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+
+const server = createServer((_req, res) =&gt; res.end("ok"));
+server.listen(0, "127.0.0.1", async () =&gt; {
+  const { port } = server.address() as AddressInfo;
+  await (await fetch(`http://127.0.0.1:${port}/orders/42`)).text();
+  server.close();
+  server.closeAllConnections();
+});
+</code></pre>
+<pre><code class="language-plaintext">NET 11448: setupListenHandle 127.0.0.1 0 4 false undefined
+NET 11448: bind to 127.0.0.1
+NET 11448: connect: attempting to connect to 127.0.0.1:60675 (addressType: 4)
+NET 11448: onconnection
+HTTP 11448: SERVER new http connection
+(node:11448) Warning: Setting the NODE_DEBUG environment variable to 'http' can expose sensitive data (such as passwords [...]
+HTTP 11448: write ret = true
+HTTP 11448: outgoing message end.
+HTTP 11448: SERVER socketOnParserExecute 179
+NET 11448: destroy
+NET 11448: SERVER: emit close
+</code></pre>
+  <div class="ar-note">مختصر من run حقيقي على request واحد. <code>NET</code> هو طبقة الـ TCP: الـ bind والـ connect والـ onconnection. و<code>HTTP</code> فوقها: connection جديدة، والكتابة، والـ parser قرا 179 byte. والسطر اللي في النص تحذير حقيقي من Node: الـ flag ده ممكن يطلّع بيانات حساسة زي الـ passwords، فمتسيبوش في production. مفيد لما تسأل "الـ socket ده اتقفل إمتى ومين قفله؟".</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ repo بتاع Node فيه 3 طبقات لازم تعرفهم. <code>lib/</code> هو الـ JavaScript اللي بتعمله import، ومتخزن جوه الـ binary. <code>src/</code> هو الـ C++ اللي بيوصله بـ V8 وبالمكتبات الـ native. و<code>deps/</code> فيه المكتبات دي، ومنها libuv في <code>deps/uv</code>. والكوبري من JavaScript لـ C++ هو <code>internalBinding('fs')</code>، وده object فيه functions native متجهزة في <code>src/</code>. الكود بتاعك ميقدرش يوصله عادي، و<code>--expose-internals</code> بيفتحه للاستكشاف.</p>
+    <p>دي رحلة <code>fs.readFile</code>، وكل لينك متثبت على tag v22.19.0. في <code>lib/</code>، <code>readFile</code> بتعمل <code>ReadFileContext</code> و request object، وبعدين تنادي <code>binding.open(path, flags, mode, req)</code>. وجود الـ <code>req</code> هو اللي بيختار الطريق الـ async. في <code>src/node_file.cc</code>، <code>Open</code> بتشوف الـ argument ده وتنادي <code>AsyncCall(..., uv_fs_open, ...)</code>، وده بيبعت لـ libuv و<code>AfterInteger</code> هو الـ callback. في libuv، <code>uv_fs_open</code> بتوصل للـ macro اللي اسمه <code>POST</code>، وده بينادي <code>uv__work_submit</code> ويحط الشغل في الطابور. thread من الـ pool بياخده في <code>worker()</code>، وينفذ الـ syscall الـ blocking عن طريق <code>w-&gt;work(w)</code>، ويصحّي الـ loop بـ <code>uv_async_send</code>. وعلى الـ main thread، <code>uv__work_done</code> بيشغّل الـ done callback، و<code>AfterInteger</code> بتخلص، و<code>MakeCallback</code> بينادي الـ <code>oncomplete</code> بتاعك.</p>
+    <p>ده مشوار واحد، و<code>readFile</code> بتعمل كذا مشوار: open و fstat و reads كل واحدة لحد 512 KB (<code>kReadFileBufferLength</code>) و close. الـ traces فوق بتأكد ده لملف 1.4 MB: 6 requests عبر الـ pool. يعني <code>readFile</code> سلسلة شغلانات صغيرة بينها دورات event loop، مش شغلانة طويلة واحدة على thread. على Linux، <code>uv_fs_open</code> بتجرّب <code>uv__iou_fs_open</code> الأول، بس <a href="https://github.com/nodejs/node/blob/v22.19.0/deps/uv/src/unix/linux.c#L770">comment في libuv ده</a> بيقول إن الـ ring ده مش بيتعمل إلا لو الـ loop متظبط عليه، فافتراضيًا الـ request بينزل للـ thread pool (ده من قراية الـ source، ومتشغلش على Linux هنا). و<code>readFileSync(path, "utf8")</code> بتاخد اختصار من غير pool خالص، وهو <code>binding.readFileUtf8</code>.</p>
+    <p>فيه أداتين بيوروك ده من غير ما تقرا source. <code>NODE_DEBUG=http,net</code> بيشغّل الـ debug logs المكتوبة جوه <code>lib/</code> أصلًا، من غير تعديل كود، بس Node بيحذر إنها ممكن تطلّع بيانات حساسة. و<code>--trace-sync-io</code> بيطبع stack trace لأي sync I/O بعد أول دورة في الـ event loop. <b>وفيه نقطة عميا، اتجربت هنا</b>: <code>readFileSync(path)</code> بيدّي 4 تحذيرات (open و fstat و read و close)، و<code>statSync</code> و<code>writeFileSync</code> و<code>pbkdf2Sync</code> و<code>gzipSync</code> كلهم بيتمسكوا، بس <code>readFileSync(path, "utf8")</code> و<code>existsSync</code> مش بيطبعوا حاجة. فـ run نضيف مش دليل إن مفيش sync I/O عندك. وقراية الـ source بتخلي ده فحص سريع: <code>PrintSyncTrace</code> موجودة في الـ helpers العامة بتاعة الـ sync calls، والطريق السريع بتاع UTF-8 مش بيعدي عليهم.</p>
+    <p>وقراية source بتاع Node مهارة يومية مش حاجة للخبراء بس: لما سلوك يفاجئك، <code>node -p "require('fs').readFile.toString()"</code> بيوريك كود الإصدار اللي شغال عندك بالظبط، ولينك على الـ tag بيوريك الباقي. والغلطة الشائعة: تقرا فرع <code>main</code> وتفتكر إنه سلوك الإصدار بتاعك.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      الـ app بقت بطيئة لما زاد الضغط على <code>fs</code>، و<code>dns.lookup</code> و<code>pbkdf2</code> بيستنوا مع إن الـ CPU فاضي. لما تعرف إن كلهم بيعدوا على نفس الـ 4 threads من <code>threadpool.c</code>، هتعرف إن المشكلة طابور مش CPU، وتزوّد <code>UV_THREADPOOL_SIZE</code> من الـ environment (زي <a href="./04-event-loop-libuv.html">درس 04، الجزء 5</a>). وفي الـ code review أو الـ CI، شغّل الـ integration tests بـ <code>--trace-sync-io</code> عشان تمسك الـ sync calls، بس متعتبرش النتيجة النضيفة ضمان، وضيف قاعدة lint لـ <code>readFileSync</code> جوه الـ handlers.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question (exit test Q3): why does <code>fs.readFile</code> use the thread pool when an HTTP request doesn't?</b>
+    "Sockets have a readiness API: epoll on Linux, IOCP on Windows. The loop registers them and the kernel reports when they're ready, so one thread can watch thousands. Regular files have no equivalent that libuv relies on by default, so the read is a blocking syscall, and it runs on a pool thread (4 by default) to keep the loop free. In the source you can follow it: <code>uv_fs_open</code>, <code>POST</code>, <code>uv__work_submit</code>, <code>worker()</code>, and <code>uv_async_send</code> back to the loop."
+    <div class="ar-note"><b>السؤال (سؤال 3 في اختبار الخروج): ليه <code>fs.readFile</code> بيروح الـ thread pool و HTTP request لأ؟</b> "الـ sockets عندها readiness API: epoll على Linux و IOCP على Windows. الـ loop بيسجّلها والـ kernel بيبلّغ لما تجهز، فـ thread واحد يقدر يراقب آلاف. الملفات العادية مفيهاش مقابل libuv بيعتمد عليه افتراضيًا، فالقراية syscall بـ blocking، وبتشتغل على thread من الـ pool (4 افتراضيًا) عشان الـ loop يفضل فاضي. وتقدر تمشي وراها في الـ source: <code>uv_fs_open</code> و<code>POST</code> و<code>uv__work_submit</code> و<code>worker()</code> و<code>uv_async_send</code> راجع للـ loop."</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Snapshot on a serving instance</b>
+<pre><code class="language-typescript">app.post("/admin/snapshot", (_req, res) =&gt; {
+  // الـ users كلهم واقفين الثواني دي، والـ 503 مش هتتقرا
+  serving = false;
+  res.json({ file: writeHeapSnapshot() });
+});
+</code></pre></div>
+    <div class="good"><b>✅ Drain first, then snapshot</b>
+<pre><code class="language-typescript">app.post("/admin/snapshot", async (_req, res) =&gt; {
+  serving = false;
+  // نستنى الـ load balancer يشوف الـ 503 ويوقف الـ traffic
+  await sleep(DRAIN_MS);
+  res.json({ file: writeHeapSnapshot() });
+});
+</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>writeHeapSnapshot</code> sync، فلو الـ instance بتاخد traffic، كل الـ requests هتقف، وتغيير <code>serving</code> قبلها على طول مش هيلحق يوصل لحد. ✅ سيب وقت للـ load balancer يقرا الـ 503 الأول. وفي الحالتين جهّز memory زيادة: قسنا ≈8–10 أضعاف الـ heap هنا.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Heap limit equal to the container limit</b>
+<pre><code class="language-bash"># الـ limit بتاع الـ container هو 1024Mi: مفيش مكان للـ Buffers والـ stacks
+node --max-old-space-size=1024 server.js
+</code></pre></div>
+    <div class="good"><b>✅ Below the limit, then check it</b>
+<pre><code class="language-bash"># حوالي 75%، والباقي للـ Buffers والـ young generation والكود
+node --max-old-space-size=768 server.js
+node -p "require('v8').getHeapStatistics().heap_size_limit / 1048576"
+</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ لو الـ heap مسموحله يوصل لحد الـ container، الـ RSS هيعدّي الأول، والـ kernel يبعت SIGKILL: exit 137 ومفيش أي log. ✅ حطه أقل، فـ V8 يجمّع بقوة قبل الحد، ولو حصل overflow حقيقي تاخد رسالة واضحة وفرصة للتشخيص. واطبع <code>heap_size_limit</code> وقت الـ startup عشان تتأكد إن الـ flag وصل فعلًا. وخد بالك إن الـ 75% نقطة بداية، ولو الـ service بتمسك Buffers كتير محتاج مساحة أكبر.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Assuming one directory covers everything</b>
+<pre><code class="language-bash"># الـ snapshot في diag، والتقرير بيروح الـ current directory وفيه الـ env
+node --diagnostic-dir=/data/diag --report-on-fatalerror server.js
+</code></pre></div>
+    <div class="good"><b>✅ Set each path, and drop the env</b>
+<pre><code class="language-bash"># كله على volume ثابت، ومن غير env variables في التقرير
+node --heapsnapshot-near-heap-limit=1 --diagnostic-dir=/data/diag --report-on-fatalerror --report-directory=/data/diag --report-exclude-env server.js
+</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ docs بتقول إن <code>--diagnostic-dir</code> بيأثر على الـ cpu و heap profiles والـ warnings، مش الـ reports، وفي التجربة التقرير نزل في الـ current directory فعلًا، وده غالبًا بيضيع مع الـ container. ✅ حدد <code>--report-directory</code> كمان على volume ثابت، و<code>--report-exclude-env</code> عشان الـ secrets متتكتبش في الملف.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ <code>delete</code> on a request object</b>
+<pre><code class="language-typescript">function redact(body: SignupBody) {
+  // الـ object بقى dictionary mode، والقراية ⁦≈16 ns⁩
+  delete body.password;
+  return body;
+}
+</code></pre></div>
+    <div class="good"><b>✅ A rest copy</b>
+<pre><code class="language-typescript">function redact(body: SignupBody) {
+  // شكل ثابت، والمفتاح اتشال فعلًا، وقراية ⁦≈2.8 ns⁩
+  const { password: _password, ...safe } = body;
+  return safe;
+}
+</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>delete</code> بتعدّل الـ object الأصلي وبتحوّله لـ dictionary mode، وأي middleware بعدها بيدفع التمن وهو بيقرا. ✅ الـ rest copy بيرجّع object جديد بشكل ثابت ومن غير المفتاح. والفرق بالـ nanoseconds، فالسبب الأقوى هنا هو الوضوح وإن الـ input ميتعدلش، مش السرعة.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Tuning a flag before measuring</b>
+<pre><code class="language-bash"># "الـ p99 عالي، أكيد ⁦GC"⁩: الـ RSS زاد ⁦≈90 MB⁩ والـ p99 زي ما هو
+node --max-semi-space-size=64 server.js
+</code></pre></div>
+    <div class="good"><b>✅ Line GC up with latency, then cut allocations</b>
+<pre><code class="language-bash"># الأول: الـ outliers واقعة مع GC ولا لأ؟
+node gc-lab.ts
+# وبعدين: الـ CPU profile بيقول مين بيعمل allocation
+node --cpu-prof server.ts
+</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ رفع الـ semi-space من غير قياس كلّف ≈90 MB في الجولة الهادية والـ p99 مبيتحركش (≈10 مقابل ≈11 ms). ✅ حط الـ GC جنب الـ latency الأول، ولو الـ GC هو السبب، قلّل الـ allocations: الـ loop الواحد إدّى ≈13 ضعف الـ rps. والـ flag يبقى آخر خطوة، مش أول خطوة.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+
+  <div class="exercise"><b>1. Predict the limit <span class="lvl lvl-1">🟢 easy</span></b>
+    Without running anything, predict <code>heap_size_limit</code> for <code>--max-old-space-size=256</code>, and for <code>--max-old-space-size=256 --max-semi-space-size=32</code>. Then check both, and run <code>rss-vs-heap.ts</code> with a 32 MB limit: will it crash?
+    <div class="ar-note">من غير ما تشغّل حاجة، توقّع <code>heap_size_limit</code> لـ <code>--max-old-space-size=256</code>، ولـ <code>--max-old-space-size=256 --max-semi-space-size=32</code>. وبعدين اتأكد من الاتنين، وشغّل <code>rss-vs-heap.ts</code> بـ limit 32 MB: هيقع؟</div>
+    <details><summary>Solution · الحل</summary>
+      The formula is old + 3 × semi, so 256 + 48 = 304, and 256 + 96 = 352. It won't crash: the uploads are Buffers outside the heap, so RSS keeps growing with a 32 MB limit. JS lesson 18 ran the same thing with 400 MB of Buffers and exit 0.
+      <div class="ar-note">المعادلة old + 3 × semi، فـ 256 + 48 = 304، و256 + 96 = 352. ومش هيقع: الـ uploads دي Buffers برّه الـ heap، فالـ RSS بيفضل يكبر حتى بـ limit 32 MB. ودرس JS رقم 18 شغّل نفس الفكرة بـ 400 MB Buffers وخرج بـ exit 0.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>2. Fix the leak and prove it <span class="lvl lvl-2">🟡 medium</span></b>
+    Fix <code>leaky-catalog-api.ts</code>, then run the same three-snapshot procedure and show that <code>diff-snapshots.ts</code> no longer names <code>CachedProductPage</code>. Fixing the code isn't enough: the rerun is your proof.
+    <div class="ar-note">صلّح <code>leaky-catalog-api.ts</code>، وبعدين شغّل نفس الـ three-snapshot procedure، ووري إن <code>diff-snapshots.ts</code> مبقاش بيسمّي <code>CachedProductPage</code>. تصليح الكود مش كفاية: إعادة التشغيل هي الإثبات.</div>
+    <details><summary>Hint · تلميح</summary>
+      There are two problems. The key contains the whole URL, so every <code>utm_campaign</code> creates a new entry, and the cache has no size limit.
+      <div class="ar-note">فيه مشكلتين. الـ key فيه الـ URL كله، فكل <code>utm_campaign</code> بيعمل entry جديدة، والـ cache ملوش حد أقصى.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="leaky-fixed.ts"><code class="language-typescript">// الحل: الـ cache محدود بعدد، والـ key مبني من اللي بيغيّر الصفحة فعلًا مش من الـ URL كله
+import type { AddressInfo } from "node:net";
+import { writeHeapSnapshot } from "node:v8";
+import express from "express";
+import { LRUCache } from "lru-cache";
+
+class CachedProductPage {
+  renderedAt = Date.now();
+  url: string;
+  html: string;
+  constructor(url: string, html: string) {
+    this.url = url;
+    this.html = html;
+  }
+}
+
+const routeCache = new LRUCache&lt;string, CachedProductPage&gt;({ max: 1_000 });
+
+function renderProductPage(productId: string, url: string): CachedProductPage {
+  const html = [`&lt;h1&gt;Product ${productId}&lt;/h1&gt;`, url, "x".repeat(2_000)].join("");
+  return new CachedProductPage(url, html);
+}
+
+const app = express();
+
+app.get("/products/:id", (req, res) =&gt; {
+  // الـ utm_campaign مبيغيّرش الصفحة، فمحلّهاش مكان في الـ key
+  const key = `product:${req.params.id}`;
+  let page = routeCache.get(key);
+  if (!page) {
+    page = renderProductPage(req.params.id, key);
+    routeCache.set(key, page);
+  }
+  res.type("html").send(page.html);
+});
+
+app.post("/admin/heap-snapshot", (req, res) =&gt; {
+  if (req.get("x-admin-token") !== process.env.ADMIN_TOKEN) return res.status(403).end();
+  const file = writeHeapSnapshot(`${String(req.query.label)}.heapsnapshot`);
+  res.json({ file, cacheSize: routeCache.size });
+});
+
+const server = app.listen(0, "127.0.0.1", () =&gt; {
+  process.send?.({ port: (server.address() as AddressInfo).port });
+});
+process.on("disconnect", () =&gt; process.exit(0));
+</code></pre>
+<pre><code class="language-plaintext">f1 { file: 'f1.heapsnapshot', cacheSize: 50 }
+f2 { file: 'f2.heapsnapshot', cacheSize: 50 }
+f3 { file: 'f3.heapsnapshot', cacheSize: 50 }
+constructors that grew in BOTH windows:
+┌─────────┐
+│ (index) │
+├─────────┤
+└─────────┘
+nothing grew in both windows: no leak of this kind
+</code></pre>
+      <div class="ar-note">الـ <code>cacheSize</code> ثابت عند 50 (عدد الـ products)، ومفيش constructor كبر في الفترتين، وحجم الملفات ثبت حوالين 10 MB بدل ما يطلع من 14 لـ 27 MB. الـ <code>max</code> بيحمي من الـ cardinality العالية حتى لو الـ key اتغيّر تاني.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>3. Export GC as metrics <span class="lvl lvl-3">🔴 hard</span></b>
+    Write a module that observes <code>'gc'</code> entries and keeps count, total seconds and the maximum per kind (scavenge, mark-compact, incremental, weak callbacks), named as Prometheus metrics. Then add it to a route of yours and compare the numbers with <code>--trace-gc</code>.
+    <div class="ar-note">اكتب module بيراقب الـ <code>'gc'</code> entries وبيحتفظ بالعدد وإجمالي الثواني والأقصى لكل نوع (scavenge و mark-compact و incremental و weak callbacks)، بأسماء زي Prometheus metrics. وبعدين ضيفه على route عندك وقارن الأرقام بـ <code>--trace-gc</code>.</div>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="gc-metrics.ts"><code class="language-typescript">// شغّله كده: node gc-metrics.ts
+// بنحوّل كل GC لـ counters بالنوع، زي اللي بتبعتهم لـ Prometheus
+import { constants, PerformanceObserver, type PerformanceEntry } from "node:perf_hooks";
+
+const kindName = new Map&lt;number, string&gt;([
+  [constants.NODE_PERFORMANCE_GC_MINOR, "scavenge"],
+  [constants.NODE_PERFORMANCE_GC_MAJOR, "mark_compact"],
+  [constants.NODE_PERFORMANCE_GC_INCREMENTAL, "incremental"],
+  [constants.NODE_PERFORMANCE_GC_WEAKCB, "weak_callbacks"],
+]);
+
+export const gcPauseSeconds = new Map&lt;string, { count: number; sum: number; max: number }&gt;();
+
+export function startGcMetrics(): PerformanceObserver {
+  const observer = new PerformanceObserver((list) =&gt; {
+    for (const entry of list.getEntries() as (PerformanceEntry &amp; { detail: { kind: number } })[]) {
+      const kind = kindName.get(entry.detail.kind) ?? String(entry.detail.kind);
+      const row = gcPauseSeconds.get(kind) ?? { count: 0, sum: 0, max: 0 };
+      row.count++;
+      row.sum += entry.duration / 1000;
+      row.max = Math.max(row.max, entry.duration / 1000);
+      gcPauseSeconds.set(kind, row);
+    }
+  });
+  observer.observe({ entryTypes: ["gc"] });
+  return observer;
+}
+
+if (process.argv[1]?.endsWith("gc-metrics.ts")) {
+  const observer = startGcMetrics();
+  const keep: object[] = [];
+  for (let i = 0; i &lt; 3_000_000; i++) {
+    const order = { id: i, status: "paid", items: [i] };
+    if (i % 50 === 0) keep.push(order);
+  }
+  await new Promise((resolve) =&gt; setTimeout(resolve, 50));
+  observer.disconnect();
+  for (const [kind, row] of gcPauseSeconds) {
+    console.log(`node_gc_pause_seconds_count{kind="${kind}"} ${row.count}`);
+    console.log(`node_gc_pause_seconds_sum{kind="${kind}"} ${row.sum.toFixed(4)}`);
+  }
+  console.log({ kept: keep.length });
+}
+</code></pre>
+<pre><code class="language-plaintext">node_gc_pause_seconds_count{kind="scavenge"} 82
+node_gc_pause_seconds_sum{kind="scavenge"} 0.0128
+node_gc_pause_seconds_count{kind="incremental"} 1
+node_gc_pause_seconds_sum{kind="incremental"} 0.0002
+node_gc_pause_seconds_count{kind="mark_compact"} 1
+node_gc_pause_seconds_sum{kind="mark_compact"} 0.0036
+{ kept: 60000 }
+</code></pre>
+      <div class="ar-note">3 مليون order قصيرة العمر طلّعوا 82 scavenge بإجمالي ≈13 ms بس، و Mark-Compact واحد. من الـ counters دي تقدر تعمل rate للـ <code>sum</code> في Prometheus، فتعرف الـ GC بياخد كام في المية من الوقت. وصدّرهم مع الـ lag بتاع <a href="./35-profiling-load-testing.html">درس 35</a> عشان تشوفهم جنب بعض.</div>
+    </details>
+  </div>
+
+  <div class="exercise"><b>4. In your project / at work <span class="lvl lvl-3">🔴 project</span></b>
+    Do two things. First, set up production memory diagnostics in your side project's Dockerfile: <code>--max-old-space-size</code> below the container limit, a persistent diagnostics volume, and <code>rss</code>, <code>heapUsed</code> and <code>external</code> as metrics. Print <code>heap_size_limit</code> and <code>process.constrainedMemory()</code> at startup. Second, pick one Node API your code uses and trace it to libuv, at your exact Node version, as Part 6 did. A good first one is <code>dns.lookup</code>: is it in the thread pool?
+    <div class="ar-note">اعمل حاجتين. الأولى: جهّز تشخيص الـ memory في الـ Dockerfile بتاع مشروعك: <code>--max-old-space-size</code> أقل من الـ container limit، و volume ثابت للتشخيص، و<code>rss</code> و<code>heapUsed</code> و<code>external</code> كـ metrics. واطبع <code>heap_size_limit</code> و<code>process.constrainedMemory()</code> وقت الـ startup. التانية: اختار Node API بيستخدمه الكود بتاعك، وامشي وراه لحد libuv عند إصدار Node بتاعك بالظبط، زي الجزء 6. وأحسن بداية <code>dns.lookup</code>: هل بيروح الـ thread pool؟</div>
+    <details><summary>Hint · تلميح</summary>
+      At v22.19.0: <a href="https://github.com/nodejs/node/blob/v22.19.0/lib/dns.js#L143">lookup in lib/dns.js#L143</a> calls <a href="https://github.com/nodejs/node/blob/v22.19.0/lib/dns.js#L236">cares.getaddrinfo at #L236</a>, which is <a href="https://github.com/nodejs/node/blob/v22.19.0/src/cares_wrap.cc#L1852">GetAddrInfo in src/cares_wrap.cc#L1852</a>, which calls <a href="https://github.com/nodejs/node/blob/v22.19.0/src/cares_wrap.cc#L1906">uv_getaddrinfo at #L1906</a>. So yes: despite the name <code>cares</code>, <code>dns.lookup</code> ends up in libuv's <code>getaddrinfo</code>, which is where the thread pool comes in. Open libuv's file and confirm it yourself.
+      <div class="ar-note">عند v22.19.0: <code>lookup</code> في <a href="https://github.com/nodejs/node/blob/v22.19.0/lib/dns.js#L143">lib/dns.js#L143</a> بتنادي <code>cares.getaddrinfo</code> عند <a href="https://github.com/nodejs/node/blob/v22.19.0/lib/dns.js#L236">#L236</a>، ودي <code>GetAddrInfo</code> في <a href="https://github.com/nodejs/node/blob/v22.19.0/src/cares_wrap.cc#L1852">src/cares_wrap.cc#L1852</a>، وبتنادي <code>uv_getaddrinfo</code> عند <a href="https://github.com/nodejs/node/blob/v22.19.0/src/cares_wrap.cc#L1906">#L1906</a>. يعني أيوه: رغم اسم <code>cares</code>، <code>dns.lookup</code> بتوصل لـ <code>getaddrinfo</code> بتاع libuv، وهناك بييجي الـ thread pool. افتح ملف libuv واتأكد بنفسك.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li><code>writeHeapSnapshot</code> freezes the loop: ≈15 s and ≈2.8 GB extra for a 268 MB heap of small objects. The docs' "twice" can be far off. Drain first, then snapshot.</li>
+    <li>Snapshots and reports contain secrets and user data: encrypt them, delete them, and use <code>--report-exclude-env</code>.</li>
+    <li>Three snapshots after warm-up: a leak grows in both windows, in proportion to the load. Then follow the retainer path.</li>
+    <li><code>--heapsnapshot-near-heap-limit</code> raises the real limit (64 → 160 MB, ≈347 MB RSS here). A tight container may kill it first. <code>--diagnostic-dir</code> doesn't cover reports.</li>
+    <li><code>heap_size_limit</code> = old space + 3 × semi-space. <code>--max-old-space-size</code> doesn't cap Buffers: ≈966 MB RSS under a 64 MB limit.</li>
+    <li>V8 OOM = <code>FATAL ERROR</code>, diagnostics possible. Kernel kill = exit 137, nothing logged. Set the old space around 75% of the limit, and export <code>rss</code> and <code>external</code>.</li>
+    <li><code>--max-old-space-size-percentage</code>: rejected by 22.19, added in 24.6.0 and 22.21.0.</li>
+    <li><code>--trace-gc</code>: type, before (committed) → after, pause, mu, reason. Line up GC with latency with <code>PerformanceObserver('gc')</code> before blaming it.</li>
+    <li>Semi-space 16 → 64: scavenges ÷4, ≈90 MB more RSS, little p99 change. Allocating less: ≈13× the rps. Object pools: no gain here, plus a cross-tenant bug.</li>
+    <li>Megamorphic starts at 5 shapes (≈0.97 → ≈5.38 ns), and <code>wrong map</code> is the deopt reason. On HTTP it was invisible: one 5 ms query ≈ 570× that cost.</li>
+    <li><code>readFile</code>: <code>lib/</code> → <code>internalBinding</code> → <code>src/node_file.cc</code> → <code>uv_fs_open</code> → pool thread → <code>uv_async_send</code> → your callback, repeated for open, fstat, each 512 KB read, and close.</li>
+    <li><code>--trace-sync-io</code> misses <code>readFileSync(path, "utf8")</code> and <code>existsSync</code>. <code>NODE_DEBUG=http,net</code> can expose sensitive data. Always link to a tag, not <code>main</code>.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li><code>writeHeapSnapshot</code> بيجمّد الـ loop: ≈15 ثانية و≈2.8 GB زيادة لـ heap بـ 268 MB من objects صغيرة. و"الضعف" بتاع الـ docs ممكن يبقى بعيد جدًا. فرّغ الـ traffic الأول وبعدين خد الـ snapshot.</li>
+      <li>الـ snapshots والتقارير فيها secrets وبيانات users: شفّرها وامسحها، واستخدم <code>--report-exclude-env</code>.</li>
+      <li>3 snapshots بعد الـ warm-up: الـ leak بيكبر في الفترتين بما يتناسب مع الضغط. وبعدين امشي ورا الـ retainer path.</li>
+      <li><code>--heapsnapshot-near-heap-limit</code> بيرفع الـ limit الحقيقي (64 ← 160 MB، و≈347 MB RSS هنا). والـ container الضيق ممكن يقتلها الأول. و<code>--diagnostic-dir</code> مش بيغطي الـ reports.</li>
+      <li><code>heap_size_limit</code> = الـ old space + 3 × الـ semi-space. و<code>--max-old-space-size</code> مش بيحدد الـ Buffers: ≈966 MB RSS تحت limit بـ 64 MB.</li>
+      <li>V8 OOM يعني <code>FATAL ERROR</code> والتشخيص ممكن. Kernel kill يعني exit 137 ومفيش log. حط الـ old space حوالي 75% من الـ limit، وصدّر <code>rss</code> و<code>external</code>.</li>
+      <li><code>--max-old-space-size-percentage</code>: 22.19 بيرفضه، ونزل في 24.6.0 و22.21.0.</li>
+      <li><code>--trace-gc</code>: النوع، وقبل (committed) ← بعد، والوقفة، والـ mu، والسبب. حط الـ GC جنب الـ latency بـ <code>PerformanceObserver('gc')</code> قبل ما تتهمه.</li>
+      <li>الـ semi-space من 16 لـ 64: الـ scavenges ÷4، و≈90 MB RSS زيادة، وتغيير بسيط في الـ p99. الـ allocations الأقل: ≈13 ضعف الـ rps. والـ object pools: مفيش مكسب هنا، وكمان bug بين الـ tenants.</li>
+      <li>الـ megamorphic بيبدأ عند 5 أشكال (≈0.97 ← ≈5.38 ns)، و<code>wrong map</code> هو سبب الـ deopt. وعلى HTTP مكانش باين: query واحدة بـ 5 ms ≈ 570 ضعف التكلفة دي.</li>
+      <li><code>readFile</code>: <code>lib/</code> ← <code>internalBinding</code> ← <code>src/node_file.cc</code> ← <code>uv_fs_open</code> ← thread من الـ pool ← <code>uv_async_send</code> ← الـ callback بتاعك، وبيتكرر للـ open والـ fstat وكل read بـ 512 KB والـ close.</li>
+      <li><code>--trace-sync-io</code> بيفوّت <code>readFileSync(path, "utf8")</code> و<code>existsSync</code>. و<code>NODE_DEBUG=http,net</code> ممكن يطلّع بيانات حساسة. ودايمًا خلي اللينك على tag مش <code>main</code>.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 06 · 3.2 — Memory: heap snapshots في production (<code>v8.writeHeapSnapshot</code>)، <code>--max-old-space-size</code> في containers (وليه Node بيتقتل بـ OOM لو مظبطتوش مع الـ container limit)، leak detection بالـ snapshots المتتالية</label>
+    <label><input type="checkbox" data-key="r2"> 06 · 3.2 — <code>--heapsnapshot-near-heap-limit</code></label>
+    <label><input type="checkbox" data-key="r3"> 06 · 3.9 — V8 internals للـ debugging: hidden classes، inline caching، deoptimization، <code>--trace-opt --trace-deopt</code></label>
+    <label><input type="checkbox" data-key="r4"> 06 · 3.9 — V8 GC: Scavenger (young)، Mark-Compact (old)، <code>--trace-gc</code>، وعلاقة الـ GC pauses بالـ p99 latency</label>
+    <label><input type="checkbox" data-key="r5"> 06 · 3.9 — Node internals: <code>lib/</code> vs <code>src/</code>، إزاي الـ <code>fs.readFile</code> بيوصل لـ libuv</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://nodejs.org/api/v8.html">Node.js docs: v8 module (writeHeapSnapshot, getHeapStatistics)</a></li>
+    <li><a href="https://nodejs.org/api/cli.html">Node.js docs: Command-line options</a></li>
+    <li><a href="https://nodejs.org/api/report.html">Node.js docs: Diagnostic report</a></li>
+    <li><a href="https://nodejs.org/en/learn/diagnostics/memory/using-gc-traces">Node.js: Tracing garbage collection</a></li>
+    <li><a href="https://v8.dev/blog/trash-talk">V8 blog: Trash talk, the Orinoco garbage collector</a></li>
+    <li><a href="https://mathiasbynens.be/notes/shapes-ics">Mathias Bynens: Shapes and inline caches</a></li>
+    <li><a href="https://kubernetes.io/docs/tasks/configure-pod-container/assign-memory-resource/">Kubernetes docs: Assign memory resources</a></li>
+  </ul>
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="./35-profiling-load-testing.html"><small>← Previous</small>35 · Profiling &amp; Load</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./37-realtime-at-scale.html"><small>Next →</small>37 · Real-time</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>

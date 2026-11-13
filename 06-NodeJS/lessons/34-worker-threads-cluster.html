@@ -1,0 +1,2317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ===== EDIT: title + meta (the progress script reads title, level, time) ===== -->
+<title>worker_threads, cluster &amp; Choosing a Concurrency Model — 06 Node.js</title>
+<meta name="section" content="06-NodeJS">
+<meta name="level" content="🔴 Advanced">
+<meta name="time" content="60 min">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<style>
+  /* ===== Design tokens ===== */
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1f2328;
+    --text-muted: #5b6470;
+    --border: #e4e1da;
+    --accent: #2563eb;
+    --accent-soft: #e8efff;
+    --en: #0f766e;
+    --en-soft: #e6f5f3;
+    --ar: #b45309;
+    --ar-soft: #fdf3e3;
+    --warn: #b91c1c;
+    --warn-soft: #fdecec;
+    --ok: #15803d;
+    --ok-soft: #e9f7ee;
+    --code-bg: #f6f8fa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+    --font-en: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-ar: "Cairo", "Segoe UI", Tahoma, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Cairo", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+      --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+      --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+      --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1c1f24; --surface-2: #23272e; --text: #e6e8eb; --text-muted: #9aa4b2;
+    --border: #2e333b; --accent: #7aa2ff; --accent-soft: #1d2740; --en: #5fd3c4; --en-soft: #15302d;
+    --ar: #f0b35b; --ar-soft: #35281a; --warn: #ff7b7b; --warn-soft: #3a1f1f; --ok: #6fd08c; --ok-soft: #1c3324;
+    --code-bg: #0f1115; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== Base ===== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-en); font-size: 17px; line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.3; letter-spacing: -0.01em; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  h2 { font-size: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+  p { margin: 0 0 1rem; }
+  ul, ol { padding-inline-start: 1.5rem; }
+  li { margin: .35rem 0; }
+  /* No ligatures: show the exact characters to type (<= not the merged glyph); they also overlap neighbouring Arabic */
+  pre, code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: .12em .4em; border-radius: 6px; }
+  pre {
+    margin: 1.25rem 0; padding: 1.1rem 1.25rem; background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow-x: auto; font-size: .9rem; line-height: 1.6; direction: ltr; text-align: left;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre[data-file]::before {
+    content: attr(data-file); display: block; margin: -0.6rem 0 .8rem; font-size: .75rem; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .hljs { background: transparent !important; }
+  /* Arabic comments inside code: each comment picks its own direction from its first letter.
+     Write Arabic comments as line comments (// # --) that START with an Arabic word. */
+  .hljs-comment { unicode-bidi: plaintext; display: inline-block; max-width: 100%; vertical-align: top; text-align: start; }
+  /* Long code lines wrap instead of scrolling, so a trailing RTL comment never loses its start off-screen.
+     Plaintext output and diagrams keep their exact alignment. */
+  pre code:not(.language-plaintext) { white-space: pre-wrap; }
+  /* README items are mostly Arabic with English terms: read them as RTL so the words stay in order. */
+  .covers li, .checklist label { direction: rtl; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { padding: .6rem .75rem; border: 1px solid var(--border); text-align: start; vertical-align: top; }
+  th { background: var(--surface-2); }
+
+  /* ASCII / text diagrams: <pre class="diagram">...</pre> (no highlighting) */
+  pre.diagram { background: var(--surface); font-size: .85rem; line-height: 1.45; color: var(--text); }
+  figure { margin: 1.25rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-muted); text-align: center; margin-top: .4rem; }
+  svg { max-width: 100%; height: auto; }
+
+  /* ===== Layout ===== */
+  .wrap { max-width: 800px; margin: 0 auto; padding: 2.5rem 16px 6rem; }
+  .topbar {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 85%, transparent); border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner { max-width: 800px; margin: 0 auto; padding: .6rem 16px; display: flex; align-items: center; gap: .75rem; font-size: .85rem; color: var(--text-muted); flex-wrap: wrap; }
+  .topbar-inner .spacer { flex: 1; }
+  .btn {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: .35rem .7rem; border-radius: 999px; font: inherit; font-size: .8rem;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .progress-bar { height: 3px; background: var(--border); }
+  .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  /* ===== Header ===== */
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 1.5rem; font-size: .85rem; }
+  .chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .7rem; }
+  .covers { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; box-shadow: var(--shadow); font-size: .95rem; }
+  .covers ul { margin: .4rem 0 0; }
+
+  /* Level tag on each part heading: <h2>Part 1 — ... <span class="lvl lvl-1">🟢 Basic</span></h2> */
+  .lvl { display: inline-block; vertical-align: middle; margin-inline-start: .5rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em;
+    padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+  .lvl-1 { border-color: var(--ok); } .lvl-2 { border-color: #ca8a04; } .lvl-3 { border-color: var(--warn); }
+
+  /* ===== TOC ===== */
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1.5rem 0 2rem; font-size: .95rem; }
+  nav.toc ol { margin: .4rem 0 0; }
+
+  /* ===== EN / AR blocks ===== */
+  .en, .ar { border-radius: var(--radius); padding: 1.1rem 1.35rem; margin: 1rem 0; border: 1px solid var(--border); border-inline-start-width: 4px; }
+  .en { background: var(--en-soft); border-inline-start-color: var(--en); }
+  .ar { background: var(--ar-soft); border-inline-start-color: var(--ar); direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1.05rem; line-height: 1.9; }
+  .ar code, .ar pre { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar pre { display: block; }
+  .en > .label, .ar > .label { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; opacity: .85; }
+  .en > .label { color: var(--en); } .ar > .label { color: var(--ar); font-family: var(--font-en); }
+  .ar p:last-child, .en p:last-child { margin-bottom: 0; }
+  .ar ul, .ar ol { padding-inline-start: 1.5rem; }
+
+  /* Arabic explanation attached to callouts, exercises, hints/solutions, diagrams, tables: <div class="ar-note">…</div> */
+  .ar-note { direction: rtl; text-align: right; font-family: var(--font-ar); font-size: 1rem; line-height: 1.9;
+    margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
+  .ar-note p { margin: 0 0 .5rem; } .ar-note p:last-child { margin: 0; }
+  .ar-note code { direction: ltr; display: inline-block; font-family: var(--font-mono); }
+  .ar-note ul, .ar-note ol { padding-inline-start: 1.5rem; margin: .3rem 0; }
+  pre.diagram + .ar-note, table + .ar-note, figure + .ar-note { margin-top: -.6rem; border-top: none; padding: .4rem .5rem 0; color: var(--text-muted); font-size: .95rem; }
+  /* Arabic subtitle under English headings: <h2>Part 1 — Title <span class="lvl">…</span><span class="ar-sub">العنوان بالعربي</span></h2> */
+  .ar-sub { display: block; direction: rtl; text-align: right; font-family: var(--font-ar); font-size: .95rem; font-weight: 500; color: var(--text-muted); margin-top: .35rem; letter-spacing: 0; }
+  h3 .ar-sub, .exercise .ar-sub { font-size: .9rem; }
+
+  /* "فين هستخدمه في شغلي" */
+  .use { margin-top: 1rem; padding: .85rem 1rem; background: var(--surface); border: 1px dashed var(--ar); border-radius: 10px; }
+  .use > b { display: block; margin-bottom: .3rem; }
+
+  /* ===== Callouts ===== */
+  .callout { border-radius: var(--radius); padding: .9rem 1.2rem; margin: 1rem 0; border: 1px solid var(--border); background: var(--surface); }
+  .callout > b { display: block; margin-bottom: .25rem; }
+  .callout.tradeoff { border-color: var(--accent); background: var(--accent-soft); }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .callout.interview { border-color: var(--text-muted); }
+  .callout[dir="rtl"] { font-family: var(--font-ar); text-align: right; }
+
+  /* ===== Mistakes: bad vs good ===== */
+  .compare { display: grid; grid-template-columns: 1fr; gap: .75rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .compare { grid-template-columns: 1fr 1fr; } }
+  .compare > div { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem .9rem; min-width: 0; }
+  .compare .bad { border-color: var(--warn); } .compare .good { border-color: var(--ok); }
+  .compare b { font-size: .85rem; }
+  .compare pre { margin: .5rem 0; font-size: .82rem; }
+
+  /* ===== Exercises & checklist ===== */
+  .exercise { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin: .75rem 0; background: var(--surface); }
+  .exercise > b { display: block; }
+  .exercise .lvl { margin-inline-start: .5rem; }
+  details { margin-top: .6rem; border-top: 1px dashed var(--border); padding-top: .5rem; }
+  details > summary { cursor: pointer; font-size: .85rem; color: var(--accent); font-weight: 600; }
+  details[open] > summary { margin-bottom: .5rem; }
+  /* block, not flex: a <code> inside a label must stay in the sentence instead of becoming its own column */
+  .checklist label { display: block; padding: .35rem 0; cursor: pointer; }
+  .checklist input { margin-inline-end: .5rem; vertical-align: middle; }
+  .done-box { margin: 3rem 0 0; padding: 1.25rem; text-align: center; border: 2px dashed var(--border); border-radius: var(--radius); }
+  .done-box.is-done { border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ===== Prev / Next ===== */
+  .lesson-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; margin-top: 2rem; font-size: .9rem; align-items: stretch; }
+  .lesson-nav a, .lesson-nav span { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem; background: var(--surface); }
+  .lesson-nav a:hover { border-color: var(--accent); text-decoration: none; }
+  .lesson-nav .next { text-align: end; }
+  .lesson-nav .empty { visibility: hidden; }
+  .lesson-nav small { display: block; color: var(--text-muted); font-size: .75rem; }
+
+  @media print { .topbar, .done-box, .btn, .lesson-nav { display: none; } body { font-size: 12pt; } details { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span>📚 <a href="./index.html">06 · Node.js</a></span>
+    <span>·</span>
+    <span>Lesson 34 / 39</span>
+    <span>·</span>
+    <span>~60 min</span>
+    <span class="spacer"></span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌗 Theme</button>
+    <button class="btn" id="font-toggle" title="Bigger text">A+</button>
+  </div>
+  <div class="progress-bar"><i id="scroll-progress"></i></div>
+</div>
+
+<main class="wrap">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <h1>worker_threads, cluster &amp; Choosing a Concurrency Model</h1>
+    <p style="color:var(--text-muted);margin:0">Lesson 34 of 39 — 06 Node.js</p>
+    <div class="meta">
+      <span class="chip">🔴 Advanced</span>
+      <span class="chip">⏱ 60 min</span>
+      <span class="chip">Node 22.19 · piscina 5.3 · autocannon 8 · BullMQ 6.5 on Redis 8 · TypeScript 7</span>
+      <span class="chip">Prereq: 04 Event Loop, 08 child_process, 22 BullMQ</span>
+    </div>
+    <div class="covers">
+      <b>README items covered · البنود اللي الدرس بيغطيها</b>
+      <ul>
+        <li>06 · 3.1 — <b><code>worker_threads</code></b>: للـ CPU-bound work، <code>postMessage</code>، <code>workerData</code>، transferable objects، <code>SharedArrayBuffer</code> + <code>Atomics</code></li>
+        <li>06 · 3.1 — Worker pool pattern (piscina)</li>
+        <li>06 · 3.1 — <b><code>cluster</code></b>: forks بنفس الـ port، round-robin، وإمتى (multi-core على server واحد) — vs containers horizontal scaling (الأشهر دلوقتي)</li>
+        <li>06 · 3.1 — الحكم: <code>worker_threads</code> (CPU work، shared memory) vs <code>cluster</code> (scale HTTP على cores) vs <code>child_process</code> (external programs، isolation) vs queue + separate service (الأفضل غالبًا)</li>
+      </ul>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <b>Contents · المحتوى</b>
+    <ol>
+      <li><a href="#why">Why this matters</a></li>
+      <li><a href="#p1">Part 1 — Workers for CPU work</a></li>
+      <li><a href="#p2">Part 2 — Transfer &amp; sharing</a></li>
+      <li><a href="#p3">Part 3 — Pools: by hand &amp; piscina</a></li>
+      <li><a href="#p4">Part 4 — cluster</a></li>
+      <li><a href="#p5">Part 5 — cluster vs containers</a></li>
+      <li><a href="#p6">Part 6 — The verdict</a></li>
+      <li><a href="#mistakes">Common mistakes</a></li>
+      <li><a href="#try">Try it yourself</a></li>
+      <li><a href="#summary">Cheat sheet</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===================== WHY ===================== -->
+  <h2 id="why">Why this matters · ليه ده مهم</h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>Your JavaScript runs on one thread, so one CPU-heavy route freezes every other request, <code>/health</code> included, and the orchestrator may restart a process that was only busy. Node gives you three in-process answers (<code>worker_threads</code>, <code>cluster</code>, <code>child_process</code>) and the usual architectural one (a queue and a separate service). They solve different problems, and picking the wrong one is expensive: this lesson measures a Worker per request running slower than no Worker at all, and <code>cluster</code> adding nothing on an I/O route. It's also exit-test question 8, and one of the most common Senior Node interview questions.</p>
+  </section>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ JavaScript بتاعك شغال على thread واحد، فـ route واحد تقيل على الـ CPU بيجمّد كل الـ requests التانية، ومعاهم <code>/health</code>، والـ orchestrator ممكن يعمل restart لـ process هو بس كان مشغول. Node بيديك 3 حلول جوه الـ process نفسه (<code>worker_threads</code> و <code>cluster</code> و <code>child_process</code>) وحل رابع من ناحية الـ architecture (queue و service منفصل). كل واحد بيحل مشكلة مختلفة، والاختيار الغلط غالي: في الدرس ده هنقيس Worker لكل request طالع أبطأ من مفيش Worker خالص، و <code>cluster</code> مش بيزوّد حاجة على route كله I/O. وده كمان السؤال رقم 8 في اختبار الخروج، ومن أشهر أسئلة الـ interviews لـ Senior Node.</p>
+  </section>
+
+  <!-- ===================== PART 1 ===================== -->
+  <h2 id="p1">Part 1 — Workers for CPU work <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 1 — الـ Workers للشغل التقيل على الـ CPU</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>A Worker is a real OS thread inside your process, with its own V8 isolate, its own heap and its own event loop. <a href="./04-event-loop-libuv.html#p6">Lesson 04, part 6</a> showed what blocking does and <a href="../../03-CS-Fundamentals/lessons/11-processes-threads-concurrency.html#p4">CS lesson 11, part 4</a> covers concurrency vs parallelism, so here we go straight to the fix. This is the README's artifact script: one heavy invoice hash while a client polls <code>/health</code> every 20 ms.</p>
+    <p><b>The API is small.</b> <code>new Worker(url, { workerData })</code> starts the thread and hands it a <em>clone</em> of <code>workerData</code>. Inside the Worker, <code>parentPort.postMessage()</code> talks back. The parent listens to four events: <code>online</code>, <code>message</code>, <code>error</code> (an uncaught exception in the Worker, followed by exit code 1) and <code>exit</code>. <code>process.exit()</code> inside a Worker ends only that thread.</p>
+    <p><b><code>.ts</code> workers run on 22.19</b>, because type stripping is on by default and it applies to Worker files too (real, below). It's fine for development. In production, compile first: the same small Worker takes longer to start and about 9 MB more per thread as <code>.ts</code> (measured in part 3), and a bundler won't find your Worker file on its own (see common mistakes).</p>
+    <p><b>Messages are copied, and copying isn't free.</b> <code>postMessage</code> uses the structured clone algorithm, synchronously, on the thread that calls it. In the table below, sending 500,000 orders (63 MB as JSON) blocks the main thread for about 0.85 s on this Windows machine (between 0.5 and 2.5 s across runs, depending on what else was loading it), more than twice the time of <code>JSON.stringify</code> on the same data, and the message reaches the Worker about 2.2 s after the call, because it still has to be deserialized. So a Worker doesn't automatically remove a blocking problem: if you ship a huge object to it, you've moved part of the block to <code>postMessage</code>. Send an ID and let the Worker fetch the data, or send bytes with a transfer (part 2). The clone also carries data only: a class instance arrives as a plain object without methods, a <code>Buffer</code> arrives as a <code>Uint8Array</code>, while <code>Date</code> and <code>Set</code> survive, and a function throws <code>DataCloneError</code>.</p>
+  </section>
+
+<pre class="diagram">
+ one process
+ +----------------------------+        +----------------------------+
+ | main thread                |        | worker thread              |
+ | own V8 isolate and heap    |        | own V8 isolate and heap    |
+ | event loop: HTTP, /health  |        | event loop                 |
+ |                            |        | hashInvoiceChain() blocks  |
+ |                            |        | only this thread           |
+ +-------------+--------------+        +--------------+-------------+
+               |   postMessage = structured clone     |
+               +&lt;------------------------------------>+
+ shared by both: the libuv thread pool, and raw bytes in a SharedArrayBuffer
+</pre>
+  <div class="ar-note">Process واحد فيه thread رئيسي و Worker. كل واحد ليه V8 isolate و heap و event loop لوحده، فالـ hash التقيل بيبلوك الـ Worker بس، والـ main لسه بيرد على HTTP و <code>/health</code>. والكلام بينهم بـ <code>postMessage</code>، وده معناه نسخة بالـ structured clone. والحاجات المشتركة فعلًا: الـ libuv thread pool، والـ bytes الخام اللي في <code>SharedArrayBuffer</code>.</div>
+
+<pre data-file="src/invoice-hash.ts"><code class="language-typescript">// الشغل التقيل: سلسلة sha256 على الفاتورة. كله CPU ومفيش فيه أي I/O
+import { createHash } from "node:crypto";
+
+export function hashInvoiceChain(invoiceId: string, rounds: number): string {
+  let digest = invoiceId;
+  for (let i = 0; i &lt; rounds; i++) {
+    digest = createHash("sha256").update(digest).digest("hex");
+  }
+  return digest;
+}</code></pre>
+<pre data-file="src/hash-worker.ts"><code class="language-typescript">// الملف ده بيشتغل جوه thread تاني: ليه event loop و V8 isolate لوحده
+import { parentPort, workerData } from "node:worker_threads";
+import { hashInvoiceChain } from "./invoice-hash.ts";
+
+type Job = { invoiceId: string; rounds: number };
+const { invoiceId, rounds } = workerData as Job;
+
+parentPort!.postMessage({ invoiceId, digest: hashInvoiceChain(invoiceId, rounds) });</code></pre>
+<pre data-file="src/hash-server.ts"><code class="language-typescript">// نفس الـ route مرتين: مرة على الـ main thread ومرة في Worker، و ⁦/health⁩ جنبهم
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { Worker } from "node:worker_threads";
+import { hashInvoiceChain } from "./invoice-hash.ts";
+
+const ROUNDS = Number(process.env.ROUNDS ?? 1_500_000);
+
+function hashInWorker(invoiceId: string, rounds: number): Promise&lt;string&gt; {
+  return new Promise((resolve, reject) =&gt; {
+    const worker = new Worker(new URL("./hash-worker.ts", import.meta.url), {
+      workerData: { invoiceId, rounds },
+    });
+    worker.once("message", (msg: { digest: string }) =&gt; resolve(msg.digest));
+    // الـ error ده exception جوه الـ worker. من غير listener هيوقّع الـ API كله
+    worker.once("error", reject);
+    worker.once("exit", (code) =&gt; {
+      if (code !== 0) reject(new Error(`worker exited with code ${code}`));
+    });
+  });
+}
+
+const server = createServer(async (req, res) =&gt; {
+  const url = new URL(req.url!, "http://local");
+  if (url.pathname === "/health") {
+    res.end("ok");
+    return;
+  }
+  const started = performance.now();
+  const digest =
+    url.pathname === "/hash/main"
+      ? hashInvoiceChain("inv-1", ROUNDS)
+      : await hashInWorker("inv-1", ROUNDS);
+  res.setHeader("content-type", "application/json");
+  res.end(JSON.stringify({ digest: digest.slice(0, 8), ms: Math.round(performance.now() - started) }));
+});
+
+server.listen(0, "127.0.0.1", () =&gt; {
+  process.send?.({ port: (server.address() as AddressInfo).port });
+});</code></pre>
+<pre data-file="src/measure-health.ts"><code class="language-typescript">// بنبعت ⁦/health⁩ كل 20 ms وفي نفس الوقت request واحد تقيل، ونسجّل أبطأ ⁦/health⁩
+import { fork } from "node:child_process";
+import { once } from "node:events";
+import { setTimeout as sleep } from "node:timers/promises";
+
+const server = fork(new URL("./hash-server.ts", import.meta.url));
+const [{ port }] = (await once(server, "message")) as [{ port: number }];
+const base = `http://127.0.0.1:${port}`;
+
+async function run(path: string) {
+  const latencies: number[] = [];
+  let done = false;
+  const heavy = fetch(base + path).then((r) =&gt; r.json());
+
+  const prober = (async () =&gt; {
+    while (!done) {
+      const t0 = performance.now();
+      await (await fetch(`${base}/health`)).text();
+      latencies.push(performance.now() - t0);
+      await sleep(20);
+    }
+  })();
+
+  const body = (await heavy) as { digest: string; ms: number };
+  done = true;
+  await prober;
+  latencies.sort((a, b) =&gt; a - b);
+  const pick = (q: number) =&gt; Math.round(latencies[Math.floor((latencies.length - 1) * q)]!);
+  console.log(`${path.padEnd(12)} heavy ${String(body.ms).padStart(5)} ms | /health replies: ${String(latencies.length).padStart(3)} | p50 ${pick(0.5)} ms | max ${pick(1)} ms`);
+}
+
+// أول request بيسخّن الـ fetch والـ server، فبنعمل warm-up الأول
+await (await fetch(`${base}/health`)).text();
+await run("/hash/main");
+await sleep(200);
+await run("/hash/worker");
+server.kill();</code></pre>
+<pre><code class="language-plaintext">$ node src/measure-health.ts
+/hash/main   heavy  1445 ms | /health replies:   1 | p50 1448 ms | max 1448 ms
+/hash/worker heavy  1416 ms | /health replies:  46 | p50 1 ms | max 3 ms</code></pre>
+  <div class="ar-note">على الـ main thread: <code>/health</code> رد مرة واحدة بس طول الوقت، وأبطأ رد قد الشغل التقيل كله تقريبًا، يعني أي probe كان هيعمل timeout. في الـ Worker: الشغل خد نفس الوقت تقريبًا، بس <code>/health</code> رد 46 مرة بـ p50 حوالي 1 ms. الأرقام من Windows ممكن يبقى عليه load من agents تانية، فبص على الفرق مش الرقم نفسه.</div>
+
+<pre data-file="src/worker-events.ts"><code class="language-typescript">// كل الطرق اللي Worker ممكن يخلص بيها، وإيه اللي الـ parent بيشوفه في كل واحدة
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+type Scenario = "normal" | "throw" | "exit3" | "clone-fail";
+
+if (!isMainThread) {
+  const scenario = workerData as Scenario;
+  if (scenario === "throw") throw new TypeError("invoice total is NaN");
+  // الـ process.exit هنا بيقفل الـ thread ده بس، مش الـ API كله
+  if (scenario === "exit3") process.exit(3);
+  // الـ function مينفعش تتبعت: structured clone بيرفضها
+  if (scenario === "clone-fail") parentPort!.postMessage({ format: () =&gt; "PDF" });
+  parentPort!.postMessage({ scenario, ok: true });
+} else {
+  for (const scenario of ["normal", "throw", "exit3", "clone-fail"] as const) {
+    const worker = new Worker(new URL(import.meta.url), { workerData: scenario });
+    const seen: string[] = [];
+    worker.on("online", () =&gt; seen.push("online"));
+    worker.on("message", (m) =&gt; seen.push(`message ${JSON.stringify(m)}`));
+    // الـ error بيوصل بعد ما يتعمله clone هو كمان، فمش مضمون يفضل Error
+    worker.on("error", (e: unknown) =&gt; seen.push(`error ${e instanceof Error ? `${e.name}: ${e.message}` : JSON.stringify(e)}`));
+    // خد بالك: events.once على exit بترمي لو error اتبعت قبله، فبنستخدم Promise عادي
+    const code = await new Promise&lt;number&gt;((resolve) =&gt; worker.once("exit", resolve));
+    console.log(`${scenario.padEnd(11)} ${seen.join(" &gt; ")} &gt; exit ${code}`);
+  }
+  console.log("main thread is still alive");
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/worker-events.ts
+normal      online &gt; message {"scenario":"normal","ok":true} &gt; exit 0
+throw       online &gt; error TypeError: invoice total is NaN &gt; exit 1
+exit3       online &gt; exit 3
+clone-fail  online &gt; error {} &gt; exit 1
+main thread is still alive</code></pre>
+  <div class="ar-note">الحالات الأربعة: <code>normal</code> بيوصل <code>message</code> وبعدين exit 0. و <code>throw</code> بيوصل <code>error</code> وبعدين exit 1. و <code>exit3</code> خلّص الـ thread بس بكود 3 ومفيش <code>error</code>. والحالة الغريبة <code>clone-fail</code>: الـ <code>DataCloneError</code> اللي اترمى جوه الـ Worker وصل للـ parent كـ <code>{}</code> فاضي، من غير name ولا message. يعني الـ log بتاعك مش هيقولك حاجة، فلو بتبعت data مش مضمونة اعمل <code>try/catch</code> حوالين <code>postMessage</code> جوه الـ Worker نفسه. وفي الآخر الـ main thread لسه عايش.</div>
+
+<pre data-file="src/worker-no-listener.ts"><code class="language-typescript">// ❌ من غير listener على error: exception في Worker واحد بيوقّع الـ process كله
+import { isMainThread, Worker } from "node:worker_threads";
+
+if (!isMainThread) {
+  throw new TypeError("invoice total is NaN");
+} else {
+  setInterval(() =&gt; console.log("API still serving"), 40);
+  const worker = new Worker(new URL(import.meta.url));
+  worker.on("online", () =&gt; console.log("worker online"));
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/worker-no-listener.ts   (stack trace trimmed)
+worker online
+API still serving
+TypeError [Error]: invoice total is NaN
+exit code: 1</code></pre>
+  <div class="ar-note">نفس الـ exception بس من غير listener على <code>error</code>: الـ process كله وقع بـ exit code 1، و "API still serving" وقف. يعني bug في PDF واحد ممكن يوقّع كل الـ requests الشغالة. دايمًا حط <code>worker.on("error", ...)</code>.</div>
+
+<pre data-file="src/clone-cost.ts"><code class="language-typescript">// تكلفة الـ structured clone بحجم الرسالة: وقت الـ postMessage على الـ main thread، والرحلة كلها
+import { once } from "node:events";
+import { isMainThread, parentPort, Worker } from "node:worker_threads";
+
+type Order = { id: number; customer: string; total: number; items: { sku: string; qty: number }[] };
+
+if (!isMainThread) {
+  parentPort!.on("message", () =&gt; parentPort!.postMessage(performance.now() + performance.timeOrigin));
+} else {
+  const makeOrders = (n: number): Order[] =&gt;
+    Array.from({ length: n }, (_, id) =&gt; ({
+      id,
+      customer: `customer-${id}`,
+      total: id * 1.5,
+      items: [{ sku: `sku-${id}`, qty: 1 }, { sku: `sku-${id + 1}`, qty: 2 }],
+    }));
+
+  const worker = new Worker(new URL(import.meta.url));
+  await once(worker, "online");
+  const median = (xs: number[]) =&gt; xs.sort((a, b) =&gt; a - b)[Math.floor(xs.length / 2)]!;
+
+  console.log("  orders | json size | postMessage | reached worker | JSON.stringify");
+  for (const n of [10, 1_000, 10_000, 100_000, 500_000]) {
+    const orders = makeOrders(n);
+    const send: number[] = [], arrive: number[] = [], json: number[] = [];
+    const repeats = n &gt;= 100_000 ? 3 : 15;
+    let size = 0;
+    for (let i = 0; i &lt; repeats; i++) {
+      const t0 = performance.now();
+      const s = JSON.stringify(orders);
+      json.push(performance.now() - t0);
+      size = s.length;
+      const sentAt = performance.now() + performance.timeOrigin;
+      worker.postMessage(orders);
+      send.push(performance.now() + performance.timeOrigin - sentAt);
+      const [arrivedAt] = (await once(worker, "message")) as [number];
+      arrive.push(arrivedAt - sentAt);
+    }
+    const mb = size / 1e6;
+    console.log(
+      `${String(n).padStart(8)} | ${(mb &lt; 1 ? `${(size / 1e3).toFixed(1)} KB` : `${mb.toFixed(1)} MB`).padStart(9)} | ${median(send).toFixed(1).padStart(8)} ms | ${median(arrive).toFixed(1).padStart(11)} ms | ${median(json).toFixed(1).padStart(11)} ms`,
+    );
+  }
+  await worker.terminate();
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/clone-cost.ts
+  orders | json size | postMessage | reached worker | JSON.stringify
+      10 |    1.0 KB |      0.0 ms |         0.3 ms |         0.0 ms
+    1000 |  111.8 KB |      1.5 ms |         3.9 ms |         0.9 ms
+   10000 |    1.2 MB |     24.2 ms |        54.3 ms |        11.6 ms
+  100000 |   12.2 MB |    234.7 ms |       613.1 ms |       118.5 ms
+  500000 |   63.0 MB |    853.3 ms |      2193.0 ms |       368.0 ms</code></pre>
+  <div class="ar-note">كل صف حجم مختلف من الـ orders. العمود التالت هو الوقت اللي <code>postMessage</code> قفل فيه الـ main thread، والرابع الوقت لحد ما الرسالة وصلت للـ Worker، والأخير <code>JSON.stringify</code> لنفس الـ data للمقارنة. الوقت بيكبر خطيًا مع الحجم، والـ structured clone أكتر من ضعف <code>JSON.stringify</code> هنا. فلو بعت 63 MB objects، الـ main thread هيقف أقل من ثانية بشوية على الـ <code>postMessage</code> لوحده.</div>
+
+<pre data-file="src/clone-loses.ts"><code class="language-typescript">// الـ structured clone بينسخ data بس: الـ class بتبقى object عادي، والـ Buffer بيبقى Uint8Array
+import { once } from "node:events";
+import { isMainThread, parentPort, Worker } from "node:worker_threads";
+
+class Money {
+  cents: number;
+  constructor(cents: number) {
+    this.cents = cents;
+  }
+  format(): string {
+    return `$${(this.cents / 100).toFixed(2)}`;
+  }
+}
+
+if (!isMainThread) {
+  parentPort!.on("message", (m: { total: Money; pdf: Buffer; at: Date; tags: Set&lt;string&gt; }) =&gt; {
+    parentPort!.postMessage({
+      totalIsMoney: m.total instanceof Money,
+      formatType: typeof m.total.format,
+      pdfIsBuffer: Buffer.isBuffer(m.pdf),
+      pdfCtor: (m.pdf as object).constructor.name,
+      atIsDate: m.at instanceof Date,
+      tagsIsSet: m.tags instanceof Set,
+    });
+  });
+} else {
+  const worker = new Worker(new URL(import.meta.url));
+  worker.postMessage({ total: new Money(1999), pdf: Buffer.from("PDF"), at: new Date(0), tags: new Set(["vip"]) });
+  const [received] = await once(worker, "message");
+  console.log(received);
+  try {
+    worker.postMessage({ retry: () =&gt; 1 });
+  } catch (e) {
+    console.log((e as Error).name, "-", (e as Error).message);
+  }
+  await worker.terminate();
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/clone-loses.ts
+{
+  totalIsMoney: false,
+  formatType: 'undefined',
+  pdfIsBuffer: false,
+  pdfCtor: 'Uint8Array',
+  atIsDate: true,
+  tagsIsSet: true
+}
+DataCloneError - () =&gt; 1 could not be cloned.</code></pre>
+  <div class="ar-note">الـ <code>Money</code> وصل object عادي من غير <code>format</code>. والـ <code>Buffer</code> وصل <code>Uint8Array</code>. أما <code>Date</code> و <code>Set</code> فوصلوا زي ما هما. ولما بعتنا function، الـ <code>postMessage</code> رمى <code>DataCloneError</code> على طول.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>الـ Worker ده OS thread حقيقي جوه الـ process بتاعك، ليه V8 isolate و heap و event loop لوحده. <a href="./04-event-loop-libuv.html#p6">الدرس 04، الجزء 6</a> ورّاك البلوك بيعمل إيه، و <a href="../../03-CS-Fundamentals/lessons/11-processes-threads-concurrency.html#p4">درس CS رقم 11، الجزء 4</a> فيه الفرق بين concurrency و parallelism، فهنا هندخل في الحل على طول. وده الـ script المطلوب في الـ README: hash تقيل واحد لفاتورة، و client بيسأل <code>/health</code> كل 20 ms.</p>
+    <p><b>الـ API صغير.</b> <code>new Worker(url, { workerData })</code> بيشغّل الـ thread ويديله <em>نسخة</em> من <code>workerData</code>. وجوه الـ Worker، <code>parentPort.postMessage()</code> بيرد. والـ parent بيسمع 4 events: <code>online</code>، و <code>message</code>، و <code>error</code> (exception محدش مسكه جوه الـ Worker، وبعده exit code 1)، و <code>exit</code>. و <code>process.exit()</code> جوه الـ Worker بيقفل الـ thread ده بس.</p>
+    <p><b>ملفات <code>.ts</code> بتشتغل كـ workers على 22.19</b>، لأن الـ type stripping شغال by default وبيتطبق على ملفات الـ Worker كمان (اتجرب فوق). ده كويس في الـ development. في production اعمل compile الأول: نفس الـ Worker الصغير بياخد وقت أطول في الـ startup وحوالي 9 MB زيادة لكل thread لو <code>.ts</code> (هنقيسه في الجزء 3)، والـ bundler مش هيلاقي ملف الـ Worker لوحده (شوف الغلطات الشائعة).</p>
+    <p><b>الرسايل بتتنسخ، والنسخ مش ببلاش.</b> <code>postMessage</code> بيستخدم الـ structured clone، بشكل synchronous، على الـ thread اللي نادى عليه. في الجدول، بعت 500,000 order (يعني 63 MB كـ JSON) بيقفل الـ main thread حوالي 0.85 ثانية على الـ Windows ده (بين 0.5 و 2.5 ثانية في الـ runs المختلفة، حسب الـ load على الجهاز)، أكتر من ضعف وقت <code>JSON.stringify</code> لنفس الـ data، والرسالة بتوصل للـ Worker بعد حوالي 2.2 ثانية من النداء، لأنه لسه لازم يفكها. يعني الـ Worker مش بيشيل البلوك أوتوماتيك: لو بعتله object ضخم، إنت نقلت جزء من البلوك لـ <code>postMessage</code>. ابعت ID وخلّي الـ Worker يجيب الـ data، أو ابعت bytes بـ transfer (الجزء 2). والـ clone بينقل data بس: الـ class instance بيوصل object عادي من غير methods، والـ <code>Buffer</code> بيوصل <code>Uint8Array</code>، أما <code>Date</code> و <code>Set</code> بيوصلوا زي ما هما، والـ function بترمي <code>DataCloneError</code>.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      endpoint بيعمل export فاتورة PDF أو بيحسب hash لملف كبير، والـ p99 بتاع كل الـ API بيقفز وقت ما حد يستخدمه، وساعات الـ pod بيعمل restart من غير سبب واضح. اقيس بنفس الـ script ده: لو <code>/health</code> بيستنى الشغل التقيل، انقله لـ Worker. وفي الـ code review: أي <code>worker.postMessage(rows)</code> فيه آلاف الصفوف ابعت بداله الـ IDs، وأي <code>new Worker</code> من غير <code>on("error")</code> ده bug.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>A trap in the demo above: <code>events.once(worker, "exit")</code></b>
+    <code>once()</code> from <code>node:events</code> rejects if <code>'error'</code> fires first, so <code>await once(worker, "exit")</code> throws on the Worker's exception instead of giving you the exit code. That's why <code>worker-events.ts</code> wraps <code>worker.once("exit")</code> in a plain Promise. It took a crash in this lesson's first run to notice.
+    <div class="ar-note"><b>فخ في الـ demo اللي فوق: <code>events.once(worker, "exit")</code>.</b> الـ <code>once()</code> من <code>node:events</code> بترمي لو <code>'error'</code> حصل الأول، فـ <code>await once(worker, "exit")</code> هيرمي الـ exception بتاع الـ Worker بدل ما يديك الـ exit code. وعشان كده <code>worker-events.ts</code> بيلف <code>worker.once("exit")</code> في Promise عادي. وأنا نفسي خدت crash في أول run للدرس ده بسببها.</div>
+  </div>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "We moved a heavy computation to a Worker and the API still stutters. Why?" → Check the size of what you post. <code>postMessage</code> runs a structured clone synchronously on the calling thread, so a large object blocks the main thread on the way out and again when the result comes back. Send an ID, or send binary data with a transfer list. Then check you're not spawning a Worker per request, because startup costs far more than most tasks.
+    <div class="ar-note"><b>السؤال:</b> "نقلنا حساب تقيل لـ Worker والـ API لسه بيقطّع. ليه؟" ← <b>الإجابة:</b> شوف حجم اللي بتبعته. <code>postMessage</code> بيعمل structured clone بشكل synchronous على الـ thread اللي نادى عليه، فالـ object الكبير بيقفل الـ main thread وهو خارج، وتاني لما النتيجة ترجع. ابعت ID، أو ابعت binary data بـ transfer list. وبعدين اتأكد إنك مش بتعمل Worker لكل request، لأن الـ startup أغلى بكتير من معظم الـ tasks.</div>
+  </div>
+
+  <!-- ===================== PART 2 ===================== -->
+  <h2 id="p2">Part 2 — Transfer &amp; sharing <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 2 — الـ transfer والـ memory المشتركة</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Transfer moves, copy duplicates.</b> <code>postMessage(buffer, [buffer])</code> hands the underlying memory to the other thread. Below, a 100 MB <code>ArrayBuffer</code>: the <code>postMessage</code> call itself drops from about 17 ms to about 0.02 ms. The price is that your side loses it: the buffer becomes <em>detached</em>, <code>byteLength</code> is 0, every view on it has length 0, and building a new view throws. A small <code>Buffer.from()</code> comes from Node's shared 8 KB pool, which is marked untransferable, so transferring it throws <code>DataCloneError</code>. Allocate your own with <code>Buffer.alloc</code>.</p>
+    <p><b><code>SharedArrayBuffer</code> shares, with no copy and no move.</b> Both threads see the same bytes, which brings real data races to JavaScript. Four Workers each run <code>counter[0]++</code> a million times, and the result is well short of 4,000,000 and different on every run, because <code>++</code> is read, add, write, and another thread can get in between. <code>Atomics.add</code> does it as one indivisible step and always reaches 4,000,000. It's slower per operation (about 7 times in the run below), so you only pay for it where you need it.</p>
+    <p><b><code>Atomics.wait</code> and <code>Atomics.notify</code></b> let a thread sleep on a memory cell without polling. <code>wait</code> returns <code>'ok'</code> if it was woken, <code>'not-equal'</code> if the cell had already changed, and <code>'timed-out'</code>. Never call it on the main thread of a server: it freezes the event loop, as the last line of the run shows (zero timer ticks during 300 ms).</p>
+    <p><b>Only memory is shared, never objects.</b> You can't put a JS object in a <code>SharedArrayBuffer</code>; you get typed arrays over bytes and you do your own layout and locking. <b>Most applications never need this.</b> Reach for it when several Workers need a big read-only table, when you need counters across a pool without message overhead, or for a ring buffer between threads. The 80 MB price table below is the clearest case: 4 Workers add about 68 MB with sharing against about 392 MB with copies. For ordinary tasks, return a value with <code>postMessage</code>; the mistakes shared memory invites are the kind that pass every test (see <a href="../../03-CS-Fundamentals/lessons/11-processes-threads-concurrency.html#p5">CS lesson 11, part 5</a>).</p>
+  </section>
+
+<pre data-file="src/transfer-vs-copy.ts"><code class="language-typescript">// فاتورة PDF حجمها 100 MB: مرة copy ومرة transfer، والـ buffer بعد الـ transfer
+import { once } from "node:events";
+import { isMainThread, parentPort, Worker } from "node:worker_threads";
+
+if (!isMainThread) {
+  parentPort!.on("message", (pdf: ArrayBuffer) =&gt; parentPort!.postMessage(pdf.byteLength));
+} else {
+  const MB = 1024 * 1024;
+  const worker = new Worker(new URL(import.meta.url));
+  await once(worker, "online");
+  const median = (xs: number[]) =&gt; xs.sort((a, b) =&gt; a - b)[Math.floor(xs.length / 2)]!;
+
+  // بنقيس حاجتين: الـ postMessage بيقفل الـ main قد إيه، والرحلة كلها لحد الرد
+  const copySend: number[] = [], copyTrip: number[] = [], moveSend: number[] = [], moveTrip: number[] = [];
+  for (let i = 0; i &lt; 7; i++) {
+    const pdf = new ArrayBuffer(100 * MB);
+    new Uint8Array(pdf).fill(7);
+
+    let t0 = performance.now();
+    worker.postMessage(pdf);
+    copySend.push(performance.now() - t0);
+    await once(worker, "message");
+    copyTrip.push(performance.now() - t0);
+
+    t0 = performance.now();
+    worker.postMessage(pdf, [pdf]);
+    moveSend.push(performance.now() - t0);
+    await once(worker, "message");
+    moveTrip.push(performance.now() - t0);
+  }
+  const row = (name: string, send: number[], trip: number[]) =&gt;
+    console.log(`${name} 100 MB: postMessage ≈${median(send).toFixed(2)} ms, round trip ≈${median(trip).toFixed(2)} ms`);
+  row("copy    ", copySend, copyTrip);
+  row("transfer", moveSend, moveTrip);
+
+  // بعد الـ transfer: الـ memory اتنقلت، والـ buffer اللي عندك بقى فاضي
+  const invoice = new ArrayBuffer(1 * MB);
+  const view = new Uint8Array(invoice);
+  view[0] = 42;
+  worker.postMessage(invoice, [invoice]);
+  await once(worker, "message");
+  console.log({ byteLength: invoice.byteLength, detached: invoice.detached, viewLength: view.length, firstByte: view[0] });
+  try {
+    new Uint8Array(invoice);
+  } catch (e) {
+    console.log(`${(e as Error).name}: ${(e as Error).message}`);
+  }
+
+  // ❌ الـ Buffer.from الصغير جاي من pool مشترك، ومينفعش يتنقل
+  const small = Buffer.from("invoice-1");
+  console.log({ smallLength: small.length, poolSize: small.buffer.byteLength });
+  try {
+    worker.postMessage(small, [small.buffer]);
+  } catch (e) {
+    console.log(`${(e as Error).name}: ${(e as Error).message}`);
+  }
+
+  // الحل: buffer مش من الـ pool، زي Buffer.alloc
+  const own = Buffer.alloc(16);
+  console.log({ ownPoolSize: own.buffer.byteLength });
+  worker.postMessage(own.buffer, [own.buffer]);
+  await once(worker, "message");
+  console.log({ ownAfterTransfer: own.length });
+  await worker.terminate();
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/transfer-vs-copy.ts
+copy     100 MB: postMessage ≈17.31 ms, round trip ≈38.49 ms
+transfer 100 MB: postMessage ≈0.02 ms, round trip ≈4.07 ms
+{ byteLength: 0, detached: true, viewLength: 0, firstByte: undefined }
+TypeError: Cannot perform Construct on a detached ArrayBuffer
+{ smallLength: 9, poolSize: 8192 }
+DataCloneError: Cannot transfer object of unsupported type.
+{ ownPoolSize: 16 }
+{ ownAfterTransfer: 0 }</code></pre>
+  <div class="ar-note">أول سطرين: الـ copy بياخد حوالي 17 ms في <code>postMessage</code> لوحدها، والـ transfer حوالي 0.02 ms، لأنه بينقل الملكية بس. وبعدها الـ buffer بعد الـ transfer: <code>byteLength: 0</code> و <code>detached: true</code> وطول الـ view صفر، و <code>new Uint8Array</code> عليه بيرمي <code>TypeError</code>. وبعدها <code>Buffer.from</code> الصغير جاي من pool حجمه 8192 byte، وبيرمي <code>DataCloneError</code>. وآخر سطرين: <code>Buffer.alloc</code> ليه memory لوحده، فالـ transfer نجح وطوله بقى صفر.</div>
+
+<pre data-file="src/sab-counter.ts"><code class="language-typescript">// الـ 4 workers بيزوّدوا نفس العدّاد مليون مرة: الناتج المفروض 4,000,000
+import { setTimeout as sleep } from "node:timers/promises";
+import { isMainThread, Worker, workerData } from "node:worker_threads";
+
+type Job = { shared: SharedArrayBuffer; mode: "plain" | "atomic"; times: number };
+const COUNTER = 0;
+const GO = 1;
+
+if (!isMainThread) {
+  const { shared, mode, times } = workerData as Job;
+  const cells = new Int32Array(shared);
+  // كلهم يستنوا إشارة واحدة عشان يبدأوا في نفس اللحظة
+  Atomics.wait(cells, GO, 0);
+  if (mode === "plain") {
+    // ❌ دي 3 خطوات: اقرا، زوّد، اكتب. و worker تاني ممكن يدخل في النص
+    for (let i = 0; i &lt; times; i++) cells[COUNTER]!++;
+  } else {
+    // ✅ العملية كلها بتحصل كخطوة واحدة على الـ CPU
+    for (let i = 0; i &lt; times; i++) Atomics.add(cells, COUNTER, 1);
+  }
+} else {
+  const times = 1_000_000;
+  for (const mode of ["plain", "atomic"] as const) {
+    const results: number[] = [];
+    let ms = 0;
+    for (let run = 0; run &lt; 3; run++) {
+      const shared = new SharedArrayBuffer(8);
+      const cells = new Int32Array(shared);
+      const done = Array.from({ length: 4 }, () =&gt; {
+        const w = new Worker(new URL(import.meta.url), { workerData: { shared, mode, times } });
+        return new Promise((resolve) =&gt; w.once("exit", resolve));
+      });
+      await sleep(500);
+      const t0 = performance.now();
+      Atomics.store(cells, GO, 1);
+      Atomics.notify(cells, GO);
+      await Promise.all(done);
+      ms = performance.now() - t0;
+      results.push(cells[COUNTER]!);
+    }
+    console.log(`${mode.padEnd(6)} expected 4000000, got ${results.join(", ")} (last run ≈${Math.round(ms)} ms)`);
+  }
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/sab-counter.ts
+plain  expected 4000000, got 1511616, 1216525, 1179335 (last run ≈11 ms)
+atomic expected 4000000, got 4000000, 4000000, 4000000 (last run ≈81 ms)</code></pre>
+  <div class="ar-note">كل سطر 3 runs. الـ <code>plain</code> بيضيّع جزء كبير من الزيادات، والرقم بيتغير كل مرة، وده اللي بيخلي الـ race ده صعب يتمسك في الـ tests. أما الـ <code>atomic</code> بيوصل 4,000,000 دايمًا، بس أبطأ، والوقت في آخر كل سطر بيوريك الفرق.</div>
+
+<pre data-file="src/atomics-wait.ts"><code class="language-typescript">// الـ worker بينام على خانة في الـ memory لحد ما الـ main يصحّيه، من غير polling
+import { once } from "node:events";
+import { setTimeout as sleep } from "node:timers/promises";
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+const STATE = 0;
+const PAYLOAD = 1;
+
+if (!isMainThread) {
+  const cells = new Int32Array(workerData as SharedArrayBuffer);
+  parentPort!.postMessage("about to wait");
+  // استنى طول ما الخانة لسه 0، وبحد أقصى 5 ثواني
+  const first = Atomics.wait(cells, STATE, 0, 5_000);
+  const orderId = Atomics.load(cells, PAYLOAD);
+  // القيمة دلوقتي 1 مش 0، فالـ wait بيرجع فورًا
+  const second = Atomics.wait(cells, STATE, 0, 5_000);
+  // مفيش حد هيصحّيه هنا، فبيخلص بالـ timeout
+  const third = Atomics.wait(cells, STATE, 1, 50);
+  parentPort!.postMessage({ first, orderId, second, third });
+} else {
+  const cells = new Int32Array(new SharedArrayBuffer(8));
+  const worker = new Worker(new URL(import.meta.url), { workerData: cells.buffer });
+  await once(worker, "message");
+  await sleep(200);
+
+  // الـ payload الأول، وبعدين الإشارة: الترتيب ده مضمون مع Atomics
+  Atomics.store(cells, PAYLOAD, 1042);
+  Atomics.store(cells, STATE, 1);
+  // بترجع عدد الـ threads اللي صحيت
+  const woken = Atomics.notify(cells, STATE);
+  const [result] = await once(worker, "message");
+  console.log({ woken, ...result });
+  await worker.terminate();
+
+  // ❌ الـ Atomics.wait على الـ main thread بيجمّد الـ event loop كله
+  const t0 = performance.now();
+  let ticks = 0;
+  const timer = setInterval(() =&gt; ticks++, 10);
+  Atomics.wait(cells, STATE, 1, 300);
+  console.log({ blockedMs: Math.round(performance.now() - t0), ticksWhileBlocked: ticks });
+  clearInterval(timer);
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/atomics-wait.ts
+{
+  woken: 1,
+  first: 'ok',
+  orderId: 1042,
+  second: 'not-equal',
+  third: 'timed-out'
+}
+{ blockedMs: 309, ticksWhileBlocked: 0 }</code></pre>
+  <div class="ar-note"><code>woken: 1</code> يعني الـ notify صحّى thread واحد. و <code>first: 'ok'</code> الـ Worker اتصحى فعلًا، و <code>orderId: 1042</code> شاف الـ payload. و <code>second: 'not-equal'</code> القيمة كانت اتغيرت فرجع فورًا، و <code>third: 'timed-out'</code> محدش صحّاه. والسطر الأخير: <code>Atomics.wait</code> على الـ main thread قفله حوالي 300 ms، وصفر timer ticks في الوقت ده.</div>
+
+<pre data-file="src/sab-table.ts"><code class="language-typescript">// جدول أسعار 80 MB لـ 4 workers: 4 نسخ ضد نسخة واحدة مشتركة، ونقيس الـ RSS
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+if (!isMainThread) {
+  const prices = new Float64Array(workerData as ArrayBuffer | SharedArrayBuffer);
+  // اقرا عشان الـ pages تتحمّل فعلًا في الـ memory
+  let sum = 0;
+  for (let i = 0; i &lt; prices.length; i += 512) sum += prices[i]!;
+  parentPort!.postMessage(sum);
+  // فضّل الـ worker عايش لحد ما الـ main يقيس
+  parentPort!.once("message", () =&gt; process.exit(0));
+} else {
+  const MB = 1024 * 1024;
+  const mode = process.argv[2] as "copy" | "shared";
+  const size = 80 * MB;
+  const buffer = mode === "shared" ? new SharedArrayBuffer(size) : new ArrayBuffer(size);
+  new Float64Array(buffer).fill(9.99);
+  const before = process.memoryUsage().rss / MB;
+
+  const workers = Array.from({ length: 4 }, () =&gt; new Worker(new URL(import.meta.url), { workerData: buffer }));
+  await Promise.all(workers.map((w) =&gt; new Promise((resolve) =&gt; w.once("message", resolve))));
+  const after = process.memoryUsage().rss / MB;
+  console.log(`${mode.padEnd(6)} rss with table ${before.toFixed(0)} MB, after 4 workers ${after.toFixed(0)} MB, added ${(after - before).toFixed(0)} MB`);
+  for (const w of workers) w.postMessage("done");
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/sab-table.ts copy ; node src/sab-table.ts shared
+copy   rss with table 153 MB, after 4 workers 545 MB, added 392 MB
+shared rss with table 153 MB, after 4 workers 221 MB, added 68 MB</code></pre>
+  <div class="ar-note">نفس الجدول 80 MB و 4 workers. الـ <code>copy</code> زوّد حوالي 392 MB لأن كل Worker خد نسخته في <code>workerData</code> (4 × 80 وزيادة). والـ <code>shared</code> زوّد حوالي 68 MB، وده تقريبًا تكلفة الـ 4 threads نفسهم.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ transfer بينقل، والـ copy بينسخ.</b> <code>postMessage(buffer, [buffer])</code> بيدّي الـ memory نفسها للـ thread التاني. فوق ArrayBuffer حجمه 100 MB: الـ <code>postMessage</code> نزلت من حوالي 17 ms لحوالي 0.02 ms. والتمن إنها مبقتش عندك: الـ buffer بقى <em>detached</em>، و <code>byteLength</code> بقى 0، وكل view عليه طوله 0، وعمل view جديد بيرمي error. و <code>Buffer.from()</code> الصغير جاي من الـ pool المشترك بتاع Node (8 KB)، وده متعلّم إنه مينفعش يتنقل، فبيرمي <code>DataCloneError</code>. اعمل واحد بتاعك بـ <code>Buffer.alloc</code>.</p>
+    <p><b>الـ <code>SharedArrayBuffer</code> مشترك: لا نسخ ولا نقل.</b> الـ threads شايفين نفس الـ bytes، وده بيجيب data races حقيقية للـ JavaScript. 4 Workers كل واحد بيعمل <code>counter[0]++</code> مليون مرة، والنتيجة أقل بكتير من 4,000,000 ومختلفة كل run، لأن <code>++</code> معناها اقرا، زوّد، اكتب، و thread تاني ممكن يدخل في النص. <code>Atomics.add</code> بيعملها خطوة واحدة مبتتقسمش، ودايمًا بتوصل 4,000,000. وهي أبطأ لكل عملية (حوالي 7 مرات في الـ run فوق)، فتدفع تمنها بس في المكان اللي محتاجها.</p>
+    <p><b>الـ <code>Atomics.wait</code> و <code>Atomics.notify</code></b> بيخلوا thread ينام على خانة في الـ memory من غير polling. <code>wait</code> بترجع <code>'ok'</code> لو حد صحّاها، و <code>'not-equal'</code> لو الخانة كانت اتغيرت خلاص، و <code>'timed-out'</code>. وأوعى تناديها على الـ main thread بتاع server: بتجمّد الـ event loop، زي ما آخر سطر في الـ run بيوري (صفر timer ticks في 300 ms).</p>
+    <p><b>الـ memory بس هي اللي مشتركة، مش الـ objects.</b> مينفعش تحط JS object في <code>SharedArrayBuffer</code>: اللي معاك typed arrays فوق bytes، والترتيب والـ locking عليك. <b>ومعظم الـ applications عمرها ما هتحتاج ده.</b> استخدمه لما كذا Worker يحتاجوا جدول كبير read-only، أو counters على pool كامل من غير تكلفة رسايل، أو ring buffer بين threads. وجدول الأسعار 80 MB فوق أوضح مثال: 4 Workers زوّدوا حوالي 68 MB مع المشاركة، مقابل حوالي 392 MB مع النسخ. وللـ tasks العادية، رجّع قيمة بـ <code>postMessage</code>: الغلطات اللي الـ shared memory بتجيبها من النوع اللي بيعدّي كل الـ tests (شوف <a href="../../03-CS-Fundamentals/lessons/11-processes-threads-concurrency.html#p5">درس CS رقم 11، الجزء 5</a>).</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      Service بيعمل thumbnails: الـ main بيقرا الصورة كـ <code>Buffer.alloc</code> وبيبعتها للـ Worker بـ transfer، والـ Worker بيرجّع النتيجة بـ transfer، فمفيش copy خالص على صور كبيرة. ولو عندك rules engine أو جدول أسعار حجمه مئات الـ MB بتقرا منه 8 Workers، حطه في <code>SharedArrayBuffer</code> واتوفّر 7 نسخ. أما لو حد في الـ code review عمل <code>SharedArrayBuffer</code> عشان "يشارك state" بين tasks عادية، قوله يرجع لـ message أو Redis.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: copy, transfer or share</b>
+    Copy is the safe default for small messages, since nothing can go wrong. Transfer is right for large binary data with one owner at a time; the bug you get is touching a detached buffer, and it fails loudly. Share is right only for many readers of a big table or for lock-free counters; the bug you get is a race that fails quietly once a week.
+    <div class="ar-note"><b>الـ Trade-off، نسخ ولا نقل ولا مشاركة:</b> النسخ هو الـ default الآمن للرسايل الصغيرة، لأن مفيش حاجة تغلط. والنقل صح للـ binary data الكبيرة اللي ليها صاحب واحد في الوقت الواحد، والـ bug اللي ممكن يطلعلك إنك تلمس buffer بقى detached، وده بيفشل بصوت عالي. والمشاركة صح بس لقرّاء كتير على جدول كبير أو counters من غير lock، والـ bug هنا race بيفشل في صمت مرة في الأسبوع.</div>
+  </div>
+
+  <!-- ===================== PART 3 ===================== -->
+  <h2 id="p3">Part 3 — Pools: by hand &amp; piscina <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 3 — الـ pools: بالإيد وبـ piscina</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>Workers are expensive to start.</b> Each one boots a V8 isolate and a Node environment: tens of milliseconds and about 11 MB as <code>.mjs</code>, more as <code>.ts</code>. That's several times a 5 ms task. Node's docs say it directly: spawning per call "would likely exceed their benefit". The load test below shows how bad it gets: under autocannon, a Worker per request has <em>lower</em> throughput than running on the main thread, with several times the memory. A pool reuses threads and gets about 3 to 4 times the main thread's throughput while <code>/health</code> stays fast.</p>
+    <p><b>A pool is a queue plus idle workers.</b> The class below is about 50 lines, and it's there so you see the moving parts: a FIFO queue, a cap on it, and a replacement when a Worker dies. Don't ship it; it has no task timeouts, no <code>AsyncResource</code> for tracing, and no handling for a Worker that exits without an error.</p>
+    <p><b>piscina 5</b> is the standard. <code>pool.run(task, { signal })</code> returns a promise. The options that matter:</p>
+    <ul>
+      <li><code>maxThreads</code> and <code>minThreads</code>: size it from <code>availableParallelism()</code>, not <code>os.cpus().length</code>. Leave a core for the main thread, which still does all the HTTP. The scaling run below flattens out long before 20 threads on this machine, and more threads don't help.</li>
+      <li><code>maxQueue</code>: the default is <code>Infinity</code>. Set a number or <code>'auto'</code> (<code>maxThreads</code> squared) and turn <code>Task queue is at limit</code> into a <b>503</b>. The open-loop run shows what the default does: the queue and RSS grow for as long as traffic exceeds capacity.</li>
+      <li><code>idleTimeout</code>: the default of 0 kills idle threads above <code>minThreads</code> immediately, and the docs warn this can cost performance. A few seconds is a reasonable start.</li>
+      <li><code>signal</code>: aborting a running task terminates its thread, because blocked JS can't be interrupted any other way, and the pool replaces it. So tasks need to be safe to kill.</li>
+    </ul>
+    <p><b>Read the real defaults.</b> On this 20-core machine <code>new Piscina({ filename })</code> gave <code>minThreads: 10</code> and <code>maxThreads: 30</code>. The maximum matches the README that ships in the package (<code>availableParallelism</code> × 1.5), but the minimum doesn't: the README says it equals <code>availableParallelism</code>, which is 20 here. That's 10 threads and about 275 MB of RSS before the first task. Set both explicitly, and log <code>pool.options</code> once. Also, the README on GitHub's main branch now says Node 24 and higher, while the installed 5.3.2 declares <code>engines: &gt;=20</code> and ran fine on 22.19, so check before you upgrade.</p>
+  </section>
+
+<pre data-file="src/noop-worker.ts"><code class="language-typescript">// أصغر worker ممكن: بيقول إنه جاهز، ويفضل عايش لحد ما نقفله
+import { parentPort } from "node:worker_threads";
+
+parentPort!.postMessage("ready");
+parentPort!.once("message", () =&gt; process.exit(0));</code></pre>
+<pre data-file="src/worker-startup.ts"><code class="language-typescript">// الـ Worker مش ببلاش: كام ms لحد ما يبقى جاهز، وكام MB لكل واحد
+import { once } from "node:events";
+import { Worker } from "node:worker_threads";
+
+const MB = 1024 * 1024;
+
+for (const file of ["./noop-worker.mjs", "./noop-worker.ts"]) {
+  const url = new URL(file, import.meta.url);
+  const times: number[] = [];
+  for (let i = 0; i &lt; 21; i++) {
+    const t0 = performance.now();
+    const w = new Worker(url);
+    await once(w, "message");
+    times.push(performance.now() - t0);
+    await w.terminate();
+  }
+  times.sort((a, b) =&gt; a - b);
+
+  const before = process.memoryUsage().rss / MB;
+  const alive = Array.from({ length: 10 }, () =&gt; new Worker(url));
+  await Promise.all(alive.map((w) =&gt; once(w, "message")));
+  const after = process.memoryUsage().rss / MB;
+  await Promise.all(alive.map((w) =&gt; w.terminate()));
+
+  console.log(`${file.padEnd(19)} ready: p50 ≈${times[10]!.toFixed(0)} ms, max ≈${times[20]!.toFixed(0)} ms | idle: ≈${((after - before) / 10).toFixed(1)} MB each`);
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/worker-startup.ts
+./noop-worker.mjs   ready: p50 ≈26 ms, max ≈33 ms | idle: ≈11.0 MB each
+./noop-worker.ts    ready: p50 ≈42 ms, max ≈55 ms | idle: ≈19.4 MB each</code></pre>
+  <div class="ar-note">الـ Worker الفاضي بـ <code>.mjs</code> بياخد عشرات الـ ms عشان يبقى جاهز وحوالي 11 MB، ونفسه بـ <code>.ts</code> أبطأ وحوالي 20 MB، لأن كل thread بيحمّل الـ type stripper لوحده. قارن ده بـ task بياخد 5 ms: الـ startup لوحده أكبر منها كام مرة.</div>
+
+<pre data-file="src/pool-task.ts"><code class="language-typescript">// الـ worker بتاع الـ pool: بيستنى شغل، ويرد، ويفضل عايش للشغل اللي بعده
+import { parentPort } from "node:worker_threads";
+import { hashInvoiceChain } from "./invoice-hash.ts";
+
+parentPort!.on("message", ({ invoiceId, rounds }: { invoiceId: string; rounds: number }) =&gt; {
+  if (invoiceId === "boom") throw new Error("corrupt invoice");
+  parentPort!.postMessage(hashInvoiceChain(invoiceId, rounds));
+});</code></pre>
+<pre data-file="src/small-pool.ts"><code class="language-typescript">// الـ pool بالإيد عشان تشوف الفكرة: workers ثابتة، وطابور بحد أقصى، و worker جديد لو واحد مات
+import { Worker } from "node:worker_threads";
+
+type Task = { input: unknown; resolve: (v: any) =&gt; void; reject: (e: Error) =&gt; void };
+
+export class SmallPool {
+  private idle: Worker[] = [];
+  private queue: Task[] = [];
+  private busy = new Map&lt;Worker, Task&gt;();
+  private file: URL;
+  private maxQueue: number;
+
+  constructor(file: URL, size: number, maxQueue: number) {
+    this.file = file;
+    this.maxQueue = maxQueue;
+    for (let i = 0; i &lt; size; i++) this.spawn();
+  }
+
+  private spawn(): void {
+    const worker = new Worker(this.file);
+    worker.on("message", (output) =&gt; {
+      this.busy.get(worker)!.resolve(output);
+      this.busy.delete(worker);
+      this.idle.push(worker);
+      this.next();
+    });
+    // الـ worker اللي اتكسر مبيرجعش للـ pool: الـ task بتاعته تترفض، ونعمل واحد جديد
+    worker.on("error", (err: Error) =&gt; {
+      this.busy.get(worker)?.reject(err);
+      this.busy.delete(worker);
+      this.spawn();
+    });
+    this.idle.push(worker);
+    this.next();
+  }
+
+  run&lt;O&gt;(input: unknown): Promise&lt;O&gt; {
+    // الطابور ليه سقف: الرفض السريع أحسن من memory بتكبر من غير حد
+    if (this.queue.length &gt;= this.maxQueue) return Promise.reject(new Error("pool queue full"));
+    return new Promise&lt;O&gt;((resolve, reject) =&gt; {
+      this.queue.push({ input, resolve, reject });
+      this.next();
+    });
+  }
+
+  private next(): void {
+    while (this.idle.length &gt; 0 &amp;&amp; this.queue.length &gt; 0) {
+      const worker = this.idle.pop()!;
+      const task = this.queue.shift()!;
+      this.busy.set(worker, task);
+      worker.postMessage(task.input);
+    }
+  }
+
+  get stats() {
+    return { idle: this.idle.length, running: this.busy.size, queued: this.queue.length };
+  }
+}</code></pre>
+<pre data-file="src/small-pool-demo.ts"><code class="language-typescript">// نجرّب الـ pool: طابور، ورفض لما يتملى، و worker بيقع والباقي بيكمل
+import { SmallPool } from "./small-pool.ts";
+
+const pool = new SmallPool(new URL("./pool-task.ts", import.meta.url), 2, 3);
+
+const results = Array.from({ length: 7 }, (_, i) =&gt;
+  pool.run&lt;string&gt;({ invoiceId: i === 1 ? "boom" : `inv-${i}`, rounds: 50_000 }).then(
+    (digest) =&gt; `inv-${i}: ${digest.slice(0, 8)}`,
+    (err: Error) =&gt; `inv-${i}: REJECTED ${err.message}`,
+  ),
+);
+console.log(pool.stats);
+for (const line of await Promise.all(results)) console.log(line);
+console.log(pool.stats);
+process.exit(0);</code></pre>
+<pre><code class="language-plaintext">$ node src/small-pool-demo.ts
+{ idle: 0, running: 2, queued: 3 }
+inv-0: f9b4f33b
+inv-1: REJECTED corrupt invoice
+inv-2: d4484f16
+inv-3: 487efc9b
+inv-4: 3d546e2e
+inv-5: REJECTED pool queue full
+inv-6: REJECTED pool queue full
+{ idle: 2, running: 0, queued: 0 }</code></pre>
+  <div class="ar-note">Pool فيه 2 workers وطابور 3. جالنا 7 tasks: اتنين اشتغلوا و 3 في الطابور، والاتنين الأخيرين اترفضوا على طول بـ <code>pool queue full</code>. و <code>inv-1</code> وقع بـ <code>corrupt invoice</code> وده رفض الـ task بتاعته بس، والـ pool عمل worker جديد وكمّل الباقي. وآخر سطر: الـ 2 workers رجعوا idle.</div>
+
+<pre data-file="src/pool-server.ts"><code class="language-typescript">// نفس الـ route بأربع طرق: main، و Worker جديد لكل request، و pool بالإيد، و piscina
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { availableParallelism } from "node:os";
+import { Worker } from "node:worker_threads";
+import { Piscina } from "piscina";
+import { hashInvoiceChain } from "./invoice-hash.ts";
+import { SmallPool } from "./small-pool.ts";
+
+const MODE = process.env.MODE as "main" | "spawn" | "small" | "piscina";
+const ROUNDS = 5_000;
+const THREADS = Math.max(1, Math.min(4, availableParallelism() - 1));
+
+const small = MODE === "small" ? new SmallPool(new URL("./pool-task.ts", import.meta.url), THREADS, 1_000) : null;
+const piscina =
+  MODE === "piscina"
+    ? new Piscina({ filename: new URL("./piscina-task.ts", import.meta.url).href, minThreads: THREADS, maxThreads: THREADS })
+    : null;
+
+function spawnWorker(job: { invoiceId: string; rounds: number }): Promise&lt;string&gt; {
+  return new Promise((resolve, reject) =&gt; {
+    const w = new Worker(new URL("./hash-worker.ts", import.meta.url), { workerData: job });
+    w.once("message", (m: { digest: string }) =&gt; resolve(m.digest));
+    w.once("error", reject);
+  });
+}
+
+const server = createServer(async (req, res) =&gt; {
+  if (req.url === "/health") return void res.end("ok");
+  const job = { invoiceId: "inv-1", rounds: ROUNDS };
+  const digest =
+    MODE === "main" ? hashInvoiceChain(job.invoiceId, job.rounds)
+    : MODE === "spawn" ? await spawnWorker(job)
+    : MODE === "small" ? await small!.run&lt;string&gt;(job)
+    : ((await piscina!.run(job)) as string);
+  res.end(digest.slice(0, 8));
+});
+
+server.listen(0, "127.0.0.1", () =&gt; process.send?.({ port: (server.address() as AddressInfo).port }));
+process.on("message", (m) =&gt; {
+  if (m === "rss") process.send?.({ rssMB: Math.round(process.memoryUsage().rss / 1024 / 1024) });
+});</code></pre>
+<pre data-file="src/load-compare.ts"><code class="language-typescript">// نفس الـ load على الأربع طرق: autocannon في process تانية عن الـ server
+import { fork } from "node:child_process";
+import { once } from "node:events";
+import { setTimeout as sleep } from "node:timers/promises";
+import autocannon from "autocannon";
+
+async function health(base: string, stop: () =&gt; boolean): Promise&lt;number&gt; {
+  let worst = 0;
+  while (!stop()) {
+    const t0 = performance.now();
+    await (await fetch(`${base}/health`)).text();
+    worst = Math.max(worst, performance.now() - t0);
+    await sleep(25);
+  }
+  return worst;
+}
+
+console.log("mode    | req/s | p50 ms | p97.5 | p99 | errors | worst /health | rss MB");
+for (const mode of ["main", "spawn", "small", "piscina"]) {
+  const server = fork(new URL("./pool-server.ts", import.meta.url), { env: { ...process.env, MODE: mode } });
+  const [{ port }] = (await once(server, "message")) as [{ port: number }];
+  const base = `http://127.0.0.1:${port}`;
+  await sleep(500);
+
+  let running = true;
+  const worstHealth = health(base, () =&gt; !running);
+  const result = await autocannon({ url: `${base}/hash`, connections: 20, duration: 6 });
+  running = false;
+  const worst = await worstHealth;
+  server.send("rss");
+  const [{ rssMB }] = (await once(server, "message")) as [{ rssMB: number }];
+  server.kill();
+
+  const l = result.latency;
+  console.log(
+    `${mode.padEnd(7)} | ${String(Math.round(result.requests.average)).padStart(5)} | ${String(l.p50).padStart(6)} | ${String(l.p97_5).padStart(5)} | ${String(l.p99).padStart(3)} | ${String(result.errors + result.non2xx).padStart(6)} | ${String(Math.round(worst)).padStart(10)} ms | ${String(rssMB).padStart(6)}`,
+  );
+  await sleep(500);
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/load-compare.ts
+mode    | req/s | p50 ms | p97.5 | p99 | errors | worst /health | rss MB
+main    |    92 |    208 |   423 | 447 |      0 |        423 ms |     89
+spawn   |    74 |    247 |   499 | 636 |      0 |         28 ms |    497
+small   |   273 |     70 |   121 | 130 |      0 |         19 ms |    168
+piscina |   270 |     71 |   124 | 138 |      0 |         15 ms |    183</code></pre>
+  <div class="ar-note">كل صف نفس الـ route بـ 5,000 round. <code>main</code>: أقل throughput من الـ pools و <code>/health</code> بيستنى أكتر من 100 ms. <code>spawn</code>: <b>أقل من main كمان</b> رغم إن عندنا 20 core، و memory أضعاف، لأن كل request بيدفع startup كامل. <code>small</code> و <code>piscina</code> على 4 threads: حوالي 3 لـ 4 مرات الـ main، و <code>/health</code> سريع. والـ load generator على نفس الجهاز، فالأرقام للمقارنة بس.</div>
+
+<pre data-file="src/piscina-task.ts"><code class="language-typescript">// الـ task بتاع piscina: function عادية، والـ pool هو اللي بيربطها بالـ thread
+import { hashInvoiceChain } from "./invoice-hash.ts";
+
+export default function renderThumbnail({ invoiceId, rounds }: { invoiceId: string; rounds: number }): string {
+  return hashInvoiceChain(invoiceId, rounds);
+}</code></pre>
+<pre data-file="src/piscina-basics.ts"><code class="language-typescript">// الـ options الأساسية في piscina 5، وإيه اللي بيحصل فعلًا مع كل واحد
+import { availableParallelism } from "node:os";
+import { setTimeout as sleep } from "node:timers/promises";
+import { Piscina } from "piscina";
+
+const filename = new URL("./piscina-task.ts", import.meta.url).href;
+const MB = 1024 * 1024;
+
+// (1) الـ defaults: كام thread بيتفتح لوحده؟
+const defaults = new Piscina({ filename });
+await sleep(800);
+console.log("defaults:", {
+  cores: availableParallelism(),
+  threadsAtStartup: defaults.threads.length,
+  options: { minThreads: defaults.options.minThreads, maxThreads: defaults.options.maxThreads, maxQueue: defaults.options.maxQueue, idleTimeout: defaults.options.idleTimeout },
+  rssMB: Math.round(process.memoryUsage().rss / MB),
+});
+await defaults.destroy();
+
+// (2) الـ pool المظبوط: thread واحد على الأقل، و idleTimeout بيقفل الزيادة
+const pool = new Piscina({ filename, minThreads: 1, maxThreads: 4, maxQueue: 8, idleTimeout: 300 });
+const work = Array.from({ length: 12 }, (_, i) =&gt; pool.run({ invoiceId: `inv-${i}`, rounds: 200_000 }));
+console.log("under load:", { threads: pool.threads.length, queued: pool.queueSize });
+
+// (3) الطابور اتملى: الـ run بترفض على طول
+await pool.run({ invoiceId: "inv-13", rounds: 1 }).catch((err: Error) =&gt; {
+  console.log("queue full:", err.message);
+});
+await Promise.all(work);
+console.log("after work:", { threads: pool.threads.length, completed: pool.completed });
+await sleep(900);
+console.log("after idleTimeout:", { threads: pool.threads.length });
+
+// (4) الـ AbortSignal: الـ task اللي شغالة الـ thread بتاعها بيتقتل
+const started = performance.now();
+const outcome = await pool
+  .run({ invoiceId: "inv-big", rounds: 10_000_000 }, { signal: AbortSignal.timeout(100) })
+  .catch((err: Error) =&gt; `${err.name}: ${err.message}`);
+console.log("aborted:", outcome, `after ≈${Math.round(performance.now() - started)} ms`);
+console.log("still works:", (await pool.run({ invoiceId: "inv-next", rounds: 1 })).slice(0, 8));
+await pool.close();</code></pre>
+<pre><code class="language-plaintext">$ node src/piscina-basics.ts
+defaults: {
+  cores: 20,
+  threadsAtStartup: 10,
+  options: {
+    minThreads: 10,
+    maxThreads: 30,
+    maxQueue: Infinity,
+    idleTimeout: 0
+  },
+  rssMB: 275
+}
+under load: { threads: 4, queued: 8 }
+queue full: Task queue is at limit
+after work: { threads: 4, completed: 12 }
+after idleTimeout: { threads: 1 }
+aborted: AbortError: The task has been aborted after ≈110 ms
+still works: 9a023218</code></pre>
+  <div class="ar-note"><b>الـ defaults:</b> على 20 core، الـ <code>minThreads</code> طلع 10 والـ <code>maxThreads</code> طلع 30 والـ <code>maxQueue</code> مالوش حد، و RSS حوالي 275 MB قبل أول task. <b>under load:</b> 4 threads و 8 في الطابور. <b>queue full:</b> رسالة <code>Task queue is at limit</code>. <b>بعد الـ idleTimeout:</b> رجع لـ thread واحد. <b>aborted:</b> الـ task اللي كان محتاج ثواني اتلغى بعد حوالي 100 ms بـ <code>AbortError</code>، و <b>still works</b>: الـ pool عمل thread جديد وكمّل عادي.</div>
+
+<pre data-file="src/piscina-503.ts"><code class="language-typescript">// الطابور الممتلي لازم يبقى 503، مش memory بتكبر: نفس الـ load مرتين، مرة بسقف ومرة من غير
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { Piscina } from "piscina";
+
+const LIMIT = process.env.MAX_QUEUE === "none" ? Infinity : Number(process.env.MAX_QUEUE);
+const pool = new Piscina({
+  filename: new URL("./piscina-task.ts", import.meta.url).href,
+  minThreads: 2,
+  maxThreads: 2,
+  maxQueue: LIMIT,
+});
+
+let peakQueue = 0;
+const server = createServer(async (req, res) =&gt; {
+  if (req.url === "/stats") {
+    return void res.end(JSON.stringify({ peakQueue, rssMB: Math.round(process.memoryUsage().rss / 1048576) }));
+  }
+  // الرفض قبل ما نقرا أي data من الـ request: دي الـ backpressure بتاعتنا
+  if (pool.queueSize &gt;= LIMIT) {
+    res.writeHead(503, { "retry-after": "2" });
+    return void res.end("busy");
+  }
+  // جسم كبير عشان كل task في الطابور تاخد memory زي thumbnail حقيقية
+  const image = Buffer.alloc(256 * 1024, 1);
+  const task = pool.run({ invoiceId: image.toString("latin1", 0, 64), rounds: 20_000, image });
+  peakQueue = Math.max(peakQueue, pool.queueSize);
+  res.end(((await task) as string).slice(0, 8));
+});
+server.listen(0, "127.0.0.1", () =&gt; process.send?.({ port: (server.address() as AddressInfo).port }));</code></pre>
+<pre><code class="language-plaintext">$ node src/piscina-503-load.ts
+maxQueue | 200 OK | 503 | p50 ms | p99 ms | peak queue | rss MB
+16       |    718 | 352272 |      3 |      8 |         16 |    190
+none     |    751 |   0 |   2107 |   3173 |        198 |    211</code></pre>
+  <div class="ar-note">200 connection على 2 threads. مع <code>maxQueue: 16</code>: معظم الـ requests خدت 503 سريع والـ p50 قليل، والطابور ماعدّاش 16. من غير حد: مفيش 503، بس الـ p50 بقى ثواني لأن كل request واقف في الطابور. والـ RSS مش بعيد هنا، لأن autocannon "closed loop": عنده 200 connection بس، فالطابور مايقدرش يعدّي 198. الـ traffic الحقيقي مش بيستناك، والـ run اللي تحت بيوري ده.</div>
+
+<pre data-file="src/piscina-open-loop.ts"><code class="language-typescript">// الـ traffic الحقيقي مش بيستناك: 200 task في الثانية على 2 threads، وكل task معاها 256 KB
+import { setTimeout as sleep } from "node:timers/promises";
+import { Piscina } from "piscina";
+
+const maxQueue = process.argv[2] === "none" ? Infinity : Number(process.argv[2]);
+const pool = new Piscina({
+  filename: new URL("./piscina-task.ts", import.meta.url).href,
+  minThreads: 2,
+  maxThreads: 2,
+  maxQueue,
+});
+
+let accepted = 0;
+let rejected = 0;
+const tick = setInterval(() =&gt; {
+  for (let i = 0; i &lt; 20; i++) {
+    if (pool.queueSize &gt;= maxQueue) {
+      rejected++;
+      continue;
+    }
+    accepted++;
+    pool.run({ invoiceId: "inv", rounds: 20_000, image: Buffer.alloc(256 * 1024, 1) }).catch(() =&gt; {});
+  }
+}, 100);
+
+for (let second = 2; second &lt;= 8; second += 2) {
+  await sleep(2_000);
+  const rss = Math.round(process.memoryUsage().rss / 1048576);
+  console.log(`maxQueue ${String(maxQueue).padEnd(8)} t=${second}s queue=${String(pool.queueSize).padStart(4)} rss=${String(rss).padStart(4)} MB accepted=${accepted} rejected=${rejected}`);
+}
+clearInterval(tick);
+process.exit(0);</code></pre>
+<pre><code class="language-plaintext">$ node src/piscina-open-loop.ts none ; node src/piscina-open-loop.ts 16
+maxQueue Infinity t=2s queue= 169 rss= 224 MB accepted=380 rejected=0
+maxQueue Infinity t=4s queue= 349 rss= 255 MB accepted=760 rejected=0
+maxQueue Infinity t=6s queue= 503 rss= 293 MB accepted=1140 rejected=0
+maxQueue Infinity t=8s queue= 702 rss= 359 MB accepted=1540 rejected=0
+maxQueue 16       t=2s queue=  13 rss= 181 MB accepted=211 rejected=169
+maxQueue 16       t=4s queue=  11 rss= 139 MB accepted=388 rejected=372
+maxQueue 16       t=6s queue=   8 rss= 167 MB accepted=598 rejected=542
+maxQueue 16       t=8s queue=   9 rss= 171 MB accepted=810 rejected=710</code></pre>
+  <div class="ar-note">هنا الـ tasks بتيجي بمعدل ثابت 200 في الثانية مهما كان الـ pool مشغول، زي users حقيقيين. من غير حد: الطابور وصل 702 task في 8 ثواني بس، و RSS بيطلع طول الوقت، ولو فضل كده الـ process هيقع في الآخر. مع حد 16: الطابور ثابت و RSS ثابت، والزيادة بتترفض، وده اللي بيبقى 503 في الـ API.</div>
+
+<pre data-file="src/thread-scaling.ts"><code class="language-typescript">// كام thread يستاهل؟ 40 task تقيلة على أحجام مختلفة، والـ cores هنا 20
+import { availableParallelism } from "node:os";
+import { Piscina } from "piscina";
+
+console.log("cores:", availableParallelism());
+for (const threads of [1, 2, 4, 8, 16, 20, 40, 80]) {
+  const pool = new Piscina({
+    filename: new URL("./piscina-task.ts", import.meta.url).href,
+    minThreads: threads,
+    maxThreads: threads,
+  });
+  // استنى لحد ما كل الـ threads تبقى جاهزة
+  await Promise.all(Array.from({ length: threads }, () =&gt; pool.run({ invoiceId: "warm", rounds: 1 })));
+  const t0 = performance.now();
+  await Promise.all(Array.from({ length: 160 }, (_, i) =&gt; pool.run({ invoiceId: `inv-${i}`, rounds: 150_000 })));
+  const ms = performance.now() - t0;
+  console.log(`${String(threads).padStart(2)} threads: ≈${String(Math.round(ms)).padStart(6)} ms`);
+  await pool.destroy();
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/thread-scaling.ts
+cores: 20
+ 1 threads: ≈ 19091 ms
+ 2 threads: ≈ 11246 ms
+ 4 threads: ≈  6176 ms
+ 8 threads: ≈  5219 ms
+16 threads: ≈  4676 ms
+20 threads: ≈  4477 ms
+40 threads: ≈  4173 ms
+80 threads: ≈  4411 ms</code></pre>
+  <div class="ar-note">160 task تقيلة بأحجام pool مختلفة. الوقت بينزل بسرعة لحد 4 threads (حوالي 3 مرات أسرع من thread واحد)، وبعدها بيبقى شبه مسطح: 20 thread حوالي 4.3 مرات بس، و 40 و 80 مش بيزوّدوا حاجة تُذكر، وبيصرفوا memory. الـ 20 هنا logical cores مش cores حقيقية كلها، والجهاز عليه agents تانية، فالمنحنى مش نضيف، بس الشكل هو المهم.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ Worker غالي في الـ startup.</b> كل واحد بيقوّم V8 isolate وبيئة Node كاملة: عشرات الـ ms وحوالي 11 MB بـ <code>.mjs</code>، وأكتر بـ <code>.ts</code>. وده أكبر كام مرة من task بياخد 5 ms. والـ docs بتاعة Node قالتها صراحة: الـ spawn لكل call "would likely exceed their benefit". وتحت الـ load test بيوري قد إيه الموضوع وحش: مع autocannon، Worker لكل request طلع throughput بتاعه <em>أقل</em> من الشغل على الـ main thread نفسه، و memory أضعاف. أما الـ pool بيعيد استخدام الـ threads، وبيوصل حوالي 3 لـ 4 مرات throughput الـ main، و <code>/health</code> لسه سريع.</p>
+    <p><b>الـ pool يعني طابور و workers فاضية.</b> الـ class اللي فوق حوالي 50 سطر، وهو موجود عشان تشوف الأجزاء: طابور FIFO، وحد أقصى ليه، و worker بديل لما واحد يموت. متطلّعهوش production: مفيهوش timeouts للـ tasks، ولا <code>AsyncResource</code> للـ tracing، ولا بيتعامل مع worker خرج من غير error.</p>
+    <p><b>الـ piscina 5</b> هو المعيار. <code>pool.run(task, { signal })</code> بترجع promise. والـ options المهمة:</p>
+    <ul>
+      <li><code>maxThreads</code> و <code>minThreads</code>: احسبهم من <code>availableParallelism()</code>، مش <code>os.cpus().length</code>. وسيب core للـ main thread، لأنه لسه بيعمل كل الـ HTTP. والـ scaling run فوق بيبقى مسطح قبل 20 thread بكتير على الجهاز ده، والـ threads الزيادة مش بتفيد.</li>
+      <li><code>maxQueue</code>: الـ default هو <code>Infinity</code>. حط رقم أو <code>'auto'</code> (يعني <code>maxThreads</code> تربيع)، وحوّل <code>Task queue is at limit</code> لـ <b>503</b>. والـ open-loop run بيوريك الـ default بيعمل إيه: الطابور والـ RSS بيكبروا طول ما الـ traffic أكبر من الـ capacity.</li>
+      <li><code>idleTimeout</code>: الـ default صفر بيقتل الـ threads الفاضية اللي فوق <code>minThreads</code> فورًا، والـ docs بتحذر إن ده ممكن يكلفك performance. كام ثانية بداية معقولة.</li>
+      <li><code>signal</code>: الـ abort على task شغالة بيقتل الـ thread بتاعها، لأن الـ JS المتبلوكة مفيش طريقة تانية توقفها، والـ pool بيعمل بديل. يعني الـ tasks لازم تستحمل إنها تتقتل في النص.</li>
+    </ul>
+    <p><b>اقرا الـ defaults الحقيقية.</b> على الجهاز ده بـ 20 core، <code>new Piscina({ filename })</code> إدّى <code>minThreads: 10</code> و <code>maxThreads: 30</code>. الـ max متفق مع الـ README اللي جوه الـ package (<code>availableParallelism</code> × 1.5)، بس الـ min لأ: الـ README بيقول إنه قد <code>availableParallelism</code>، يعني 20 هنا. يعني 10 threads وحوالي 275 MB RSS قبل أول task. حدد الاتنين بنفسك، واطبع <code>pool.options</code> مرة. وكمان الـ README في main branch على GitHub بقى بيقول Node 24 وأعلى، بينما 5.3.2 المتسطب مكتوب فيه <code>engines: &gt;=20</code> واشتغل عادي على 22.19، فراجع قبل ما تعمل upgrade.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      API بيعمل thumbnails للصور أو PDFs صغيرة في نفس الـ request: <code>new Piscina({ filename, minThreads: 2, maxThreads: availableParallelism() - 1, maxQueue: "auto", idleTimeout: 30_000 })</code>. الـ route بيعمل <code>pool.run(job, { signal: AbortSignal.timeout(5_000) })</code>، ولو الطابور اتملى بيرد <code>503</code> مع <code>Retry-After</code>. ولو الشغل بياخد أكتر من ثواني أو لازم يكمّل بعد الـ deploy، ده مش مكانه: روح لـ queue (الجزء 6). وراقب <code>pool.queueSize</code> كـ metric (<a href="./31-metrics-tracing-errors.html">الدرس 31</a>).
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question</b>
+    "How do you size a worker pool, and what happens when it's full?" → Threads about equal to the CPUs you're actually allowed, minus one for the event loop, because beyond that you only add contention and memory. The queue must be bounded: past a small multiple of the pool it only adds latency and memory, so reject with a 503 and <code>Retry-After</code>. Then alert on queue depth, and scale out or move the work to a background queue if it stays high.
+    <div class="ar-note"><b>السؤال:</b> "بتحدد حجم الـ worker pool إزاي، وإيه اللي بيحصل لما يتملى؟" ← <b>الإجابة:</b> الـ threads تقريبًا قد الـ CPUs المسموح لك بيها فعلًا، ناقص واحد للـ event loop، لأن بعد كده بتزوّد contention و memory بس. والطابور لازم يكون ليه حد: بعد كام ضعف من حجم الـ pool هو بيزوّد latency و memory بس، فارفض بـ 503 و <code>Retry-After</code>. وبعدين اعمل alert على طول الطابور، ولو فضل عالي اعمل scale out أو انقل الشغل لـ background queue.</div>
+  </div>
+
+  <!-- ===================== PART 4 ===================== -->
+  <h2 id="p4">Part 4 — cluster <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 4 — الـ cluster</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><code>cluster.fork()</code> starts a new Node process running the same script, connected over IPC, and all of them can listen on one port. Each worker is a full process: its own heap, its own event loop, its own everything.</p>
+    <p><b>What changed from the README's "round-robin":</b> it isn't universal. There are two policies. With <code>SCHED_RR</code> the primary accepts connections and hands them out in turn. With <code>SCHED_NONE</code> the workers accept from a shared socket and the OS decides. Per Node's docs, <code>SCHED_RR</code> is the default everywhere <em>except Windows</em>, and the docs warn that <code>SCHED_NONE</code> tends to be unbalanced, with over 70% of connections in two of eight processes. On this Windows machine the default really is <code>SCHED_NONE</code> (policy 1), and it's worse than that warning: 400 new connections went to one worker out of four. Setting <code>cluster.schedulingPolicy = cluster.SCHED_RR</code> before the first fork, or <code>NODE_CLUSTER_SCHED_POLICY=rr</code>, gave exactly 100 each. The Linux default comes from the docs; there's no Linux here to run it on.</p>
+    <p><b>The balancing is per connection, not per request.</b> The last line of each run: one keep-alive connection sent every request to one worker, under both policies. So a load balancer holding a few long-lived upstream connections can leave your workers uneven even with round-robin.</p>
+    <p><b>The primary is your supervisor, and that part is on you.</b> Node doesn't restart anything; the docs say managing the worker pool is the application's job. The run below shows both jobs:</p>
+    <ul>
+      <li><b>Crash:</b> listen for <code>exit</code>, use <code>worker.exitedAfterDisconnect</code> to tell a crash from a planned restart, and fork a replacement. Only that worker's connections fail (about 10 of 40). Add backoff so a crash loop doesn't spin (<a href="./24-errors-shutdown-health.html#p4">lesson 24, part 4</a>).</li>
+      <li><b>Rolling restart:</b> fork the new one, wait for <code>listening</code>, tell the old one to drain, then <code>disconnect()</code>. The drain step matters. <code>disconnect()</code> closes the worker's server, and <code>server.close()</code> closes idle keep-alive sockets at once. Clients sending at that moment get <code>ECONNRESET</code>: dozens of failures in the run below. First answering with <code>Connection: close</code> for 500 ms took that to zero or one. It's the same race as the keep-alive 502 in <a href="../../03-CS-Fundamentals/lessons/16-load-balancers-proxies-cdn.html#p3">CS lesson 16, part 3</a>.</li>
+    </ul>
+    <p><b>Nothing is shared between workers.</b> A user who adds 40 items sees a cart of 10 on each of 4 workers. In-memory sessions, caches and rate limits all split the same way, so <code>cluster</code> needs the same stateless design as replicas (<a href="./33-deployment-serverless-edge.html#p6">lesson 33, part 6</a>). And <b>DB connections multiply</b>: <code>pool max 10</code> × 4 workers opened 40 real connections, so the formula from <a href="./19-databases-from-node.html#p5">lesson 19, part 5</a> becomes machines × workers × max. (<code>startPg</code> in that script is a small local helper for a throwaway Postgres; on your machine, use your own <code>DATABASE_URL</code>.)</p>
+  </section>
+
+<pre class="diagram">
+                clients
+                   |
+         +---------v----------+
+         | primary process    |   SCHED_RR: owns the listening socket,
+         | no request handlers|   hands out each new connection in turn
+         +--+------+------+---+
+            |      |      |       IPC
+         +--v--+ +-v---+ +v----+
+         | w1  | | w2  | | w3  |  separate processes: own heap, own pg pool,
+         +-----+ +-----+ +-----+  own in-memory state, one event loop each
+</pre>
+  <div class="ar-note">الـ clients بيوصلوا للـ primary، وده في <code>SCHED_RR</code> ماسك الـ socket وبيوزّع كل connection جديد بالدور، ومفيهوش أي handlers للـ requests. وتحته workers كل واحد process لوحده: heap لوحده، و pg pool لوحده، و state لوحده، و event loop واحد. والرابط بينهم IPC.</div>
+
+<pre data-file="src/cluster-basic.ts"><code class="language-typescript">// الـ primary بيعمل fork، والـ workers بيسمعوا على نفس الـ port. بنعدّ الـ requests لكل worker
+import cluster from "node:cluster";
+import { createServer } from "node:http";
+import autocannon from "autocannon";
+
+const WORKERS = 4;
+
+if (cluster.isPrimary) {
+  // لازم قبل أول fork: بعدها القيمة بتتجمّد
+  if (process.argv[2] === "rr") cluster.schedulingPolicy = cluster.SCHED_RR;
+  if (process.argv[2] === "none") cluster.schedulingPolicy = cluster.SCHED_NONE;
+  console.log(`policy=${cluster.schedulingPolicy} (SCHED_NONE=${cluster.SCHED_NONE}, SCHED_RR=${cluster.SCHED_RR}) platform=${process.platform}`);
+
+  const workers = Array.from({ length: WORKERS }, () =&gt; cluster.fork());
+  const ports = await Promise.all(
+    workers.map((w) =&gt; new Promise&lt;number&gt;((resolve) =&gt; w.once("listening", (a) =&gt; resolve(a.port)))),
+  );
+  console.log("ports:", [...new Set(ports)].length === 1 ? "all 4 workers share one port" : ports);
+  const url = `http://127.0.0.1:${ports[0]}/orders`;
+
+  const counts = async (): Promise&lt;number[]&gt; =&gt; {
+    const replies = workers.map((w) =&gt; new Promise&lt;number&gt;((resolve) =&gt; w.once("message", resolve)));
+    for (const w of workers) w.send("count");
+    return Promise.all(replies);
+  };
+  const delta = (a: number[], b: number[]) =&gt; b.map((v, i) =&gt; v - a[i]!);
+
+  // (1) الأول: connection جديد لكل request
+  let before = await counts();
+  for (let i = 0; i &lt; 400; i++) {
+    await (await fetch(url, { headers: { connection: "close" } })).text();
+  }
+  let after = await counts();
+  console.log("400 requests, new connection each:", delta(before, after));
+
+  // (2) التاني: 8 connections بـ keep-alive، و autocannon بيبعت على نفس الـ connection
+  before = await counts();
+  const load = await autocannon({ url, connections: 8, duration: 3 });
+  after = await counts();
+  console.log(`8 keep-alive connections, ${load.requests.total} requests:`, delta(before, after));
+
+  // (3) التالت: connection واحد، فكل الـ requests لنفس الـ worker
+  before = await counts();
+  const one = await autocannon({ url, connections: 1, duration: 2 });
+  after = await counts();
+  console.log(`1 keep-alive connection, ${one.requests.total} requests:`, delta(before, after));
+
+  for (const w of workers) w.kill();
+} else {
+  let served = 0;
+  process.on("message", () =&gt; process.send!(served));
+  createServer((_req, res) =&gt; {
+    served++;
+    res.end(`worker ${cluster.worker!.id}`);
+  }).listen(0, "127.0.0.1");
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/cluster-basic.ts ; node src/cluster-basic.ts rr
+policy=1 (SCHED_NONE=1, SCHED_RR=2) platform=win32
+ports: all 4 workers share one port
+400 requests, new connection each: [ 0, 0, 400, 0 ]
+8 keep-alive connections, 146678 requests: [ 0, 0, 146686, 0 ]
+1 keep-alive connection, 32006 requests: [ 0, 0, 32007, 0 ]
+
+policy=2 (SCHED_NONE=1, SCHED_RR=2) platform=win32
+ports: all 4 workers share one port
+400 requests, new connection each: [ 100, 100, 100, 100 ]
+8 keep-alive connections, 118366 requests: [ 29461, 29656, 29794, 29463 ]
+1 keep-alive connection, 27219 requests: [ 27220, 0, 0, 0 ]</code></pre>
+  <div class="ar-note">الـ run الأول هو الـ default على Windows: <code>policy=1</code> يعني <code>SCHED_NONE</code>، وكل الـ connections راحت لـ worker واحد من الأربعة. والـ run التاني بـ <code>SCHED_RR</code>: كل worker خد 100 بالظبط، والـ 8 keep-alive connections اتوزعوا بالتساوي تقريبًا. وآخر سطر في الاتنين: connection واحد keep-alive، وكله راح لـ worker واحد، لأن التوزيع بيحصل وقت فتح الـ connection بس.</div>
+
+<pre data-file="src/cluster-supervisor.ts"><code class="language-typescript">// الـ primary كـ supervisor: يرجّع الـ worker اللي وقع، ويعمل rolling restart من غير ما يوقّع requests
+import cluster, { type Worker } from "node:cluster";
+import { createServer } from "node:http";
+import { setTimeout as sleep } from "node:timers/promises";
+import autocannon from "autocannon";
+
+const SIZE = 4;
+const DRAIN_MS = Number(process.env.DRAIN_MS ?? 500);
+
+if (cluster.isPrimary) {
+  cluster.schedulingPolicy = cluster.SCHED_RR;
+  const started = performance.now();
+  const stamp = () =&gt; `[+${String(Math.round(performance.now() - started)).padStart(5)} ms]`;
+  let port = 0;
+
+  const start = (): Worker =&gt; {
+    const w = cluster.fork();
+    w.once("listening", (a) =&gt; (port = a.port));
+    return w;
+  };
+
+  cluster.on("exit", (w, code, signal) =&gt; {
+    // الـ exitedAfterDisconnect بيفرّق بين restart مقصود و crash
+    if (w.exitedAfterDisconnect) return;
+    console.log(`${stamp()} worker ${w.id} crashed (code ${code}, signal ${signal}), starting a replacement`);
+    start();
+  });
+
+  for (let i = 0; i &lt; SIZE; i++) start();
+  while (Object.keys(cluster.workers!).length &lt; SIZE || port === 0) await sleep(20);
+  await sleep(300);
+  const url = `http://127.0.0.1:${port}`;
+
+  // (1) الـ crash وسط الـ load
+  console.log(`${stamp()} load starts, a crash request arrives after 1 s`);
+  const crashLoad = autocannon({ url: `${url}/orders`, connections: 40, duration: 4 });
+  await sleep(1_000);
+  await fetch(`${url}/crash`, { headers: { connection: "close" } }).catch((e: Error &amp; { cause?: { code?: string } }) =&gt; {
+    console.log(`${stamp()} crash request: ${e.message} (${e.cause?.code})`);
+  });
+  const crash = await crashLoad;
+  console.log(`${stamp()} crash run: ${crash["2xx"]} ok, ${crash.errors} errors, ${crash.resets ?? 0} resets, live workers ${Object.keys(cluster.workers!).length}`);
+
+  // (2) الـ rolling restart: واحد واحد، والجديد يبقى listening قبل ما القديم يمشي
+  const rolling = async () =&gt; {
+    for (const old of Object.values(cluster.workers!)) {
+      const fresh = start();
+      await new Promise((resolve) =&gt; fresh.once("listening", resolve));
+      const gone = new Promise((resolve) =&gt; old!.once("exit", resolve));
+      // (أ) قول للـ worker القديم يرد بـ Connection: close، وادّي الـ clients وقت يسيبوه
+      old!.send("drain");
+      await sleep(DRAIN_MS);
+      // (ب) الـ disconnect بيقفل الـ server في الـ worker ويستنى الـ connections المفتوحة
+      old!.disconnect();
+      await gone;
+      console.log(`${stamp()} replaced worker ${old!.id} with worker ${fresh.id}`);
+    }
+  };
+  // الـ client هنا fetch عادي بيحترم Connection: close، زي أي client محترم أو load balancer
+  let ok = 0;
+  let failed = 0;
+  let rollingDone = false;
+  const causes = new Map&lt;string, number&gt;();
+  const client = async () =&gt; {
+    while (!rollingDone) {
+      try {
+        await (await fetch(`${url}/orders`)).text();
+        ok++;
+      } catch (e) {
+        failed++;
+        const code = ((e as Error).cause as { code?: string } | undefined)?.code ?? (e as Error).message;
+        causes.set(code, (causes.get(code) ?? 0) + 1);
+      }
+    }
+  };
+  const clients = Array.from({ length: 40 }, client);
+  await sleep(500);
+  await rolling();
+  await sleep(300);
+  rollingDone = true;
+  await Promise.all(clients);
+  console.log(`${stamp()} rolling restart, drain ${DRAIN_MS} ms: ${ok} ok, ${failed} failed`, Object.fromEntries(causes));
+
+  for (const w of Object.values(cluster.workers!)) {
+    w!.process.kill();
+  }
+  process.exit(0);
+} else {
+  const server = createServer((req, res) =&gt; {
+    if (req.url === "/crash") throw new Error("bug in invoice route");
+    // أثناء الـ drain: قول للـ client يقفل عشان الـ keep-alive ميعطّلش الخروج
+    if (draining) res.setHeader("connection", "close");
+    res.end("ok");
+  });
+  let draining = false;
+  process.on("message", (m) =&gt; {
+    if (m === "drain") draining = true;
+  });
+  // الـ exception ده بيوقّع الـ worker ده بس
+  process.on("uncaughtException", (err) =&gt; {
+    console.log(`worker ${cluster.worker!.id}: ${err.message}`);
+    process.exit(1);
+  });
+  server.listen(0, "127.0.0.1");
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/cluster-supervisor.ts
+[+  638 ms] load starts, a crash request arrives after 1 s
+worker 4: bug in invoice route
+[+ 1674 ms] crash request: fetch failed (ECONNRESET)
+[+ 1676 ms] worker 4 crashed (code 1, signal null), starting a replacement
+[+ 4653 ms] crash run: 181851 ok, 10 errors, 0 resets, live workers 4
+[+ 5981 ms] replaced worker 1 with worker 6
+[+ 6804 ms] replaced worker 2 with worker 7
+[+ 7619 ms] replaced worker 3 with worker 8
+[+ 8443 ms] replaced worker 5 with worker 9
+[+ 8749 ms] rolling restart, drain 500 ms: 22798 ok, 0 failed {}</code></pre>
+<pre><code class="language-plaintext">$ DRAIN_MS=0 node src/cluster-supervisor.ts   (last line only)
+[+ 6816 ms] rolling restart, drain 0 ms: 9752 ok, 60 failed { ECONNRESET: 60 }</code></pre>
+  <div class="ar-note">اقرا مع الوقت. <b>الـ crash:</b> الـ request بتاع <code>/crash</code> خد <code>ECONNRESET</code>، والـ worker خرج بـ code 1، والـ primary شغّل بديل على طول. ومن آلاف الـ requests، اللي فشل حوالي 10 بس، وهم connections الـ worker ده (40 ÷ 4). وفي الآخر 4 workers شغالين. <b>الـ rolling restart:</b> كل worker اتبدل واحد ورا التاني، ومع drain بتاع 500 ms مفيش فشل تقريبًا. <b>من غير drain</b> (الـ run التاني): عشرات الـ <code>ECONNRESET</code>، لأن <code>server.close()</code> بيقفل الـ idle sockets والـ client بيبعت عليها في نفس اللحظة.</div>
+
+<pre data-file="src/cluster-state.ts"><code class="language-typescript">// كل worker process لوحده: الـ memory مش مشتركة، ولا الـ DB pool
+import cluster from "node:cluster";
+import { createServer } from "node:http";
+import pg from "pg";
+import { startPg } from "../../pg-throwaway.mjs";
+
+const POOL_MAX = 10;
+const WORKERS = 4;
+
+if (cluster.isPrimary) {
+  cluster.schedulingPolicy = cluster.SCHED_RR;
+  const db = await startPg({});
+  process.env.DATABASE_URL = db.url;
+  const workers = Array.from({ length: WORKERS }, () =&gt; cluster.fork());
+  const [port] = await Promise.all(
+    workers.map((w) =&gt; new Promise&lt;number&gt;((resolve) =&gt; w.once("listening", (a) =&gt; resolve(a.port)))),
+  );
+
+  // عدّاد in-memory: كل worker شايف رقمه هو بس
+  const seen = new Map&lt;number, number&gt;();
+  for (let i = 0; i &lt; 40; i++) {
+    const r = (await (await fetch(`http://127.0.0.1:${port}/cart/add`, { headers: { connection: "close" } })).json()) as { worker: number; items: number };
+    seen.set(r.worker, r.items);
+  }
+  console.log("40 items added, cart per worker:", Object.fromEntries(seen));
+
+  // الـ connections: كل worker فتح الـ pool بتاعه
+  await Promise.all(
+    Array.from({ length: 120 }, () =&gt;
+      fetch(`http://127.0.0.1:${port}/report`, { headers: { connection: "close" } }).then((r) =&gt; r.text()),
+    ),
+  );
+  const admin = new pg.Client({ connectionString: db.url });
+  await admin.connect();
+  const { rows } = await admin.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE application_name = 'orders-api'");
+  const { rows: maxRows } = await admin.query("SHOW max_connections");
+  console.log(`pool max ${POOL_MAX} x ${WORKERS} workers = ${rows[0].n} connections open (max_connections = ${maxRows[0].max_connections})`);
+  await admin.end();
+
+  for (const w of workers) w.process.kill();
+  await db.stop();
+  process.exit(0);
+} else {
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: POOL_MAX, application_name: "orders-api" });
+  let items = 0;
+  createServer(async (req, res) =&gt; {
+    if (req.url === "/cart/add") {
+      items++;
+      return void res.end(JSON.stringify({ worker: cluster.worker!.id, items }));
+    }
+    await pool.query("SELECT pg_sleep(0.2)");
+    res.end("ok");
+  }).listen(0, "127.0.0.1");
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/cluster-state.ts
+40 items added, cart per worker: { '1': 10, '2': 10, '3': 10, '4': 10 }
+pool max 10 x 4 workers = 40 connections open (max_connections = 60)</code></pre>
+  <div class="ar-note">الـ user ضاف 40 حاجة، وكل worker شايف 10 بس، لأن كل واحد عنده العدّاد بتاعه. والسطر التاني: <code>max: 10</code> في 4 workers فتحوا 40 connection حقيقية على Postgres، من <code>pg_stat_activity</code>.</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><code>cluster.fork()</code> بيشغّل Node process جديدة بنفس الـ script، متوصلة بـ IPC، وكلهم يقدروا يسمعوا على port واحد. كل worker هو process كاملة: heap لوحده، و event loop لوحده، وكل حاجة لوحده.</p>
+    <p><b>إيه اللي اتغير عن "round-robin" اللي في الـ README:</b> ده مش في كل حتة. فيه policy اتنين. في <code>SCHED_RR</code> الـ primary بياخد الـ connections ويوزعها بالدور. وفي <code>SCHED_NONE</code> الـ workers بياخدوا من socket مشترك والـ OS هو اللي بيقرر. وحسب docs بتاعة Node، <code>SCHED_RR</code> هو الـ default في كل حتة <em>ما عدا Windows</em>، والـ docs بتحذر إن <code>SCHED_NONE</code> بيطلع غير متوازن، أكتر من 70% من الـ connections في 2 من 8 processes. وعلى الـ Windows ده الـ default فعلًا <code>SCHED_NONE</code> (policy رقم 1)، والنتيجة أسوأ من التحذير: 400 connection جديد راحوا كلهم لـ worker واحد من أربعة. ولما عملنا <code>cluster.schedulingPolicy = cluster.SCHED_RR</code> قبل أول fork، أو <code>NODE_CLUSTER_SCHED_POLICY=rr</code>، كل واحد خد 100 بالظبط. والـ default بتاع Linux من الـ docs، لأن مفيش Linux هنا نجرب عليه.</p>
+    <p><b>التوزيع لكل connection، مش لكل request.</b> آخر سطر في كل run: connection واحد keep-alive بعت كل الـ requests لـ worker واحد، في الـ policy الاتنين. يعني load balancer ماسك كام upstream connection طويل ممكن يسيب الـ workers مش متساويين، حتى مع round-robin.</p>
+    <p><b>الـ primary هو الـ supervisor بتاعك، والشغل ده عليك.</b> Node مبيعملش restart لحاجة، والـ docs بتقول إدارة الـ workers مسؤولية الـ application. والـ run فوق بيوري الشغلتين:</p>
+    <ul>
+      <li><b>الـ crash:</b> اسمع <code>exit</code>، واستخدم <code>worker.exitedAfterDisconnect</code> عشان تفرّق بين crash و restart مقصود، واعمل fork لبديل. الـ connections بتاعة الـ worker ده بس هي اللي بتفشل (حوالي 10 من 40). وضيف backoff عشان الـ crash loop ميلفّش (<a href="./24-errors-shutdown-health.html#p4">الدرس 24، الجزء 4</a>).</li>
+      <li><b>الـ rolling restart:</b> اعمل fork للجديد، واستنى <code>listening</code>، وقول للقديم يعمل drain، وبعدين <code>disconnect()</code>. خطوة الـ drain هي المهمة. <code>disconnect()</code> بيقفل الـ server بتاع الـ worker، و <code>server.close()</code> بيقفل الـ idle keep-alive sockets فورًا، والـ clients اللي بيبعتوا في اللحظة دي بياخدوا <code>ECONNRESET</code>: عشرات الفشل في الـ run فوق. ولما رد الأول بـ <code>Connection: close</code> لمدة 500 ms، نزلت لصفر أو واحد. وده نفس الـ race بتاع الـ keep-alive 502 في <a href="../../03-CS-Fundamentals/lessons/16-load-balancers-proxies-cdn.html#p3">درس CS رقم 16، الجزء 3</a>.</li>
+    </ul>
+    <p><b>مفيش حاجة مشتركة بين الـ workers.</b> user ضاف 40 حاجة شايف cart فيها 10 على كل worker من الأربعة. والـ sessions والـ caches والـ rate limits اللي في الـ memory بيتقسموا بنفس الطريقة، فالـ <code>cluster</code> محتاج نفس الـ stateless design بتاع الـ replicas (<a href="./33-deployment-serverless-edge.html#p6">الدرس 33، الجزء 6</a>). و <b>الـ DB connections بتتضرب</b>: <code>pool max 10</code> في 4 workers فتحوا 40 connection حقيقية، فالمعادلة من <a href="./19-databases-from-node.html#p5">الدرس 19، الجزء 5</a> بتبقى machines × workers × max. (و <code>startPg</code> في الـ script ده helper محلي صغير لـ Postgres مؤقت، وعندك استخدم <code>DATABASE_URL</code> بتاعك.)</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      API على VPS واحد بـ 4 cores: الـ CPU واقف على core واحد 100% والباقي فاضي. <code>cluster</code> (أو PM2 فوقه) بيخليك تستخدم الـ 4. قبل ما تعمله راجع 3 حاجات: الـ <code>max</code> بتاع الـ pool قسّمه على عدد الـ workers، والـ sessions والـ rate limit في Redis، والـ cron مش هيشتغل 4 مرات (<a href="./22-background-jobs-bullmq.html#p4">الدرس 22، الجزء 4</a>). ولو بتجرب على Windows، خد بالك إن الأرقام بتاعتك مش هتشبه Linux من غير <code>SCHED_RR</code>.
+    </div>
+  </section>
+
+  <div class="callout warn">
+    <b>What breaks: forgetting the multiplication</b>
+    You add <code>cluster</code> to a service with <code>max: 20</code> on 3 machines. Connections go from 60 to 240 on an 8-core box, Postgres's default <code>max_connections</code> of 100 is gone, and the deploy that "just added cores" fails with <code>53300</code> at peak. Divide the pool by the worker count when you add workers.
+    <div class="ar-note"><b>إيه اللي بيكسر: نسيان الضرب.</b> ضفت <code>cluster</code> لـ service بـ <code>max: 20</code> على 3 machines. الـ connections بتطلع من 60 لـ 240 لو كل واحدة 4 workers، والـ <code>max_connections</code> الـ default بتاع Postgres (100) خلص، والـ deploy اللي كان "بيزوّد cores بس" بيقع بـ <code>53300</code> وقت الذروة. لما تزوّد workers، اقسم الـ pool على عددهم.</div>
+  </div>
+
+  <!-- ===================== PART 5 ===================== -->
+  <h2 id="p5">Part 5 — cluster vs containers <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 5 — الـ cluster ضد الـ containers</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p><b>The common default today is one Node process per container, with replicas.</b> Scaling across cores and across machines becomes the same operation, and each process has its own limits, signals and metrics:</p>
+    <table>
+      <tr><th></th><th>one process per container, N replicas</th><th><code>cluster</code> with N workers in one container</th></tr>
+      <tr><td>Signals</td><td>SIGTERM reaches the process directly</td><td>The primary must forward it and coordinate the drain</td></tr>
+      <tr><td>Memory limit</td><td>Per process: one OOM kills one replica</td><td>Shared: one leaking worker can get the whole container killed</td></tr>
+      <tr><td>CPU limit</td><td>Maps cleanly: 1 CPU, 1 event loop</td><td>Workers compete inside one quota and throttle together</td></tr>
+      <tr><td>Metrics and logs</td><td>One series per pod</td><td>Per-worker metrics need aggregation through IPC</td></tr>
+      <tr><td>Crash</td><td>The orchestrator restarts it, with backoff and events</td><td>Your primary restarts it, and the orchestrator sees nothing</td></tr>
+      <tr><td>Rolling deploy</td><td>The orchestrator does it, with health gates</td><td>You write it, as in part 4</td></tr>
+    </table>
+    <div class="ar-note">صف صف: <b>الـ signals:</b> في الـ replicas الـ SIGTERM بيوصل الـ process مباشرة، وفي الـ cluster الـ primary لازم يوصّله وينظّم الـ drain. <b>الـ memory limit:</b> في الـ replicas الـ OOM بيقتل replica واحدة، وفي الـ cluster worker واحد بيسرّب ممكن يخلي الـ container كله يتقتل. <b>الـ CPU limit:</b> في الـ replicas 1 CPU لـ event loop واحد، وفي الـ cluster الـ workers بيتخانقوا على نفس الـ quota وبيتعملهم throttling مع بعض. <b>الـ metrics والـ logs:</b> في الـ replicas series لكل pod، وفي الـ cluster لازم تجمّع من كل worker عن طريق IPC. <b>الـ crash:</b> في الـ replicas الـ orchestrator بيعمل restart بـ backoff و events، وفي الـ cluster الـ primary بتاعك بيعمله والـ orchestrator مش شايف حاجة. <b>الـ rolling deploy:</b> في الـ replicas الـ orchestrator بيعمله بـ health gates، وفي الـ cluster إنت اللي بتكتبه زي الجزء 4.</div>
+    <p><b>cluster saves no memory.</b> The name "fork" misleads people who know Unix: <code>child_process.fork()</code> starts a fresh Node process, so there's no copy-on-write heap. Measured below, 4 workers use about as much RSS as 4 separate processes, plus the primary. (RSS double-counts the pages of the Node binary that the OS shares, in both columns.)</p>
+    <p><b>And it only helps when the event loop is the bottleneck.</b> With a route burning CPU, throughput grows with the workers, about 3.2 times at 4. With a route that waits 50 ms on I/O, it doesn't move at all: 40 connections × 50 ms caps it, and one event loop was already enough. Measure with event loop utilization (<a href="./35-profiling-load-testing.html#p4">lesson 35, part 4</a>) before you add workers.</p>
+    <p><b>Where <code>cluster</code> still fits:</b> a single VM or VPS with several cores and no orchestrator, usually through PM2 (<a href="./32-config-docker-ci.html#p5">lesson 32, part 5</a>), where it's a cheap way to use the cores you're already paying for. Inside a container on Kubernetes it mostly duplicates what the platform does.</p>
+    <p><b>CPU limits and <code>availableParallelism()</code>, hedged because no container runs here.</b> The Node docs only say it wraps libuv's <code>uv_available_parallelism()</code> and don't mention cgroups, and libuv's docs mention only the CPU affinity mask. But the libuv 1.51 source bundled in Node 22.19 (<code>deps/uv/src/unix/core.c</code>) also reads the cgroup CPU quota on Linux, with integer division: <code>cpu: 2</code> gives 2, <code>cpu: 2500m</code> gives 2, and for a quota under one CPU the division gives 0, which the code ignores, so <code>cpu: 500m</code> returns the full affinity count. <code>os.cpus().length</code> doesn't consider any of this. Older Node versions behave differently, so print the value inside your real container before sizing a pool from it. Don't assume.</p>
+  </section>
+
+<pre data-file="src/mem-compare.ts"><code class="language-typescript">// المقارنة: 4 cluster workers ضد 4 processes مستقلين، والـ RSS بعد شوية traffic
+import cluster from "node:cluster";
+import { fork, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
+import { fileURLToPath } from "node:url";
+import autocannon from "autocannon";
+
+const MB = 1024 * 1024;
+const rssOf = async (p: Pick&lt;ChildProcess, "send" | "once"&gt;): Promise&lt;number&gt; =&gt; {
+  const reply = new Promise&lt;{ rss: number }&gt;((resolve) =&gt; p.once("message", resolve as never));
+  p.send("rss");
+  return (await reply).rss / MB;
+};
+const sum = (xs: number[]) =&gt; xs.reduce((a, b) =&gt; a + b, 0);
+const file = fileURLToPath(new URL("./mem-app.ts", import.meta.url));
+
+if (process.argv[2] === "cluster") {
+  cluster.schedulingPolicy = cluster.SCHED_RR;
+  cluster.setupPrimary({ exec: file });
+  const workers = Array.from({ length: 4 }, () =&gt; cluster.fork());
+  const [{ port }] = (await Promise.all(workers.map((w) =&gt; once(w, "message"))))[0] as [{ port: number }];
+  await autocannon({ url: `http://127.0.0.1:${port}/orders`, connections: 20, duration: 3 });
+  const rss = await Promise.all(workers.map((w) =&gt; rssOf(w.process)));
+  const primary = process.memoryUsage().rss / MB;
+  console.log(`cluster: workers ${rss.map((r) =&gt; r.toFixed(0)).join(" + ")} = ${sum(rss).toFixed(0)} MB`);
+  console.log(`         primary (this one also ran autocannon) ${primary.toFixed(0)} MB`);
+  for (const w of workers) w.process.kill();
+  process.exit(0);
+} else {
+  const children = Array.from({ length: 4 }, () =&gt; fork(file));
+  const ports = (await Promise.all(children.map((c) =&gt; once(c, "message")))) as [{ port: number }][];
+  await Promise.all(ports.map(([{ port }]) =&gt; autocannon({ url: `http://127.0.0.1:${port}/orders`, connections: 5, duration: 3 })));
+  const rss = await Promise.all(children.map((c) =&gt; rssOf(c)));
+  console.log(`separate: ${rss.map((r) =&gt; r.toFixed(0)).join(" + ")} = ${sum(rss).toFixed(0)} MB`);
+  for (const c of children) c.kill();
+  process.exit(0);
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/mem-compare.ts cluster ; node src/mem-compare.ts separate
+cluster: workers 143 + 143 + 143 + 142 = 571 MB
+         primary (this one also ran autocannon) 89 MB
+separate: 147 + 143 + 147 + 143 = 580 MB</code></pre>
+  <div class="ar-note">4 cluster workers حوالي نفس الـ RSS بتاع 4 processes مستقلين، وفوقهم الـ primary. يعني مفيش أي توفير: كل worker عامل تحميل Node و Express من الأول. والـ primary هنا رقمه كبير لأنه هو كمان شغّل autocannon في الـ demo.</div>
+
+<pre data-file="src/cluster-scale.ts"><code class="language-typescript">// هل الـ cluster بيزوّد الـ throughput؟ route فيه حوالي 2 ms CPU، و route بيستنى I/O بس
+import cluster from "node:cluster";
+import { createServer } from "node:http";
+import { setTimeout as sleep } from "node:timers/promises";
+import autocannon from "autocannon";
+import { hashInvoiceChain } from "./invoice-hash.ts";
+
+if (cluster.isPrimary) {
+  cluster.schedulingPolicy = cluster.SCHED_RR;
+  console.log("workers | CPU route req/s | I/O route req/s");
+  for (const n of [1, 2, 4]) {
+    const workers = Array.from({ length: n }, () =&gt; cluster.fork());
+    const [port] = await Promise.all(workers.map((w) =&gt; new Promise&lt;number&gt;((r) =&gt; w.once("listening", (a) =&gt; r(a.port)))));
+    const cpu = await autocannon({ url: `http://127.0.0.1:${port}/cpu`, connections: 40, duration: 4 });
+    const io = await autocannon({ url: `http://127.0.0.1:${port}/io`, connections: 40, duration: 4 });
+    console.log(`${String(n).padStart(7)} | ${String(Math.round(cpu.requests.average)).padStart(15)} | ${String(Math.round(io.requests.average)).padStart(15)}`);
+    await Promise.all(workers.map((w) =&gt; new Promise((r) =&gt; { w.once("exit", r); w.kill(); })));
+    await sleep(200);
+  }
+  process.exit(0);
+} else {
+  createServer(async (req, res) =&gt; {
+    if (req.url === "/cpu") return void res.end(hashInvoiceChain("inv", 2_000).slice(0, 8));
+    // استنى 50 ms زي query على DB
+    await sleep(50);
+    res.end("ok");
+  }).listen(0, "127.0.0.1");
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/cluster-scale.ts
+workers | CPU route req/s | I/O route req/s
+      1 |             359 |             630
+      2 |             845 |             630
+      4 |            1158 |             630</code></pre>
+  <div class="ar-note">الـ CPU route: من 1 لـ 4 workers الـ throughput زاد حوالي 3.2 مرات. الـ I/O route: مفيش فرق تقريبًا، لأن 40 connection كل واحد بيستنى 50 ms، يعني السقف حوالي 800 في الثانية، و worker واحد كان مكفّي أصلًا. فلو الـ route بتاعك بيستنى DB، الـ cluster مش هو الحل.</div>
+
+<pre data-file="k8s/replicas.yaml"><code class="language-yaml"># متشغّلش هنا: مفيش Kubernetes على الجهاز. الـ cores عن طريق replicas، مش cluster جوه الـ pod
+spec:
+  replicas: 4
+  template:
+    spec:
+      containers:
+        - name: api
+          resources:
+            requests: { cpu: "1", memory: "512Mi" }
+            limits: { memory: "512Mi" }</code></pre>
+  <div class="callout warn">
+    <b>Not run here: no Kubernetes or containers on this machine.</b>
+    This YAML was not applied to a cluster, and the <code>availableParallelism()</code> behaviour above comes from reading the source, not from a run.
+    <div class="ar-note"><b>متشغّلش هنا: مفيش Kubernetes ولا containers على الجهاز ده.</b> الـ YAML ده ماتطبقش على cluster، وسلوك <code>availableParallelism()</code> اللي فوق من قراءة الكود، مش من run حقيقي.</div>
+  </div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p><b>الـ default الشائع النهارده: Node process واحدة في كل container، و replicas.</b> الـ scaling على الـ cores وعلى الـ machines بيبقى نفس العملية، وكل process ليها limits و signals و metrics لوحدها، زي الجدول فوق.</p>
+    <p><b>الـ cluster مش بيوفّر memory.</b> اسم "fork" بيلخبط اللي يعرف Unix: <code>child_process.fork()</code> بيشغّل Node process جديدة خالص، فمفيش heap بـ copy-on-write. وفي القياس فوق، 4 workers بياخدوا حوالي نفس RSS بتاع 4 processes مستقلين، وفوقهم الـ primary. (والـ RSS بيعدّ pages بتاعة Node binary اللي الـ OS بيشاركها مرتين، في العمودين.)</p>
+    <p><b>وهو بيفيد بس لما الـ event loop هو الـ bottleneck.</b> لو الـ route بيحرق CPU، الـ throughput بيزيد مع الـ workers، حوالي 3.2 مرات عند 4. ولو الـ route بيستنى I/O بـ 50 ms، مش بيتحرك خالص: 40 connection × 50 ms هما السقف، و event loop واحد كان مكفّي. اقيس بالـ event loop utilization (<a href="./35-profiling-load-testing.html#p4">الدرس 35، الجزء 4</a>) قبل ما تزوّد workers.</p>
+    <p><b>الـ <code>cluster</code> لسه مكانه فين:</b> VM أو VPS واحد بكذا core ومن غير orchestrator، وغالبًا عن طريق PM2 (<a href="./32-config-docker-ci.html#p5">الدرس 32، الجزء 5</a>)، وده طريقة رخيصة تستخدم الـ cores اللي بتدفع فيها أصلًا. أما جوه container على Kubernetes فهو غالبًا بيكرر اللي الـ platform بتعمله.</p>
+    <p><b>الـ CPU limits و <code>availableParallelism()</code>، وبتحفّظ لأن مفيش container متشغّل هنا.</b> docs بتاعة Node بتقول بس إنها wrapper على <code>uv_available_parallelism()</code> ومش بتذكر cgroups، و docs بتاعة libuv بتذكر الـ CPU affinity mask بس. لكن كود libuv 1.51 اللي جوه Node 22.19 (<code>deps/uv/src/unix/core.c</code>) بيقرا كمان الـ cgroup CPU quota على Linux، بقسمة صحيحة: <code>cpu: 2</code> بتدي 2، و <code>cpu: 2500m</code> بتدي 2، ولو الـ quota أقل من CPU واحد القسمة بتدي 0، والكود بيتجاهلها، فـ <code>cpu: 500m</code> بترجع عدد الـ affinity كله. و <code>os.cpus().length</code> مش بيبص على أي حاجة من دي. والإصدارات الأقدم من Node سلوكها مختلف، فاطبع القيمة جوه الـ container الحقيقي بتاعك قبل ما تحسب منها حجم pool. متفترضش.</p>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      لقيت في الـ Dockerfile <code>pm2-runtime start app.js -i max</code> على Kubernetes، والـ pod بـ <code>cpu: 500m</code>؟ حسب الكود اللي فوق، <code>max</code> ممكن يطلع عدد cores الـ node كله: عشرات الـ processes على نص CPU، و memory بتنفجر، و throttling طول الوقت. الحل: process واحدة في الـ container، وزوّد <code>replicas</code>. ولو على VPS بـ 4 cores وفريق صغير، PM2 بـ 4 instances قرار سليم تمامًا ومش محتاج تتكسف منه.
+    </div>
+  </section>
+
+  <div class="callout tradeoff">
+    <b>Trade-off: replicas cost overhead too</b>
+    Four pods means four sets of probes, four sidecars if you run them, and scheduling that may not fit a small node. On one big machine you pay for that, and <code>cluster</code> or several plain processes behind nginx are simpler. Pick by what you already operate, not by what's fashionable.
+    <div class="ar-note"><b>الـ Trade-off، الـ replicas ليها تكلفة هي كمان:</b> 4 pods يعني 4 مجموعات probes، و 4 sidecars لو عندك، و scheduling ممكن ميجيش على node صغير. على machine واحدة كبيرة بتدفع التمن ده، و <code>cluster</code> أو كذا process عادية ورا nginx أبسط. اختار حسب اللي بتشغّله فعلًا، مش حسب الموضة.</div>
+  </div>
+
+  <!-- ===================== PART 6 ===================== -->
+  <h2 id="p6">Part 6 — The verdict <span class="lvl lvl-3">🔴 Advanced</span><span class="ar-sub">الجزء 6 — الحكم النهائي</span></h2>
+  <section class="en">
+    <span class="label">English</span>
+    <p>This is exit-test question 8. Four tools, four different questions:</p>
+    <table>
+      <tr><th>Tool</th><th>Gives you</th><th>Memory</th><th>If it dies</th><th>Survives a deploy?</th><th>Use it for</th></tr>
+      <tr><td><code>worker_threads</code></td><td>CPU parallelism in one process</td><td>Can share and transfer</td><td>JS errors and heap limits stay contained. A native crash takes the process down</td><td>No</td><td>Short CPU work inside a request: hashing, parsing, thumbnails</td></tr>
+      <tr><td><code>cluster</code></td><td>HTTP across cores on one machine</td><td>Nothing shared</td><td>One worker's connections are lost</td><td>No</td><td>Multi-core on a single VM, when the event loop is the limit</td></tr>
+      <tr><td><code>child_process</code></td><td>Any program, full OS isolation</td><td>Nothing shared, higher start cost</td><td>The parent reads an exit code</td><td>No</td><td>External programs (ffmpeg), untrusted or crash-prone code</td></tr>
+      <tr><td>queue + separate service</td><td>Durability, retries, independent scaling</td><td>Nothing shared, payload over the network</td><td>The job is retried by another worker</td><td><b>Yes</b></td><td>Anything slow, anything that must finish: <b>usually the best answer</b></td></tr>
+    </table>
+    <div class="ar-note"><b><code>worker_threads</code>:</b> parallelism للـ CPU جوه process واحدة، وينفع تشارك وتنقل memory. أخطاء الـ JS وحد الـ heap بيفضلوا جواه، بس crash في native code بيوقّع الـ process كله. مش بيعيش بعد الـ deploy. استخدمه لشغل CPU قصير جوه request: hashing، و parsing، و thumbnails. <b><code>cluster</code>:</b> HTTP على الـ cores في machine واحدة، ومفيش مشاركة. لو worker وقع، الـ connections بتاعته بس هي اللي بتضيع. مش بيعيش بعد الـ deploy. استخدمه لـ multi-core على VM واحد لما الـ event loop هو الحد. <b><code>child_process</code>:</b> أي برنامج، و isolation كامل من الـ OS، ومفيش مشاركة وتكلفة الـ start أعلى. الـ parent بيقرا exit code. مش بيعيش بعد الـ deploy. استخدمه للبرامج الخارجية زي ffmpeg، والكود غير الموثوق أو اللي بيقع كتير. <b>queue و service منفصل:</b> durability و retries و scaling مستقل، ومفيش مشاركة والـ payload بيعدّي على الشبكة. الـ job بتتعاد على worker تاني. <b>بيعيش بعد الـ deploy</b>. استخدمه لأي حاجة بطيئة أو لازم تخلص: <b>غالبًا ده أحسن إجابة</b>.</div>
+    <p><b>Three things a table can't show, so we ran them.</b> <em>Isolation:</em> a leak in a Worker with <code>resourceLimits</code> ends with <code>ERR_WORKER_OUT_OF_MEMORY</code>, and a child process with <code>--max-old-space-size</code> ends with exit code 134. In both, the API process lives. <em>External programs:</em> <code>spawn</code> gives you exit codes, a kill on timeout and a free event loop; ffmpeg isn't installed here, so a small stand-in plays its part. <em>Deploys:</em> both variants below are killed mid-way. The Worker's report is simply gone, and nothing anywhere knows it was running. The BullMQ job on Redis was detected as stalled and finished by the next version.</p>
+    <p><b>Four decisions, with the reasoning:</b></p>
+    <ul>
+      <li><b>PDF generation.</b> A 300 ms invoice PDF that the user is waiting for: a piscina pool in the API is fine, with a bounded queue. A 30-page report, or anything that must not get lost: a BullMQ job and a separate worker service, which can use a pool internally (<a href="./22-background-jobs-bullmq.html#p2">lesson 22, part 2</a> has sandboxed processors). So usually a queue, with Workers inside it for the CPU part.</li>
+      <li><b>ffmpeg.</b> <code>child_process.spawn</code>, always, because it's an external program, and a Worker would only sit there waiting for it. Run it from a queue consumer on separate machines, because transcoding eats all the CPU it gets and a request can't wait for it. <a href="./08-fs-child-process-zlib.html#p4">Lesson 08, part 4</a> has the details.</li>
+      <li><b>Scaling HTTP on one box.</b> <code>cluster</code> or PM2 if you have one VM and no orchestrator. Replicas if you have containers. Either way, first prove the event loop is the limit, and make the service stateless.</li>
+      <li><b>A nightly report.</b> Not in the API process. A BullMQ job scheduler or a Kubernetes CronJob, running in a separate worker service, against a read replica if it's heavy. It needs retries and exactly one run across instances (<a href="./22-background-jobs-bullmq.html#p4">lesson 22, part 4</a>).</li>
+    </ul>
+  </section>
+
+<pre class="diagram">
+ Is it an external program?
+   yes -> child_process.spawn (inside a queue consumer if it's slow)
+   no  -> Must it survive a deploy or crash, or take more than a few seconds?
+            yes -> queue + separate service (use a pool in there for CPU)
+            no  -> Is it CPU-heavy JavaScript?
+                     yes -> worker_threads pool (piscina) with a bounded queue
+                     no  -> Plain async on the event loop. No threads needed.
+
+ Is one event loop saturated by normal HTTP traffic?
+   have an orchestrator -> more replicas
+   one VM               -> cluster or PM2
+</pre>
+  <div class="ar-note">شجرة القرار. برنامج خارجي؟ <code>child_process.spawn</code>، وجوه queue consumer لو بطيء. مش برنامج خارجي، بس لازم يعيش بعد deploy أو crash، أو بياخد أكتر من كام ثانية؟ queue و service منفصل، واستخدم pool جواه للـ CPU. لأ، وهو JavaScript تقيل على الـ CPU؟ worker_threads pool بـ piscina وطابور ليه حد. لأ؟ async عادي على الـ event loop ومش محتاج threads. والسؤال التاني منفصل: الـ event loop مشبّع من HTTP traffic عادي؟ لو عندك orchestrator زوّد replicas، ولو VM واحد استخدم cluster أو PM2.</div>
+
+<pre data-file="src/isolation.ts"><code class="language-typescript">// لو الشغل كله memory leak: مين بيقع ومين بيعيش؟ Worker بـ resourceLimits ضد child process
+import { spawn } from "node:child_process";
+import { isMainThread, Worker } from "node:worker_threads";
+
+const leak = () =&gt; {
+  const held: string[][] = [];
+  for (;;) held.push(Array.from({ length: 10_000 }, (_, i) =&gt; `row-${i}-${held.length}`));
+};
+
+if (!isMainThread) {
+  leak();
+} else if (process.argv[2] === "child") {
+  leak();
+} else {
+  const t0 = performance.now();
+  const ticks = setInterval(() =&gt; {}, 50);
+
+  const worker = new Worker(new URL(import.meta.url), { resourceLimits: { maxOldGenerationSizeMb: 32 } });
+  const workerResult = await new Promise&lt;string&gt;((resolve) =&gt; {
+    worker.once("error", (err: NodeJS.ErrnoException) =&gt; resolve(`${err.code}`));
+  });
+  console.log(`worker with resourceLimits: ${workerResult}`);
+  console.log(`  API process still alive after ≈${Math.round(performance.now() - t0)} ms, rss ${Math.round(process.memoryUsage().rss / 1048576)} MB`);
+
+  const child = spawn(process.execPath, ["--max-old-space-size=32", process.argv[1]!, "child"], { stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr.on("data", (d) =&gt; (stderr += d));
+  const [code, signal] = await new Promise&lt;[number | null, string | null]&gt;((resolve) =&gt; child.once("exit", (c, s) =&gt; resolve([c, s])));
+  console.log(`child process: exit code ${code}, signal ${signal}`);
+  console.log(`  ${stderr.split("\n").find((l) =&gt; l.includes("FATAL ERROR"))?.slice(0, 31)}`);
+  console.log("  API process still alive");
+  clearInterval(ticks);
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/isolation.ts
+worker with resourceLimits: ERR_WORKER_OUT_OF_MEMORY
+  API process still alive after ≈413 ms, rss 69 MB
+child process: exit code 134, signal null
+  FATAL ERROR: Reached heap limit
+  API process still alive</code></pre>
+  <div class="ar-note">نفس الـ leak مرتين. الـ Worker بـ <code>maxOldGenerationSizeMb: 32</code> خلص بـ <code>ERR_WORKER_OUT_OF_MEMORY</code>، والـ API لسه عايش. والـ child process بـ <code>--max-old-space-size=32</code> طلع <code>FATAL ERROR</code> و exit code 134، والـ parent لسه عايش برضه. الفرق إن الـ <code>resourceLimits</code> بتحمي الـ JS heap بس، لكن الـ Worker في نفس الـ address space، فأي crash في native code هيوقّع الـ process كله، أما الـ child process فمعزول من الـ OS نفسه.</div>
+
+<pre data-file="src/run-ffmpeg.ts"><code class="language-typescript">// برنامج خارجي: spawn مع timeout، وقراءة الـ exit code، والـ API بيفضل شغال
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+function transcode(args: string[], timeoutMs: number) {
+  return new Promise&lt;{ code: number | null; signal: string | null; lastLine: string }&gt;((resolve, reject) =&gt; {
+    // الـ signal بيقتل الـ program لو طوّل، وعلى Linux هتبقى ffmpeg بدل node
+    const child = spawn(process.execPath, [new URL("./fake-ffmpeg.mjs", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1").replaceAll("%27", "'"), ...args], {
+      stdio: ["ignore", "ignore", "pipe"],
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    let lastLine = "";
+    child.stderr.on("data", (d: Buffer) =&gt; (lastLine = d.toString().trim().split("\n").at(-1)!));
+    child.once("error", (e) =&gt; {
+      // الـ AbortError بيجي مع الـ timeout، وبعده بييجي close
+      if (e.name !== "AbortError") reject(e);
+    });
+    child.once("close", (code, signal) =&gt; resolve({ code, signal, lastLine }));
+  });
+}
+
+let ticks = 0;
+const timer = setInterval(() =&gt; ticks++, 50);
+console.log("ok     :", await transcode(["0.3"], 5_000));
+console.log("bad    :", await transcode(["0.3", "bad"], 5_000));
+console.log("timeout:", await transcode(["30"], 400));
+console.log("event loop ticks during all 3:", ticks &gt; 10 ? "kept running" : "blocked");
+clearInterval(timer);</code></pre>
+<pre><code class="language-plaintext">$ node src/run-ffmpeg.ts
+ok     : { code: 0, signal: null, lastLine: 'frame=33' }
+bad    : { code: 69, signal: null, lastLine: 'frame=33' }
+timeout: { code: null, signal: 'SIGTERM', lastLine: 'frame=33' }
+event loop ticks during all 3: kept running</code></pre>
+  <div class="ar-note">الـ ok: كود 0. الـ bad: كود 69 زي أي برنامج بيفشل. الـ timeout: الـ <code>AbortSignal</code> قتله، و <code>code: null</code> مع <code>signal: 'SIGTERM'</code>. و <code>lastLine</code> آخر سطر progress من stderr. والسطر الأخير: الـ event loop فضل شغال طول الوقت. و ffmpeg مش متسطب هنا، فـ <code>fake-ffmpeg.mjs</code> بديل صغير ليه، و <code>spawn</code> نفسه حقيقي.</div>
+
+<pre data-file="src/report-in-process.ts"><code class="language-typescript">// ❌ الـ report جوه الـ API process في Worker: لو الـ process اتقفل، الشغل راح
+import { hashInvoiceChain } from "./invoice-hash.ts";
+import { isMainThread, parentPort, Worker } from "node:worker_threads";
+
+if (!isMainThread) {
+  parentPort!.postMessage(hashInvoiceChain("nightly-report", 3_000_000));
+} else {
+  const worker = new Worker(new URL(import.meta.url));
+  process.send?.("started");
+  worker.once("message", () =&gt; {
+    process.send?.("finished");
+    process.exit(0);
+  });
+}</code></pre>
+<pre data-file="src/report-job.ts"><code class="language-typescript">// ✅ نفس الـ report كـ job في BullMQ على Redis: الـ process يتقتل، والـ job لسه موجودة
+import { Worker } from "bullmq";
+import { hashInvoiceChain } from "./invoice-hash.ts";
+
+const connection = { host: "127.0.0.1", port: Number(process.env.REDIS_PORT) };
+const worker = new Worker&lt;{ rounds: number }&gt;(
+  "reports",
+  async (job) =&gt; {
+    process.send?.(`job ${job.id} started by pid-${process.env.LABEL}, attempt ${job.attemptsStarted}`);
+    // الشغل التقيل بيتعمل chunks عشان الـ lock يتجدّد، وفي الحقيقة دي thread أو sandboxed processor
+    for (let i = 0; i &lt; 40; i++) {
+      hashInvoiceChain(`chunk-${i}`, job.data.rounds);
+      await new Promise((r) =&gt; setImmediate(r));
+    }
+    return "report.pdf";
+  },
+  // قيم صغيرة للـ demo بس، عشان الـ job اللي صاحبها مات تتكشف بسرعة
+  { connection, lockDuration: 1_500, stalledInterval: 500, maxStalledCount: 2 },
+);
+worker.on("completed", (job, result) =&gt; process.send?.(`job ${job.id} completed by pid-${process.env.LABEL}: ${result}`));
+process.send?.("ready");</code></pre>
+<pre data-file="src/survive-deploy.ts"><code class="language-typescript">// الاتنين بيتقتلوا في النص زي deploy أو OOM. مين بيكمّل؟
+import { fork } from "node:child_process";
+import { once } from "node:events";
+import { setTimeout as sleep } from "node:timers/promises";
+import { Queue } from "bullmq";
+
+// (1) جوه الـ process
+const inProcess = fork(new URL("./report-in-process.ts", import.meta.url));
+const messages: unknown[] = [];
+inProcess.on("message", (m) =&gt; messages.push(m));
+await once(inProcess, "message");
+await sleep(300);
+inProcess.kill();
+await once(inProcess, "exit");
+console.log("in-process worker thread, killed mid-way. messages:", messages);
+
+// (2) الـ job على Redis
+const connection = { host: "127.0.0.1", port: Number(process.env.REDIS_PORT) };
+const queue = new Queue("reports", { connection });
+await queue.obliterate({ force: true });
+const start = (label: string) =&gt; {
+  const child = fork(new URL("./report-job.ts", import.meta.url), { env: { ...process.env, LABEL: label } });
+  child.on("message", (m) =&gt; {
+    if (m !== "ready") console.log(m);
+  });
+  return child;
+};
+await queue.add("nightly", { rounds: 20_000 }, { attempts: 3 });
+const oldVersion = start("v1");
+await once(oldVersion, "message");
+await sleep(700);
+console.log("killing v1 mid-job. counts:", await queue.getJobCounts("active", "waiting", "completed"));
+oldVersion.kill();
+await once(oldVersion, "exit");
+
+const newVersion = start("v2");
+for (let i = 0; i &lt; 200; i++) {
+  const { completed } = await queue.getJobCounts("completed");
+  if (completed === 1) break;
+  await sleep(100);
+}
+console.log("final counts:", await queue.getJobCounts("active", "waiting", "completed", "failed"));
+newVersion.kill();
+await queue.close();</code></pre>
+<pre><code class="language-plaintext">$ REDIS_PORT=... node src/survive-deploy.ts
+in-process worker thread, killed mid-way. messages: [ 'started' ]
+job 1 started by pid-v1, attempt 1
+killing v1 mid-job. counts: { active: 1, waiting: 0, completed: 0 }
+job 1 started by pid-v2, attempt 2
+job 1 completed by pid-v2: report.pdf
+final counts: { active: 0, waiting: 0, completed: 1, failed: 0 }</code></pre>
+  <div class="ar-note">السطر الأول: الـ report في Worker جوه الـ API، والـ process اتقتل في النص. وصلت رسالة <code>started</code> بس، ومفيش <code>finished</code>، ومحدش في الدنيا يعرف إن الـ report ضاع. وباقي السطور: نفس الـ report كـ job. الـ v1 بدأها ومات وهي <code>active: 1</code>. الـ v2 طلع، و BullMQ اكتشف إن الـ job بقت stalled، فبدأها v2 كـ attempt 2 وخلصها، والعدّادات في الآخر <code>completed: 1</code>. وده بيفترض إن الـ processor idempotent (<a href="./22-background-jobs-bullmq.html#p5">الدرس 22، الجزء 5</a>).</div>
+
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>ده سؤال 8 في اختبار الخروج. 4 أدوات لـ 4 أسئلة مختلفة، زي الجدول فوق.</p>
+    <p><b>3 حاجات الجدول مش هيوريهالك، فشغّلناها.</b> <em>الـ isolation:</em> leak في Worker بـ <code>resourceLimits</code> بيخلص بـ <code>ERR_WORKER_OUT_OF_MEMORY</code>، و child process بـ <code>--max-old-space-size</code> بيخلص بـ exit code 134. وفي الاتنين الـ API عايش. <em>البرامج الخارجية:</em> <code>spawn</code> بيديك exit codes، وقتل عند الـ timeout، و event loop فاضي. و ffmpeg مش متسطب هنا، فبديل صغير عامل دوره. <em>الـ deploys:</em> الاتنين تحت بيتقتلوا في النص. الـ report بتاع الـ Worker راح خلاص، ومفيش حد في أي حتة عارف إنه كان شغال. أما الـ BullMQ job على Redis فاتكشفت إنها stalled، والإصدار الجديد خلصها.</p>
+    <p><b>4 قرارات، بالسبب:</b></p>
+    <ul>
+      <li><b>توليد PDF.</b> فاتورة PDF بتاخد 300 ms والـ user مستنيها: piscina pool جوه الـ API كفاية، بطابور ليه حد. تقرير 30 صفحة، أو أي حاجة مينفعش تضيع: BullMQ job و worker service منفصل، وجواه ممكن يبقى pool (<a href="./22-background-jobs-bullmq.html#p2">الدرس 22، الجزء 2</a> فيه الـ sandboxed processors). يعني غالبًا queue، و Workers جواه لجزء الـ CPU.</li>
+      <li><b>ffmpeg.</b> <code>child_process.spawn</code>، دايمًا، لأنه برنامج خارجي، و Worker هيقعد يستناه وخلاص. شغّله من queue consumer على machines منفصلة، لأن الـ transcoding بياكل كل الـ CPU اللي يلاقيه، والـ request مش هيقدر يستناه. <a href="./08-fs-child-process-zlib.html#p4">الدرس 08، الجزء 4</a> فيه التفاصيل.</li>
+      <li><b>scaling لـ HTTP على box واحد.</b> <code>cluster</code> أو PM2 لو عندك VM واحد ومفيش orchestrator. و replicas لو عندك containers. وفي الحالتين، الأول اثبت إن الـ event loop هو الحد، وخلّي الـ service stateless.</li>
+      <li><b>تقرير كل ليلة.</b> مش جوه الـ API process. BullMQ job scheduler أو Kubernetes CronJob، في worker service منفصل، وعلى read replica لو تقيل. محتاج retries، ولازم يشتغل مرة واحدة على كل الـ instances (<a href="./22-background-jobs-bullmq.html#p4">الدرس 22، الجزء 4</a>).</li>
+    </ul>
+    <div class="use">
+      <b>فين هستخدمه في شغلي؟</b>
+      في design review حد قال "هنحل بطء الـ report بـ worker thread". اسأل 3 أسئلة بالترتيب: لو الـ pod اتعمله deploy في نص التقرير، إيه اللي هيحصل؟ لو التقرير فشل، مين هيعيده؟ لو بقوا 50 تقرير في نفس الوقت، إيه اللي هيحصل للـ API؟ لو الإجابات مش مريحة، الحل queue و worker service. والـ thread pool يفضل لشغل CPU قصير والـ user مستنيه.
+    </div>
+  </section>
+
+  <div class="callout interview">
+    <b>Interview question: exit-test Q8</b>
+    "What's the difference between <code>worker_threads</code> and <code>cluster</code>, and when do you use each?" → <code>worker_threads</code> runs extra threads in one process for CPU-bound JavaScript; they can share memory through <code>SharedArrayBuffer</code> or transfer buffers, and a pool keeps them cheap. <code>cluster</code> runs extra processes that share a listening port, to use more cores for HTTP when the event loop is saturated; they share nothing, so state moves out and DB connections multiply. In containers I'd normally run one process per pod and add replicas rather than use <code>cluster</code>. For external programs I'd use <code>child_process</code>. And for slow work or work that must finish, none of these: a queue and a separate service, because it survives deploys, retries, and scales on its own.
+    <div class="ar-note"><b>السؤال:</b> "إيه الفرق بين <code>worker_threads</code> و <code>cluster</code>، وإمتى تستخدم كل واحد؟" ← <b>الإجابة:</b> <code>worker_threads</code> بيشغّل threads زيادة في process واحدة للـ JavaScript التقيل على الـ CPU، وينفع يشاركوا memory بـ <code>SharedArrayBuffer</code> أو ينقلوا buffers، والـ pool بيخليهم رخاص. و <code>cluster</code> بيشغّل processes زيادة بتشارك port واحد، عشان تستخدم cores أكتر لـ HTTP لما الـ event loop يتشبع، ومش بيشاركوا حاجة، فالـ state لازم يطلع بره والـ DB connections بتتضرب. في الـ containers عادةً بشغّل process واحدة في الـ pod وأزوّد replicas بدل <code>cluster</code>. وللبرامج الخارجية <code>child_process</code>. وللشغل البطيء أو اللي لازم يخلص، ولا واحد منهم: queue و service منفصل، لأنه بيعيش بعد الـ deploys، وبيعمل retries، وبيعمل scale لوحده.</div>
+  </div>
+
+  <!-- ===================== MISTAKES ===================== -->
+  <h2 id="mistakes">Common mistakes · غلطات شائعة</h2>
+
+  <div class="compare">
+    <div class="bad"><b>❌ A Worker per request</b>
+<pre><code class="language-typescript">app.post("/thumbnails", async (req, res) =&gt; {
+  // كل request بيدفع startup كامل و memory
+  const w = new Worker(file, { workerData: req.body });
+  res.json(await once(w, "message"));
+});</code></pre></div>
+    <div class="good"><b>✅ A shared pool</b>
+<pre><code class="language-typescript">const pool = new Piscina({
+  filename,
+  maxThreads: availableParallelism() - 1,
+  maxQueue: "auto",
+});
+app.post("/thumbnails", async (req, res) =&gt; {
+  // نفس الـ threads بتخدم كل الـ requests
+  res.json(await pool.run(req.body));
+});</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ Worker لكل request طلع في القياس أبطأ من الـ main thread نفسه، و memory أضعاف، لأن كل request بيقوّم isolate جديد. ✅ الـ pool بيعمل الـ threads مرة واحدة، وكل الـ requests بتعدّي عليهم، ووصل حوالي 3 لـ 4 مرات الـ throughput.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Workers for I/O</b>
+<pre><code class="language-typescript">// الـ worker بيستنى الـ DB زي الـ main بالظبط
+export default ({ orderId }: Job) =&gt;
+  pool.query("SELECT * FROM orders WHERE id = $1",
+    [orderId]);</code></pre></div>
+    <div class="good"><b>✅ Plain async on the main thread</b>
+<pre><code class="language-typescript">// الـ event loop شاطر في الاستنى، ومش محتاج thread
+const { rows } = await pool.query(
+  "SELECT * FROM orders WHERE id = $1",
+  [orderId],
+);</code></pre></div>
+  </div>
+<pre data-file="src/io-in-worker.ts"><code class="language-typescript">// الـ Workers للـ CPU مش للـ I/O: 400 call لـ API بطيء، على الـ main وعن طريق pool
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+import { Piscina } from "piscina";
+
+// بديل لـ payment provider: كل رد بياخد 20 ms ومفيش CPU خالص
+const provider = createServer(async (_req, res) =&gt; {
+  await sleep(20);
+  res.end("paid");
+});
+await new Promise&lt;void&gt;((resolve) =&gt; provider.listen(0, "127.0.0.1", resolve));
+const url = `http://127.0.0.1:${(provider.address() as AddressInfo).port}/charge`;
+
+const pool = new Piscina({
+  filename: new URL("./io-task.ts", import.meta.url).href,
+  minThreads: 4,
+  maxThreads: 4,
+});
+await Promise.all(Array.from({ length: 4 }, () =&gt; pool.run(url)));
+
+async function timed(label: string, call: () =&gt; Promise&lt;unknown&gt;) {
+  const t0 = performance.now();
+  for (let batch = 0; batch &lt; 4; batch++) await Promise.all(Array.from({ length: 100 }, call));
+  console.log(`${label.padEnd(30)} ≈${String(Math.round(performance.now() - t0)).padStart(5)} ms`);
+}
+for (let i = 0; i &lt; 2; i++) {
+  await timed("main thread, plain fetch", () =&gt; fetch(url).then((r) =&gt; r.text()));
+  await timed("4-thread pool, 1 task per thread", () =&gt; pool.run(url));
+}
+await pool.destroy();
+provider.close();
+provider.closeAllConnections();</code></pre>
+<pre><code class="language-plaintext">$ node src/io-in-worker.ts
+main thread, plain fetch       ≈  426 ms
+4-thread pool, 1 task per thread ≈ 3110 ms
+main thread, plain fetch       ≈  233 ms
+4-thread pool, 1 task per thread ≈ 3126 ms</code></pre>
+  <div class="ar-note">400 call لـ API بياخد 20 ms، 100 في نفس الوقت. على الـ main thread: حوالي ربع ثانية لنص ثانية. عن طريق pool بـ 4 threads: حوالي 3 ثواني، أبطأ بحوالي 7 لـ 13 مرة. السبب إن كل thread بيعمل task واحدة في الوقت الواحد (<code>concurrentTasksPerWorker: 1</code> هو الـ default)، فالـ pool قلّل الـ concurrency من 100 لـ 4، و event loop واحد كان بيستنى الـ 100 مع بعض من غير أي مشكلة.</div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ Workers مش بتسرّع الـ I/O، والـ docs بتقولها صراحة: "They do not help much with I/O-intensive work". الـ thread بيقعد يستنى زي الـ main، وإنت بتدفع رحلة كمان، والأسوأ إن الـ pool بيحط سقف على الـ concurrency. رفع <code>concurrentTasksPerWorker</code> بيشيل السقف، بس ساعتها إنت بتعمل async عادي جوه thread من غير أي فايدة. ✅ الـ I/O خليه async عادي على الـ event loop، وسيب الـ Workers للـ CPU. ولو عايز تعرف هل الـ route ده I/O ولا CPU، اعمله profile (<a href="./35-profiling-load-testing.html#p1">الدرس 35</a>).</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ The default queue</b>
+<pre><code class="language-typescript">// الـ maxQueue هنا Infinity: الطابور و RSS بيكبروا
+const pool = new Piscina({ filename });
+app.post("/render", async (req, res) =&gt; {
+  res.send(await pool.run(req.body));
+});</code></pre></div>
+    <div class="good"><b>✅ A bound, and a 503</b>
+<pre><code class="language-typescript">const pool = new Piscina({ filename, maxQueue: "auto" });
+app.post("/render", async (req, res) =&gt; {
+  // الطابور مليان؟ ارفض بسرعة وقول للـ client يرجع
+  if (pool.queueSize &gt;= pool.options.maxQueue) {
+    return res.status(503).set("retry-after", "2").end();
+  }
+  res.send(await pool.run(req.body));
+});</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ الـ default مالوش حد: في الـ open-loop run الطابور عدّى 700 task في 8 ثواني والـ RSS فضل طالع، وأي حد في الطابور بيستنى ثواني، وممكن يكون قفل الصفحة أصلًا. ✅ حد صغير و 503 سريع هما backpressure حقيقي: اللي دخل بيتخدم بسرعة، واللي مدخلش عارف إنه يرجع بعدين.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ Bundling only the server</b>
+<pre><code class="language-bash"># الـ Worker مش import، فالـ esbuild مش شايفه خالص
+esbuild server.ts --bundle --platform=node \
+  --format=esm --outfile=dist/server.mjs</code></pre></div>
+    <div class="good"><b>✅ The Worker as its own entry point</b>
+<pre><code class="language-bash"># كل Worker ليه entry point، بالاسم اللي الـ URL بيشاور عليه
+esbuild server.ts worker.ts --bundle --platform=node \
+  --format=esm --outdir=dist</code></pre></div>
+  </div>
+<pre><code class="language-plaintext">$ node dist/one/server.mjs
+MODULE_NOT_FOUND: Cannot find module 'C:\app\dist\one\bundle-worker.js'</code></pre>
+  <div class="ar-note">ده الـ error الحقيقي: الـ build نجح بـ exit code 0، والـ crash ظهر وقت التشغيل بس، لما أول request طلب Worker. الـ path متقصّر هنا عشان القراءة.</div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ <code>new Worker(new URL("./worker.js", import.meta.url))</code> مش import، فالـ bundler مبيدخلوش في الـ bundle، والـ build بينجح عادي، وتكتشف المشكلة في production. ✅ اعمل entry point لكل Worker، وخلّي اسمه في <code>dist</code> نفس اللي الـ URL بيشاور عليه، وجرّب الـ bundle نفسه في الـ CI.</p>
+  </section>
+
+  <div class="compare">
+    <div class="bad"><b>❌ cluster inside a limited container</b>
+<pre><code class="language-typescript">// في pod بـ cpu: 500m، الرقم ده ممكن يطلع عدد cores الـ node
+for (let i = 0; i &lt; availableParallelism(); i++) {
+  cluster.fork();
+}</code></pre></div>
+    <div class="good"><b>✅ One process, more replicas</b>
+<pre><code class="language-typescript">// الـ container فيه process واحدة، والـ scaling من الـ platform
+const server = createServer(handler);
+server.listen(3000);
+process.once("SIGTERM", () =&gt; shutdown(server));</code></pre></div>
+  </div>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <p>❌ عدد workers محسوب من رقم مش فاهم إنت في container، فبيبقى عندك processes كتير بتتخانق على quota صغيرة، و memory مضروبة، و throttling مع بعض. ✅ process واحدة في الـ pod: الـ signals والـ limits والـ metrics بيبقوا أبسط، والـ <code>replicas</code> هو اللي بيحدد العدد. ده من قراءة كود libuv ومن الـ docs، ومتجربش في container هنا.</p>
+  </section>
+
+  <!-- ===================== EXERCISES ===================== -->
+  <h2 id="try">Try it yourself · جرّب بنفسك</h2>
+  <div class="exercise"><b>1. Find your block <span class="lvl lvl-1">🟢 easy</span></b>
+    Take the slowest CPU-heavy function you have (a report's aggregation, a CSV parse, a password hash), put it in <code>hash-server.ts</code> in place of <code>hashInvoiceChain</code>, and run <code>measure-health.ts</code>. Write down <code>/health</code> p50 and max with and without the Worker.
+    <div class="ar-note">خد أبطأ function تقيلة على الـ CPU عندك (تجميع report، أو parse لـ CSV، أو hash لـ password)، وحطها في <code>hash-server.ts</code> مكان <code>hashInvoiceChain</code>، وشغّل <code>measure-health.ts</code>. اكتب p50 و max بتوع <code>/health</code> مع الـ Worker ومن غيره.</div>
+    <details><summary>Hint · تلميح</summary>
+      If the function takes under a few milliseconds, the Worker won't help: the trip costs more than the work. Run it in a loop first to see its real duration.
+      <div class="ar-note">لو الـ function بتاخد أقل من كام ms، الـ Worker مش هيفيد: الرحلة أغلى من الشغل. شغّلها في loop الأول عشان تعرف مدتها الحقيقية.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>2. Return bytes with a transfer <span class="lvl lvl-2">🟡 medium</span></b>
+    Write a Worker that produces a 50 MB thumbnail <code>Buffer</code> and sends it back with a transfer, so the main thread gets a real <code>Buffer</code> with no copy. Prove the Worker's own copy is now empty.
+    <div class="ar-note">اكتب Worker بيعمل thumbnail حجمها 50 MB كـ <code>Buffer</code> ويرجعها بـ transfer، بحيث الـ main thread ياخد <code>Buffer</code> حقيقي من غير نسخ. واثبت إن النسخة اللي عند الـ Worker بقت فاضية.</div>
+    <details><summary>Hint · تلميح</summary>
+      Use <code>Buffer.alloc</code>, not <code>Buffer.from</code> on a small value. It arrives as a <code>Uint8Array</code>, so wrap it with <code>Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)</code>.
+      <div class="ar-note">استخدم <code>Buffer.alloc</code>، مش <code>Buffer.from</code> على قيمة صغيرة. وهي بتوصل <code>Uint8Array</code>، فلفّها بـ <code>Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)</code>.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-transfer.ts"><code class="language-typescript">// الحل: الـ worker بيرجّع الـ bytes بـ transfer، فمفيش نسخة تانية على الـ main thread
+import { once } from "node:events";
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+const MB = 1024 * 1024;
+
+if (!isMainThread) {
+  // صورة وهمية: Buffer.alloc مش من الـ pool، فينفع تتنقل
+  const thumbnail = Buffer.alloc(workerData as number, 1);
+  parentPort!.postMessage(thumbnail, [thumbnail.buffer]);
+  // الـ worker مبقاش يقدر يلمسها: طولها بقى صفر
+  parentPort!.postMessage({ afterSend: thumbnail.length });
+} else {
+  const worker = new Worker(new URL(import.meta.url), { workerData: 50 * MB });
+  const [bytes] = (await once(worker, "message")) as [Uint8Array];
+  const [{ afterSend }] = (await once(worker, "message")) as [{ afterSend: number }];
+  // بيوصل Uint8Array مش Buffer، فلفّه من غير نسخ لو محتاج Buffer
+  const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  console.log({ received: buf.length, isBuffer: Buffer.isBuffer(buf), workerSideAfterSend: afterSend });
+  await worker.terminate();
+}</code></pre>
+<pre><code class="language-plaintext">$ node src/ex-transfer.ts
+{ received: 52428800, isBuffer: true, workerSideAfterSend: 0 }</code></pre>
+      <div class="ar-note">الـ main خد 52,428,800 byte كـ <code>Buffer</code> حقيقي، والـ Worker طوله عنده بقى 0 بعد الـ send، يعني الـ memory اتنقلت مش اتنسخت.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>3. Add a task timeout to the pool <span class="lvl lvl-3">🔴 hard</span></b>
+    Extend the hand-written pool so <code>run(input, timeoutMs)</code> rejects if a task takes too long. A hung task must not block the pool, and other queued tasks must still finish.
+    <div class="ar-note">طوّر الـ pool اللي بالإيد بحيث <code>run(input, timeoutMs)</code> ترفض لو الـ task طوّل. والـ task المعلّقة لازم متعطلش الـ pool، والـ tasks التانية في الطابور لازم تخلص.</div>
+    <details><summary>Hint · تلميح</summary>
+      Blocked JS never returns to its event loop, so a message can't cancel it. The only way out is <code>worker.terminate()</code> and a replacement.
+      <div class="ar-note">الـ JS المتبلوكة عمرها ما بترجع للـ event loop بتاعها، فمفيش رسالة تقدر تلغيها. الطريقة الوحيدة <code>worker.terminate()</code> و worker بديل.</div>
+    </details>
+    <details><summary>Solution · الحل</summary>
+<pre data-file="src/ex-pool-timeout.ts"><code class="language-typescript">// الحل: timeout لكل task. الـ JS المتبلوكة مبتتلغيش غير بـ terminate، فلازم worker جديد بداله
+import { Worker } from "node:worker_threads";
+
+type Task = { input: unknown; timeoutMs: number; resolve: (v: unknown) =&gt; void; reject: (e: Error) =&gt; void };
+type Slot = { worker: Worker; task?: Task; timer?: NodeJS.Timeout };
+
+export class TimeoutPool {
+  private slots: Slot[] = [];
+  private queue: Task[] = [];
+  private file: URL;
+
+  constructor(file: URL, size: number) {
+    this.file = file;
+    for (let i = 0; i &lt; size; i++) this.spawn();
+  }
+
+  private spawn(): void {
+    const slot: Slot = { worker: new Worker(this.file) };
+    slot.worker.on("message", (output) =&gt; this.finish(slot, () =&gt; slot.task!.resolve(output)));
+    slot.worker.on("error", (err: Error) =&gt; this.replace(slot, err));
+    this.slots.push(slot);
+    this.next();
+  }
+
+  private finish(slot: Slot, settle: () =&gt; void): void {
+    clearTimeout(slot.timer);
+    settle();
+    slot.task = undefined;
+    this.next();
+  }
+
+  private replace(slot: Slot, err: Error): void {
+    clearTimeout(slot.timer);
+    slot.task?.reject(err);
+    this.slots = this.slots.filter((s) =&gt; s !== slot);
+    // بلاش await هنا: الـ terminate بيخلص لوحده، والبديل يبدأ على طول
+    void slot.worker.terminate();
+    this.spawn();
+  }
+
+  run(input: unknown, timeoutMs: number): Promise&lt;unknown&gt; {
+    return new Promise((resolve, reject) =&gt; {
+      this.queue.push({ input, timeoutMs, resolve, reject });
+      this.next();
+    });
+  }
+
+  private next(): void {
+    for (const slot of this.slots) {
+      if (slot.task || this.queue.length === 0) continue;
+      const task = this.queue.shift()!;
+      slot.task = task;
+      slot.timer = setTimeout(() =&gt; this.replace(slot, new Error(`task timed out after ${task.timeoutMs} ms`)), task.timeoutMs);
+      slot.worker.postMessage(task.input);
+    }
+  }
+
+  close(): Promise&lt;number[]&gt; {
+    return Promise.all(this.slots.map((s) =&gt; s.worker.terminate()));
+  }
+}
+
+const pool = new TimeoutPool(new URL("./pool-task.ts", import.meta.url), 2);
+const t0 = performance.now();
+const outcome = (p: Promise&lt;unknown&gt;) =&gt; p.then((d) =&gt; `ok ${String(d).slice(0, 8)}`, (e: Error) =&gt; e.message);
+const results = await Promise.all([
+  outcome(pool.run({ invoiceId: "slow", rounds: 5_000_000 }, 200)),
+  outcome(pool.run({ invoiceId: "fast-1", rounds: 1_000 }, 3_000)),
+  outcome(pool.run({ invoiceId: "fast-2", rounds: 1_000 }, 3_000)),
+]);
+console.log(results, `≈${Math.round(performance.now() - t0)} ms`);
+console.log("pool still works:", await outcome(pool.run({ invoiceId: "after", rounds: 1_000 }, 3_000)));
+await pool.close();</code></pre>
+<pre><code class="language-plaintext">$ node src/ex-pool-timeout.ts
+[ 'task timed out after 200 ms', 'ok 5958caa6', 'ok 57411d60' ] ≈208 ms
+pool still works: ok 716857d4</code></pre>
+      <div class="ar-note">الـ task البطيئة اترفضت بعد 200 ms، والاتنين التانيين خلصوا عادي، والـ pool لسه شغال بعدها بـ worker بديل.</div>
+    </details>
+  </div>
+  <div class="exercise"><b>4. In your project: the document route <span class="lvl lvl-3">🔴 project</span></b>
+    In your side project, add a heavy document route (invoice PDF or thumbnail) in two versions. First, piscina in the API with a bounded queue and a 503, load-tested with autocannon while watching <code>/health</code>. Second, the same work as a BullMQ job in a separate worker process, returning 202 from the API. Kill the worker mid-job, confirm the job finishes, and write a short ADR in <code>project/adr/</code> saying which one you keep and why.
+    <div class="ar-note">في مشروعك الجانبي، ضيف route تقيل لمستند (فاتورة PDF أو thumbnail) بنسختين. الأولى: piscina جوه الـ API بطابور ليه حد و 503، واعمله load test بـ autocannon وإنت بتراقب <code>/health</code>. التانية: نفس الشغل كـ BullMQ job في worker process منفصل، والـ API بيرد 202. اقتل الـ worker في نص الـ job، واتأكد إن الـ job خلصت، واكتب ADR قصير في <code>project/adr/</code> يقول هتحتفظ بأنهي واحدة وليه.</div>
+    <details><summary>Hint · تلميح</summary>
+      The decision usually comes down to two numbers: how long the user can wait, and what it costs if the work is lost. Put both in the ADR.
+      <div class="ar-note">القرار غالبًا بيتحدد برقمين: الـ user يقدر يستنى قد إيه، وتكلفة ضياع الشغل قد إيه. اكتب الاتنين في الـ ADR.</div>
+    </details>
+  </div>
+
+  <!-- ===================== SUMMARY ===================== -->
+  <h2 id="summary">Cheat sheet · الخلاصة</h2>
+  <ul>
+    <li>A Worker is an OS thread with its own isolate, heap and event loop. Use it for CPU-bound JavaScript; it doesn't help I/O.</li>
+    <li>Always listen for <code>error</code>: without a listener, one Worker's exception kills the whole process.</li>
+    <li><code>postMessage</code> clones synchronously on the caller: big objects block the main thread. Send IDs, or transfer bytes.</li>
+    <li>Transfer detaches the buffer on your side. <code>Buffer.from</code> small values can't be transferred; <code>Buffer.alloc</code> can.</li>
+    <li><code>SharedArrayBuffer</code> shares bytes, not objects. Plain <code>++</code> loses updates, <code>Atomics.add</code> doesn't. Most apps don't need this.</li>
+    <li>Never a Worker per request: it measured slower than the main thread. Use a pool.</li>
+    <li>piscina: set <code>minThreads</code>, <code>maxThreads</code> and <code>maxQueue</code> yourself. The queue is unbounded by default, so turn "full" into a 503.</li>
+    <li><code>cluster</code> default is round-robin except on Windows (<code>SCHED_NONE</code>). Balancing is per connection, not per request.</li>
+    <li>Workers share nothing: state moves out, and DB connections become machines × workers × max. <code>cluster</code> saves no memory.</li>
+    <li>In containers: one process per pod and more replicas. <code>cluster</code> or PM2 fits a single VM. Check <code>availableParallelism()</code> inside your real container.</li>
+    <li>Only a queue survives a deploy: in-process work dies with the process and nobody knows.</li>
+    <li>Verdict: CPU in a request → Worker pool. External program → <code>child_process</code>. HTTP across cores → replicas or <code>cluster</code>. Slow or must finish → queue + service.</li>
+  </ul>
+  <section class="ar">
+    <span class="label">بالعامية</span>
+    <ul>
+      <li>الـ Worker هو OS thread ليه isolate و heap و event loop لوحده. استخدمه للـ JavaScript التقيل على الـ CPU، ومش بيفيد الـ I/O.</li>
+      <li>دايمًا اسمع <code>error</code>: من غير listener، exception في Worker واحد بيقتل الـ process كله.</li>
+      <li><code>postMessage</code> بينسخ بشكل synchronous على اللي بينادي: الـ objects الكبيرة بتبلوك الـ main thread. ابعت IDs، أو انقل bytes.</li>
+      <li>الـ transfer بيخلي الـ buffer عندك detached. و <code>Buffer.from</code> للقيم الصغيرة مينفعش يتنقل، و <code>Buffer.alloc</code> ينفع.</li>
+      <li>الـ <code>SharedArrayBuffer</code> بيشارك bytes مش objects. و <code>++</code> العادية بتضيّع زيادات، و <code>Atomics.add</code> لأ. ومعظم الـ apps مش محتاجة ده.</li>
+      <li>أبدًا Worker لكل request: في القياس طلع أبطأ من الـ main thread. استخدم pool.</li>
+      <li>الـ piscina: حدد <code>minThreads</code> و <code>maxThreads</code> و <code>maxQueue</code> بنفسك. الطابور مالوش حد by default، فحوّل "مليان" لـ 503.</li>
+      <li>الـ default بتاع <code>cluster</code> هو round-robin ما عدا Windows (<code>SCHED_NONE</code>). والتوزيع لكل connection مش لكل request.</li>
+      <li>الـ workers مش بيشاركوا حاجة: الـ state يطلع بره، والـ DB connections تبقى machines × workers × max. و <code>cluster</code> مش بيوفّر memory.</li>
+      <li>في الـ containers: process واحدة في الـ pod و replicas أكتر. و <code>cluster</code> أو PM2 مناسبين لـ VM واحد. وشيّك على <code>availableParallelism()</code> جوه الـ container الحقيقي بتاعك.</li>
+      <li>الـ queue بس هي اللي بتعيش بعد الـ deploy: الشغل اللي جوه الـ process بيموت معاه ومحدش بيعرف.</li>
+      <li>الحكم: CPU جوه request ← Worker pool. برنامج خارجي ← <code>child_process</code>. HTTP على الـ cores ← replicas أو <code>cluster</code>. بطيء أو لازم يخلص ← queue و service.</li>
+    </ul>
+  </section>
+
+  <h3>README items to tick · بنود الـ README تعلّمها</h3>
+  <div class="checklist">
+    <label><input type="checkbox" data-key="r1"> 06 · 3.1 — <b><code>worker_threads</code></b>: للـ CPU-bound work، <code>postMessage</code>، <code>workerData</code>، transferable objects، <code>SharedArrayBuffer</code> + <code>Atomics</code></label>
+    <label><input type="checkbox" data-key="r2"> 06 · 3.1 — Worker pool pattern (piscina)</label>
+    <label><input type="checkbox" data-key="r3"> 06 · 3.1 — <b><code>cluster</code></b>: forks بنفس الـ port، round-robin، وإمتى (multi-core على server واحد) — vs containers horizontal scaling (الأشهر دلوقتي)</label>
+    <label><input type="checkbox" data-key="r4"> 06 · 3.1 — الحكم: <code>worker_threads</code> (CPU work، shared memory) vs <code>cluster</code> (scale HTTP على cores) vs <code>child_process</code> (external programs، isolation) vs queue + separate service (الأفضل غالبًا)</label>
+  </div>
+
+  <h3>Sources · المصادر</h3>
+  <ul>
+    <li><a href="https://nodejs.org/api/worker_threads.html">Node.js docs: Worker threads</a></li>
+    <li><a href="https://nodejs.org/api/cluster.html">Node.js docs: Cluster</a></li>
+    <li><a href="https://github.com/piscinajs/piscina">piscina: the Node.js worker pool</a></li>
+    <li><a href="https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop">Node.js: Don't Block the Event Loop</a></li>
+    <li><a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Atomics">MDN: Atomics</a></li>
+    <li><a href="https://docs.libuv.org/en/v1.x/misc.html">libuv docs: uv_available_parallelism</a></li>
+  </ul>
+
+
+  <div class="done-box" id="done-box">
+    <label style="cursor:pointer"><input type="checkbox" id="done-lesson"> <b>Mark this lesson as done · علّم إن الدرس خلص</b></label>
+    <div style="font-size:.85rem;color:var(--text-muted);margin-top:.3rem">Saved in this browser only. The real source of truth is the README checkboxes + <code>progress.md</code>.</div>
+    <div class="ar-note" style="font-size:.85rem;color:var(--text-muted);border:none;padding:0;margin-top:.2rem;text-align:center">متسجّل في المتصفح ده بس. مصدر الحقيقة هو الـ checkboxes في الـ README و<code>progress.md</code>.</div>
+  </div>
+
+  <!-- ===== Prev / Next ===== -->
+  <nav class="lesson-nav">
+    <a class="prev" href="./33-deployment-serverless-edge.html"><small>← Previous</small>33 · Deployment</a>
+    <a href="./index.html"><small>Section</small>All lessons</a>
+    <a class="next" href="./35-profiling-load-testing.html"><small>Next →</small>35 · Profiling &amp; Load</a>
+  </nav>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/nginx.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<script>
+  // ---- highlight (skip diagrams) ----
+  try { hljs.configure({ ignoreUnescapedHTML: true }); document.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el)); } catch (e) {}
+
+  // ---- theme toggle (persisted per browser) ----
+  const root = document.documentElement;
+  const key = "senior2027:" + location.pathname;
+  // ترحيل علامات "خلصت" من مسار القسم القديم بعد إعادة الترقيم (نوفمبر 2026) — senior2027-migrate
+  (() => { try {
+    const moved = {"01-JavaScript":"02-JavaScript","02-TypeScript":"03-TypeScript","03-CS-Fundamentals":"01-CS-Fundamentals","06-NodeJS":"04-NodeJS","07-React":"05-React","08-NextJS":"06-NextJS","09-Databases":"07-Databases","10-Design-Patterns":"08-Design-Patterns","11-Software-Architecture":"09-Software-Architecture","12-System-Design":"10-System-Design","13-Testing-Security-DevOps":"11-Testing-Security-DevOps","14-AI-Engineering":"12-AI-Engineering","15-Senior-Skills":"13-Senior-Skills","16-Interview-Prep":"14-Interview-Prep","17-ERP":"15-ERP"};
+    const p = location.pathname;
+    for (const [now, was] of Object.entries(moved)) {
+      if (!p.includes("/" + now + "/")) continue;
+      const oldKey = "senior2027:" + p.replace("/" + now + "/", "/" + was + "/");
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(oldKey + ":")) continue;
+        const nk = key + k.slice(oldKey.length);
+        if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+      }
+      break;
+    }
+  } catch {} })();
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const applyTheme = (t) => {
+    if (t) root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    const dark = t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("hl-light").media = dark ? "not all" : "all";
+    document.getElementById("hl-dark").media = dark ? "all" : "not all";
+  };
+  applyTheme(safeGet("senior2027:theme"));
+  document.getElementById("theme-toggle").onclick = () => {
+    const cur = root.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : cur === "light" ? "" : "dark";
+    safeSet("senior2027:theme", next); applyTheme(next);
+  };
+
+  // ---- font size toggle ----
+  const sizes = [17, 19, 21];
+  let si = +(safeGet("senior2027:font") || 0);
+  const applyFont = () => (document.body.style.fontSize = sizes[si] + "px");
+  applyFont();
+  document.getElementById("font-toggle").onclick = () => { si = (si + 1) % sizes.length; safeSet("senior2027:font", si); applyFont(); };
+
+  // ---- scroll progress ----
+  const bar = document.getElementById("scroll-progress");
+  addEventListener("scroll", () => {
+    const h = document.documentElement;
+    bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+  }, { passive: true });
+
+  // ---- checkboxes persisted ----
+  document.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const k = key + ":" + (cb.dataset.key || cb.id);
+    cb.checked = safeGet(k) === "1";
+    cb.addEventListener("change", () => safeSet(k, cb.checked ? "1" : "0"));
+  });
+  const doneCb = document.getElementById("done-lesson"), doneBox = document.getElementById("done-box");
+  const syncDone = () => doneBox.classList.toggle("is-done", doneCb.checked);
+  syncDone(); doneCb.addEventListener("change", syncDone);
+</script>
+</body>
+</html>
