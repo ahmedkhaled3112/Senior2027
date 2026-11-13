@@ -1,4 +1,4 @@
-# 03 — TypeScript
+# 02 — TypeScript
 
 > **ليه القسم ده:** TS مش "JS بـ annotations". السنيور بيستخدم الـ type system عشان يخلي الحالات الغلط مستحيلة تتكتب (make illegal states unrepresentable)، ويكتب types لـ libraries، ويعرف إمتى الـ types بتكلّف أكتر ما بتفيد.
 >
